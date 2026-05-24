@@ -201,6 +201,12 @@ class TestNamesMatchPositive:
         with the existing behavior in both feed.py and espn_sync.py."""
         assert names_match("South Carolina", "South Carolina State")
 
+    def test_stanford_vs_stanford_cardinal(self):
+        """'Stanford' matches 'Stanford Cardinal' — college short name vs full name.
+        Token overlap: min(1/1, 1/2) = 0.5, meeting the threshold.
+        This is the fix for issue #661 (team dedup)."""
+        assert names_match("Stanford", "Stanford Cardinal")
+
     def test_la_lakers_vs_los_angeles_lakers(self):
         """City abbreviation expansion: 'LA' -> 'Los Angeles'.
         Token overlap after expansion: {'los', 'angeles', 'lakers'} = 1.0."""

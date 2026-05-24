@@ -83,3 +83,23 @@ async def test_check_admin_auth_rejects_unlisted_user(monkeypatch):
     )
 
     assert allowed is False
+
+
+def test_check_admin_secret_none(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert admin_utils._check_admin_secret(None) is False
+
+
+def test_check_admin_secret_empty(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert admin_utils._check_admin_secret("") is False
+
+
+def test_check_admin_secret_correct(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert admin_utils._check_admin_secret("correct-secret") is True
+
+
+def test_check_admin_secret_wrong(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert admin_utils._check_admin_secret("wrong-secret") is False

@@ -39,6 +39,30 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
         )
         team = team_result.scalar_one_or_none()
 
+    # Fuzzy match: "Stanford" should find "Stanford Cardinal" (and vice versa)
+    if team is None and team_cache is not None:
+        for (cached_name, cached_sport_id), cached_team in team_cache.items():
+            if cached_sport_id == sport_id and _canonical_names_match(team_name, cached_name):
+                team = cached_team
+                break
+
+    if not team:
+        # Check DB with fuzzy matching before creating a new record.
+        # Use ILIKE on the first significant word to narrow candidates,
+        # then apply names_match for final verification.
+        _first_word = team_name.split()[0] if team_name else ""
+        if len(_first_word) >= 3:
+            fuzzy_result = await session.execute(
+                select(Team).where(
+                    Team.sport_id == sport_id,
+                    Team.name.ilike(f"%{_first_word}%"),
+                )
+            )
+            for candidate in fuzzy_result.scalars():
+                if _canonical_names_match(team_name, candidate.name):
+                    team = candidate
+                    break
+
     if not team:
         team = Team(
             name=team_name,
@@ -46,8 +70,9 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
         )
         session.add(team)
         await session.flush()  # Assign team.id for FK linking
-        if team_cache is not None:
-            team_cache[(team_name, sport_id)] = team
+
+    if team_cache is not None:
+        team_cache[(team_name, sport_id)] = team
 
     # Update ESPN fields — but guard against overwriting correct data
     # with mismatched ESPN data (e.g., from a wrong event-level match).

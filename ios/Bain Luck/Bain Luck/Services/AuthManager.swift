@@ -31,6 +31,19 @@ final class AuthManager: ObservableObject {
     /// True when a backend session has been restored or established.
     var isAuthenticated: Bool { user != nil }
 
+    /// Admin email addresses that unlock internal-only features in the app.
+    /// Mirrors ``DEFAULT_ADMIN_EMAILS`` in ``backend/app/routes/admin_utils.py``.
+    private static let adminEmails: Set<String> = [
+        "alex.bain@gmail.com",
+        "alex.bain@bainluck.com",
+    ]
+
+    /// True when the signed-in user's email matches a known admin address.
+    var isAdmin: Bool {
+        guard let email = user?.email?.lowercased() else { return false }
+        return Self.adminEmails.contains(email)
+    }
+
     init() {
         Task {
             await restoreSession()

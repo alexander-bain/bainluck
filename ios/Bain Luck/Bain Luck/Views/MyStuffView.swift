@@ -345,8 +345,10 @@ struct MyStuffView: View {
             }
 
             Section {
-                NavigationLink(value: Route.discoverLabeling) {
-                    Label("Discover Labeling", systemImage: "tag.circle.fill")
+                if authManager.isAdmin {
+                    NavigationLink(value: Route.discoverLabeling) {
+                        Label("Discover Labeling", systemImage: "tag.circle.fill")
+                    }
                 }
                 NavigationLink(value: Route.about) {
                     Label("About Bain Luck", systemImage: "info.circle")

@@ -446,17 +446,29 @@ async def _discover_events():
                     # Auto-create Team records for any teams not yet in the DB.
                     # This ensures college teams (Harvard, Brown, Stanford, etc.)
                     # get Team records even without ESPN scoreboard matching.
+                    # Uses fuzzy matching to avoid creating "Stanford" when
+                    # "Stanford Cardinal" already exists (and vice versa).
                     if all_team_names:
                         existing_result = await session.execute(
                             select(Team.name).where(
                                 Team.sport_id == sport.id,
-                                Team.name.in_(all_team_names),
                             )
                         )
                         existing_team_names = {
                             row[0] for row in existing_result.all()
                         }
-                        new_team_names = all_team_names - existing_team_names
+                        new_team_names = set()
+                        for candidate in all_team_names:
+                            # Exact match
+                            if candidate in existing_team_names:
+                                continue
+                            # Fuzzy match against existing teams
+                            if any(
+                                _canonical_names_match(candidate, existing)
+                                for existing in existing_team_names
+                            ):
+                                continue
+                            new_team_names.add(candidate)
                         for team_name in new_team_names:
                             new_team = Team(
                                 name=team_name,

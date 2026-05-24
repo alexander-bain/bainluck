@@ -19,6 +19,7 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome,
 )
 from app.services.database import get_db, get_db_rw
+from app.utils.name_normalization import names_match as _names_match
 
 logger = logging.getLogger(__name__)
 
@@ -694,7 +695,15 @@ async def search_teams(
         display = _SPORT_DISPLAY.get(sport_key, sport_key.split("_", 1)[-1].upper() if sport_key else "OTHER")
         variant = TeamSportVariant(id=team.id, sport_key=sport_key, sport_display=display)
 
-        if norm not in grouped:
+        # Find an existing group that fuzzy-matches this team name.
+        # Handles "Stanford" vs "Stanford Cardinal" being the same team.
+        matched_key = None
+        for existing_key in grouped:
+            if _names_match(norm, existing_key):
+                matched_key = existing_key
+                break
+
+        if matched_key is None:
             grouped[norm] = {
                 "primary": team,
                 "sport_key": sport_key,
@@ -703,13 +712,18 @@ async def search_teams(
                 "variants": [variant],
             }
         else:
-            grouped[norm]["variants"].append(variant)
-            if tier < grouped[norm]["tier"]:
-                grouped[norm]["primary"] = team
-                grouped[norm]["sport_key"] = sport_key
-                grouped[norm]["tier"] = tier
+            grouped[matched_key]["variants"].append(variant)
+            if tier < grouped[matched_key]["tier"]:
+                grouped[matched_key]["primary"] = team
+                grouped[matched_key]["sport_key"] = sport_key
+                grouped[matched_key]["tier"] = tier
                 if team.logo_url_small or team.logo_url:
-                    grouped[norm]["logo"] = team.logo_url_small or team.logo_url
+                    grouped[matched_key]["logo"] = team.logo_url_small or team.logo_url
+            # Prefer the longer (more specific) name as the display name
+            elif len(norm) > len(matched_key) and tier <= grouped[matched_key]["tier"]:
+                grouped[matched_key]["primary"] = team
+                if team.logo_url_small or team.logo_url:
+                    grouped[matched_key]["logo"] = team.logo_url_small or team.logo_url
 
     results = []
     for norm, g in grouped.items():
@@ -778,6 +792,15 @@ async def search_teams(
             if (team_name, sport_id) in existing_name_sports:
                 continue
 
+            # Also skip if a fuzzy-matching team is already in results
+            # (e.g., "Stanford" when "Stanford Cardinal" is already showing)
+            if any(
+                _names_match(team_name, existing_name)
+                for existing_name, existing_sid in existing_name_sports
+                if existing_sid == sport_id
+            ):
+                continue
+
             # Check if a Team record already exists (may not be in our initial
             # search results due to missing location/alternate_names)
             team_check = await db.execute(
@@ -787,6 +810,21 @@ async def search_teams(
                 )
             )
             team = team_check.scalar_one_or_none()
+
+            # Fuzzy match: find existing team with a matching name
+            if not team:
+                _first_word = team_name.split()[0] if team_name else ""
+                if len(_first_word) >= 3:
+                    fuzzy_check = await db.execute(
+                        select(Team).where(
+                            Team.sport_id == sport_id,
+                            Team.name.ilike(f"%{_first_word}%"),
+                        )
+                    )
+                    for candidate in fuzzy_check.scalars():
+                        if _names_match(team_name, candidate.name):
+                            team = candidate
+                            break
 
             if not team:
                 # Auto-create Team record — this team exists in events but has
@@ -883,22 +921,29 @@ async def teams_by_location(
     )
     rows = result.all()
 
-    # Deduplicate by team ID (aliases can match the same team multiple times)
+    # Deduplicate by team ID and fuzzy name match
+    # (catches "Stanford" vs "Stanford Cardinal" as separate Team records)
     seen: set[int] = set()
+    seen_names: list[str] = []
     results: list[TeamSearchResult] = []
     for team, sport_key in rows:
-        if team.id not in seen:
-            seen.add(team.id)
-            results.append(
-                TeamSearchResult(
-                    id=team.id,
-                    name=team.name,
-                    location=team.location,
-                    sport_key=sport_key,
-                    logo_url=team.logo_url_small or team.logo_url,
-                    abbreviation=team.abbreviation,
-                )
+        if team.id in seen:
+            continue
+        # Skip if a fuzzy-matching team name already in results
+        if any(_names_match(team.name, sn) for sn in seen_names):
+            continue
+        seen.add(team.id)
+        seen_names.append(team.name)
+        results.append(
+            TeamSearchResult(
+                id=team.id,
+                name=team.name,
+                location=team.location,
+                sport_key=sport_key,
+                logo_url=team.logo_url_small or team.logo_url,
+                abbreviation=team.abbreviation,
             )
+        )
 
     return results
 

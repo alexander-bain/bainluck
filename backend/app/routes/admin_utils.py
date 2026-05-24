@@ -6,12 +6,14 @@ from fastapi import Request
 from sqlalchemy import select
 
 
-def _check_admin_secret(secret: str) -> bool:
+def _check_admin_secret(secret: str | None) -> bool:
     """Verify admin secret for protected endpoints.
 
     Checks ADMIN_TOKEN (canonical, set on Heroku) with ADMIN_SECRET as
     fallback for backward compatibility. See gotchas-reference.md #40.
     """
+    if not secret:
+        return False
     expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
     if not expected:
         return False

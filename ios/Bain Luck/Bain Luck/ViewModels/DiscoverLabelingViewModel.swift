@@ -93,6 +93,15 @@ final class DiscoverLabelingViewModel: ObservableObject {
             if items.isEmpty {
                 error = sawAnyDebugItems ? "No new debug feed items returned." : "No debug feed items returned."
             }
+        } catch let apiError as APIError {
+            switch apiError {
+            case .httpError(let code, _) where code == 403:
+                self.error = "Admin access required. Sign in with an admin account and try again."
+            case .decodingError:
+                self.error = "Failed to decode debug feed response. The backend response format may have changed."
+            default:
+                self.error = apiError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -152,6 +161,13 @@ final class DiscoverLabelingViewModel: ObservableObject {
             currentIndex += 1
             submitting = false
             return true
+        } catch let apiError as APIError {
+            switch apiError {
+            case .httpError(let code, _) where code == 403:
+                self.error = "Admin access required to submit labels. Sign in with an admin account."
+            default:
+                self.error = apiError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }
