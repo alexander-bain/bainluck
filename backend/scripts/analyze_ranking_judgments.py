@@ -30,6 +30,7 @@ async def main():
     from sqlalchemy import select, func
     from app.models.models import RankingJudgment
     from app.services.database import async_session_factory
+    from app.utils.discover_reason_tags import canonical_reason_tags
 
     async with async_session_factory() as db:
         q = select(RankingJudgment).order_by(RankingJudgment.created_at)
@@ -75,7 +76,7 @@ async def main():
     tag_counts: dict[str, int] = {}
     tag_labels: dict[str, dict[str, int]] = {}
     for r in rows:
-        for tag in (r.reason_tags or []):
+        for tag in canonical_reason_tags(r.reason_tags):
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
             tag_labels.setdefault(tag, {})
             tag_labels[tag][r.label] = tag_labels[tag].get(r.label, 0) + 1
@@ -121,7 +122,7 @@ async def main():
             for r in rows:
                 writer.writerow([
                     r.date, r.surface, r.rank_seen, r.item_type, r.market_id,
-                    r.market_name, r.label, ",".join(r.reason_tags or []),
+                    r.market_name, r.label, ",".join(canonical_reason_tags(r.reason_tags)),
                     r.better_than, r.worse_than, r.notes, r.score_at_review,
                     r.category_at_review, r.reviewer,
                 ])

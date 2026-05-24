@@ -155,6 +155,20 @@ def test_summarize_fixable_interest_counts_types_and_issue_candidates():
     }
 
 
+def test_format_labeled_row_canonicalizes_reason_tag_aliases():
+    formatted = format_labeled_row(
+        {
+            "judgment_id": 10,
+            "item_type": "futures",
+            "market_id": 456,
+            "label": "bad",
+            "reason_tags": ["important", "needs_context", "bucket", "important"],
+        }
+    )
+
+    assert formatted["reason_tags"] == "high_stakes,unclear,repetitive"
+
+
 def test_write_rows_supports_csv_and_jsonl():
     row = {
         "id": "futures:1",

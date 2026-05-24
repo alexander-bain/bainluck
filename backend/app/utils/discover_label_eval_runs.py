@@ -10,6 +10,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import DiscoverLabelEvalRun, RankingJudgment
+from app.utils.discover_reason_tags import canonical_reason_tags
 from scripts.evaluate_discover_label_gold_set import evaluate_gold_set
 
 SCALAR_METRIC_KEYS = [
@@ -113,7 +114,7 @@ def judgment_to_eval_row(judgment: RankingJudgment) -> dict[str, Any]:
         "score_at_review": judgment.score_at_review,
         "category": judgment.category_at_review or "unknown",
         "quality_class": judgment.quality_class_at_review or "",
-        "reason_tags": ",".join(judgment.reason_tags or []),
+        "reason_tags": ",".join(canonical_reason_tags(judgment.reason_tags)),
         "tapworthy_score": metadata.get("tapworthy_score", ""),
         "boring": metadata.get("boring", ""),
         "clarity": metadata.get("clarity", ""),

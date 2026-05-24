@@ -128,6 +128,28 @@ Failure chips explain why a card should be downranked or repaired:
 Reason chips are multi-select. They should be used for diagnostics and training
 features, not as direct ranking rules until reviewed.
 
+Backend ingestion, exports, and evals canonicalize legacy chip aliases so labels
+from older web/native surfaces remain comparable. Unknown experimental tags are
+kept in normalized snake case instead of dropped. Current aliases:
+
+| Legacy alias | Canonical chip |
+| --- | --- |
+| `fun`, `weird`, `funny` | `fun_or_weird` |
+| `important` | `high_stakes` |
+| `newsworthy`, `public` | `public_story` |
+| `close` | `close_probability` |
+| `disagreement` | `source_disagreement` |
+| `celebrity`, `person` | `celebrity_or_person` |
+| `sports` | `sports_relevance` |
+| `surprising` | `surprising_probability` |
+| `major` | `major_event` |
+| `needs_context`, `no_context`, `missing_context`, `confusing` | `unclear` |
+| `bad_explanation`, `generic` | `generic_hook` |
+| `wrong_image` | `bad_image` |
+| `niche` | `too_niche` |
+| `duplicate_family` | `duplicate` |
+| `bucket`, `dated_bucket` | `repetitive` |
+
 ## Gold-Set Metrics
 
 Human labels should feed offline evals before production ranking changes:

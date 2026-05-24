@@ -43,6 +43,27 @@ def test_judgment_to_eval_row_flattens_metadata_and_fixable_interest():
     assert row["create_issue_candidate"] is True
 
 
+def test_judgment_to_eval_row_canonicalizes_reason_tag_aliases():
+    judgment = SimpleNamespace(
+        id=10,
+        item_type="futures",
+        market_id=456,
+        event_id=None,
+        market_name="Will aliases normalize?",
+        label="bad",
+        rank_seen=8,
+        score_at_review=50,
+        category_at_review="tech",
+        quality_class_at_review="normal",
+        reason_tags=["fun", "no_context", "fun"],
+        label_metadata={},
+    )
+
+    row = judgment_to_eval_row(judgment)
+
+    assert row["reason_tags"] == "fun_or_weird,unclear"
+
+
 def test_scalar_metric_values_maps_dynamic_top_k_keys():
     metrics = {
         "tapworthy_at_10": 0.8,

@@ -94,6 +94,22 @@ def test_summarize_fixable_interest_handles_missing_types():
     assert summary["by_fix_type"] == {"data_bug": 1, "unspecified": 1}
 
 
+def test_evaluate_gold_set_reads_canonical_reason_tag_aliases():
+    metrics = evaluate_gold_set(
+        [
+            {
+                "id": "futures:1",
+                "rank_seen": 1,
+                "label": "bad",
+                "reason_tags": "duplicate_family,needs_context",
+            }
+        ],
+        top_k=1,
+    )
+
+    assert metrics["duplicate_family_rate_at_1"] == 1.0
+
+
 def test_load_rows_supports_csv_json_and_jsonl(tmp_path: Path):
     csv_path = tmp_path / "rows.csv"
     csv_path.write_text("id,label\n1,love\n", encoding="utf-8")

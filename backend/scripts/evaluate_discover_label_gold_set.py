@@ -15,8 +15,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from app.utils.discover_reason_tags import canonical_reason_tags
 
 
 DEFAULT_TOP_K = 20
@@ -253,10 +259,7 @@ def _bool_value(value: Any) -> bool:
 
 
 def _tags(row: dict[str, Any]) -> set[str]:
-    raw = row.get("reason_tags") or ""
-    if isinstance(raw, list):
-        return {_norm(tag) for tag in raw if _norm(tag)}
-    return {_norm(tag) for tag in str(raw).split(",") if _norm(tag)}
+    return set(canonical_reason_tags(row.get("reason_tags")))
 
 
 def _norm(value: Any) -> str:

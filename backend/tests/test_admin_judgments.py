@@ -192,6 +192,21 @@ def test_create_judgment_keeps_query_param_write_path(monkeypatch):
     assert db.added.reviewer == "sam"
 
 
+def test_create_judgment_canonicalizes_reason_tag_aliases(monkeypatch):
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments"
+        "?secret=ok&label=bad&reason_tags=fun,needs-context,duplicate,fun"
+    )
+
+    assert response.status_code == 200
+    assert db.added.reason_tags == ["fun_or_weird", "unclear", "duplicate"]
+
+
 def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(

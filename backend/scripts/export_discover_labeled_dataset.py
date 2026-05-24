@@ -37,6 +37,7 @@ from app.models.models import (  # noqa: E402
     FuturesOutcome,
     RankingJudgment,
 )
+from app.utils.discover_reason_tags import canonical_reason_tags  # noqa: E402
 
 
 EXPORT_FIELDS = [
@@ -259,7 +260,7 @@ def format_labeled_row(row: Any) -> dict[str, Any]:
         "event_id": _as_int(data.get("event_id")),
         "name": data.get("name") or "",
         "label": data.get("label") or "",
-        "reason_tags": ",".join(data.get("reason_tags") or []),
+        "reason_tags": ",".join(canonical_reason_tags(data.get("reason_tags"))),
         "notes": data.get("notes") or "",
         "score_at_review": _round_float(data.get("score_at_review"), 4),
         "category": data.get("category") or "",

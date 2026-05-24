@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import RankingJudgment
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils.discover_reason_tags import canonical_reason_tags
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
@@ -75,13 +76,7 @@ def _merged_value(
 
 
 def _normalize_reason_tags(value: list[str] | str | None) -> list[str]:
-    if not value:
-        return []
-    if isinstance(value, str):
-        raw_tags = value.split(",")
-    else:
-        raw_tags = value
-    return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+    return canonical_reason_tags(value)
 
 
 def _serialize_judgment(judgment: RankingJudgment) -> dict[str, Any]:
@@ -96,7 +91,7 @@ def _serialize_judgment(judgment: RankingJudgment) -> dict[str, Any]:
         "event_id": judgment.event_id,
         "market_name": judgment.market_name,
         "label": judgment.label,
-        "reason_tags": judgment.reason_tags or [],
+        "reason_tags": canonical_reason_tags(judgment.reason_tags),
         "better_than": judgment.better_than,
         "worse_than": judgment.worse_than,
         "notes": judgment.notes,
@@ -666,7 +661,7 @@ async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Que
     for j in rows:
         writer.writerow([
             j.date, j.surface, j.rank_seen, j.item_type, j.market_id,
-            j.market_name, j.label, ",".join(j.reason_tags or []),
+            j.market_name, j.label, ",".join(canonical_reason_tags(j.reason_tags)),
             j.better_than, j.worse_than, j.notes, j.score_at_review,
             j.category_at_review, j.archetype_at_review, j.quality_class_at_review,
             j.headline_at_review, j.feed_request_id,
