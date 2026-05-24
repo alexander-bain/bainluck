@@ -225,6 +225,7 @@ class TestBeatScheduleCompleteness:
         "big-move-alerts",
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
+        "precompute-category-pages",
     }
 
     def test_no_missing_entries(self):

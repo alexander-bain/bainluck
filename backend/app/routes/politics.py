@@ -7,6 +7,7 @@ gubernatorial, policy/legislation, Supreme Court, international.
 Single endpoint returns the full response consumed by the frontend.
 """
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -480,8 +481,24 @@ def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def get_politics(db: AsyncSession = Depends(get_db)):
-    """Return all politics market data organized by sub-theme."""
+async def get_politics_cached(db: AsyncSession = Depends(get_db)):
+    """Return all politics market data (Redis-cached, precomputed hourly)."""
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get("bainluck:category:politics")
+        await rc.aclose()
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass  # Fall through to live query
+
+    return await get_politics(db)
+
+
+async def get_politics(db: AsyncSession):
+    """Build politics response from database (called by precompute task + fallback)."""
     now = datetime.now(timezone.utc)
 
     result = await db.execute(

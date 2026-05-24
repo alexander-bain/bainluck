@@ -5,6 +5,7 @@ organized into featured markets, city temperature distributions,
 rain forecasts, natural disaster events, climate dashboards, and wildcards.
 """
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -23,6 +24,22 @@ from app.utils.cross_source_matching import group_markets_by_group_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _read_weather_cache(sub_key: str):
+    """Try to read a cached weather sub-endpoint response from Redis."""
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get(f"bainluck:category:weather:{sub_key}")
+        await rc.aclose()
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Tag classification helpers
@@ -387,8 +404,16 @@ def _find_cross_source(
 # ============================================================================
 
 @router.get("/cross-source")
-async def get_cross_source(db: AsyncSession = Depends(get_db)):
-    """Return weather markets that appear on both Kalshi and Polymarket."""
+async def get_cross_source_cached(db: AsyncSession = Depends(get_db)):
+    """Return weather cross-source data (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("cross-source")
+    if cached is not None:
+        return cached
+    return await get_cross_source(db)
+
+
+async def get_cross_source(db: AsyncSession):
+    """Build weather cross-source response from database."""
     result = await db.execute(_open_weather_query())
     all_markets: list[FuturesMarket] = list(result.scalars().unique().all())
     # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
@@ -401,8 +426,16 @@ async def get_cross_source(db: AsyncSession = Depends(get_db)):
 # ============================================================================
 
 @router.get("/featured")
-async def get_featured(db: AsyncSession = Depends(get_db)):
-    """Return top 5 weather markets suitable for hero rotation."""
+async def get_featured_cached(db: AsyncSession = Depends(get_db)):
+    """Return featured weather markets (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("featured")
+    if cached is not None:
+        return cached
+    return await get_featured(db)
+
+
+async def get_featured(db: AsyncSession):
+    """Build featured weather response from database."""
     query = _open_weather_query()
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
@@ -449,8 +482,16 @@ async def get_featured(db: AsyncSession = Depends(get_db)):
 # ============================================================================
 
 @router.get("/cities")
-async def get_cities(db: AsyncSession = Depends(get_db)):
-    """Return temperature distribution data grouped by city."""
+async def get_cities_cached(db: AsyncSession = Depends(get_db)):
+    """Return city temperature data (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("cities")
+    if cached is not None:
+        return cached
+    return await get_cities(db)
+
+
+async def get_cities(db: AsyncSession):
+    """Build city temperature response from database."""
     query = _open_weather_query().where(
         or_(
             FuturesMarket.name.ilike("Highest temperature in%"),
@@ -599,8 +640,16 @@ def _extract_mode_value(label: str) -> float | None:
 # ============================================================================
 
 @router.get("/rain")
-async def get_rain(db: AsyncSession = Depends(get_db)):
-    """Return NYC 7-day rain forecast and monthly city rain data."""
+async def get_rain_cached(db: AsyncSession = Depends(get_db)):
+    """Return rain forecast data (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("rain")
+    if cached is not None:
+        return cached
+    return await get_rain(db)
+
+
+async def get_rain(db: AsyncSession):
+    """Build rain forecast response from database."""
     # --- Daily NYC rain ---
     daily_query = _open_weather_query().where(
         FuturesMarket.name.ilike("Will it rain in NYC on%"),
@@ -687,8 +736,16 @@ def _get_yes_probability(market: FuturesMarket) -> int:
 # ============================================================================
 
 @router.get("/events")
-async def get_events(db: AsyncSession = Depends(get_db)):
-    """Return natural disaster/event markets grouped by type."""
+async def get_events_cached(db: AsyncSession = Depends(get_db)):
+    """Return natural event markets (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("events")
+    if cached is not None:
+        return cached
+    return await get_events(db)
+
+
+async def get_events(db: AsyncSession):
+    """Build natural events response from database."""
     query = _open_weather_query().where(
         or_(
             FuturesMarket.name.ilike("%hurricane%"),
@@ -743,8 +800,16 @@ async def get_events(db: AsyncSession = Depends(get_db)):
 # ============================================================================
 
 @router.get("/climate")
-async def get_climate(db: AsyncSession = Depends(get_db)):
-    """Return long-range climate markets with time scale classification."""
+async def get_climate_cached(db: AsyncSession = Depends(get_db)):
+    """Return climate markets (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("climate")
+    if cached is not None:
+        return cached
+    return await get_climate(db)
+
+
+async def get_climate(db: AsyncSession):
+    """Build climate response from database."""
     now = datetime.now(timezone.utc)
     six_months_out = now.replace(
         year=now.year if now.month <= 6 else now.year + 1,
@@ -827,8 +892,16 @@ def _classify_scale(market: FuturesMarket) -> str:
 # ============================================================================
 
 @router.get("/wildcards")
-async def get_wildcards(db: AsyncSession = Depends(get_db)):
-    """Return rare/dramatic weather markets (volcano, arctic, solar, etc.)."""
+async def get_wildcards_cached(db: AsyncSession = Depends(get_db)):
+    """Return wildcard weather markets (Redis-cached, precomputed hourly)."""
+    cached = await _read_weather_cache("wildcards")
+    if cached is not None:
+        return cached
+    return await get_wildcards(db)
+
+
+async def get_wildcards(db: AsyncSession):
+    """Build wildcards response from database."""
     query = _open_weather_query().where(
         or_(
             FuturesMarket.name.ilike("%volcano%"),

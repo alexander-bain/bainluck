@@ -7,6 +7,7 @@ movies & TV (RT scores/box office/reality), cultural moments, tech & culture.
 Single endpoint returns the full response consumed by the frontend.
 """
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -448,8 +449,24 @@ def _build_cultural(themed: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def get_entertainment(db: AsyncSession = Depends(get_db)):
-    """Return all entertainment market data organized by themed sections."""
+async def get_entertainment_cached(db: AsyncSession = Depends(get_db)):
+    """Return all entertainment market data (Redis-cached, precomputed hourly)."""
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get("bainluck:category:entertainment")
+        await rc.aclose()
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass  # Fall through to live query
+
+    return await get_entertainment(db)
+
+
+async def get_entertainment(db: AsyncSession):
+    """Build entertainment response from database (called by precompute task + fallback)."""
     now = datetime.now(timezone.utc)
 
     result = await db.execute(

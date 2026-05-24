@@ -327,3 +327,44 @@ class TestKalshiFuturesCategorization:
             )
             == "baseball"
         )
+
+
+class TestKalshiPollMetadataBuilding:
+    """Regression test: the metadata-building code in _poll_kalshi_markets
+    must not reference undefined variables.
+
+    Commit c485950 removed `has_multiple_markets = len(event.markets) > 1`
+    but left a dangling `if has_multiple_markets:` reference, which raised
+    NameError at runtime and silently broke ALL Kalshi ingestion.
+    """
+
+    def test_no_undefined_names_in_poll_function(self):
+        """AST-compile _poll_kalshi_markets and check for NameErrors."""
+        import ast
+        import inspect
+        import textwrap
+        from app.tasks.kalshi import _poll_kalshi_markets
+
+        source = inspect.getsource(_poll_kalshi_markets)
+        source = textwrap.dedent(source)
+        # This will raise SyntaxError if malformed, but won't catch NameError.
+        # We do a deeper check below.
+        tree = ast.parse(source)
+
+        # Collect all Name nodes used in Load context (variable reads)
+        # and all Name nodes used in Store context (variable assignments)
+        loads: set[str] = set()
+        stores: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                if isinstance(node.ctx, ast.Load):
+                    loads.add(node.id)
+                elif isinstance(node.ctx, ast.Store):
+                    stores.add(node.id)
+
+        # 'has_multiple_markets' must NOT appear in loads without stores
+        # (that was the exact bug)
+        assert "has_multiple_markets" not in (loads - stores), (
+            "Undefined variable 'has_multiple_markets' found in "
+            "_poll_kalshi_markets — likely a dangling reference after refactor"
+        )

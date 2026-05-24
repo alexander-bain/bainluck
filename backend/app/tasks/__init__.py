@@ -1130,6 +1130,13 @@ def compute_fair_fight_comparison(self):
     return _tracked_run("compute_fair_fight_comparison", _compute_fair_fight_comparison())
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_category_pages")
+def precompute_category_pages(self):
+    """Precompute category page responses and cache in Redis (every 1h)."""
+    from app.tasks.precompute_category_pages import _precompute_all_category_pages
+    return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -1357,6 +1364,11 @@ celery_app.conf.beat_schedule = {
     "precompute-interestingness": {
         "task": "app.tasks.precompute_interestingness",
         "schedule": crontab(minute=20, hour="*/2"),  # Every 2 hours at :20
+        "options": {"queue": "background"},
+    },
+    "precompute-category-pages": {
+        "task": "app.tasks.precompute_category_pages",
+        "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
         "options": {"queue": "background"},
     },
     "check-aggregation-quality": {

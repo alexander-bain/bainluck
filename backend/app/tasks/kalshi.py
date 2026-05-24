@@ -414,7 +414,7 @@ async def _poll_kalshi_markets():
                         kalshi_metadata["kalshi_event_ticker"] = event.event_ticker
                     if event.title:
                         kalshi_metadata["event_title"] = event.title
-                    if has_multiple_markets:
+                    if len(event.markets) > 1:
                         kalshi_metadata["market_count"] = len(event.markets)
 
                     # Aggregate volume across all markets in this event

@@ -7,6 +7,7 @@ markets/indices, energy, housing, trade/tariffs, government/fiscal.
 Single endpoint returns the full EconData shape consumed by the frontend.
 """
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -255,8 +256,24 @@ def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def get_economics(db: AsyncSession = Depends(get_db)):
-    """Return all economics market data organized by sub-theme."""
+async def get_economics_cached(db: AsyncSession = Depends(get_db)):
+    """Return all economics market data (Redis-cached, precomputed hourly)."""
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get("bainluck:category:economics")
+        await rc.aclose()
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass  # Fall through to live query
+
+    return await get_economics(db)
+
+
+async def get_economics(db: AsyncSession):
+    """Build economics response from database (called by precompute task + fallback)."""
     now = datetime.now(timezone.utc)
 
     # Query all open economics markets with outcomes
