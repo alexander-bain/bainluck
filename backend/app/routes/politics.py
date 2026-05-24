@@ -173,6 +173,11 @@ def _market_row(market: FuturesMarket) -> dict | None:
     }
 
 
+_BUCKET_LABEL_RE = re.compile(
+    r"^\d+[\-–]\d+%?$|^(?:over|under)\s+\d|^(?:yes|no)$",
+    re.I,
+)
+
 _NON_US_RE = re.compile(
     r"\b(?:french|france|uk\b|british|canada|canadian|german|brazil|"
     r"mexico|australian|india|japan|eu\b|european|south\s*korea|"
@@ -247,6 +252,8 @@ def _build_presidential(
             headline_q = headline["q"]
         for o in headline["outcomes"]:
             name = (o.name or "").strip()
+            if _BUCKET_LABEL_RE.match(name):
+                continue
             name_key = name.lower()
             prob_val = round(float(o.current_probability or 0) * 100, 1)
             outcome_id_map[o.id] = name_key
@@ -519,11 +526,14 @@ async def get_politics(db: AsyncSession):
     # representative market with merged outcomes (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
 
+    stale_cutoff = now - timedelta(days=7)
     themed: dict[str, list] = defaultdict(list)
     for m in all_markets:
         if _is_resolved(m):
             continue
         if _is_non_politics(m):
+            continue
+        if m.resolution_date and m.resolution_date < stale_cutoff:
             continue
         theme = _classify_theme(m)
         themed[theme].append(m)
