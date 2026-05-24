@@ -2,10 +2,11 @@
 
 import type { DiscoverLaunchHealthTrend } from "./types";
 import { StatusPill } from "./ui";
-import { rateText } from "./utils";
+import { formatTargetName, rateText } from "./utils";
 
-export default function LaunchHealthTrendPanel({ rows }: { rows: DiscoverLaunchHealthTrend[] }) {
-  if (rows.length === 0) return null;
+export default function LaunchHealthTrendPanel({ rows }: { rows?: DiscoverLaunchHealthTrend[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (safeRows.length === 0) return null;
   return (
     <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
       <div className="mb-3">
@@ -15,7 +16,7 @@ export default function LaunchHealthTrendPanel({ rows }: { rows: DiscoverLaunchH
         </div>
       </div>
       <div className="grid md:grid-cols-3 gap-2">
-        {rows.map((row) => {
+        {safeRows.map((row) => {
           const topRootCause = Object.entries(row.stale_root_causes || {})[0];
           return (
             <div key={row.window} className="rounded-lg border border-surface-border bg-surface-card p-3">
