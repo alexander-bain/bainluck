@@ -13,6 +13,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
+import { Suspense } from "react";
+const NavigationProgress = dynamic(() => import("@/components/NavigationProgress"), { ssr: false });
 const MobileSearchTrigger = dynamic(() => import("@/components/MobileSearchTrigger"), { ssr: false });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -98,6 +100,9 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
         />
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         <GoogleAnalytics />
         <SWRProvider>
         <AnalyticsProvider>

@@ -16,7 +16,7 @@ import type {
   EntThemeTechCulture,
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
-import LoadingState from "@/components/LoadingState";
+import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
 import s from "./entertainment.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1363,9 +1363,7 @@ export default function EntertainmentPage() {
   if (!data) {
     return (
       <div className={s.page}>
-        <div className="max-w-[1200px] mx-auto">
-          <LoadingState message="Loading entertainment markets..." />
-        </div>
+        <EntertainmentSkeleton />
       </div>
     );
   }

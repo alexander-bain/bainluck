@@ -17,7 +17,7 @@ import type {
   CrossSourceMatch,
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
-import LoadingState from "@/components/LoadingState";
+import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import s from "./politics.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1072,9 +1072,7 @@ export default function PoliticsPage() {
   if (!data) {
     return (
       <div className={s.page}>
-        <div className="max-w-[1200px] mx-auto">
-          <LoadingState message="Loading politics markets..." />
-        </div>
+        <PoliticsSkeleton />
       </div>
     );
   }

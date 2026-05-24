@@ -8,7 +8,7 @@ import {
   ProbNum, ProbBar, Histogram, Delta, probColor,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
-import LoadingState from "@/components/LoadingState";
+import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
 import type { EconData } from "@/lib/api";
 
@@ -129,7 +129,7 @@ export default function EconomicsPage() {
 
   if (!data) return (
     <div className="max-w-7xl mx-auto">
-      <LoadingState message="Loading economics markets..." />
+      <EconomicsSkeleton />
     </div>
   );
 
