@@ -10,6 +10,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var submittedCount = 0
     @Published private(set) var labelCounts: [String: Int] = [:]
+    @Published private(set) var loadSummary: String?
 
     private var feedRequestId: String?
     private let batchId = "native-review-\(UUID().uuidString)"
@@ -33,10 +34,12 @@ final class DiscoverLabelingViewModel: ObservableObject {
 
     var reviewedCount: Int { min(currentIndex, items.count) }
     var remainingCount: Int { max(items.count - currentIndex, 0) }
+    var localReviewedCount: Int { reviewedItemKeys.count }
 
     func load() async {
         loading = true
         error = nil
+        loadSummary = nil
         do {
             var offset = 0
             var pagesLoaded = 0
@@ -44,6 +47,11 @@ final class DiscoverLabelingViewModel: ObservableObject {
             var seenKeys: Set<String> = []
             var feedRequestIds: [String: String] = [:]
             var sawAnyDebugItems = false
+            var apiItemCount = 0
+            var filteredReviewedCount = 0
+            var filteredDuplicateCount = 0
+            var latestTotal = 0
+            var latestHasMore = false
 
             while pagesLoaded < maxPagesPerLoad && loadedItems.count < targetQueueSize {
                 let response = try await APIClient.shared.fetchDiscoverLabelingFeed(
@@ -52,10 +60,20 @@ final class DiscoverLabelingViewModel: ObservableObject {
                 )
                 feedRequestId = response.feedRequestId
                 sawAnyDebugItems = sawAnyDebugItems || !response.debugItems.isEmpty
+                apiItemCount += response.debugItems.count
+                latestTotal = response.total
+                latestHasMore = response.hasMore
 
                 for item in response.debugItems {
                     let key = reviewKey(for: item)
-                    guard !reviewedItemKeys.contains(key), !seenKeys.contains(key) else { continue }
+                    if reviewedItemKeys.contains(key) {
+                        filteredReviewedCount += 1
+                        continue
+                    }
+                    if seenKeys.contains(key) {
+                        filteredDuplicateCount += 1
+                        continue
+                    }
                     loadedItems.append(item)
                     seenKeys.insert(key)
                     if let feedRequestId = response.feedRequestId {
@@ -71,6 +89,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
             items = Array(loadedItems.prefix(targetQueueSize))
             itemFeedRequestIds = feedRequestIds
             currentIndex = 0
+            loadSummary = "Loaded \(items.count) of \(apiItemCount) fetched; filtered \(filteredReviewedCount) reviewed, \(filteredDuplicateCount) duplicate; pages \(pagesLoaded), total \(latestTotal), more \(latestHasMore ? "yes" : "no"). Local reviewed: \(reviewedItemKeys.count)."
             if items.isEmpty {
                 error = sawAnyDebugItems ? "No new debug feed items returned." : "No debug feed items returned."
             }
@@ -78,6 +97,12 @@ final class DiscoverLabelingViewModel: ObservableObject {
             self.error = error.localizedDescription
         }
         loading = false
+    }
+
+    func resetLocalReviewedCards() async {
+        reviewedItemKeys.removeAll()
+        UserDefaults.standard.removeObject(forKey: reviewedStorageKey)
+        await load()
     }
 
     func skip() {

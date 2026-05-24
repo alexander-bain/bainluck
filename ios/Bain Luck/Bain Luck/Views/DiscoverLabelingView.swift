@@ -101,6 +101,25 @@ struct DiscoverLabelingView: View {
                     }
                 }
             }
+
+            if let summary = viewModel.loadSummary {
+                Text(summary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            if viewModel.localReviewedCount > 0 {
+                Button {
+                    resetForm()
+                    Task { await viewModel.resetLocalReviewedCards() }
+                } label: {
+                    Label("Reset reviewed cards", systemImage: "arrow.counterclockwise")
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .disabled(viewModel.loading || viewModel.submitting)
+            }
         }
     }
 
