@@ -425,6 +425,16 @@ async def _poll_kalshi_markets():
                     total_volume_24h = sum(m.volume_24h or 0 for m in event.markets) or None
                     total_open_interest = sum(m.open_interest or 0 for m in event.markets) or None
 
+                    # Derive market status from Kalshi API data.
+                    # A market is "resolved" only when ALL sub-markets in the
+                    # event are closed or settled. This unblocks backfill_winners
+                    # which only processes status='resolved' rows.
+                    all_settled = all(
+                        m.status in ("closed", "settled")
+                        for m in event.markets
+                    )
+                    market_status = "resolved" if all_settled else "open"
+
                     # Upsert the FuturesMarket
                     upsert_values = {
                         "source": "kalshi",
@@ -436,7 +446,7 @@ async def _poll_kalshi_markets():
                         "mutually_exclusive": event.mutually_exclusive,
                         "commence_time": commence_time,
                         "resolution_date": expiration_time,
-                        "status": "open",
+                        "status": market_status,
                         "category_tags": tags,
                         "group_id": kalshi_group_id,
                         "group_type": kalshi_group_type,
@@ -451,6 +461,7 @@ async def _poll_kalshi_markets():
                         "name": market_name,
                         "category": category,
                         "market_tier": market_tier,
+                        "status": market_status,
                         "commence_time": commence_time,
                         "resolution_date": expiration_time,
                         "category_tags": tags,
