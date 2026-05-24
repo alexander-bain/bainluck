@@ -1,7 +1,7 @@
 "use client";
 
 import type { DiscoverScoreBucket } from "./types";
-import { rateText } from "./utils";
+import { rateText, signedNumber } from "./utils";
 import { StatusPill } from "./ui";
 
 export default function ScoreBucketList({ rows }: { rows: DiscoverScoreBucket[] }) {
