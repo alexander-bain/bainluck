@@ -7,8 +7,8 @@ nonisolated struct DiscoverLabelingFeedResponse: Decodable, Sendable {
     let debugItems: [DiscoverLabelingDebugItem]
 
     private enum CodingKeys: String, CodingKey {
-        case feedRequestId = "feed_request_id"
-        case debugItems = "debug_items"
+        case feedRequestId
+        case debugItems
     }
 
     init(from decoder: Decoder) throws {
