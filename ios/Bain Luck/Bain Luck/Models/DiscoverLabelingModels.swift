@@ -94,7 +94,7 @@ nonisolated struct DiscoverLabelingCardSnapshot: Encodable, Sendable {
 }
 
 nonisolated struct RankingJudgmentRequest: Encodable, Sendable {
-    let secret: String
+    let secret: String?
     let surface: String
     let rankSeen: Int
     let itemType: String

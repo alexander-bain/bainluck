@@ -106,6 +106,7 @@ from app.utils.personalization import (
     compute_event_multiplier,
     compute_futures_multiplier,
 )
+from app.routes.admin_utils import _check_admin_auth
 from app.routes.events import _build_team_lookup, _format_team_data
 
 logger = logging.getLogger(__name__)
@@ -895,9 +896,9 @@ async def get_feed(
     _previous_at = _started_at
     _timings: list[dict[str, float | str]] = []
 
-    if debug and not _check_admin_secret(secret):
+    if debug and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     session_id = _session_id_from_request(request)
     discover_config = await _load_discover_runtime_config()

@@ -661,19 +661,22 @@ actor APIClient {
     // MARK: - Admin Discover Labeling
 
     /// Fetches the admin debug Discover feed used by native labeling tools.
-    func fetchDiscoverLabelingFeed(secret: String, offset: Int = 0, limit: Int = 100) async throws -> DiscoverLabelingFeedResponse {
+    func fetchDiscoverLabelingFeed(secret: String? = nil, offset: Int = 0, limit: Int = 100) async throws -> DiscoverLabelingFeedResponse {
+        var query = [
+            "limit": String(limit),
+            "offset": String(offset),
+            "include_events": "false",
+            "include_futures": "true",
+            "event_pct": "0.15",
+            "debug": "true",
+            "debug_ground_truth": "false",
+        ]
+        if let secret, !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            query["secret"] = secret
+        }
         return try await fetch(
             "/api/feed",
-            query: [
-                "limit": String(limit),
-                "offset": String(offset),
-                "include_events": "false",
-                "include_futures": "true",
-                "event_pct": "0.15",
-                "debug": "true",
-                "debug_ground_truth": "false",
-                "secret": secret,
-            ],
+            query: query,
             cacheTTL: nil
         )
     }

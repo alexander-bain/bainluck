@@ -2,8 +2,6 @@ import SwiftUI
 
 struct DiscoverLabelingView: View {
     @StateObject private var viewModel = DiscoverLabelingViewModel()
-    @State private var adminSecret = ""
-    @State private var secretInput = ""
     @State private var selectedLabel: String?
     @State private var selectedTags: Set<String> = []
     @State private var notes = ""
@@ -27,42 +25,16 @@ struct DiscoverLabelingView: View {
     ]
 
     var body: some View {
-        Group {
-            if adminSecret.isEmpty {
-                secretGate
-            } else {
-                labelingContent
-            }
-        }
+        labelingContent
         .navigationTitle("Discover Labeling")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-    }
-
-    private var secretGate: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Admin Access")
-                .font(.title2.weight(.semibold))
-            Text("Enter the admin secret to load the Discover debug feed for native labeling.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            SecureField("Admin secret", text: $secretInput)
-                .textFieldStyle(.roundedBorder)
-            Button {
-                let value = secretInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !value.isEmpty else { return }
-                adminSecret = value
-                Task { await viewModel.load(secret: value) }
-            } label: {
-                Label("Continue", systemImage: "lock.open")
-                    .frame(maxWidth: .infinity)
+        .task {
+            if viewModel.items.isEmpty && !viewModel.loading {
+                await viewModel.load()
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(secretInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Spacer()
         }
-        .padding()
     }
 
     private var labelingContent: some View {
@@ -89,7 +61,7 @@ struct DiscoverLabelingView: View {
         }
         .refreshable {
             resetForm()
-            await viewModel.load(secret: adminSecret)
+            await viewModel.load()
         }
     }
 
@@ -138,12 +110,7 @@ struct DiscoverLabelingView: View {
                 .foregroundStyle(.red)
             HStack {
                 Button("Retry") {
-                    Task { await viewModel.load(secret: adminSecret) }
-                }
-                .buttonStyle(.bordered)
-                Button("Clear Secret") {
-                    adminSecret = ""
-                    secretInput = ""
+                    Task { await viewModel.load() }
                 }
                 .buttonStyle(.bordered)
             }
@@ -253,7 +220,6 @@ struct DiscoverLabelingView: View {
                 guard let label = selectedLabel else { return }
                 Task {
                     let saved = await viewModel.submit(
-                        secret: adminSecret,
                         label: label,
                         reasonTags: selectedTags,
                         notes: notes,
@@ -295,7 +261,7 @@ struct DiscoverLabelingView: View {
                 .font(.headline)
             Button("Reload Debug Feed") {
                 resetForm()
-                Task { await viewModel.load(secret: adminSecret) }
+                Task { await viewModel.load() }
             }
             .buttonStyle(.bordered)
         }

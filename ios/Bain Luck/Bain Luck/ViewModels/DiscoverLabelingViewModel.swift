@@ -34,11 +34,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
     var reviewedCount: Int { min(currentIndex, items.count) }
     var remainingCount: Int { max(items.count - currentIndex, 0) }
 
-    func load(secret: String) async {
-        guard !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            error = "Enter an admin secret."
-            return
-        }
+    func load() async {
         loading = true
         error = nil
         do {
@@ -51,7 +47,6 @@ final class DiscoverLabelingViewModel: ObservableObject {
 
             while pagesLoaded < maxPagesPerLoad && loadedItems.count < targetQueueSize {
                 let response = try await APIClient.shared.fetchDiscoverLabelingFeed(
-                    secret: secret,
                     offset: offset,
                     limit: pageSize
                 )
@@ -91,7 +86,6 @@ final class DiscoverLabelingViewModel: ObservableObject {
     }
 
     func submit(
-        secret: String,
         label: String,
         reasonTags: Set<String>,
         notes: String,
@@ -104,7 +98,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
         let previousName = betterThanPrevious && currentIndex > 0 ? items[currentIndex - 1].name : nil
         let nextName = worseThanNext && currentIndex + 1 < items.count ? items[currentIndex + 1].name : nil
         let request = RankingJudgmentRequest(
-            secret: secret,
+            secret: nil,
             surface: "native_discover",
             rankSeen: item.rank,
             itemType: item.type,

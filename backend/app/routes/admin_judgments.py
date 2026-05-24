@@ -7,14 +7,14 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import RankingJudgment
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_auth, _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.utils.discover_reason_tags import canonical_reason_tags
 
@@ -379,6 +379,7 @@ def _normalize_card_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("")
 async def create_judgment(
+    request: Request,
     payload: RankingJudgmentCreate | None = Body(None),
     db: AsyncSession = Depends(get_db_rw),
     secret: str | None = Query(None),
@@ -403,8 +404,10 @@ async def create_judgment(
 ):
     body = payload.model_dump(exclude_unset=True) if payload else {}
     secret_value = _merged_value(body, "secret", secret)
-    if not _check_admin_secret(secret_value):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not _check_admin_secret(secret_value) and not await _check_admin_auth(
+        secret_value, request, db
+    ):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     label_value = _merged_value(body, "label", label)
     if not label_value:
