@@ -658,6 +658,30 @@ actor APIClient {
         return try await postEncodable("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]))
     }
 
+    // MARK: - Admin Discover Labeling
+
+    /// Fetches the admin debug Discover feed used by native labeling tools.
+    func fetchDiscoverLabelingFeed(secret: String) async throws -> DiscoverLabelingFeedResponse {
+        return try await fetch(
+            "/api/feed",
+            query: [
+                "limit": "50",
+                "include_events": "false",
+                "include_futures": "true",
+                "event_pct": "0.15",
+                "debug": "true",
+                "debug_ground_truth": "false",
+                "secret": secret,
+            ],
+            cacheTTL: nil
+        )
+    }
+
+    /// Records a native admin ranking judgment for one Discover card.
+    func submitRankingJudgment(_ body: RankingJudgmentRequest) async throws -> RankingJudgmentResponse {
+        return try await postEncodable("/api/admin/ranking-judgments", body: body)
+    }
+
     // MARK: - Bug Reports
 
     /// Uploads a rage-shake bug report with screenshot and app state.
