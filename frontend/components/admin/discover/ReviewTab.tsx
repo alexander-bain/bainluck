@@ -36,6 +36,77 @@ const FIX_TYPES = [
   { value: "other", label: "Other" },
 ];
 
+const TAXONOMY_SELECTS = [
+  {
+    key: "clarity",
+    label: "Clarity",
+    options: [
+      { value: "clear", label: "Clear" },
+      { value: "needs_context", label: "Needs context" },
+      { value: "confusing", label: "Confusing" },
+    ],
+  },
+  {
+    key: "explanationQuality",
+    label: "Explanation",
+    options: [
+      { value: "good", label: "Good" },
+      { value: "generic", label: "Generic" },
+      { value: "misleading", label: "Misleading" },
+      { value: "missing", label: "Missing" },
+    ],
+  },
+  {
+    key: "imageFit",
+    label: "Image",
+    options: [
+      { value: "good", label: "Good" },
+      { value: "neutral", label: "Neutral" },
+      { value: "bad", label: "Bad" },
+      { value: "wrong_entity", label: "Wrong entity" },
+      { value: "not_needed", label: "Not needed" },
+    ],
+  },
+  {
+    key: "audienceScope",
+    label: "Audience",
+    options: [
+      { value: "broad", label: "Broad" },
+      { value: "category_fan", label: "Category fan" },
+      { value: "niche", label: "Niche" },
+      { value: "almost_nobody", label: "Almost nobody" },
+    ],
+  },
+  {
+    key: "resolutionImportance",
+    label: "Resolution",
+    options: [
+      { value: "high", label: "High" },
+      { value: "medium", label: "Medium" },
+      { value: "low", label: "Low" },
+    ],
+  },
+  {
+    key: "duplicateSeverity",
+    label: "Duplicate",
+    options: [
+      { value: "none", label: "None" },
+      { value: "minor", label: "Minor" },
+      { value: "major", label: "Major" },
+    ],
+  },
+  {
+    key: "storyRelationship",
+    label: "Story",
+    options: [
+      { value: "same_question", label: "Same question" },
+      { value: "same_story_family", label: "Same family" },
+      { value: "related", label: "Related" },
+      { value: "unrelated", label: "Unrelated" },
+    ],
+  },
+] as const;
+
 function createBatchId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -81,11 +152,21 @@ interface JudgmentSummary {
   labels: Record<string, number>;
 }
 
+type TaxonomySelectKey = typeof TAXONOMY_SELECTS[number]["key"];
+
 export default function ReviewTab() {
   const { secret } = useAdminAuth();
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [tapworthyScore, setTapworthyScore] = useState("");
+  const [clarity, setClarity] = useState("");
+  const [explanationQuality, setExplanationQuality] = useState("");
+  const [imageFit, setImageFit] = useState("");
+  const [audienceScope, setAudienceScope] = useState("");
+  const [resolutionImportance, setResolutionImportance] = useState("");
+  const [duplicateSeverity, setDuplicateSeverity] = useState("");
+  const [storyRelationship, setStoryRelationship] = useState("");
   const [betterThanPrev, setBetterThanPrev] = useState(false);
   const [worseThanNext, setWorseThanNext] = useState(false);
   const [notes, setNotes] = useState("");
@@ -140,6 +221,14 @@ export default function ReviewTab() {
   const resetForm = () => {
     setSelectedLabel(null);
     setSelectedTags(new Set());
+    setTapworthyScore("");
+    setClarity("");
+    setExplanationQuality("");
+    setImageFit("");
+    setAudienceScope("");
+    setResolutionImportance("");
+    setDuplicateSeverity("");
+    setStoryRelationship("");
     setBetterThanPrev(false);
     setWorseThanNext(false);
     setNotes("");
@@ -149,6 +238,51 @@ export default function ReviewTab() {
     setDesiredEntityOrVariant("");
     setCurrentEntityOrVariant("");
     setCreateIssueCandidate(false);
+  };
+
+  const taxonomyValue = (key: TaxonomySelectKey) => {
+    switch (key) {
+      case "clarity":
+        return clarity;
+      case "explanationQuality":
+        return explanationQuality;
+      case "imageFit":
+        return imageFit;
+      case "audienceScope":
+        return audienceScope;
+      case "resolutionImportance":
+        return resolutionImportance;
+      case "duplicateSeverity":
+        return duplicateSeverity;
+      case "storyRelationship":
+        return storyRelationship;
+    }
+  };
+
+  const setTaxonomyValue = (key: TaxonomySelectKey, value: string) => {
+    switch (key) {
+      case "clarity":
+        setClarity(value);
+        break;
+      case "explanationQuality":
+        setExplanationQuality(value);
+        break;
+      case "imageFit":
+        setImageFit(value);
+        break;
+      case "audienceScope":
+        setAudienceScope(value);
+        break;
+      case "resolutionImportance":
+        setResolutionImportance(value);
+        break;
+      case "duplicateSeverity":
+        setDuplicateSeverity(value);
+        break;
+      case "storyRelationship":
+        setStoryRelationship(value);
+        break;
+    }
   };
 
   const submit = useCallback(async () => {
@@ -187,14 +321,32 @@ export default function ReviewTab() {
       const hasLabelMetadata = Object.entries(labelMetadata).some(([key, value]) => (
         key === "create_issue_candidate" ? value === true : value !== null
       ));
+      const taxonomyMetadata = {
+        tapworthy_score: tapworthyScore ? Number(tapworthyScore) : null,
+        clarity: clarity || null,
+        explanation_quality: explanationQuality || null,
+        image_fit: imageFit || null,
+        audience_scope: audienceScope || null,
+        resolution_importance: resolutionImportance || null,
+        duplicate_severity: duplicateSeverity || null,
+        story_relationship: storyRelationship || null,
+      };
+      const compactTaxonomyMetadata = Object.fromEntries(
+        Object.entries(taxonomyMetadata).filter(([, value]) => value !== null)
+      );
 
       await fetch(`${API_URL}/api/admin/ranking-judgments?${params}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           card_snapshot: buildCardSnapshot(current, batchId, data?.feed_request_id),
-          ...(hasLabelMetadata
-            ? { label_metadata: { fixable_interest: labelMetadata } }
+          ...(hasLabelMetadata || Object.keys(compactTaxonomyMetadata).length
+            ? {
+                label_metadata: {
+                  ...compactTaxonomyMetadata,
+                  ...(hasLabelMetadata ? { fixable_interest: labelMetadata } : {}),
+                },
+              }
             : {}),
         }),
       });
@@ -222,6 +374,14 @@ export default function ReviewTab() {
     desiredEntityOrVariant,
     currentEntityOrVariant,
     createIssueCandidate,
+    tapworthyScore,
+    clarity,
+    explanationQuality,
+    imageFit,
+    audienceScope,
+    resolutionImportance,
+    duplicateSeverity,
+    storyRelationship,
     batchId,
   ]);
 
@@ -343,6 +503,40 @@ export default function ReviewTab() {
                     {formatTargetName(tag)}
                   </button>
                 ))}
+              </div>
+
+              {/* Optional taxonomy controls */}
+              <div className="mb-3 rounded-lg border border-surface-border bg-surface-elevated p-3">
+                <div className="mb-2 text-xs font-semibold text-text-primary">Optional taxonomy</div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <select
+                    value={tapworthyScore}
+                    onChange={(e) => setTapworthyScore(e.target.value)}
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                    aria-label="Tapworthy score"
+                  >
+                    <option value="">Tapworthy</option>
+                    <option value="1">1 - skip</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5 - must tap</option>
+                  </select>
+                  {TAXONOMY_SELECTS.map((field) => (
+                    <select
+                      key={field.key}
+                      value={taxonomyValue(field.key)}
+                      onChange={(e) => setTaxonomyValue(field.key, e.target.value)}
+                      className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                      aria-label={field.label}
+                    >
+                      <option value="">{field.label}</option>
+                      {field.options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  ))}
+                </div>
               </div>
 
               {/* Pairwise controls */}
