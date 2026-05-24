@@ -2928,3 +2928,41 @@ async def calibration_decomposition(
         "mce_by_source_sport": mce_by_cell[:30],
     }
 
+
+import re as _re
+
+_MUTATING_RE = _re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
+    _re.IGNORECASE,
+)
+
+
+@router.get("/query")
+async def admin_query(
+    sql: str = Query(..., description="SELECT-only SQL query"),
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a read-only SQL query and return JSON results.
+
+    Admin-secret gated. Only SELECT statements allowed.
+    1000 row limit, 10 second statement timeout.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    sql_stripped = sql.strip().rstrip(";")
+    if _MUTATING_RE.search(sql_stripped):
+        raise HTTPException(status_code=400, detail="Only SELECT queries are allowed")
+    if not sql_stripped.upper().startswith("SELECT"):
+        raise HTTPException(status_code=400, detail="Query must start with SELECT")
+
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
+        result = await db.execute(text(sql_stripped + " LIMIT 1000"))
+        columns = list(result.keys())
+        rows = [dict(zip(columns, row)) for row in result.fetchall()]
+        return {"columns": columns, "rows": rows, "count": len(rows)}
+    except Exception as e:
+        return {"error": str(e)[:500], "columns": [], "rows": [], "count": 0}
+
