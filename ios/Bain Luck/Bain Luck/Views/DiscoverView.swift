@@ -24,6 +24,7 @@ private enum NativeDiscoverAction {
 
 private struct NativeDiscoverProfile {
     private static let storageKey = "discover_interaction_profile_native_v1"
+    private static let categoryCooldownScore = -3.0
     private var categoryScores: [String: Double]
 
     static func load() -> NativeDiscoverProfile {
@@ -50,6 +51,10 @@ private struct NativeDiscoverProfile {
         let score = categoryScores[category.lowercased()] ?? 0
         guard abs(score) >= 2 else { return 0 }
         return min(12, max(-8, score))
+    }
+
+    func suppresses(category: String) -> Bool {
+        (categoryScores[category.lowercased()] ?? 0) <= Self.categoryCooldownScore
     }
 
     func topAffinities(limit: Int = 3) -> [(String, Double)] {
@@ -372,7 +377,9 @@ struct DiscoverView: View {
     }
 
     private var filteredItems: [FeedItem] {
-        vm.items.filter { !dismissed.contains(itemId($0)) }
+        let localFresh = vm.items.filter { !dismissed.contains(itemId($0)) }
+        let cooldownFiltered = localFresh.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
+        return cooldownFiltered.isEmpty ? localFresh : cooldownFiltered
     }
 
     private var groupedItems: [DiscoverGroupedItem] {

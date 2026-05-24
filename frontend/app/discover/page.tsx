@@ -26,6 +26,8 @@ const PAGE_SIZE = 20;
 const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_LOCAL_DISMISSES = 40;
 const MIN_ITEMS_AFTER_LOCAL_DISMISS = 20;
+const CATEGORY_COOLDOWN_DISMISSES = 3;
+const CATEGORY_COOLDOWN_SCORE = -3;
 
 function getDismissed(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -98,6 +100,23 @@ function getItemCategory(item: FeedItem): string {
 function getGroupedAnalytics(groupedItem: DiscoverGroupedItem) {
   const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
   return item ? getDiscoverItemAnalytics(item) : null;
+}
+
+function getSuppressedCategories(profile: DiscoverProfile | null): Set<string> {
+  const suppressed = new Set<string>();
+  if (!profile?.categories) return suppressed;
+
+  for (const [category, bucket] of Object.entries(profile.categories)) {
+    if (
+      bucket.dismisses >= CATEGORY_COOLDOWN_DISMISSES &&
+      bucket.score <= CATEGORY_COOLDOWN_SCORE &&
+      bucket.likes === 0 &&
+      bucket.shares === 0
+    ) {
+      suppressed.add(category.toLowerCase());
+    }
+  }
+  return suppressed;
 }
 
 function applyLocalPersonalization(
@@ -627,11 +646,16 @@ export default function DiscoverPage() {
       || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
       ? dismissFiltered
       : fresh;
+    const suppressedCategories = getSuppressedCategories(interactionProfile);
+    const cooldownFiltered = categoryFilter === "all" && suppressedCategories.size
+      ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
+      : filtered;
+    const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const catFiltered = categoryFilter === "all"
-      ? filtered
+      ? cooldownSafe
       : categoryFilter === "sports"
-      ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
-      : filtered.filter((i) => getItemCategory(i) === categoryFilter);
+      ? cooldownSafe.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
+      : cooldownSafe.filter((i) => getItemCategory(i) === categoryFilter);
     const grouped = groupRelatedMarkets(interleave(catFiltered));
     return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
   }, [data, allItems, dismissed, categoryFilter, interactionProfile]);
@@ -712,8 +736,13 @@ export default function DiscoverPage() {
       || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
       ? dismissFiltered
       : fresh;
+    const suppressedCategories = getSuppressedCategories(interactionProfile);
+    const cooldownLive = suppressedCategories.size
+      ? live.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
+      : live;
+    const countItems = cooldownLive.length > 0 ? cooldownLive : live;
     const counts = new Map<string, number>();
-    for (const item of live) {
+    for (const item of countItems) {
       const cat = getItemCategory(item);
       if (SPORTS_CATS.has(cat)) {
         counts.set("sports", (counts.get("sports") || 0) + 1);
@@ -721,9 +750,9 @@ export default function DiscoverPage() {
         counts.set(cat, (counts.get(cat) || 0) + 1);
       }
     }
-    counts.set("all", live.length);
+    counts.set("all", countItems.length);
     return counts;
-  }, [data, dismissed]);
+  }, [data, dismissed, interactionProfile]);
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
