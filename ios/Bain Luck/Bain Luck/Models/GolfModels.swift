@@ -131,7 +131,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
     let rank: Int?
     let movement24h: Double?
     let openingProbability: Double?
-    let americanOdds: String?
+    let americanOdds: Int?
 
     var id: String { name }
 
@@ -142,7 +142,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
         rank = try container.decodeIfPresent(Int.self, forKey: .rank)
         movement24h = try container.decodeIfPresent(Double.self, forKey: .movement24h)
         openingProbability = try container.decodeIfPresent(Double.self, forKey: .openingProbability)
-        americanOdds = try container.decodeIfPresent(String.self, forKey: .americanOdds)
+        americanOdds = try container.decodeIfPresent(Int.self, forKey: .americanOdds)
     }
 
     private enum CodingKeys: String, CodingKey {
