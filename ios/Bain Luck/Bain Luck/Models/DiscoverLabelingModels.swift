@@ -5,16 +5,23 @@ import Foundation
 nonisolated struct DiscoverLabelingFeedResponse: Decodable, Sendable {
     let feedRequestId: String?
     let debugItems: [DiscoverLabelingDebugItem]
+    let total: Int
+    let limit: Int
+    let offset: Int
+    let hasMore: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case feedRequestId
-        case debugItems
+        case feedRequestId, debugItems, total, limit, offset, hasMore
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         feedRequestId = try container.decodeIfPresent(String.self, forKey: .feedRequestId)
         debugItems = try container.decodeIfPresent([DiscoverLabelingDebugItem].self, forKey: .debugItems) ?? []
+        total = try container.decodeIfPresent(Int.self, forKey: .total) ?? debugItems.count
+        limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? debugItems.count
+        offset = try container.decodeIfPresent(Int.self, forKey: .offset) ?? 0
+        hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
     }
 }
 

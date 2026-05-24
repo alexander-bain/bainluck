@@ -15,7 +15,11 @@ final class DiscoverLabelingViewModel: ObservableObject {
     private let batchId = "native-review-\(UUID().uuidString)"
     private let reviewer = "native"
     private let reviewedStorageKey = "discover_labeling_reviewed_keys_v1"
+    private let pageSize = 100
+    private let targetQueueSize = 40
+    private let maxPagesPerLoad = 8
     private var reviewedItemKeys: Set<String>
+    private var itemFeedRequestIds: [String: String] = [:]
 
     init() {
         let stored = UserDefaults.standard.stringArray(forKey: reviewedStorageKey) ?? []
@@ -38,12 +42,42 @@ final class DiscoverLabelingViewModel: ObservableObject {
         loading = true
         error = nil
         do {
-            let response = try await APIClient.shared.fetchDiscoverLabelingFeed(secret: secret)
-            feedRequestId = response.feedRequestId
-            items = response.debugItems.filter { !reviewedItemKeys.contains(reviewKey(for: $0)) }
+            var offset = 0
+            var pagesLoaded = 0
+            var loadedItems: [DiscoverLabelingDebugItem] = []
+            var seenKeys: Set<String> = []
+            var feedRequestIds: [String: String] = [:]
+            var sawAnyDebugItems = false
+
+            while pagesLoaded < maxPagesPerLoad && loadedItems.count < targetQueueSize {
+                let response = try await APIClient.shared.fetchDiscoverLabelingFeed(
+                    secret: secret,
+                    offset: offset,
+                    limit: pageSize
+                )
+                feedRequestId = response.feedRequestId
+                sawAnyDebugItems = sawAnyDebugItems || !response.debugItems.isEmpty
+
+                for item in response.debugItems {
+                    let key = reviewKey(for: item)
+                    guard !reviewedItemKeys.contains(key), !seenKeys.contains(key) else { continue }
+                    loadedItems.append(item)
+                    seenKeys.insert(key)
+                    if let feedRequestId = response.feedRequestId {
+                        feedRequestIds[key] = feedRequestId
+                    }
+                }
+
+                pagesLoaded += 1
+                guard response.hasMore else { break }
+                offset = response.offset + max(response.limit, pageSize)
+            }
+
+            items = Array(loadedItems.prefix(targetQueueSize))
+            itemFeedRequestIds = feedRequestIds
             currentIndex = 0
             if items.isEmpty {
-                error = response.debugItems.isEmpty ? "No debug feed items returned." : "No new debug feed items returned."
+                error = sawAnyDebugItems ? "No new debug feed items returned." : "No debug feed items returned."
             }
         } catch {
             self.error = error.localizedDescription
@@ -87,7 +121,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
             archetypeAtReview: item.archetype,
             qualityClassAtReview: item.qualityClass,
             headlineAtReview: item.headline,
-            feedRequestId: feedRequestId,
+            feedRequestId: itemFeedRequestIds[reviewKey(for: item)] ?? feedRequestId,
             cardSnapshot: snapshot(for: item),
             reviewer: reviewer
         )

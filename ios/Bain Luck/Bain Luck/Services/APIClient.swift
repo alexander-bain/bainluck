@@ -661,11 +661,12 @@ actor APIClient {
     // MARK: - Admin Discover Labeling
 
     /// Fetches the admin debug Discover feed used by native labeling tools.
-    func fetchDiscoverLabelingFeed(secret: String) async throws -> DiscoverLabelingFeedResponse {
+    func fetchDiscoverLabelingFeed(secret: String, offset: Int = 0, limit: Int = 100) async throws -> DiscoverLabelingFeedResponse {
         return try await fetch(
             "/api/feed",
             query: [
-                "limit": "100",
+                "limit": String(limit),
+                "offset": String(offset),
                 "include_events": "false",
                 "include_futures": "true",
                 "event_pct": "0.15",
