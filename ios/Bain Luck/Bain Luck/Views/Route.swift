@@ -6,6 +6,7 @@ enum Route: Hashable {
     case eventDetail(id: Int)
     case futuresDetail(id: Int)
     case preferences
+    case discoverLabeling
     case sportCategory(key: String, name: String)
     case leagueGrid(slug: String)
     case golfCategory
@@ -33,6 +34,7 @@ struct RouteDestination: View {
         case .eventDetail(let id): EventDetailView(eventId: id)
         case .futuresDetail(let id): FuturesDetailView(marketId: id)
         case .preferences: PreferencesView()
+        case .discoverLabeling: DiscoverLabelingView()
         case .sportCategory(let key, let name): SportCategoryView(categoryKey: key, categoryName: name)
         case .leagueGrid(let slug): LeagueGridView(slug: slug)
         case .golfCategory: GolfCategoryView()
