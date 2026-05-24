@@ -3,6 +3,15 @@ import SwiftUI
 struct PredictionStatsView: View {
     @State private var stats: DetailedPredictionStats? = nil
     @State private var loading = true
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 700
+        #else
+        return sizeClass == .regular ? 700 : .infinity
+        #endif
+    }
 
     var body: some View {
         ScrollView {
@@ -19,6 +28,8 @@ struct PredictionStatsView: View {
                     badgesSection(stats)
                 }
                 .padding()
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
             } else {
                 VStack(spacing: 12) {
                     Text("🎯")

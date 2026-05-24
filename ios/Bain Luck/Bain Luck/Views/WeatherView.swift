@@ -5,6 +5,15 @@ import SwiftUI
 struct WeatherView: View {
     @StateObject private var viewModel = WeatherViewModel()
     @State private var citySearch = ""
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 900
+        #else
+        return sizeClass == .regular ? 900 : .infinity
+        #endif
+    }
 
     var body: some View {
         Group {
@@ -40,6 +49,8 @@ struct WeatherView: View {
                 weatherFooter
             }
             .padding(.vertical)
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 

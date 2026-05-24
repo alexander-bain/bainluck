@@ -524,6 +524,17 @@ struct DiscoverView: View {
         return result
     }
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Max content width — phone-style on compact, wider on iPad/Mac
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 800
+        #else
+        return sizeClass == .regular ? 800 : .infinity
+        #endif
+    }
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
         VStack(spacing: 0) {
@@ -596,6 +607,8 @@ struct DiscoverView: View {
                             Image(systemName: "xmark")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -608,7 +621,7 @@ struct DiscoverView: View {
 
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageGrouped = Array(groupedItems.prefix(visibleCount))
-                let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
+                let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
                 ScrollViewReader { proxy in
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(Array(pageGrouped.enumerated()), id: \.element.id) { idx, gi in
@@ -707,6 +720,8 @@ struct DiscoverView: View {
                 .padding(.horizontal)
                 .padding(.bottom)
             }
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         }
         .navigationTitle("Discover")
@@ -1352,7 +1367,7 @@ struct NativeGuessCard: View {
             Label(label, systemImage: systemImage)
                 .font(.subheadline.weight(.heavy))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
+                .frame(minHeight: 44)
                 .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(color)
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.28), lineWidth: 1))

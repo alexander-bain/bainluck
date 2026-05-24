@@ -45,6 +45,15 @@ private struct ThemeInfo: Identifiable {
 
 struct EconomicsView: View {
     @StateObject private var viewModel = EconomicsViewModel()
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 900
+        #else
+        return sizeClass == .regular ? 900 : .infinity
+        #endif
+    }
 
     var body: some View {
         Group {
@@ -92,6 +101,8 @@ struct EconomicsView: View {
                 footerSection(data)
             }
             .padding(.vertical)
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .background(DS.surface)
     }

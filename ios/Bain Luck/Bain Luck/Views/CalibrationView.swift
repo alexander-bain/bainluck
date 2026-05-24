@@ -5,6 +5,15 @@ import SwiftUI
 
 struct CalibrationView: View {
     @StateObject private var viewModel = CalibrationViewModel()
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 900
+        #else
+        return sizeClass == .regular ? 900 : .infinity
+        #endif
+    }
 
     var body: some View {
         Group {
@@ -33,6 +42,8 @@ struct CalibrationView: View {
                 calibrationChartSection; tradingActivitySection; categoryBreakdownSection
             }
             .padding(.horizontal).padding(.bottom, 32)
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 

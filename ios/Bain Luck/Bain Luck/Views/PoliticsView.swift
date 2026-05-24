@@ -28,6 +28,15 @@ private let filterTabs = ["All", "Congress", "Courts", "Campaign", "World", "Tec
 struct PoliticsView: View {
     @StateObject private var viewModel = PoliticsViewModel()
     @State private var selectedTab = "All"
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 900
+        #else
+        return sizeClass == .regular ? 900 : .infinity
+        #endif
+    }
 
     var body: some View {
         Group {
@@ -87,6 +96,8 @@ struct PoliticsView: View {
                 footerNote(data)
             }
             .padding(.vertical)
+            .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 

@@ -128,10 +128,12 @@ struct NativeEventDiscoverCard: View {
                     message: Text(shareMessage)
                 ) {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .padding(6)
+                        .padding(8)
                         .background(Color.secondary.opacity(0.10), in: Circle())
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
