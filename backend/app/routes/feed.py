@@ -869,6 +869,13 @@ async def get_feed(
             "Disable for fast admin labeling/debug-card loads."
         ),
     ),
+    debug_personalization: bool = Query(
+        False,
+        description=(
+            "When debug=true, keep authenticated personalization/seen state. "
+            "Default debug mode is global for admin labeling."
+        ),
+    ),
     secret: Optional[str] = Query(
         None, description="Admin secret for debug diagnostics"
     ),
@@ -901,6 +908,9 @@ async def get_feed(
         raise HTTPException(status_code=403, detail="Admin access required")
 
     session_id = _session_id_from_request(request)
+    debug_global = debug and not debug_personalization and not my_teams_only
+    feed_user = None if debug_global else user
+    feed_session_id = None if debug_global else session_id
     discover_config = await _load_discover_runtime_config()
     if debug:
         discover_config = {
@@ -913,7 +923,7 @@ async def get_feed(
     # Session/user feeds change as impressions are recorded. Keep anonymous
     # no-session cache warmer, but make per-session Discover refreshes respond
     # quickly to "already seen" suppression.
-    _cache_ttl = 30 if my_teams_only else (5 if (user or session_id) else 60)
+    _cache_ttl = 30 if my_teams_only else (5 if (feed_user or feed_session_id) else 60)
     _async_redis = None
     if not debug:
         try:
@@ -921,7 +931,11 @@ async def get_feed(
 
             _async_redis = get_async_redis_client()
             _user_part = (
-                f"u:{user.id}" if user else f"s:{session_id}" if session_id else "anon"
+                f"u:{feed_user.id}"
+                if feed_user
+                else f"s:{feed_session_id}"
+                if feed_session_id
+                else "anon"
             )
             _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
@@ -974,7 +988,7 @@ async def get_feed(
             tag_filter = None
 
     # my_teams_only requires authentication
-    if my_teams_only and not user:
+    if my_teams_only and not feed_user:
         _set_feed_timing_header(response, _started_at)
         return {
             "items": [],
@@ -990,8 +1004,8 @@ async def get_feed(
     try:
         ctx = await _load_personalization_context(
             db,
-            user,
-            session_id=session_id,
+            feed_user,
+            session_id=feed_session_id,
             config=discover_config,
         )
     except Exception:
@@ -1010,7 +1024,7 @@ async def get_feed(
     # Used by futures matching (BR53) to prevent cross-sport false positives
     # like "Aliya Boston" (WNBA) matching "Boston Bruins" (NHL).
     my_team_sport_categories: dict[str, set[str]] = {}
-    if my_teams_only and user and ctx.team_relations:
+    if my_teams_only and feed_user and ctx.team_relations:
         team_ids = list(ctx.team_relations.keys())
         team_name_result = await db.execute(
             select(Team.name, Sport.key)
@@ -1309,6 +1323,7 @@ async def get_feed(
         }
 
     if debug_payload is not None:
+        payload["debug_global"] = debug_global
         payload["debug_summary"] = debug_payload["summary"]
         payload["debug_items"] = debug_payload["items"]
         payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
