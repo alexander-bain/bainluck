@@ -266,6 +266,7 @@ async def google_access_token_sign_in(
 
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
+        user.preferences = prefs
 
     onboarding_completed = False
     if user.preferences:
@@ -394,6 +395,7 @@ async def apple_sign_in(
 
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
+        user.preferences = prefs
 
     onboarding_completed = False
     if user.preferences:
