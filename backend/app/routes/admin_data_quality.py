@@ -2938,8 +2938,7 @@ async def trigger_calibration_prices(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     from app.tasks.backfill_winners import _compute_calibration_prices
-    from app.tasks.base import run_async
-    stats = run_async(_compute_calibration_prices())
+    stats = await _compute_calibration_prices()
     return {"status": "completed", "stats": stats}
 
 
