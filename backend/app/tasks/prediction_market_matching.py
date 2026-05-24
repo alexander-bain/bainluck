@@ -1467,7 +1467,14 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         claim=EventClaim(market.source, external_id),
         status=status,
     )
-    event, was_created = await find_or_create_event(session, identity)
+    try:
+        event, was_created = await find_or_create_event(session, identity)
+    except ValueError as e:
+        logger.warning(
+            "Cannot auto-create event for '%s' — %s",
+            market.name, e,
+        )
+        return None
 
     # Determine yes_is_home mapping
     team_match = match_teams_to_event(matchup, team_a, team_b, external_id=external_id)

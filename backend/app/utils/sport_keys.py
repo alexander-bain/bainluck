@@ -986,10 +986,10 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxfifawcm": "soccer_fifa_world_cup",
     "kxfifawcw": "soccer_fifa_world_cup_women",
     # Tennis
-    "kxatp": "tennis",
-    "kxwta": "tennis",
-    "kxatpsets": "tennis",
-    "kxatptotal": "tennis",
+    "kxatp": "tennis_atp",
+    "kxwta": "tennis_wta",
+    "kxatpsets": "tennis_atp",
+    "kxatptotal": "tennis_atp",
     # Boxing
     "kxwbcheavyweighttitle": "boxing_boxing",
     "kxwbcmiddleweighttitle": "boxing_boxing",
