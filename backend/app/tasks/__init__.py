@@ -900,6 +900,15 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
         raise self.retry(exc=exc, countdown=60)
 
 
+# --- Calibration Prices ---
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_calibration_prices")
+def compute_calibration_prices(self):
+    """Compute calibration_probability on resolved outcomes (Parts A/B/C)."""
+    from app.tasks.backfill_winners import _compute_calibration_prices
+    return _tracked_run("calibration_prices", _compute_calibration_prices())
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")

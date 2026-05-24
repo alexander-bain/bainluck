@@ -2933,13 +2933,13 @@ async def calibration_decomposition(
 async def trigger_calibration_prices(
     secret: str = Query(...),
 ):
-    """Run only the calibration_probability computation phase."""
+    """Queue the calibration_probability computation as a background Celery task."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.tasks.backfill_winners import _compute_calibration_prices
-    stats = await _compute_calibration_prices()
-    return {"status": "completed", "stats": stats}
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.compute_calibration_prices")
+    return {"status": "queued", "task_id": str(result.id)}
 
 
 import re as _re
