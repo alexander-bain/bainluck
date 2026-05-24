@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import type { DebugItem } from "./types";
 
@@ -83,6 +83,24 @@ const CHOICE_COLORS: Record<string, string> = {
   neither: "bg-gray-500 text-white hover:bg-gray-600",
   skip: "bg-gray-300 text-gray-700 hover:bg-gray-400",
 };
+
+const CHOICE_SHORTCUTS: Record<string, string> = {
+  a: "1",
+  b: "2",
+  both: "3",
+  neither: "4",
+  skip: "S",
+};
+
+const CONFIDENCE_OPTIONS = ["low", "medium", "high"] as const;
+type Confidence = (typeof CONFIDENCE_OPTIONS)[number];
+
+const RANKING_ERROR_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "yes", label: "Error" },
+  { value: "no", label: "No error" },
+] as const;
+type RankingErrorOverride = (typeof RANKING_ERROR_OPTIONS)[number]["value"];
 
 function createBatchId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -201,11 +219,35 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
+  const pairIndexRef = useRef(0);
   const [lastChoice, setLastChoice] = useState<string | null>(null);
+  const [lastSubmitted, setLastSubmitted] = useState<string | null>(null);
+  const [confidence, setConfidence] = useState<Confidence>("medium");
+  const [rankingErrorOverride, setRankingErrorOverride] =
+    useState<RankingErrorOverride>("auto");
+  const [notes, setNotes] = useState("");
   const feedPairs = useMemo(
     () => buildFeedContextPairs(debugItems, batchId),
     [debugItems, batchId]
   );
+
+  const resetReviewFields = useCallback(() => {
+    setRankingErrorOverride("auto");
+    setNotes("");
+  }, []);
+
+  const inferredRankingError = useCallback((choice: string) => {
+    if (!pair) return null;
+    if (choice === "a") return pair.card_a.score < pair.card_b.score;
+    if (choice === "b") return pair.card_b.score < pair.card_a.score;
+    return null;
+  }, [pair]);
+
+  const rankingErrorForChoice = useCallback((choice: string) => {
+    if (rankingErrorOverride === "yes") return true;
+    if (rankingErrorOverride === "no") return false;
+    return inferredRankingError(choice);
+  }, [inferredRankingError, rankingErrorOverride]);
 
   // Fetch next pair
   const fetchPair = useCallback(async () => {
@@ -215,7 +257,9 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
     setLastChoice(null);
     try {
       if (feedPairs.length) {
-        setPair(feedPairs[labelCount % feedPairs.length]);
+        setPair(feedPairs[pairIndexRef.current % feedPairs.length]);
+        pairIndexRef.current += 1;
+        resetReviewFields();
         return;
       }
       const res = await fetch(
@@ -227,13 +271,14 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
       }
       const data: PairResponse = await res.json();
       setPair(data);
+      resetReviewFields();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load pair");
       setPair(null);
     } finally {
       setLoading(false);
     }
-  }, [feedPairs, labelCount, submittedSecret]);
+  }, [feedPairs, resetReviewFields, submittedSecret]);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
@@ -259,10 +304,11 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
   }, [submittedSecret, fetchPair, fetchStats]);
 
   // Submit label
-  const submitLabel = async (choice: string) => {
+  const submitLabel = useCallback(async (choice: string) => {
     if (!submittedSecret || !pair || !reviewer.trim()) return;
     setSubmitting(true);
     setError(null);
+    setLastSubmitted(null);
     try {
       const res = await fetch(
         `${API_URL}/api/admin/pairwise/label?secret=${encodeURIComponent(submittedSecret)}`,
@@ -280,12 +326,9 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
             pair_strategy: pair.pair_strategy || "legacy_random",
             surface: "discover_quality",
             batch_id: pair.batch_id || batchId,
-            confidence: "medium",
-            ranking_error: (
-              choice === "a" ? pair.card_a.score < pair.card_b.score
-              : choice === "b" ? pair.card_b.score < pair.card_a.score
-              : null
-            ),
+            confidence,
+            ranking_error: rankingErrorForChoice(choice),
+            notes: notes.trim() || null,
             card_a_snapshot: pair.card_a.snapshot || null,
             card_b_snapshot: pair.card_b.snapshot || null,
           }),
@@ -297,6 +340,7 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
       }
       setLabelCount((c) => c + 1);
       setLastChoice(choice);
+      setLastSubmitted(`${CHOICE_LABELS[choice] || choice} submitted`);
       // Auto-load next pair
       await fetchPair();
       fetchStats();
@@ -305,14 +349,58 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [
+    batchId,
+    confidence,
+    fetchPair,
+    fetchStats,
+    notes,
+    pair,
+    rankingErrorForChoice,
+    reviewer,
+    submittedSecret,
+  ]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName.toLowerCase();
+      if (
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (!pair || loading || submitting || !submittedSecret) return;
+
+      const key = event.key.toLowerCase();
+      const shortcutChoice =
+        key === "1" ? "a" :
+        key === "2" ? "b" :
+        key === "3" ? "both" :
+        key === "4" ? "neither" :
+        key === "s" ? "skip" :
+        null;
+
+      if (shortcutChoice) {
+        event.preventDefault();
+        submitLabel(shortcutChoice);
+      } else if (key === "r") {
+        event.preventDefault();
+        fetchPair();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [fetchPair, loading, pair, submittedSecret, submitting, submitLabel]);
 
   // --- Render ---
 
   return (
     <div>
-
-
         {/* Session counter */}
         {labelCount > 0 && (
           <div className="mb-4 flex items-center gap-3">
@@ -322,6 +410,11 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
             {lastChoice && (
               <span className="text-sm text-text-muted">
                 Last: {CHOICE_LABELS[lastChoice] || lastChoice}
+              </span>
+            )}
+            {lastSubmitted && (
+              <span className="text-sm font-medium text-accent-live">
+                {lastSubmitted}
               </span>
             )}
           </div>
@@ -476,6 +569,74 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
               </div>
             </div>
 
+            {/* Review metadata */}
+            <div className="mb-5 rounded-lg border border-surface-border bg-surface-card p-4">
+              <div className="grid gap-4 lg:grid-cols-[1fr_1fr_2fr]">
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">
+                    Confidence
+                  </div>
+                  <div className="flex rounded-lg border border-surface-border bg-surface-elevated p-1">
+                    {CONFIDENCE_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setConfidence(option)}
+                        disabled={submitting}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          confidence === option
+                            ? "bg-surface-card text-text-primary shadow-sm"
+                            : "text-text-secondary hover:text-text-primary"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">
+                    Ranking error
+                  </div>
+                  <div className="flex rounded-lg border border-surface-border bg-surface-elevated p-1">
+                    {RANKING_ERROR_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setRankingErrorOverride(option.value)}
+                        disabled={submitting}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          rankingErrorOverride === option.value
+                            ? "bg-surface-card text-text-primary shadow-sm"
+                            : "text-text-secondary hover:text-text-primary"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-xs text-text-muted">
+                    Auto marks A/B picks against the current score.
+                  </p>
+                </div>
+
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-text-muted">
+                    Notes
+                  </span>
+                  <textarea
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    disabled={submitting}
+                    rows={3}
+                    placeholder="Optional reviewer notes"
+                    className="min-h-[88px] w-full resize-y rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-brand focus:outline-none focus:ring-2 focus:ring-accent-brand/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </label>
+              </div>
+            </div>
+
             {/* Choice buttons */}
             <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
               {(["a", "b", "both", "neither", "skip"] as const).map((c) => (
@@ -483,6 +644,8 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
                   key={c}
                   onClick={() => submitLabel(c)}
                   disabled={submitting}
+                  aria-keyshortcuts={CHOICE_SHORTCUTS[c].toLowerCase()}
+                  title={`${CHOICE_LABELS[c]} (${CHOICE_SHORTCUTS[c]})`}
                   className={`rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${CHOICE_COLORS[c]}`}
                 >
                   {CHOICE_LABELS[c]}
@@ -495,6 +658,8 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
               <button
                 onClick={fetchPair}
                 disabled={loading}
+                aria-keyshortcuts="r"
+                title="Refresh pair (R)"
                 className="text-sm text-text-muted hover:text-text-secondary underline transition-colors"
               >
                 Refresh pair (no label)
