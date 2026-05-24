@@ -29,13 +29,23 @@ Import these repo files before designing:
 - `docs/design-system.md`
 - `docs/discover-labeling.md`
 - `frontend/components/admin/discover/ReviewTab.tsx`
+- `frontend/components/admin/discover/PairwiseTab.tsx`
+- `frontend/components/admin/discover/FixableInterestPanel.tsx`
+- `frontend/components/admin/discover/LabelEvalTrendPanel.tsx`
 - `frontend/app/admin/discover-quality/page.tsx`
-- Optionally `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
+- Optionally:
+  - `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
+  - `ios/Bain Luck/Bain Luck/ViewModels/DiscoverViewModel.swift`
+  - `ios/Bain Luck/Bain Luck/Models/FeedModels.swift`
 
 Design goals:
 - A reviewer can label 50 cards in under 15 minutes.
 - Primary interaction should be fast: choose `Love`, `Fine`, `Bad`, or `Kill`;
   pick reason chips; submit/next.
+- The design should show how the full taxonomy fits without slowing down the
+  primary path: tapworthiness score, clarity, explanation quality, image fit,
+  audience scope, resolution importance, duplicate severity, and story
+  relationship.
 - Pairwise review should let a reviewer choose A, B, both, neither, or skip.
 - Fixable-interest feedback must be first-class: reviewers need a quick way to
   say "this is bad as shown, but would be interesting if..." Examples:
@@ -47,6 +57,13 @@ Design goals:
 - It should support converting repeated fixable-interest clusters into GitHub
   issues or ranking experiments, but the label UI itself should not feel like a
   project-management tool.
+- Feed-context pairwise review should preserve why the two cards were paired:
+  adjacent rank, same story/family, score-rank tension, or another strategy.
+  Reviewers should see enough rank/score/context to judge the ordering without
+  turning the screen into a scoring dashboard.
+- Label eval trends should be visible as operational feedback: counts, pass/fail
+  movement, regression warnings, and fixable-interest clusters. They should not
+  compete with the primary labeling task.
 - Web admin is the first implementation. Also advise whether native should have
   any labeling/review surface now, or whether native should only send richer
   TestFlight/rage-shake context into the same backend labels.
@@ -60,15 +77,39 @@ Design constraints:
   compact inputs, keyboard shortcuts, and clear submitted/skipped states.
 - Avoid burying reviewers in explanatory text. Labels and controls should be
   self-evident.
+- Include validation rules that keep data useful without turning the flow into a
+  form: examples include requiring a failure chip for `Kill`, requiring
+  `fix_type` when a fixable-interest score is high, and requiring a short note
+  before marking something as a GitHub issue candidate.
 
 Deliverables:
 - Web layout for single-card review.
 - Web layout for pairwise review.
 - Fixable-interest interaction pattern.
-- Summary/trends panel for label counts and fixable-interest clusters.
+- Summary/trends panel for label counts, eval runs, and fixable-interest
+  clusters.
 - Native parity recommendation, including what should be captured from iOS/macOS
   Discover and rage-shake flows.
 - Implementation notes for the existing React admin components.
+- Interaction states: empty, loading, submitted, skipped, undo, repeated-label,
+  disagreement, keyboard shortcut, and low-confidence states.
+
+Current implementation notes to account for:
+- Single-card labels write to `/api/admin/ranking-judgments` with reviewer,
+  verdict, reason tags, notes, rank/score/category snapshots, card snapshot, and
+  optional fixable-interest metadata.
+- Pairwise labels write to `/api/admin/pairwise/label` with choice, pair
+  strategy, batch id, ranking-error flag, scores, and card A/B snapshots.
+- Fixable-interest clusters are triaged separately after labels accumulate and
+  can store GitHub issue URLs, issue numbers, experiment keys, and triage notes.
+- Current web/native reason chips are not yet fully aligned with the canonical
+  taxonomy in `docs/discover-labeling.md`; call out the exact chip set and
+  grouping you recommend for parity.
+- Native should avoid normal-user clutter and should not persist admin secrets
+  loosely; recommend whether iOS/macOS should use Keychain, an authenticated
+  admin check, TestFlight-only exposure, or stay out of labeling for now.
+- The design should make the fastest path obvious while keeping optional
+  structured fields discoverable for reviewers who notice a repairable card.
 
 ---
 
