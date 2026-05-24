@@ -407,6 +407,60 @@ async def test_apple_sign_in_success(client, mock_db, monkeypatch):
     assert body["expires_in"] == 2592000
 
 
+@pytest.mark.asyncio
+async def test_apple_sign_in_new_user(client, mock_db, monkeypatch):
+    """Apple sign-in for brand-new user creates user and returns valid response.
+
+    Regression test: UserPreference.onboarding_completed defaults to None
+    (not False) before flush, which broke iOS decoding (non-optional Bool).
+    """
+    monkeypatch.setenv("APPLE_SERVICES_ID", "com.bainluck.web")
+    monkeypatch.setattr(
+        "app.routes.auth.verify_apple_id_token",
+        lambda token, audiences: {"sub": "apple-new-sub", "email": "newuser@example.com"},
+    )
+    monkeypatch.setattr(
+        "app.routes.auth.get_or_create_firebase_user",
+        lambda email, name, pic: "fb-uid-new-apple",
+    )
+    monkeypatch.setattr(
+        "app.routes.auth.create_custom_token",
+        lambda uid: "mock-new-custom-token",
+    )
+    monkeypatch.setattr(
+        "app.services.firebase_auth.create_session_token",
+        lambda uid, email=None, name=None, picture=None: "mock-new-session-token",
+    )
+
+    # No existing user — trigger new user creation path
+    mock_db.execute.return_value = _make_mock_result(scalar_one_or_none_value=None)
+    mock_db.flush = AsyncMock()
+
+    async def _set_user_fields(obj):
+        if hasattr(obj, "firebase_uid"):
+            obj.id = 99
+            obj.created_at = datetime(2026, 5, 24, tzinfo=timezone.utc)
+
+    mock_db.refresh = AsyncMock(side_effect=_set_user_fields)
+    mock_db.add = MagicMock()
+
+    resp = await client.post(
+        "/api/auth/apple",
+        json={"id_token": "valid-new-apple-token", "first_name": "Kid", "last_name": "Bain"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["custom_token"] == "mock-new-custom-token"
+    assert body["id_token"] == "mock-new-session-token"
+    assert body["email"] == "newuser@example.com"
+    assert body["name"] == "Kid Bain"
+    assert body["user"]["id"] == 99
+    # Key assertion: onboarding_completed must be a bool, never null
+    assert body["user"]["onboarding_completed"] is False
+    assert body["user"]["onboarding_completed"] is not None
+
+
 # ===========================================================================
 # GET /api/auth/me — requires auth
 # ===========================================================================

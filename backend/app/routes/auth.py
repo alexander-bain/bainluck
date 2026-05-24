@@ -163,10 +163,9 @@ async def google_sign_in(
         # Create empty preferences
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
+        user.preferences = prefs
 
-    onboarding_completed = False
-    if user.preferences:
-        onboarding_completed = user.preferences.onboarding_completed
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
 
     logger.info(f"User signed in: uid={firebase_uid}, email={email}")
 
@@ -268,11 +267,9 @@ async def google_access_token_sign_in(
         db.add(prefs)
         user.preferences = prefs
 
-    onboarding_completed = False
-    if user.preferences:
-        onboarding_completed = user.preferences.onboarding_completed
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
 
-    logger.info(f"Access token exchange: uid={firebase_uid}, email={email}")
+    logger.info(f"Access token exchange: uid={firebase_uid}, email={email}, new_user={user.id is not None}")
 
     # Also create a backend session token for Safari ITP fallback.
     # When signInWithCustomToken also fails (because Safari blocks
@@ -282,6 +279,12 @@ async def google_access_token_sign_in(
     fallback_id_token = create_session_token(
         uid=firebase_uid, email=email, name=name, picture=picture
     )
+    if not fallback_id_token:
+        logger.error("Google auth: create_session_token returned None for uid=%s", firebase_uid)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create session token",
+        )
 
     return {
         "custom_token": custom_token,
@@ -354,8 +357,10 @@ async def apple_sign_in(
         display_name = " ".join(parts) if parts else None
 
     # Get or create Firebase user (uses email lookup to match existing accounts)
+    logger.info("Apple auth: getting/creating Firebase user for email=%s", email)
     firebase_uid = get_or_create_firebase_user(email, display_name, None)
     if not firebase_uid:
+        logger.error("Apple auth: get_or_create_firebase_user returned None for email=%s", email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Firebase not configured or user creation failed",
@@ -397,17 +402,22 @@ async def apple_sign_in(
         db.add(prefs)
         user.preferences = prefs
 
-    onboarding_completed = False
-    if user.preferences:
-        onboarding_completed = user.preferences.onboarding_completed
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
 
-    logger.info(f"Apple sign-in: uid={firebase_uid}, email={email}, apple_sub={apple_sub}")
+    is_new = user.id is not None  # always true after flush, but log for tracing
+    logger.info(f"Apple sign-in: uid={firebase_uid}, email={email}, apple_sub={apple_sub}, new_user={is_new}")
 
     # Create backend session token for Safari ITP fallback
     from app.services.firebase_auth import create_session_token
     fallback_id_token = create_session_token(
         uid=firebase_uid, email=email, name=display_name, picture=None
     )
+    if not fallback_id_token:
+        logger.error("Apple auth: create_session_token returned None for uid=%s", firebase_uid)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create session token",
+        )
 
     return {
         "custom_token": custom_token,
@@ -442,9 +452,7 @@ async def get_profile(
     )
     user = result.scalar_one()
 
-    onboarding_completed = False
-    if user.preferences:
-        onboarding_completed = user.preferences.onboarding_completed
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
 
     return UserProfileResponse(
         id=user.id,
@@ -474,9 +482,7 @@ async def update_profile(
     )
     user = result.scalar_one()
 
-    onboarding_completed = False
-    if user.preferences:
-        onboarding_completed = user.preferences.onboarding_completed
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
 
     return UserProfileResponse(
         id=user.id,
