@@ -2155,92 +2155,100 @@ async def _compute_calibration_prices():
                 await session.commit()
 
             # Part A: Event-linked markets — real pre-event closing line
-            # Uses events.commence_time (the actual game/tournament start) instead
-            # of futures_markets.commence_time (which is the listing or resolution
-            # date on Kalshi/Polymarket). Falls back to opening_probability when
-            # no pre-event snapshot exists.
-            result_a = await session.execute(
-                text("""
-                    WITH needs_cal AS (
-                        SELECT fo.id AS outcome_id, e.commence_time,
-                               fo.opening_probability
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        JOIN events e ON e.id = fm.event_id
-                        WHERE fm.status = 'resolved'
-                          AND fo.calibration_probability IS NULL
-                          AND fm.event_id IS NOT NULL
-                          AND e.commence_time IS NOT NULL
-                        LIMIT 600000
-                    ),
-                    closing AS (
-                        SELECT DISTINCT ON (nc.outcome_id)
-                            nc.outcome_id,
-                            fos.probability
-                        FROM needs_cal nc
-                        JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
-                        WHERE fos.captured_at < nc.commence_time
-                          AND fos.probability > 0 AND fos.probability < 1
-                        ORDER BY nc.outcome_id, fos.captured_at DESC
-                    ),
-                    final_price AS (
-                        SELECT nc.outcome_id,
-                               COALESCE(cl.probability, nc.opening_probability) AS cal_prob
-                        FROM needs_cal nc
-                        LEFT JOIN closing cl ON cl.outcome_id = nc.outcome_id
-                    )
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = fp.cal_prob
-                    FROM final_price fp
-                    WHERE fo.id = fp.outcome_id
-                      AND fp.cal_prob IS NOT NULL
-                """)
-            )
-            stats["with_commence"] = result_a.rowcount
+            # Batched at 50K to avoid Heroku Postgres timeouts.
+            part_a_total = 0
+            for _ in range(20):
+                result_a = await session.execute(
+                    text("""
+                        WITH needs_cal AS (
+                            SELECT fo.id AS outcome_id, e.commence_time,
+                                   fo.opening_probability
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            JOIN events e ON e.id = fm.event_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.calibration_probability IS NULL
+                              AND fm.event_id IS NOT NULL
+                              AND e.commence_time IS NOT NULL
+                            LIMIT 50000
+                        ),
+                        closing AS (
+                            SELECT DISTINCT ON (nc.outcome_id)
+                                nc.outcome_id,
+                                fos.probability
+                            FROM needs_cal nc
+                            JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
+                            WHERE fos.captured_at < nc.commence_time
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY nc.outcome_id, fos.captured_at DESC
+                        ),
+                        final_price AS (
+                            SELECT nc.outcome_id,
+                                   COALESCE(cl.probability, nc.opening_probability) AS cal_prob
+                            FROM needs_cal nc
+                            LEFT JOIN closing cl ON cl.outcome_id = nc.outcome_id
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = fp.cal_prob
+                        FROM final_price fp
+                        WHERE fo.id = fp.outcome_id
+                          AND fp.cal_prob IS NOT NULL
+                    """)
+                )
+                await session.commit()
+                part_a_total += result_a.rowcount
+                if result_a.rowcount == 0:
+                    break
+                logger.info("Calibration Part A: batch processed %d (total %d)", result_a.rowcount, part_a_total)
+            stats["with_commence"] = part_a_total
 
-            # Part B: Non-event markets (no event_id or no event commence_time)
-            # Uses settled price (first snapshot >=1h after opening),
-            # falls back to opening_probability. This is the honest
-            # calibration price for elections, economics, entertainment,
-            # weather — markets without a verifiable event start time.
-            result_b = await session.execute(
-                text("""
-                    WITH needs_cal AS (
-                        SELECT fo.id AS outcome_id, fo.opening_captured_at,
-                               fo.opening_probability
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        LEFT JOIN events e ON e.id = fm.event_id
-                        WHERE fm.status = 'resolved'
-                          AND fo.calibration_probability IS NULL
-                          AND (fm.event_id IS NULL OR e.commence_time IS NULL)
-                        LIMIT 600000
-                    ),
-                    settled AS (
-                        SELECT DISTINCT ON (nc.outcome_id)
-                            nc.outcome_id,
-                            fos.probability
-                        FROM needs_cal nc
-                        JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
-                        WHERE nc.opening_captured_at IS NOT NULL
-                          AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
-                          AND fos.probability > 0 AND fos.probability < 1
-                        ORDER BY nc.outcome_id, fos.captured_at ASC
-                    ),
-                    final_price AS (
-                        SELECT nc.outcome_id,
-                               COALESCE(st.probability, nc.opening_probability) AS cal_prob
-                        FROM needs_cal nc
-                        LEFT JOIN settled st ON st.outcome_id = nc.outcome_id
-                    )
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = fp.cal_prob
-                    FROM final_price fp
-                    WHERE fo.id = fp.outcome_id
-                      AND fp.cal_prob IS NOT NULL
-                """)
-            )
-            stats["without_commence"] = result_b.rowcount
+            # Part B: Non-event markets — settled price or opening fallback.
+            # Batched at 50K to avoid Heroku Postgres timeouts.
+            part_b_total = 0
+            for _ in range(20):
+                result_b = await session.execute(
+                    text("""
+                        WITH needs_cal AS (
+                            SELECT fo.id AS outcome_id, fo.opening_captured_at,
+                                   fo.opening_probability
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            LEFT JOIN events e ON e.id = fm.event_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.calibration_probability IS NULL
+                              AND (fm.event_id IS NULL OR e.commence_time IS NULL)
+                            LIMIT 50000
+                        ),
+                        settled AS (
+                            SELECT DISTINCT ON (nc.outcome_id)
+                                nc.outcome_id,
+                                fos.probability
+                            FROM needs_cal nc
+                            JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
+                            WHERE nc.opening_captured_at IS NOT NULL
+                              AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY nc.outcome_id, fos.captured_at ASC
+                        ),
+                        final_price AS (
+                            SELECT nc.outcome_id,
+                                   COALESCE(st.probability, nc.opening_probability) AS cal_prob
+                            FROM needs_cal nc
+                            LEFT JOIN settled st ON st.outcome_id = nc.outcome_id
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = fp.cal_prob
+                        FROM final_price fp
+                        WHERE fo.id = fp.outcome_id
+                          AND fp.cal_prob IS NOT NULL
+                    """)
+                )
+                await session.commit()
+                part_b_total += result_b.rowcount
+                if result_b.rowcount == 0:
+                    break
+                logger.info("Calibration Part B: batch processed %d (total %d)", result_b.rowcount, part_b_total)
+            stats["without_commence"] = part_b_total
 
             # Part C: Rescue EVENT-LINKED outcomes where Part A fell back to
             # opening_probability (no pre-event snapshots existed).
