@@ -18,6 +18,7 @@ export default function UserMenu() {
     user,
     isAuthenticated,
     isAuthAvailable,
+    authError,
     signInWithGoogle,
     signInWithApple,
     signOut,
@@ -59,6 +60,12 @@ export default function UserMenu() {
         >
           {signingIn ? "Signing in..." : "Sign in"}
         </button>
+
+        {authError && !signingIn && !showProviders && (
+          <div className="absolute right-0 mt-2 w-64 bg-red-50 border border-red-200 rounded-lg shadow-lg px-4 py-3 z-50">
+            <p className="text-sm text-red-700">{authError}</p>
+          </div>
+        )}
 
         {showProviders && !signingIn && (
           <div className="absolute right-0 mt-2 w-56 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50" role="menu" aria-label="Sign in options">

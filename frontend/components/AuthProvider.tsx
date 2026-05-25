@@ -18,6 +18,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
+  authError: string | null;
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;

@@ -148,6 +148,7 @@ async function getGoogleAccessToken(): Promise<string> {
     const client = google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: "email profile",
+      prompt: "consent",
       callback: (response: { access_token?: string; error?: string }) => {
         if (response.error) {
           reject(new Error(response.error));

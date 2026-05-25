@@ -46,6 +46,7 @@ interface UseAuthResult {
   isLoading: boolean;
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
+  authError: string | null;
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -114,6 +115,7 @@ function setSignedInMarker(value: boolean): void {
 export function useAuth(): UseAuthResult {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const isAuthAvailable = isFirebaseConfigured();
   const tokenRef = useRef<string | null>(null);
 
@@ -179,6 +181,7 @@ export function useAuth(): UseAuthResult {
   // Sign in with Google popup, then register with backend
   const signInWithGoogle = useCallback(async (): Promise<void> => {
     if (!isAuthAvailable) return;
+    setAuthError(null);
 
     try {
       const idToken = await firebaseSignInWithGoogle();
@@ -186,13 +189,8 @@ export function useAuth(): UseAuthResult {
         tokenRef.current = idToken;
         setSignedInMarker(true);
 
-        // Register with backend (best-effort, don't block user state update)
         registerWithBackend(idToken);
 
-        // Immediately update user state from backend auth data.
-        // On Safari with ITP, Firebase's onAuthStateChanged may never fire
-        // (or may fire with null if the session gets killed). The backend
-        // auth stored in localStorage is the reliable source of truth.
         const backendUser = getBackendAuthUser();
         if (backendUser) {
           console.log("[Auth] Setting user state from backend auth:", backendUser.email);
@@ -203,11 +201,19 @@ export function useAuth(): UseAuthResult {
             photoURL: backendUser.photoURL,
           });
         }
-        // If no backend auth (Chrome/Firefox tier 1 success), onAuthStateChanged
-        // will fire and update user state via the useEffect listener above.
+      } else {
+        setAuthError("Sign-in didn't complete. Please try again.");
       }
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      if (msg.includes("popup_closed") || msg.includes("popup closed")) {
+        setAuthError("Sign-in was cancelled. Please try again.");
+      } else if (msg.includes("popup_blocked") || msg.includes("blocked")) {
+        setAuthError("Pop-up was blocked. Please allow pop-ups for this site.");
+      } else {
+        setAuthError("Sign-in failed. Please try again.");
+      }
     }
   }, [isAuthAvailable]);
 
@@ -271,6 +277,7 @@ export function useAuth(): UseAuthResult {
     isLoading,
     isAuthenticated: !!user,
     isAuthAvailable,
+    authError,
     signInWithGoogle,
     signInWithApple,
     signOut,
