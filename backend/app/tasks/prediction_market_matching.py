@@ -60,6 +60,13 @@ class _LinkedMarketRef:
     home_team_name: str | None
     away_team_name: str | None
 
+    @property
+    def is_game_winner(self) -> bool:
+        if not self.external_id:
+            return False
+        prefix = self.external_id.lower().split("-")[0]
+        return prefix.endswith("game")
+
 
 def _derive_sport_category(external_id: str | None) -> str | None:
     """Derive llm_sport_category from a Kalshi ticker's sport key.
@@ -823,14 +830,18 @@ async def _match_prediction_markets(limit: int = 500):
 
             await session.commit()
 
-        # Pick the primary market per group: prefer more outcomes, then lowest id
+        # Pick the primary market per group: prefer game-winner, then lowest id.
+        # Without this, a prop market with a lower id shadows the game-winner
+        # and no win_prob_snapshots are written for Kalshi.
         best_per_event_source: dict[tuple[int, str], _LinkedMarketRef] = {}
         for key, group in all_per_event_source.items():
             if not group:
                 continue  # Group emptied by multi-game unlink
             primary = group[0]
             for market_ref in group[1:]:
-                if market_ref.market_id < primary.market_id:
+                if market_ref.is_game_winner and not primary.is_game_winner:
+                    primary = market_ref
+                elif primary.is_game_winner == market_ref.is_game_winner and market_ref.market_id < primary.market_id:
                     primary = market_ref
             best_per_event_source[key] = primary
 
@@ -1831,11 +1842,20 @@ async def _poll_live_prediction_market_prices():
                 all_per_event_source_live[key] = []
             all_per_event_source_live[key].append((market, event))
 
+        def _is_game_winner_market(m) -> bool:
+            if m.source != "kalshi" or not m.external_id:
+                return False
+            return m.external_id.lower().split("-")[0].endswith("game")
+
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for key, group in all_per_event_source_live.items():
             primary = group[0]
             for market, event in group[1:]:
-                if market.id < primary[0].id:
+                pri_is_gw = _is_game_winner_market(primary[0])
+                cur_is_gw = _is_game_winner_market(market)
+                if cur_is_gw and not pri_is_gw:
+                    primary = (market, event)
+                elif pri_is_gw == cur_is_gw and market.id < primary[0].id:
                     primary = (market, event)
             best_per_event_source[key] = primary
 
