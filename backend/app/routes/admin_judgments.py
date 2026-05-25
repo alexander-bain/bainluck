@@ -145,11 +145,9 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
     elif stratum == "weather":
         filters = [
             *base_filters,
-            or_(
-                FuturesMarket.name.ilike("%weather%"),
-                FuturesMarket.name.ilike("%temperature%"),
-                FuturesMarket.name.ilike("%hurricane%"),
-                FuturesMarket.name.ilike("%rain%"),
+            FuturesMarket.name.op("~*")(
+                r"\m(weather|temperature|hurricane|rain|rainfall|precipitation|"
+                r"storm|snow|tornado|wildfire|heat)\M"
             ),
         ]
         ordering = [
