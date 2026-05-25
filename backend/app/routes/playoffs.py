@@ -2127,12 +2127,50 @@ async def get_golf_schedule():
 
 
 @router.get("/{league_slug}")
-async def get_playoff_grid(
+async def get_playoff_grid_cached(
     league_slug: str,
     hours: int = Query(default=None, description="Trend chart window in hours"),
     top: int = Query(default=10, ge=1, le=50, description="Top N teams for trend chart"),
     debug: bool = Query(default=False, description="Include column→market debug info"),
     db: AsyncSession = Depends(get_db),
+):
+    """Return championship progression grid for a league (Redis-cached, 1h TTL)."""
+    import json
+
+    # Only cache default/simple requests (no debug, default params)
+    cache_eligible = not debug and hours is None and top == 10
+    cache_key = f"bainluck:category:playoffs:{league_slug}"
+
+    if cache_eligible:
+        from app.tasks.redis_state import get_async_redis_client
+        try:
+            rc = get_async_redis_client()
+            cached = await rc.get(cache_key)
+            await rc.aclose()
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass  # Fall through to live query
+
+    result = await get_playoff_grid(league_slug, hours, top, debug, db)
+
+    if cache_eligible:
+        try:
+            rc = get_async_redis_client()
+            await rc.set(cache_key, json.dumps(result, default=str), ex=3600)
+            await rc.aclose()
+        except Exception:
+            pass
+
+    return result
+
+
+async def get_playoff_grid(
+    league_slug: str,
+    hours: int = None,
+    top: int = 10,
+    debug: bool = False,
+    db: AsyncSession = None,
 ):
     """Return championship progression grid for a league.
 
@@ -3122,11 +3160,47 @@ async def get_team_progression_for_event(
     away_team_name: str,
     sport_key: str,
 ) -> dict | None:
-    """Build team progression data for an event's two teams.
+    """Build team progression data for an event's two teams (Redis-cached, 15 min TTL).
 
     Returns a compact response with each team's championship grid row,
     or None if no league config exists for this sport.
     """
+    import json
+
+    cache_key = f"bainluck:team_progression:{event_id}"
+    from app.tasks.redis_state import get_async_redis_client
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get(cache_key)
+        await rc.aclose()
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    result = await _get_team_progression_for_event_uncached(
+        db, event_id, home_team_name, away_team_name, sport_key,
+    )
+
+    if result is not None:
+        try:
+            rc = get_async_redis_client()
+            await rc.set(cache_key, json.dumps(result, default=str), ex=900)
+            await rc.aclose()
+        except Exception:
+            pass
+
+    return result
+
+
+async def _get_team_progression_for_event_uncached(
+    db: AsyncSession,
+    event_id: int,
+    home_team_name: str,
+    away_team_name: str,
+    sport_key: str,
+) -> dict | None:
+    """Build team progression data (uncached implementation)."""
     config = get_league_config_for_sport_key(sport_key)
     if not config:
         return None

@@ -835,7 +835,7 @@ async def list_futures_markets(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(FuturesMarket.updated_at.desc())
+    query = query.order_by(FuturesMarket.updated_at.desc()).limit(500)
 
     result = await db.execute(query)
     markets = result.scalars().unique().all()
