@@ -64,6 +64,83 @@ class UpdateProfileRequest(BaseModel):
 
 # --- Endpoints ---
 
+class EmailSignInRequest(BaseModel):
+    """Request body for direct email sign-in (admin only)."""
+    email: str
+
+
+@router.post("/email-sign-in")
+async def email_sign_in(
+    body: EmailSignInRequest,
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Direct sign-in for admin emails — no OAuth needed.
+
+    Only works for emails in DEFAULT_ADMIN_EMAILS. Creates or looks up
+    the Firebase user and issues a session token directly.
+    """
+    from app.routes.admin_utils import _admin_user_emails
+
+    email = body.email.strip().lower()
+    if email not in _admin_user_emails():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not authorized for direct sign-in",
+        )
+
+    firebase_uid = get_or_create_firebase_user(email, None, None)
+    if not firebase_uid:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Firebase not configured",
+        )
+
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.preferences))
+        .where(User.firebase_uid == firebase_uid)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(firebase_uid=firebase_uid, email=email)
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
+        prefs = UserPreference(user_id=user.id)
+        db.add(prefs)
+        user.preferences = prefs
+
+    onboarding_completed = bool(user.preferences and user.preferences.onboarding_completed)
+
+    from app.services.firebase_auth import create_session_token
+    session_token = create_session_token(uid=firebase_uid, email=email)
+    if not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create session token",
+        )
+
+    logger.info(f"Email sign-in: email={email}, uid={firebase_uid}")
+
+    return {
+        "id_token": session_token,
+        "uid": firebase_uid,
+        "email": email,
+        "name": None,
+        "picture": None,
+        "expires_in": 2592000,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "photo_url": user.photo_url,
+            "onboarding_completed": onboarding_completed,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+    }
+
+
 @router.get("/status")
 async def auth_status():
     """Check if authentication is configured."""

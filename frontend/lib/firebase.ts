@@ -570,4 +570,41 @@ export async function onAuthChange(
   return unsub;
 }
 
+/**
+ * Direct email sign-in for admin users. No OAuth popup needed.
+ */
+export async function signInWithEmail(email: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`${API_URL}/api/auth/email-sign-in`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      console.error("[Firebase] Email sign-in failed:", resp.status, text);
+      return null;
+    }
+
+    const data: BackendExchangeData = await resp.json();
+
+    if (data.id_token) {
+      storeBackendAuth({
+        uid: data.uid || email,
+        email: data.email || email,
+        displayName: data.name || null,
+        photoURL: data.picture || null,
+        idToken: data.id_token,
+        expiresAt: Date.now() + (data.expires_in || 2592000) * 1000,
+      });
+    }
+
+    return data.id_token || null;
+  } catch (error) {
+    console.error("[Firebase] Email sign-in error:", error);
+    return null;
+  }
+}
+
 export type { FirebaseUser };

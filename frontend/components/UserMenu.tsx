@@ -21,10 +21,13 @@ export default function UserMenu() {
     authError,
     signInWithGoogle,
     signInWithApple,
+    signInWithEmail,
     signOut,
   } = useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
   const [showProviders, setShowProviders] = useState(false);
+  const [showEmailInput, setShowEmailInput] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
   const [imgError, setImgError] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -123,6 +126,45 @@ export default function UserMenu() {
             </button>
 
             <div className="border-t border-surface-border mt-1 pt-1">
+              {!showEmailInput ? (
+                <button
+                  onClick={() => setShowEmailInput(true)}
+                  className="w-full text-left px-4 py-2 text-sm text-text-muted hover:bg-surface-elevated transition-colors"
+                >
+                  Sign in with email
+                </button>
+              ) : (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!emailInput.trim()) return;
+                    setShowProviders(false);
+                    setShowEmailInput(false);
+                    setSigningIn(true);
+                    try {
+                      await signInWithEmail(emailInput.trim());
+                    } finally {
+                      setSigningIn(false);
+                    }
+                  }}
+                  className="px-4 py-2"
+                >
+                  <input
+                    type="email"
+                    placeholder="Email address"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    autoFocus
+                    className="w-full px-2 py-1.5 text-sm border border-surface-border rounded bg-surface-elevated text-text-primary"
+                  />
+                  <button
+                    type="submit"
+                    className="w-full mt-1.5 px-2 py-1.5 text-sm bg-accent-brand text-white rounded hover:opacity-90"
+                  >
+                    Sign in
+                  </button>
+                </form>
+              )}
               <Link
                 href="/about"
                 onClick={() => setShowProviders(false)}

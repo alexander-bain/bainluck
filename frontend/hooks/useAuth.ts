@@ -20,6 +20,7 @@ import {
   isFirebaseConfigured,
   signInWithGoogle as firebaseSignInWithGoogle,
   signInWithApple as firebaseSignInWithApple,
+  signInWithEmail as firebaseSignInWithEmail,
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
@@ -49,6 +50,7 @@ interface UseAuthResult {
   authError: string | null;
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
+  signInWithEmail: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }
@@ -263,6 +265,31 @@ export function useAuth(): UseAuthResult {
     }
   }, [isAuthAvailable]);
 
+  const signInWithEmail = useCallback(async (email: string): Promise<void> => {
+    setAuthError(null);
+    try {
+      const idToken = await firebaseSignInWithEmail(email);
+      if (idToken) {
+        tokenRef.current = idToken;
+        setSignedInMarker(true);
+        const backendUser = getBackendAuthUser();
+        if (backendUser) {
+          setUser({
+            uid: backendUser.uid,
+            email: backendUser.email,
+            displayName: backendUser.displayName,
+            photoURL: backendUser.photoURL,
+          });
+        }
+      } else {
+        setAuthError("Email sign-in failed. Make sure you're using an authorized email.");
+      }
+    } catch (error) {
+      console.error("[Auth] Email sign-in error:", error);
+      setAuthError("Email sign-in failed. Please try again.");
+    }
+  }, []);
+
   // Sign out
   const signOut = useCallback(async (): Promise<void> => {
     await firebaseSignOut();
@@ -287,6 +314,7 @@ export function useAuth(): UseAuthResult {
     authError,
     signInWithGoogle,
     signInWithApple,
+    signInWithEmail,
     signOut,
     getToken,
   };
