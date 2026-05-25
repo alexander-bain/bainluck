@@ -1192,6 +1192,25 @@ def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[di
 
 
 @router.get("")
+async def get_golf_cached(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return golf data (Redis-cached to avoid OOM on 512MB dyno)."""
+    import json as _json
+    from app.tasks.redis_state import get_async_redis_client
+
+    try:
+        rc = get_async_redis_client()
+        cached = await rc.get("bainluck:category:golf")
+        await rc.aclose()
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
+
+    return await get_golf(db)
+
+
 async def get_golf(
     db: AsyncSession = Depends(get_db),
 ):

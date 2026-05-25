@@ -105,6 +105,21 @@ async def _precompute_weather():
     return 7
 
 
+async def _precompute_golf():
+    """Build the golf response and cache it."""
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+    from app.routes.golf import get_golf
+
+    async with get_task_session() as db:
+        response = await get_golf(db)
+
+    rc = get_redis_client()
+    rc.set(f"{CACHE_PREFIX}golf", json.dumps(response, default=str), ex=CACHE_TTL)
+    logger.info("Cached golf category page")
+    return "ok"
+
+
 async def _precompute_all_category_pages():
     """Precompute all category page caches."""
     results = {}
@@ -113,6 +128,7 @@ async def _precompute_all_category_pages():
         ("entertainment", _precompute_entertainment),
         ("economics", _precompute_economics),
         ("weather", _precompute_weather),
+        ("golf", _precompute_golf),
     ]:
         try:
             results[name] = await fn()
