@@ -284,13 +284,22 @@ class KalshiAPIService(BaseAPIClient):
             normalized = []
             for c in raw_candles:
                 ts = c.get("end_period_ts")
-                yes_bid = c.get("yes_bid", {})
-                close_str = yes_bid.get("close_dollars")
-                if ts is None or close_str is None:
+                if ts is None:
                     continue
+                yes_bid = c.get("yes_bid", {})
+                yes_ask = c.get("yes_ask", {})
                 try:
-                    price = float(close_str)
+                    bid = float(yes_bid.get("close_dollars") or 0)
+                    ask = float(yes_ask.get("close_dollars") or 0)
                 except (ValueError, TypeError):
+                    continue
+                if bid > 0 and ask > 0:
+                    price = (bid + ask) / 2
+                elif ask > 0:
+                    price = ask
+                elif bid > 0:
+                    price = bid
+                else:
                     continue
                 normalized.append({"t": ts, "yes_price": price})
             return normalized
