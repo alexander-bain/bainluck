@@ -159,11 +159,18 @@ export function useAuth(): UseAuthResult {
     onAuthChange((fbUser) => {
       if (cancelled) return;
       console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
-      setUser(mapFirebaseUser(fbUser));
-      setIsLoading(false);
       if (fbUser) {
+        setUser(mapFirebaseUser(fbUser));
         setSignedInMarker(true);
+      } else {
+        const backendFallback = getBackendAuthUser();
+        if (backendFallback) {
+          console.log("[Auth] Firebase says null but backend auth is valid — keeping session for", backendFallback.email);
+        } else {
+          setUser(null);
+        }
       }
+      setIsLoading(false);
     }).then((unsub) => {
       if (cancelled) {
         unsub();

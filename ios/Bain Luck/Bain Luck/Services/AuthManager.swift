@@ -37,6 +37,7 @@ final class AuthManager: ObservableObject {
         "alex.bain@gmail.com",
         "alex.bain@bainluck.com",
         "olivercbain@gmail.com",
+        "daphnegardinerbain@gmail.com",
     ]
 
     /// True when the signed-in user's email matches a known admin address.
