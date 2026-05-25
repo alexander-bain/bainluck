@@ -888,8 +888,9 @@ async def _backfill_kalshi_price_history(
       open_sparse   — open/active feed-visible markets with no snapshots
                       in the last 7 days (chart quality for Discover).
 
-    Uses the Kalshi candlesticks API (GET /markets/{ticker}/candlesticks)
-    to fetch hourly price history.
+    Uses the Kalshi batch candlesticks API (GET /markets/candlesticks)
+    to fetch hourly price history.  The old per-market endpoint
+    (GET /markets/{ticker}/candlesticks) was deprecated and returns 404.
     """
     import asyncio
     from app.models.models import FuturesOddsSnapshot
@@ -969,11 +970,12 @@ async def _backfill_kalshi_price_history(
                     from sqlalchemy.dialects.postgresql import insert as pg_insert
                     batch_values = []
                     for c in candles:
-                        ts = c.get("end_period_ts") or c.get("t")
-                        yes_price = c.get("yes_price") or c.get("price")
-                        if ts is None or yes_price is None:
+                        # Service returns normalized {"t": unix_ts, "yes_price": 0-1 float}
+                        ts = c.get("t")
+                        prob = c.get("yes_price")
+                        if ts is None or prob is None:
                             continue
-                        prob = yes_price / 100.0 if yes_price > 1 else float(yes_price)
+                        prob = float(prob)
                         if prob <= 0 or prob >= 1:
                             continue
                         captured = datetime.fromtimestamp(ts, tz=timezone.utc) if isinstance(ts, (int, float)) else ts

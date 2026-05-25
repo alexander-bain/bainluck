@@ -932,26 +932,44 @@ private struct NativeGroupCard: View {
     let items: [FeedItem]
     @State private var expanded = false
 
+    private var category: String {
+        items.first?.futures?.llmSportCategory?.lowercased() ?? ""
+    }
+
+    private var gradient: (Color, Color) {
+        sportCategoryGradients[category] ?? sportDefaultGradient
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
-                HStack {
+                HStack(spacing: 8) {
                     Text(title)
                         .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(items.count) markets")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text("\(items.count)")
+                        .font(.system(size: 10, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.15), in: Capsule())
                     Spacer()
                     Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.7))
                         .rotationEffect(.degrees(expanded ? 180 : 0))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color.secondary.opacity(0.05))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    LinearGradient(
+                        colors: [gradient.0, gradient.1],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
             }
             .buttonStyle(.plain)
 
@@ -973,17 +991,18 @@ private struct NativeGroupCard: View {
             } else if items.count > 1 {
                 Button { withAnimation { expanded = true } } label: {
                     Text("Show \(items.count - 1) more")
-                        .font(.caption)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.blue)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
             }
         }
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack, lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
     }
 }
 

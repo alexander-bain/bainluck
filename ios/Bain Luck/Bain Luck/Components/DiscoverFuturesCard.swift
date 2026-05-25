@@ -1,8 +1,8 @@
 import SwiftUI
 
-// MARK: - Category Gradients
+// MARK: - Category Gradients (shared with DiscoverEventCard)
 
-private let categoryGradients: [String: (Color, Color)] = [
+let sportCategoryGradients: [String: (Color, Color)] = [
     "basketball": (Color(red: 0.49, green: 0.18, blue: 0.07), Color(red: 0.76, green: 0.25, blue: 0.05)),
     "football": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.08, green: 0.50, blue: 0.24)),
     "baseball": (Color(red: 0.50, green: 0.11, blue: 0.11), Color(red: 0.73, green: 0.11, blue: 0.11)),
@@ -20,7 +20,7 @@ private let categoryGradients: [String: (Color, Color)] = [
     "olympics": (Color(red: 0.47, green: 0.21, blue: 0.06), Color(red: 0.85, green: 0.47, blue: 0.02)),
 ]
 
-private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 0.16), Color(red: 0.12, green: 0.16, blue: 0.24))
+let sportDefaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 0.16), Color(red: 0.12, green: 0.16, blue: 0.24))
 
 // MARK: - Futures Card
 
@@ -34,7 +34,7 @@ struct NativeFuturesDiscoverCard: View {
     var onContextCollapse: (() -> Void)? = nil
 
     private var gradient: (Color, Color) {
-        categoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? defaultGradient
+        sportCategoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? sportDefaultGradient
     }
 
     private var categoryLabel: String {

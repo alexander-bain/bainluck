@@ -1,5 +1,24 @@
 import SwiftUI
 
+// MARK: - Sport Emoji (shared)
+
+func sportEmoji(for sport: String?) -> String {
+    switch sport?.lowercased().split(separator: "_").first.map(String.init) {
+    case "basketball": return "🏀"
+    case "football", "americanfootball": return "🏈"
+    case "baseball": return "⚾"
+    case "hockey", "icehockey": return "🏒"
+    case "soccer": return "⚽"
+    case "golf": return "⛳"
+    case "mma", "boxing": return "🥊"
+    case "tennis": return "🎾"
+    case "cricket": return "🏏"
+    case "motorsports": return "🏎"
+    case "olympics": return "🏅"
+    default: return "🍀"
+    }
+}
+
 // MARK: - Event Card
 
 struct NativeEventDiscoverCard: View {
@@ -19,17 +38,31 @@ struct NativeEventDiscoverCard: View {
         Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
     }
 
-    private var eyebrow: String {
-        if event.status == "live" { return "LIVE" }
-        if event.status == "completed" || event.status == "closed" { return "FINAL" }
-        return (event.sportName ?? event.sport ?? "SPORTS").uppercased()
+    private var sportKey: String {
+        event.sport?.split(separator: "_").first.map(String.init)?.lowercased() ?? "sports"
+    }
+
+    private var gradient: (Color, Color) {
+        sportCategoryGradients[sportKey] ?? sportDefaultGradient
+    }
+
+    private var isLive: Bool {
+        event.status == "live"
+    }
+
+    private var isDone: Bool {
+        event.status == "completed" || event.status == "closed"
+    }
+
+    private var sportLabel: String {
+        (event.sportName ?? event.sport ?? "SPORTS").uppercased()
     }
 
     private var statusText: String {
-        if event.status == "live" { return event.espn?.period ?? "LIVE" }
-        if event.status == "completed" || event.status == "closed" {
+        if isLive { return event.espn?.period ?? "LIVE" }
+        if isDone {
             if let a = event.awayScore, let h = event.homeScore {
-                return "F \(a)-\(h)"
+                return "\(a) - \(h)"
             }
             return "Final"
         }
@@ -42,7 +75,7 @@ struct NativeEventDiscoverCard: View {
         if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
             return "Excitement Index \(score): \(label)"
         }
-        if event.status == "live" { return "Live probability is moving now" }
+        if isLive { return "Live probability is moving now" }
         return nil
     }
 
@@ -58,102 +91,165 @@ struct NativeEventDiscoverCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                HStack(spacing: 6) {
-                    if event.status == "live" {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 7, height: 7)
-                    }
-                    Text(eyebrow)
-                        .font(.system(size: 10, weight: .heavy))
-                        .tracking(0.8)
-                }
-                .foregroundStyle(event.status == "live" ? .red : .secondary)
-
-                Spacer()
-
-                Text(statusText)
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(event.status == "live" ? .red : .secondary)
-            }
-
-            HStack(alignment: .center, spacing: 10) {
-                teamColumn(
-                    name: event.awayTeam,
-                    logo: event.awayTeamData?.logoSmall,
-                    color: awayColor,
-                    probability: event.currentOdds?.awayProbability,
-                    score: event.awayScore,
-                    alignment: .leading
+        VStack(alignment: .leading, spacing: 0) {
+            // Hero section with gradient background
+            ZStack {
+                LinearGradient(
+                    colors: [gradient.0, gradient.1],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .overlay(
+                    Text(sportEmoji(for: event.sport))
+                        .font(.system(size: 96))
+                        .opacity(0.08)
                 )
 
-                Text("vs")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28)
+                VStack(spacing: 0) {
+                    // Top row: sport label + live badge
+                    HStack {
+                        Text(sportLabel)
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.24), in: Capsule())
 
-                teamColumn(
-                    name: event.homeTeam,
-                    logo: event.homeTeamData?.logoSmall,
-                    color: homeColor,
-                    probability: event.currentOdds?.homeProbability,
-                    score: event.homeScore,
-                    alignment: .trailing
-                )
-            }
+                        Spacer()
 
-            if let homeProbability = event.currentOdds?.homeProbability,
-               let awayProbability = event.currentOdds?.awayProbability {
-                probabilityBar(awayProbability: awayProbability, homeProbability: homeProbability)
-            }
-
-            if let contextText {
-                ExpandableNativeContextText(
-                    text: contextText,
-                    expandedText: expandedContext,
-                    font: .caption,
-                    onExpand: onContextExpand,
-                    onCollapse: onContextCollapse
-                )
-            }
-
-            HStack {
-                Spacer()
-
-                ShareLink(
-                    item: shareURL,
-                    subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
-                    message: Text(shareMessage)
-                ) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(8)
-                        .background(Color.secondary.opacity(0.10), in: Circle())
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button(action: copyShareImage) {
-                        Label("Copy Image", systemImage: "doc.on.doc")
+                        if isLive {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(.white)
+                                    .frame(width: 5, height: 5)
+                                Text("LIVE")
+                                    .font(.system(size: 9, weight: .heavy))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.85), in: Capsule())
+                        } else if isDone {
+                            Text("FINAL")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.white.opacity(0.78))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.black.opacity(0.24), in: Capsule())
+                        }
                     }
 
-                    #if os(iOS)
-                    Button(action: saveShareImage) {
-                        Label("Save Image", systemImage: "square.and.arrow.down")
+                    Spacer(minLength: 10)
+
+                    // Matchup row
+                    HStack(alignment: .center, spacing: 0) {
+                        heroTeam(
+                            name: event.awayTeam,
+                            logo: event.awayTeamData?.logoSmall,
+                            color: awayColor,
+                            score: event.awayScore,
+                            alignment: .leading
+                        )
+
+                        VStack(spacing: 2) {
+                            Text(statusText)
+                                .font(.system(size: isLive ? 11 : 13, weight: .heavy).monospacedDigit())
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                        .frame(width: 50)
+
+                        heroTeam(
+                            name: event.homeTeam,
+                            logo: event.homeTeamData?.logoSmall,
+                            color: homeColor,
+                            score: event.homeScore,
+                            alignment: .trailing
+                        )
                     }
-                    #endif
+                }
+                .padding(14)
+            }
+            .frame(height: 160)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
+
+            // Bottom section
+            VStack(alignment: .leading, spacing: 12) {
+                // Team names
+                Text("\(event.awayTeam) \(isDone ? "" : "@") \(event.homeTeam)")
+                    .font(.headline.weight(.bold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // Probability bar
+                if let homeProbability = event.currentOdds?.homeProbability,
+                   let awayProbability = event.currentOdds?.awayProbability {
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text(formatProbability(awayProbability))
+                                .font(.title3.weight(.black).monospacedDigit())
+                                .foregroundStyle(awayColor)
+                            Spacer()
+                            Text("Win Probability")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatProbability(homeProbability))
+                                .font(.title3.weight(.black).monospacedDigit())
+                                .foregroundStyle(homeColor)
+                        }
+                        probabilityBar(awayProbability: awayProbability, homeProbability: homeProbability)
+                    }
+                }
+
+                // Context text
+                if let contextText {
+                    ExpandableNativeContextText(
+                        text: contextText,
+                        expandedText: expandedContext,
+                        font: .caption,
+                        onExpand: onContextExpand,
+                        onCollapse: onContextCollapse
+                    )
+                }
+
+                // Footer
+                HStack {
+                    Spacer()
+
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
+                        message: Text(shareMessage)
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                            .background(Color.secondary.opacity(0.10), in: Circle())
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(action: copyShareImage) {
+                            Label("Copy Image", systemImage: "doc.on.doc")
+                        }
+
+                        #if os(iOS)
+                        Button(action: saveShareImage) {
+                            Label("Save Image", systemImage: "square.and.arrow.down")
+                        }
+                        #endif
+                    }
                 }
             }
+            .padding(14)
         }
-        .padding(14)
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
         .contentShape(Rectangle())
         .onTapGesture {
             navigationPath.append(Route.eventDetail(id: event.id))
@@ -161,51 +257,42 @@ struct NativeEventDiscoverCard: View {
         }
     }
 
-    private func teamColumn(
+    private func heroTeam(
         name: String,
         logo: String?,
         color: Color,
-        probability: Double?,
         score: Int?,
         alignment: HorizontalAlignment
     ) -> some View {
-        VStack(alignment: alignment, spacing: 7) {
+        VStack(spacing: 6) {
             if let logo, let url = URL(string: logo) {
-                AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
-                    .frame(width: 42, height: 42)
+                AsyncImage(url: url) { img in
+                    img.resizable().scaledToFit()
+                } placeholder: { EmptyView() }
+                .frame(width: 52, height: 52)
+                .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
             } else {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(color)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 52, height: 52)
+                    .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
                     .overlay(
                         Text(String(name.split(separator: " ").last ?? "").prefix(3).uppercased())
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: 12, weight: .heavy))
                             .foregroundStyle(.white)
                     )
             }
 
-            Text(name)
-                .font(.subheadline.weight(.bold))
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
-                .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
+            Text(name.split(separator: " ").last.map(String.init) ?? name)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(1)
 
-            HStack(spacing: 6) {
-                if let probability {
-                    Text(formatProbability(probability))
-                        .font(.title3.weight(.black).monospacedDigit())
-                        .foregroundStyle(color)
-                }
-                if let score {
-                    Text("\(score)")
-                        .font(.caption.weight(.heavy).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.10))
-                        .clipShape(Capsule())
-                }
+            if let score, (isLive || isDone) {
+                Text("\(score)")
+                    .font(.title2.weight(.black).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 4, x: 0, y: 2)
             }
         }
         .frame(maxWidth: .infinity)
