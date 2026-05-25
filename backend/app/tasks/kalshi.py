@@ -755,6 +755,7 @@ async def _fix_golf_commence_times() -> int:
                      len(markets), "available" if schedule else "UNAVAILABLE")
 
         fixed = 0
+        fixed_ids = []
         for m in markets:
             target_dt = None
 
@@ -782,21 +783,20 @@ async def _fix_golf_commence_times() -> int:
                     {"start": target_dt, "id": m.id},
                 )
                 fixed += 1
+                fixed_ids.append(m.id)
 
-        if fixed:
+        if fixed_ids:
             await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.source = 'kalshi'
-                      AND fm.llm_sport_category = 'golf'
+                    WHERE fo.market_id = ANY(:ids)
                       AND fo.calibration_probability IS NOT NULL
-                """)
+                """),
+                {"ids": fixed_ids},
             )
             await session.commit()
-            logger.info("Fixed commence_time for %d Kalshi golf markets (reset calibration_probability)", fixed)
+            logger.info("Fixed commence_time for %d Kalshi golf markets (reset %d market cal_probs)", fixed, len(fixed_ids))
 
         return fixed
 
@@ -824,9 +824,11 @@ async def _fix_hockey_commence_times() -> int:
                   AND e.commence_time IS NOT NULL
                   AND (fm.commence_time IS NULL
                        OR ABS(EXTRACT(EPOCH FROM fm.commence_time - e.commence_time)) > 86400)
+                RETURNING fm.id
             """)
         )
-        linked_fixed = result1.rowcount
+        linked_ids = [r[0] for r in result1.fetchall()]
+        linked_fixed = len(linked_ids)
 
         # Pass 2: Unlinked markets — derive from ticker
         result2 = await session.execute(
@@ -843,6 +845,7 @@ async def _fix_hockey_commence_times() -> int:
         )
         unlinked = result2.fetchall()
         ticker_fixed = 0
+        ticker_ids = []
         for m in unlinked:
             ticker = m.ticker or m.external_id or ""
             game_date = extract_game_date_from_ticker(ticker)
@@ -853,25 +856,24 @@ async def _fix_hockey_commence_times() -> int:
                         {"dt": game_date, "id": m.id},
                     )
                     ticker_fixed += 1
+                    ticker_ids.append(m.id)
 
-        total_fixed = linked_fixed + ticker_fixed
-        if total_fixed:
+        fixed_ids = linked_ids + ticker_ids
+        if fixed_ids:
             await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.source = 'kalshi'
-                      AND fm.llm_sport_category = 'hockey'
+                    WHERE fo.market_id = ANY(:ids)
                       AND fo.calibration_probability IS NOT NULL
-                """)
+                """),
+                {"ids": fixed_ids},
             )
             await session.commit()
             logger.info(
                 "Fixed commence_time for %d Kalshi hockey markets "
-                "(linked=%d, ticker=%d, reset calibration_probability)",
-                total_fixed, linked_fixed, ticker_fixed,
+                "(linked=%d, ticker=%d, reset %d market cal_probs)",
+                len(fixed_ids), linked_fixed, ticker_fixed, len(fixed_ids),
             )
 
         return total_fixed
