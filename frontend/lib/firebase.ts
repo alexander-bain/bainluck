@@ -362,54 +362,36 @@ async function handleBackendExchange(
  */
 export async function signInWithGoogle(): Promise<string | null> {
   const authInstance = await getFirebaseAuth();
-  if (!authInstance) {
-    console.error("[Firebase] Auth not initialized");
+  if (!authInstance || !GOOGLE_CLIENT_ID) {
+    console.error("[Firebase] Auth not initialized or missing GOOGLE_CLIENT_ID");
     return null;
   }
 
-  const authModule = firebaseAuthModule || await import("firebase/auth");
-
   try {
-    console.log("[Firebase] Opening Google signInWithPopup...");
-    const provider = new authModule.GoogleAuthProvider();
-    provider.addScope("email");
-    provider.addScope("profile");
+    console.log("[Firebase] Opening Google sign-in popup...");
+    const accessToken = await getGoogleAccessToken();
+    console.log("[Firebase] Got Google access token, exchanging with backend...");
 
-    const result = await withTimeout(
-      authModule.signInWithPopup(authInstance, provider),
-      120000,
-      "signInWithPopup (Google)"
+    const resp = await withTimeout(
+      fetch(`${API_URL}/api/auth/google-access-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: accessToken }),
+      }),
+      8000,
+      "backend token exchange"
     );
 
-    console.log("[Firebase] Google signInWithPopup succeeded for", result.user.email);
-    const idToken = await result.user.getIdToken();
-
-    // Exchange with backend for durable localStorage token
-    try {
-      const credential = authModule.GoogleAuthProvider.credentialFromResult(result);
-      const accessToken = credential?.accessToken;
-      if (accessToken) {
-        const resp = await withTimeout(
-          fetch(`${API_URL}/api/auth/google-access-token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ access_token: accessToken }),
-          }),
-          8000,
-          "backend token exchange"
-        );
-        if (resp.ok) {
-          const backendData: BackendExchangeData = await resp.json();
-          await handleBackendExchange(authInstance, backendData);
-        }
-      }
-    } catch {
-      // Backend exchange is best-effort — Firebase auth already succeeded
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      console.error("[Firebase] Backend token exchange failed:", resp.status, text);
+      return null;
     }
 
-    return idToken;
+    const backendData: BackendExchangeData = await resp.json();
+    return await handleBackendExchange(authInstance, backendData);
   } catch (error) {
-    console.error("[Firebase] Google sign-in error:", error);
+    console.error("[Firebase] Sign-in error:", error);
     return null;
   }
 }
