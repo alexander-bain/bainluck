@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.models import FuturesMarket, FuturesOutcome, RankingJudgment, Sport
-from app.routes.admin_utils import _check_admin_auth, _check_admin_secret
+from app.routes.admin_utils import _check_admin_auth, _check_admin_secret, _resolve_admin_email
 from app.services import get_db, get_db_rw
 from app.utils.discover_reason_tags import canonical_reason_tags
 from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
@@ -666,6 +666,15 @@ async def create_judgment(
     if not label_value:
         raise HTTPException(status_code=400, detail="label is required")
 
+    # Resolve reviewer identity: when the caller passes "native" (iOS default)
+    # and is authenticated via Bearer token, persist the admin user's email so
+    # server-side reviewed-state is per-user rather than a shared pool.
+    reviewer_value = _merged_value(body, "reviewer", reviewer, "alex")
+    if reviewer_value == "native":
+        admin_email = await _resolve_admin_email(request, db)
+        if admin_email:
+            reviewer_value = admin_email
+
     judgment = RankingJudgment(
         surface=_merged_value(body, "surface", surface, "discover"),
         rank_seen=_merged_value(body, "rank_seen", rank_seen),
@@ -694,7 +703,7 @@ async def create_judgment(
             body,
             _merged_value(body, "label_metadata", None),
         ),
-        reviewer=_merged_value(body, "reviewer", reviewer, "alex"),
+        reviewer=reviewer_value,
     )
     db.add(judgment)
     await db.commit()
@@ -720,12 +729,20 @@ async def list_labeling_candidates(
     ):
         raise HTTPException(status_code=403, detail="Admin access required")
 
+    # Resolve reviewer: when "native" and authenticated via Bearer token,
+    # use the admin's email for per-user reviewed state.
+    effective_reviewer = reviewer
+    if reviewer == "native":
+        admin_email = await _resolve_admin_email(request, db)
+        if admin_email:
+            effective_reviewer = admin_email
+
     now = datetime.now(timezone.utc)
     selected_strata = _parse_candidate_strata(strata)
     per_stratum_limit = min(100, max(limit * 2, 40))
     reviewed_keys = await load_reviewed_ranking_keys(
         db,
-        reviewer=reviewer,
+        reviewer=effective_reviewer,
         surface=reviewed_surface,
     )
 
@@ -773,7 +790,7 @@ async def list_labeling_candidates(
         "stratum_sample_counts": stratum_counts,
         "reviewed_filter": {
             "enabled": True,
-            "reviewer": reviewer,
+            "reviewer": effective_reviewer,
             "surface": reviewed_surface,
             "reviewed_key_count": len(reviewed_keys),
             "filtered_count": filtered_reviewed,
@@ -1011,3 +1028,144 @@ async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Que
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=ranking_judgments.csv"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Eval-ready labeled dataset export
+# ---------------------------------------------------------------------------
+
+_SPLIT_SALT = "bainluck-discover-labels-v1"
+
+
+def _reviewer_hash(reviewer: str | None) -> str:
+    """Deterministic pseudonymous reviewer ID (no PII in export)."""
+    raw = str(reviewer or "anonymous")
+    return hashlib.sha256(f"{_SPLIT_SALT}:{raw}".encode("utf-8")).hexdigest()[:12]
+
+
+def _dataset_split(market_id: int | None, event_id: int | None) -> str:
+    """Deterministic train/dev/test split based on market_id hash.
+
+    80/10/10 split. Hash-based on item id for reproducibility —
+    the same market always lands in the same split.
+    """
+    item_key = str(market_id or event_id or 0)
+    digest = hashlib.md5(
+        f"{_SPLIT_SALT}:{item_key}".encode("utf-8")
+    ).hexdigest()
+    bucket = int(digest[:8], 16) % 100
+    if bucket < 80:
+        return "train"
+    if bucket < 90:
+        return "dev"
+    return "test"
+
+
+def _eval_row_from_judgment(judgment: RankingJudgment) -> dict[str, Any]:
+    """Build one eval-ready row from a RankingJudgment, with no PII."""
+    metadata = judgment.label_metadata if isinstance(judgment.label_metadata, dict) else {}
+    snapshot = metadata.get("card_snapshot") if isinstance(metadata, dict) else {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+
+    return {
+        "market_id": judgment.market_id,
+        "event_id": judgment.event_id,
+        "market_name": judgment.market_name or "",
+        "reviewer_hash": _reviewer_hash(judgment.reviewer),
+        "label": judgment.label,
+        "timestamp": judgment.created_at.isoformat() if judgment.created_at else None,
+        "split": _dataset_split(judgment.market_id, judgment.event_id),
+        "category": judgment.category_at_review or snapshot.get("category") or "",
+        "source": snapshot.get("source") or "",
+        "archetype": judgment.archetype_at_review or snapshot.get("archetype") or "",
+        "quality_class": judgment.quality_class_at_review or snapshot.get("quality_class") or "",
+        "score_at_review": judgment.score_at_review,
+        "rank_seen": judgment.rank_seen,
+        "rendered_probability": snapshot.get("rendered_probability"),
+        "story_key": snapshot.get("story_key") or "",
+        "family_key": snapshot.get("family_key") or "",
+        "group_id": snapshot.get("group_id") or "",
+        "has_hook": bool(snapshot.get("hook_description")),
+        "has_image": bool(snapshot.get("image_url")),
+        "reason_tags": canonical_reason_tags(judgment.reason_tags),
+        "surface": judgment.surface or "discover",
+        "item_type": judgment.item_type or "futures",
+    }
+
+
+@router.get("/eval-export")
+async def export_eval_dataset(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str | None = Query(None),
+    fmt: str = Query("json", description="Output format: json or csv"),
+    days: int = Query(90, ge=1, le=365),
+    split: str | None = Query(None, description="Filter to train/dev/test split"),
+    label: str | None = Query(None, description="Filter by label"),
+    surface: str | None = Query(None),
+    limit: int = Query(10000, ge=1, le=50000),
+):
+    """Export eval-ready labeled dataset with hashed reviewers and train/dev/test splits.
+
+    Returns JSON by default. Set fmt=csv for CSV download.
+    No PII is included — reviewer emails are hashed.
+    """
+    if not _check_admin_secret(secret) and not await _check_admin_auth(
+        secret, request, db
+    ):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    query = (
+        select(RankingJudgment)
+        .where(RankingJudgment.created_at >= cutoff)
+        .order_by(RankingJudgment.created_at.desc())
+        .limit(limit)
+    )
+    if surface:
+        query = query.where(RankingJudgment.surface == surface)
+    if label:
+        query = query.where(RankingJudgment.label == label)
+
+    result = await db.execute(query)
+    all_rows = [_eval_row_from_judgment(j) for j in result.scalars().all()]
+
+    if split:
+        all_rows = [r for r in all_rows if r["split"] == split]
+
+    split_counts = {}
+    label_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    for row in all_rows:
+        split_counts[row["split"]] = split_counts.get(row["split"], 0) + 1
+        label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+        category_counts[row["category"] or "unknown"] = (
+            category_counts.get(row["category"] or "unknown", 0) + 1
+        )
+
+    if fmt == "csv":
+        output = io.StringIO()
+        if all_rows:
+            writer = csv.DictWriter(output, fieldnames=list(all_rows[0].keys()))
+            writer.writeheader()
+            for row in all_rows:
+                csv_row = dict(row)
+                csv_row["reason_tags"] = ",".join(csv_row.get("reason_tags") or [])
+                writer.writerow(csv_row)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=discover_labels_eval.csv"
+            },
+        )
+
+    return {
+        "total": len(all_rows),
+        "split_counts": split_counts,
+        "label_counts": label_counts,
+        "category_counts": category_counts,
+        "rows": all_rows,
+    }

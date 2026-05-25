@@ -38,6 +38,14 @@ LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "soccer_germany_bundesliga": ["%Bundesliga%"],
     "soccer_uefa_champs_league": ["%Champions League%", "%UCL%"],
     "mma_mixed_martial_arts": ["%UFC%", "%Mixed Martial Arts%"],
+    "tennis_atp": ["%ATP%", "%Roland Garros ATP%", "%Wimbledon%Men%", "%US Open%Men%", "%Australian Open%Men%"],
+    "tennis_wta": ["%WTA%", "%Roland Garros WTA%", "%Wimbledon%Women%", "%US Open%Women%", "%Australian Open%Women%"],
+    "boxing_boxing": ["%Boxing%", "%WBC%", "%WBA%", "%IBF%", "%WBO%"],
+    "motorsport_f1": ["%Formula 1%", "%F1 %", "%Grand Prix%"],
+    "motorsport_nascar": ["%NASCAR%"],
+    "esports_lol": ["%League of Legends%", "%LoL %"],
+    "esports_cs2": ["%Counter-Strike%", "%CS2%"],
+    "esports_valorant": ["%Valorant%"],
 }
 
 # Sport key → Kalshi external_id prefix for precise filtering
@@ -52,6 +60,14 @@ LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
     "soccer_epl": ["KXEPL"],
     "soccer_usa_mls": ["KXMLS"],
     "mma_mixed_martial_arts": ["KXUFC"],
+    "tennis_atp": ["KXATP"],
+    "tennis_wta": ["KXWTA"],
+    "boxing_boxing": ["KXBOXING", "KXWBC"],
+    "motorsport_f1": ["KXF1"],
+    "motorsport_nascar": ["KXNASCAR"],
+    "esports_lol": ["KXLOL"],
+    "esports_cs2": ["KXCS2"],
+    "esports_valorant": ["KXVALORANT", "KXVAL"],
 }
 
 # ---------------------------------------------------------------------------
@@ -110,6 +126,12 @@ _PROPS_KEYWORDS: list[str] = [
     "method of", "distance", "total rounds", "finish",
 ]
 
+# Sports where "vs" indicates an individual match/fight, not a playoff series.
+# Markets in these sports should go to "matches" section, not "series".
+_INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset({
+    "tennis", "mma", "boxing", "esports",
+})
+
 # Keywords for player-stat markets (season stats section).
 _SEASON_STAT_KEYWORDS: list[str] = [
     "leader", "scoring title", "assists title", "rebounds title",
@@ -125,12 +147,19 @@ _SEASON_STAT_KEYWORDS: list[str] = [
 def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
     """Assign a market to a display section.
 
-    Uses sport-aware keyword matching to classify into one of five sections:
-    series, awards, props, season_stats, more_markets.
+    Uses sport-aware keyword matching to classify into one of six sections:
+    series, matches, awards, props, season_stats, more_markets.
+
+    Individual match/fight sports (tennis, MMA, boxing, esports) use "matches"
+    instead of "series" for head-to-head markets.
     """
     name_lower = (market.name or "").lower()
     cat = (market.category or "").lower()
     tier = market.market_tier
+
+    # Determine sport category for match vs series classification
+    sport_cat = sport_key.split("_")[0] if sport_key else ""
+    is_individual_sport = sport_cat in _INDIVIDUAL_MATCH_SPORTS
 
     # Championship / conference / division (tier 1-2, 4) — already on grid
     if tier in (1, 2):
@@ -138,18 +167,24 @@ def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
     if tier == 4:
         return "championship"
 
-    # --- Series markets ---
-    # "vs" in a tier-5 market is almost always a series matchup.
-    # Also catch "Total Games O/U" which is a series-length bet.
+    # --- Series / Matches ---
+    # "vs" in a tier-5 market is a matchup — "series" for team sports, "matches"
+    # for individual sports (tennis, MMA, boxing, esports).
+    matchup_section = "matches" if is_individual_sport else "series"
+
     if any(kw in name_lower for kw in _SERIES_KEYWORDS):
         # Exception: "World Series Winner" is a championship, not a series
         if "world series winner" in name_lower:
             return "championship"
-        return "series"
+        return matchup_section
     if " vs " in name_lower or " vs. " in name_lower:
-        # Tier-5 matchup = series (e.g., "Bruins vs. Sabres")
+        # Tier-5 matchup
         if tier == 5:
-            return "series"
+            return matchup_section
+
+    # For individual match sports, game_prop category markets are matches too
+    if is_individual_sport and cat == "game_prop":
+        return "matches"
 
     # --- Awards ---
     # Tier 3 = award by definition. Also match known award name fragments.
@@ -181,11 +216,13 @@ async def get_league_futures(
     # Determine the sport category from the key
     # e.g., basketball_nba → llm_sport_category = "basketball"
     sport_category = sport_key.split("_")[0]
-    # Map common prefixes
-    if sport_category == "americanfootball":
-        sport_category = "football"
-    elif sport_category == "icehockey":
-        sport_category = "hockey"
+    # Map common prefixes to their llm_sport_category values
+    _SPORT_KEY_TO_LLM_CATEGORY: dict[str, str] = {
+        "americanfootball": "football",
+        "icehockey": "hockey",
+        "motorsport": "motorsports",
+    }
+    sport_category = _SPORT_KEY_TO_LLM_CATEGORY.get(sport_category, sport_category)
 
     # Build query filters
     filters = [
@@ -232,6 +269,7 @@ async def get_league_futures(
     # Group by section + deduplicate by canonical_market_key
     sections: dict[str, list[dict]] = {
         "series": [],
+        "matches": [],
         "awards": [],
         "props": [],
         "season_stats": [],

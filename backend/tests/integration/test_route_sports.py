@@ -217,7 +217,7 @@ class TestSportHierarchy:
         resp = await client.get("/api/sports/hierarchy")
         body = resp.json()
         slugs = {s["slug"] for s in body["sports"]}
-        for expected in ["basketball", "football", "baseball", "hockey", "soccer", "golf", "tennis", "mma"]:
+        for expected in ["basketball", "football", "baseball", "hockey", "soccer", "golf", "tennis", "mma", "boxing", "motorsports", "esports"]:
             assert expected in slugs, f"Expected sport '{expected}' in hierarchy"
 
     async def test_basketball_has_nba_league(self, client):

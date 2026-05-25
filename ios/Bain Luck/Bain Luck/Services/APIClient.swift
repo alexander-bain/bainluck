@@ -661,11 +661,14 @@ actor APIClient {
     // MARK: - Admin Discover Labeling
 
     /// Fetches the admin Discover labeling queue used by native labeling tools.
-    func fetchDiscoverLabelingFeed(secret: String? = nil, offset: Int = 0, limit: Int = 100) async throws -> DiscoverLabelingFeedResponse {
+    /// When `reviewer` is "native" and the request carries a Bearer token, the
+    /// server resolves the reviewer to the authenticated admin's email so
+    /// reviewed state persists across devices.
+    func fetchDiscoverLabelingFeed(reviewer: String = "native", secret: String? = nil, offset: Int = 0, limit: Int = 100) async throws -> DiscoverLabelingFeedResponse {
         var query = [
             "limit": String(limit),
             "offset": String(offset),
-            "reviewer": "native",
+            "reviewer": reviewer,
             "reviewed_surface": "native_discover",
         ]
         if let secret, !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

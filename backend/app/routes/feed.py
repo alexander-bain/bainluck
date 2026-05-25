@@ -111,7 +111,7 @@ from app.utils.personalization import (
     compute_event_multiplier,
     compute_futures_multiplier,
 )
-from app.routes.admin_utils import _check_admin_auth
+from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
 from app.routes.events import _build_team_lookup, _format_team_data
 
 logger = logging.getLogger(__name__)
@@ -1192,9 +1192,17 @@ async def get_feed(
 
     reviewed_filter = None
     if exclude_reviewed:
+        # Resolve reviewer: when "native" and authenticated via Bearer token,
+        # use the admin's email for per-user reviewed state.
+        effective_reviewer = reviewer
+        if reviewer == "native":
+            admin_email = await _resolve_admin_email(request, db)
+            if admin_email:
+                effective_reviewer = admin_email
+
         reviewed_keys = await _load_reviewed_ranking_keys(
             db,
-            reviewer=reviewer,
+            reviewer=effective_reviewer,
             surface=reviewed_surface,
         )
         feed_items, reviewed_filtered_count = _filter_reviewed_feed_items(
@@ -1203,7 +1211,7 @@ async def get_feed(
         )
         reviewed_filter = {
             "enabled": True,
-            "reviewer": reviewer,
+            "reviewer": effective_reviewer,
             "surface": reviewed_surface,
             "reviewed_key_count": len(reviewed_keys),
             "filtered_count": reviewed_filtered_count,

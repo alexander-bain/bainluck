@@ -1268,6 +1268,9 @@ LLM_CATEGORY_TO_SPORT_KEYS: dict[str, list[str]] = {
     "golf": ["golf_pga"],
     "tennis": ["tennis_atp", "tennis_wta"],
     "mma": ["mma_mixed_martial_arts"],
+    "boxing": ["boxing_boxing"],
+    "motorsports": ["motorsport_f1", "motorsport_nascar"],
+    "esports": ["esports_lol", "esports_cs2", "esports_valorant"],
 }
 
 
@@ -1397,6 +1400,41 @@ SPORT_HIERARCHY: dict[str, dict] = {
             {"slug": "ufc", "name": "UFC", "sport_keys": ["mma_mixed_martial_arts"]},
         ],
         "showcase_events": [],
+    },
+    "boxing": {
+        "name": "Boxing",
+        "slug": "boxing",
+        "leagues": [
+            {"slug": "boxing", "name": "Boxing", "sport_keys": ["boxing_boxing"]},
+        ],
+        "showcase_events": [],
+    },
+    "motorsports": {
+        "name": "Motorsports",
+        "slug": "motorsports",
+        "leagues": [
+            {"slug": "f1", "name": "Formula 1", "sport_keys": ["motorsport_f1"]},
+            {"slug": "nascar", "name": "NASCAR", "sport_keys": ["motorsport_nascar"]},
+        ],
+        "showcase_events": [
+            {"name": "Monaco Grand Prix", "type": "race"},
+            {"name": "Daytona 500", "type": "race"},
+            {"name": "Indianapolis 500", "type": "race"},
+        ],
+    },
+    "esports": {
+        "name": "Esports",
+        "slug": "esports",
+        "leagues": [
+            {"slug": "lol", "name": "League of Legends", "sport_keys": ["esports_lol"]},
+            {"slug": "cs2", "name": "Counter-Strike 2", "sport_keys": ["esports_cs2"]},
+            {"slug": "valorant", "name": "Valorant", "sport_keys": ["esports_valorant"]},
+        ],
+        "showcase_events": [
+            {"name": "LoL Worlds", "type": "championship"},
+            {"name": "CS2 Major", "type": "championship"},
+            {"name": "Valorant Champions", "type": "championship"},
+        ],
     },
 }
 

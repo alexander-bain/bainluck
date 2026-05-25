@@ -337,19 +337,6 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
   return result;
 }
 
-const CATEGORY_FILTERS = [
-  { key: "all", label: "All", emoji: "✨" },
-  { key: "sports", label: "Sports", emoji: "🏆" },
-  { key: "geopolitics", label: "Geopolitics", emoji: "🌍" },
-  { key: "politics", label: "Politics", emoji: "🏛" },
-  { key: "economics", label: "Economics", emoji: "📈" },
-  { key: "tech", label: "Tech", emoji: "💻" },
-  { key: "entertainment", label: "Entertainment", emoji: "🎬" },
-  { key: "culture", label: "Culture", emoji: "🎭" },
-  { key: "health", label: "Health", emoji: "🏥" },
-  { key: "weather", label: "Weather", emoji: "🌤" },
-];
-
 const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "olympics"]);
 
 function FeedItemShell({
@@ -500,7 +487,6 @@ export default function DiscoverPage() {
   const { mutate } = useSWRConfig();
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [dailyGuesses, setDailyGuesses] = useState(0);
@@ -647,18 +633,13 @@ export default function DiscoverPage() {
       ? dismissFiltered
       : fresh;
     const suppressedCategories = getSuppressedCategories(interactionProfile);
-    const cooldownFiltered = categoryFilter === "all" && suppressedCategories.size
+    const cooldownFiltered = suppressedCategories.size
       ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
-    const catFiltered = categoryFilter === "all"
-      ? cooldownSafe
-      : categoryFilter === "sports"
-      ? cooldownSafe.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
-      : cooldownSafe.filter((i) => getItemCategory(i) === categoryFilter);
-    const grouped = groupRelatedMarkets(interleave(catFiltered));
+    const grouped = groupRelatedMarkets(interleave(cooldownSafe));
     return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
-  }, [data, allItems, dismissed, categoryFilter, interactionProfile]);
+  }, [data, allItems, dismissed, interactionProfile]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
   const challengeItems = useMemo(() => {
@@ -727,33 +708,6 @@ export default function DiscoverPage() {
     }
   }, [visibleCount, processedItems.length, hasMore, loadingMore, loadNextPage]);
 
-  // Count items per category for chip badges
-  const catCountsForChips = useMemo(() => {
-    const raw = data?.items ?? [];
-    const fresh = raw.filter((item) => !isStale(item));
-    const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
-    const live = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
-      || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
-      ? dismissFiltered
-      : fresh;
-    const suppressedCategories = getSuppressedCategories(interactionProfile);
-    const cooldownLive = suppressedCategories.size
-      ? live.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
-      : live;
-    const countItems = cooldownLive.length > 0 ? cooldownLive : live;
-    const counts = new Map<string, number>();
-    for (const item of countItems) {
-      const cat = getItemCategory(item);
-      if (SPORTS_CATS.has(cat)) {
-        counts.set("sports", (counts.get("sports") || 0) + 1);
-      } else {
-        counts.set(cat, (counts.get(cat) || 0) + 1);
-      }
-    }
-    counts.set("all", countItems.length);
-    return counts;
-  }, [data, dismissed, interactionProfile]);
-
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen bg-surface-deep">
@@ -770,29 +724,6 @@ export default function DiscoverPage() {
               </Link>
               <span className="text-text-muted text-xs font-medium">{processedItems.length} markets</span>
             </div>
-          </div>
-          {/* Category filter chips */}
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
-            {CATEGORY_FILTERS.map((cf) => {
-              const count = catCountsForChips.get(cf.key) || 0;
-              if (cf.key !== "all" && count === 0) return null;
-              const active = categoryFilter === cf.key;
-              return (
-                <button
-                  key={cf.key}
-                  onClick={() => { setCategoryFilter(cf.key); setVisibleCount(PAGE_SIZE); }}
-                  className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                    active
-                      ? "bg-text-primary text-white"
-                      : "bg-surface-elevated text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  <span>{cf.emoji}</span>
-                  <span>{cf.label}</span>
-                  {count > 0 && <span className={`text-[10px] ${active ? "text-white/60" : "text-text-muted"}`}>{count}</span>}
-                </button>
-              );
-            })}
           </div>
         </div>
       </header>
@@ -817,7 +748,6 @@ export default function DiscoverPage() {
             void mutate("discover-feed");
           }
 
-          if (cats.length > 0 && !SPORTS_CATS.has(cats[0])) setCategoryFilter(cats[0]);
         }} />
       )}
 
@@ -863,12 +793,10 @@ export default function DiscoverPage() {
         {!isLoading && !feedError && visibleItems.length === 0 && (
           <div className="text-center py-20 text-text-muted">
             <p className="text-lg font-medium">
-              {categoryFilter !== "all" ? `No ${categoryFilter} markets right now` : "All caught up!"}
+              All caught up!
             </p>
             <p className="text-sm mt-1">
-              {categoryFilter !== "all"
-                ? <Button variant="text" onClick={() => setCategoryFilter("all")}>Show all markets</Button>
-                : "Check back later for new markets"}
+              Check back later for new markets
             </p>
           </div>
         )}

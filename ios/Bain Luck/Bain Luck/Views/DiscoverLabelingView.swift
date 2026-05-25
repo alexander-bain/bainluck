@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DiscoverLabelingView: View {
+    @EnvironmentObject private var authManager: AuthManager
     @StateObject private var viewModel = DiscoverLabelingViewModel()
     @State private var selectedLabel: String?
     @State private var selectedTags: Set<String> = []
@@ -31,9 +32,13 @@ struct DiscoverLabelingView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .task {
+            viewModel.updateUserEmail(authManager.user?.email)
             if viewModel.items.isEmpty && !viewModel.loading {
                 await viewModel.load()
             }
+        }
+        .onChange(of: authManager.user?.email) { _, newEmail in
+            viewModel.updateUserEmail(newEmail)
         }
     }
 

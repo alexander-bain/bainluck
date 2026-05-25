@@ -17,6 +17,7 @@ const SHOWCASE_TYPE_ORDER = [
   { type: "grand_slam", label: "Grand Slams" },
   { type: "tournament", label: "Tournaments" },
   { type: "championship", label: "Championships" },
+  { type: "race", label: "Marquee Races" },
 ];
 
 // League accent colors for visual cards
@@ -55,6 +56,15 @@ const LEAGUE_COLORS: Record<string, { bg: string; accent: string; icon: string }
   wta: { bg: "bg-purple-50", accent: "text-purple-700", icon: "\ud83c\udfbe" },
   // MMA
   ufc: { bg: "bg-red-50", accent: "text-red-700", icon: "\ud83e\udd4a" },
+  // Boxing
+  boxing: { bg: "bg-yellow-50", accent: "text-yellow-700", icon: "\ud83e\udd4a" },
+  // Motorsports
+  f1: { bg: "bg-red-50", accent: "text-red-700", icon: "\ud83c\udfce\ufe0f" },
+  nascar: { bg: "bg-yellow-50", accent: "text-yellow-800", icon: "\ud83c\udfce\ufe0f" },
+  // Esports
+  lol: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\ud83c\udfae" },
+  cs2: { bg: "bg-orange-50", accent: "text-orange-700", icon: "\ud83c\udfae" },
+  valorant: { bg: "bg-red-50", accent: "text-red-600", icon: "\ud83c\udfae" },
 };
 
 const DEFAULT_LEAGUE_COLOR = { bg: "bg-surface-elevated", accent: "text-text-primary", icon: "\ud83c\udfc6" };

@@ -108,7 +108,7 @@ class TestDictContents:
         assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxncaabbgame"] == "NCAA Baseball"
 
     def test_llm_category_to_sport_keys_size(self):
-        assert len(LLM_CATEGORY_TO_SPORT_KEYS) == 8
+        assert len(LLM_CATEGORY_TO_SPORT_KEYS) == 11
 
     def test_llm_category_to_sport_keys_sample(self):
         assert "basketball_nba" in LLM_CATEGORY_TO_SPORT_KEYS["basketball"]

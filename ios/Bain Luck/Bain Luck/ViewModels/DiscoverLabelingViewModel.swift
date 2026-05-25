@@ -14,17 +14,28 @@ final class DiscoverLabelingViewModel: ObservableObject {
 
     private var feedRequestId: String?
     private let batchId = "native-review-\(UUID().uuidString)"
-    private let reviewer = "native"
+    /// When the user is authenticated, reviewer is set to their email so
+    /// the server tracks reviewed state per-user. Falls back to "native".
+    private var reviewer: String = "native"
     private let reviewedStorageKey = "discover_labeling_reviewed_keys_v1"
     private let pageSize = 100
     private let targetQueueSize = 40
     private let maxPagesPerLoad = 8
     private var reviewedItemKeys: Set<String>
     private var itemFeedRequestIds: [String: String] = [:]
+    private var userEmail: String?
 
     init() {
         let stored = UserDefaults.standard.stringArray(forKey: reviewedStorageKey) ?? []
         reviewedItemKeys = Set(stored)
+    }
+
+    /// Called when the authenticated user changes. The server resolves
+    /// "native" to the Bearer-authenticated email, but passing it
+    /// explicitly keeps the load summary diagnostic accurate.
+    func updateUserEmail(_ email: String?) {
+        userEmail = email
+        reviewer = email ?? "native"
     }
 
     var currentItem: DiscoverLabelingDebugItem? {
@@ -57,6 +68,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
 
             while pagesLoaded < maxPagesPerLoad && loadedItems.count < targetQueueSize {
                 let response = try await APIClient.shared.fetchDiscoverLabelingFeed(
+                    reviewer: reviewer,
                     offset: offset,
                     limit: pageSize
                 )
@@ -95,7 +107,8 @@ final class DiscoverLabelingViewModel: ObservableObject {
             items = Array(loadedItems.prefix(targetQueueSize))
             itemFeedRequestIds = feedRequestIds
             currentIndex = 0
-            loadSummary = "Loaded \(items.count) of \(apiItemCount) fetched; server filtered \(serverFilteredReviewedCount) reviewed (\(serverReviewedKeyCount) known), local filtered \(filteredReviewedCount) reviewed, \(filteredDuplicateCount) duplicate; pages \(pagesLoaded), total \(latestTotal), more \(latestHasMore ? "yes" : "no"). Local reviewed: \(reviewedItemKeys.count)."
+            let reviewerLabel = reviewer == "native" ? "native (anonymous)" : reviewer
+            loadSummary = "Loaded \(items.count) of \(apiItemCount) fetched; server-side reviewed \(serverFilteredReviewedCount) filtered (\(serverReviewedKeyCount) known, reviewer: \(reviewerLabel)), local-side reviewed \(filteredReviewedCount) filtered (\(reviewedItemKeys.count) known), \(filteredDuplicateCount) duplicate; pages \(pagesLoaded), total \(latestTotal), more \(latestHasMore ? "yes" : "no")."
             if items.isEmpty {
                 error = sawAnyDebugItems ? "No new debug feed items returned." : "No debug feed items returned."
             }

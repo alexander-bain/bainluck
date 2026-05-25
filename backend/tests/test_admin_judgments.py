@@ -290,6 +290,85 @@ def test_labeling_candidates_returns_stratified_items(monkeypatch):
     assert body["reviewed_filter"]["filtered_count"] == 0
 
 
+def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
+    """Submitting a judgment for a market excludes it from subsequent candidate
+    queries for the same reviewer — verifying server-side reviewed state."""
+    market_reviewed = SimpleNamespace(
+        id=100,
+        name="Already reviewed market",
+        description=None,
+        llm_sport_category="weather",
+        sport=None,
+        source="kalshi",
+        hook_description=None,
+        image_url=None,
+        group_id=None,
+        resolution_date=None,
+        created_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        outcomes=[
+            SimpleNamespace(
+                id=10,
+                name="Yes",
+                current_probability=0.50,
+                probability_change_24h=None,
+                rank=1,
+            )
+        ],
+    )
+    market_new = SimpleNamespace(
+        id=200,
+        name="Not yet reviewed market",
+        description=None,
+        llm_sport_category="weather",
+        sport=None,
+        source="kalshi",
+        hook_description=None,
+        image_url=None,
+        group_id=None,
+        resolution_date=None,
+        created_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        outcomes=[
+            SimpleNamespace(
+                id=20,
+                name="No",
+                current_probability=0.40,
+                probability_change_24h=None,
+                rank=1,
+            )
+        ],
+    )
+    # First query result: reviewed keys query returns market 100 as already
+    # reviewed by "alex" on surface "native_discover".
+    reviewed_row = SimpleNamespace(item_type="futures", market_id=100, event_id=None)
+    db = _ReadDB(
+        [
+            # load_reviewed_ranking_keys query
+            _ExecuteResult(rows=[(reviewed_row.item_type, reviewed_row.market_id, reviewed_row.event_id)]),
+            # stratum query returns both markets
+            _ExecuteResult(scalar_rows=[market_reviewed, market_new]),
+        ]
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/candidates"
+        "?secret=ok&strata=weather&limit=10&reviewer=alex&reviewed_surface=native_discover"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    # Market 100 should be excluded, only market 200 remains
+    assert len(body["items"]) == 1
+    assert body["items"][0]["id"] == 200
+    assert body["reviewed_filter"]["filtered_count"] == 1
+    assert body["reviewed_filter"]["reviewed_key_count"] == 1
+    assert body["reviewed_filter"]["reviewer"] == "alex"
+
+
 def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
@@ -508,3 +587,218 @@ def test_triage_fixable_interest_cluster_updates_matching_rows(monkeypatch):
         "notes": "Created follow-up issue",
     }
     assert "triage" not in nonmatching.label_metadata["fixable_interest"]
+
+
+# ---------------------------------------------------------------------------
+# Eval-export endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def test_eval_export_returns_json_with_hashed_reviewer(monkeypatch):
+    judgment = _judgment(
+        market_id=100,
+        label="love",
+        reviewer="alex@example.com",
+        category_at_review="politics",
+        archetype_at_review="world_event",
+        quality_class_at_review="compelling",
+        label_metadata={
+            "card_snapshot": {
+                "source": "polymarket",
+                "category": "politics",
+                "archetype": "world_event",
+                "quality_class": "compelling",
+                "hook_description": "A political market",
+                "image_url": "https://example.com/img.jpg",
+                "rendered_probability": 0.72,
+                "story_key": "story:election",
+                "family_key": "politics:us",
+                "group_id": "group-1",
+            }
+        },
+    )
+    db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/eval-export?secret=ok&days=30"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert "split_counts" in body
+    assert "label_counts" in body
+    assert body["label_counts"]["love"] == 1
+    row = body["rows"][0]
+    assert row["market_id"] == 100
+    assert row["label"] == "love"
+    assert row["reviewer_hash"] != "alex@example.com"
+    assert len(row["reviewer_hash"]) == 12
+    assert row["split"] in ("train", "dev", "test")
+    assert row["category"] == "politics"
+    assert row["source"] == "polymarket"
+    assert row["has_hook"] is True
+    assert row["has_image"] is True
+    assert row["rendered_probability"] == 0.72
+    assert row["story_key"] == "story:election"
+    assert row["surface"] == "discover"
+
+
+def test_eval_export_split_is_deterministic():
+    """Same market_id always maps to the same split."""
+    split1 = admin_judgments._dataset_split(100, None)
+    split2 = admin_judgments._dataset_split(100, None)
+    assert split1 == split2
+    assert split1 in ("train", "dev", "test")
+
+
+def test_eval_export_reviewer_hash_is_consistent():
+    """Same reviewer always produces the same hash."""
+    h1 = admin_judgments._reviewer_hash("alex")
+    h2 = admin_judgments._reviewer_hash("alex")
+    assert h1 == h2
+    assert len(h1) == 12
+
+
+def test_eval_export_different_reviewers_different_hashes():
+    h1 = admin_judgments._reviewer_hash("alex")
+    h2 = admin_judgments._reviewer_hash("sam")
+    assert h1 != h2
+
+
+def test_eval_export_csv_format(monkeypatch):
+    judgment = _judgment(market_id=200, label="bad", reason_tags=["boring", "stale"])
+    db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/eval-export?secret=ok&fmt=csv"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "discover_labels_eval.csv" in response.headers["content-disposition"]
+    assert "market_id,event_id,market_name,reviewer_hash,label" in response.text
+    assert "bad" in response.text
+
+
+def test_eval_export_split_filter(monkeypatch):
+    judgments = [
+        _judgment(id=1, market_id=i, label="love")
+        for i in range(1, 101)
+    ]
+    db = _ReadDB([_ExecuteResult(scalar_rows=judgments)])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/eval-export?secret=ok&split=test"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    for row in body["rows"]:
+        assert row["split"] == "test"
+
+
+def test_eval_export_no_pii_in_output(monkeypatch):
+    judgment = _judgment(
+        market_id=300,
+        reviewer="secret.person@meta.com",
+    )
+    db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/eval-export?secret=ok"
+    )
+
+    body = response.json()
+    raw_text = str(body)
+    assert "secret.person@meta.com" not in raw_text
+    assert body["rows"][0]["reviewer_hash"] != "secret.person@meta.com"
+
+
+def test_eval_export_requires_auth(monkeypatch):
+    db = _ReadDB([])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: False
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/eval-export?secret=wrong"
+    )
+
+    assert response.status_code == 403
+
+
+async def _fake_resolve_admin_email(_request, _db=None):
+    return "admin@test.com"
+
+
+async def _fake_resolve_admin_email_none(_request, _db=None):
+    return None
+
+
+def test_create_judgment_resolves_native_reviewer_to_admin_email(monkeypatch):
+    """When reviewer=native and the request has a Bearer token, the server
+    resolves the reviewer to the admin's email for per-user reviewed state."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reviewer=native",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "admin@test.com"
+
+
+def test_create_judgment_keeps_explicit_reviewer(monkeypatch):
+    """When reviewer is explicitly set (not 'native'), it is not resolved."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reviewer=sam",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "sam"
+
+
+def test_create_judgment_native_reviewer_fallback_when_unauthenticated(monkeypatch):
+    """When reviewer=native but no Bearer token (anonymous admin via secret),
+    reviewer stays 'native'."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email_none,
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love&reviewer=native",
+    )
+
+    assert response.status_code == 200
+    assert db.added.reviewer == "native"

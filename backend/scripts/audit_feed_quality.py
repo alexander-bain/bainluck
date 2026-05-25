@@ -242,7 +242,160 @@ def main() -> int:
                 f"{item['name'][:84]} ({item['archetype']}, {item['quality_class']})"
             )
 
+    # Gold-set label comparison
+    gold_set_report = _load_gold_set_labels(base_url)
+    if gold_set_report["loaded"]:
+        _print_gold_set_report(gold_set_report, classified)
+
     return 0
+
+
+def _load_gold_set_labels(base_url: str) -> dict:
+    """Try to load human-labeled gold-set data from the eval-export endpoint."""
+    admin_token = os.getenv("ADMIN_TOKEN", "")
+    if not admin_token:
+        return {"loaded": False, "reason": "ADMIN_TOKEN not set"}
+
+    api_base = base_url.rsplit("/api/feed", 1)[0]
+    if not api_base.endswith("/api"):
+        api_base = api_base.rstrip("/")
+        if "/api/" in api_base:
+            api_base = api_base.rsplit("/api/", 1)[0] + "/api"
+        else:
+            api_base = api_base + "/api"
+
+    export_url = f"{api_base}/admin/ranking-judgments/eval-export"
+    try:
+        resp = httpx.get(
+            export_url,
+            params={"secret": admin_token, "days": "90", "limit": "10000"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return {"loaded": False, "reason": f"HTTP {resp.status_code}"}
+        data = resp.json()
+        rows = data.get("rows", [])
+        if not rows:
+            return {"loaded": False, "reason": "no labeled rows"}
+        return {
+            "loaded": True,
+            "rows": rows,
+            "total": data.get("total", len(rows)),
+            "split_counts": data.get("split_counts", {}),
+            "label_counts": data.get("label_counts", {}),
+        }
+    except Exception as exc:
+        return {"loaded": False, "reason": str(exc)}
+
+
+def _print_gold_set_report(
+    gold_set_report: dict,
+    classified_feed: list[dict],
+) -> None:
+    """Print gold-set label comparison against current feed output."""
+    rows = gold_set_report["rows"]
+    gold_by_market_id: dict[int, list[dict]] = {}
+    for row in rows:
+        mid = row.get("market_id")
+        if mid is not None:
+            gold_by_market_id.setdefault(mid, []).append(row)
+
+    # Build feed market_id set
+    feed_market_ids: dict[int, dict] = {}
+    for card in classified_feed:
+        mid = card.get("id") or card.get("market_id")
+        if mid is not None:
+            try:
+                feed_market_ids[int(mid)] = card
+            except (TypeError, ValueError):
+                pass
+
+    # Match gold-set rows against feed
+    gold_in_feed = []
+    gold_not_in_feed = []
+    for mid, label_rows in gold_by_market_id.items():
+        # Use first (most recent) label per market
+        label_row = label_rows[0]
+        if mid in feed_market_ids:
+            gold_in_feed.append({**label_row, "feed_card": feed_market_ids[mid]})
+        else:
+            gold_not_in_feed.append(label_row)
+
+    # Precision: of items in feed top 20, how many have gold labels?
+    top20_ids = set()
+    for card in classified_feed[:20]:
+        mid = card.get("id") or card.get("market_id")
+        if mid is not None:
+            try:
+                top20_ids.add(int(mid))
+            except (TypeError, ValueError):
+                pass
+
+    top20_labeled = [
+        gold_by_market_id[mid][0]
+        for mid in top20_ids
+        if mid in gold_by_market_id
+    ]
+    top20_interesting = [
+        r for r in top20_labeled if r.get("label") in ("love", "fine")
+    ]
+    top20_boring = [
+        r for r in top20_labeled if r.get("label") in ("bad", "kill")
+    ]
+
+    # Recall: of gold "love" labels, how many are in the feed?
+    gold_love = [r for r in rows if r.get("label") == "love"]
+    gold_love_in_feed = [r for r in gold_love if r.get("market_id") in feed_market_ids]
+
+    # Boring intrusion: "bad"/"kill" labels that appear in top 20
+    gold_bad_or_kill = [r for r in rows if r.get("label") in ("bad", "kill")]
+    boring_in_top20 = [r for r in gold_bad_or_kill if r.get("market_id") in top20_ids]
+
+    print()
+    print("GOLD-SET LABEL COMPARISON")
+    print("-" * 72)
+    print(f"labeled rows:            {gold_set_report['total']}")
+    print(f"split counts:            {gold_set_report['split_counts']}")
+    print(f"label counts:            {gold_set_report['label_counts']}")
+    print(
+        f"gold-in-feed:            {len(gold_in_feed)}/{len(gold_by_market_id)} "
+        f"({len(gold_in_feed) / max(len(gold_by_market_id), 1):.0%})"
+    )
+    print(
+        f"top20-labeled:           {len(top20_labeled)}/20 "
+        f"({len(top20_labeled) / 20:.0%} coverage)"
+    )
+    if top20_labeled:
+        print(
+            f"top20-interesting:       {len(top20_interesting)}/{len(top20_labeled)} "
+            f"({len(top20_interesting) / max(len(top20_labeled), 1):.0%} precision)"
+        )
+    print(
+        f"boring-intrusion@20:     {len(boring_in_top20)}/20 "
+        f"(target: 0)"
+    )
+    if gold_love:
+        print(
+            f"love-recall@feed:        {len(gold_love_in_feed)}/{len(gold_love)} "
+            f"({len(gold_love_in_feed) / max(len(gold_love), 1):.0%})"
+        )
+
+    if boring_in_top20:
+        print("boring intrusions in top 20:")
+        for row in boring_in_top20[:5]:
+            print(
+                f"  [{row.get('category', '?')}] {row.get('market_name', '')[:78]} "
+                f"(label={row['label']})"
+            )
+
+    if gold_not_in_feed and gold_love:
+        missing_love = [r for r in gold_not_in_feed if r.get("label") == "love"]
+        if missing_love:
+            print("loved markets missing from feed:")
+            for row in missing_love[:5]:
+                print(
+                    f"  [{row.get('category', '?')}] {row.get('market_name', '')[:78]}"
+                )
 
 
 if __name__ == "__main__":

@@ -70,3 +70,38 @@ async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bo
         except Exception:
             pass
     return False
+
+
+async def _resolve_admin_email(request: Request, db=None) -> str | None:
+    """Extract the authenticated admin user's email from a Bearer token.
+
+    Returns the email string when the request carries a valid admin Bearer
+    token, or ``None`` when the caller is not authenticated or not an admin.
+    """
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[7:]
+    try:
+        from app.services.firebase_auth import verify_id_token
+
+        claims = verify_id_token(token)
+        if not claims:
+            return None
+        firebase_uid = claims.get("uid") or claims.get("sub")
+        if not firebase_uid or not db:
+            return None
+        from app.models.models import User
+
+        result = await db.execute(
+            select(User).where(User.firebase_uid == firebase_uid)
+        )
+        user = result.scalar_one_or_none()
+        if user and (
+            user.id in _admin_user_ids()
+            or (user.email or "").lower() in _admin_user_emails()
+        ):
+            return (user.email or "").lower() or None
+    except Exception:
+        pass
+    return None
