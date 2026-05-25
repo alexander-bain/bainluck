@@ -32,7 +32,6 @@ from app.models.models import (
     DiscoverInteraction,
     DiscoverReviewDecision,
     ExternalCuratorGroundTruthItem,
-    RankingJudgment,
     User,
     UserFavorite,
     UserPreference,
@@ -101,6 +100,11 @@ from app.tasks.enrich_markets import (
     _get_discover_llm_metadata,
 )
 from app.utils.hook_staleness import is_hook_stale
+from app.utils.labeling_queue import (
+    filter_reviewed_feed_items as _filter_reviewed_feed_items,
+    load_reviewed_ranking_keys as _load_reviewed_ranking_keys,
+    review_key_for_feed_item as _review_key_for_feed_item,
+)
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -834,67 +838,6 @@ def _ei_label(score: int) -> str:
 
 # Backward-compatible alias
 _pulse_label = _ei_label
-
-
-def _review_key_for_feed_item(item: dict) -> tuple[str, int] | None:
-    """Return the stable judgment identity key for a feed item."""
-    item_type = item.get("type")
-    if item_type not in {"futures", "event"}:
-        return None
-    data = item.get("data") or {}
-    item_id = data.get("id")
-    if item_id is None:
-        return None
-    try:
-        return item_type, int(item_id)
-    except (TypeError, ValueError):
-        return None
-
-
-def _filter_reviewed_feed_items(
-    items: list[dict],
-    reviewed_keys: set[tuple[str, int]],
-) -> tuple[list[dict], int]:
-    if not reviewed_keys:
-        return items, 0
-    kept: list[dict] = []
-    filtered = 0
-    for item in items:
-        key = _review_key_for_feed_item(item)
-        if key and key in reviewed_keys:
-            filtered += 1
-            continue
-        kept.append(item)
-    return kept, filtered
-
-
-async def _load_reviewed_ranking_keys(
-    db: AsyncSession,
-    *,
-    reviewer: str | None,
-    surface: str | None,
-) -> set[tuple[str, int]]:
-    """Load futures/event keys that already have human ranking judgments."""
-    filters = [RankingJudgment.item_type.in_(["futures", "event"])]
-    if reviewer:
-        filters.append(RankingJudgment.reviewer == reviewer)
-    if surface:
-        filters.append(RankingJudgment.surface == surface)
-
-    result = await db.execute(
-        select(
-            RankingJudgment.item_type,
-            RankingJudgment.market_id,
-            RankingJudgment.event_id,
-        ).where(*filters)
-    )
-    reviewed: set[tuple[str, int]] = set()
-    for item_type, market_id, event_id in result.all():
-        if item_type == "futures" and market_id is not None:
-            reviewed.add(("futures", int(market_id)))
-        elif item_type == "event" and event_id is not None:
-            reviewed.add(("event", int(event_id)))
-    return reviewed
 
 
 @router.get("")

@@ -5,18 +5,22 @@ import hashlib
 import io
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.models import RankingJudgment
+from app.models.models import FuturesMarket, FuturesOutcome, RankingJudgment, Sport
 from app.routes.admin_utils import _check_admin_auth, _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.utils.discover_reason_tags import canonical_reason_tags
+from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
+from app.utils.labeling_queue import load_reviewed_ranking_keys
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
@@ -60,6 +64,251 @@ class FixableInterestClusterTriage(BaseModel):
     experiment_key: str | None = None
     notes: str | None = None
     owner: str | None = None
+
+
+DEFAULT_LABELING_STRATA = [
+    "top_feed_like",
+    "fresh_public_story",
+    "stale_fixable",
+    "weather",
+    "finance_ladder",
+    "duplicate_group",
+    "explanation_image_gap",
+    "movement_boundary",
+    "low_volume_editorial",
+]
+
+PUBLIC_STORY_CATEGORIES = (
+    "politics",
+    "geopolitics",
+    "economics",
+    "tech",
+    "entertainment",
+    "culture",
+    "health",
+    "weather",
+)
+
+
+def _parse_candidate_strata(value: str | None) -> list[str]:
+    if not value:
+        return list(DEFAULT_LABELING_STRATA)
+    requested = [part.strip() for part in value.split(",") if part.strip()]
+    allowed = set(DEFAULT_LABELING_STRATA)
+    return [stratum for stratum in requested if stratum in allowed] or list(
+        DEFAULT_LABELING_STRATA
+    )
+
+
+def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
+    base_filters = [
+        FuturesMarket.status == "open",
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date > now,
+        ),
+    ]
+
+    if stratum == "top_feed_like":
+        filters = base_filters
+        ordering = [
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        ]
+    elif stratum == "fresh_public_story":
+        filters = [
+            *base_filters,
+            FuturesMarket.llm_sport_category.in_(PUBLIC_STORY_CATEGORIES),
+            FuturesMarket.created_at >= now - timedelta(days=14),
+        ]
+        ordering = [
+            FuturesMarket.created_at.desc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "stale_fixable":
+        filters = [
+            *base_filters,
+            or_(
+                FuturesMarket.hook_generated_at < now - timedelta(days=10),
+                FuturesMarket.updated_at < now - timedelta(days=14),
+            ),
+            or_(
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.image_url.isnot(None),
+            ),
+        ]
+        ordering = [
+            FuturesMarket.updated_at.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "weather":
+        filters = [
+            *base_filters,
+            or_(
+                FuturesMarket.llm_sport_category == "weather",
+                FuturesMarket.name.ilike("%weather%"),
+                FuturesMarket.name.ilike("%temperature%"),
+                FuturesMarket.name.ilike("%hurricane%"),
+                FuturesMarket.name.ilike("%rain%"),
+            ),
+        ]
+        ordering = [
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "finance_ladder":
+        filters = [
+            *base_filters,
+            or_(
+                FuturesMarket.llm_sport_category == "economics",
+                FuturesMarket.name.ilike("%S&P%"),
+                FuturesMarket.name.ilike("%SPX%"),
+                FuturesMarket.name.ilike("%Nasdaq%"),
+                FuturesMarket.name.ilike("%WTI%"),
+                FuturesMarket.name.ilike("%oil%"),
+                FuturesMarket.name.ilike("%CPI%"),
+                FuturesMarket.name.ilike("%Fed%"),
+                FuturesMarket.name.ilike("%rate%"),
+            ),
+        ]
+        ordering = [
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "duplicate_group":
+        filters = [*base_filters, FuturesMarket.group_id.isnot(None)]
+        ordering = [
+            FuturesMarket.group_id.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "explanation_image_gap":
+        filters = [
+            *base_filters,
+            or_(
+                FuturesMarket.hook_description.is_(None),
+                FuturesMarket.image_url.is_(None),
+            ),
+        ]
+        ordering = [
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        ]
+    elif stratum == "movement_boundary":
+        filters = [
+            *base_filters,
+            FuturesMarket.max_movement_24h.isnot(None),
+            FuturesMarket.max_movement_24h > 0,
+        ]
+        ordering = [
+            FuturesMarket.max_movement_24h.desc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    else:
+        filters = [
+            *base_filters,
+            or_(
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.image_url.isnot(None),
+            ),
+            or_(FuturesMarket.volume_24h.is_(None), FuturesMarket.volume_24h < 1000),
+        ]
+        ordering = [
+            FuturesMarket.updated_at.desc().nulls_last(),
+            FuturesMarket.created_at.desc().nulls_last(),
+        ]
+
+    return (
+        select(FuturesMarket)
+        .options(
+            selectinload(FuturesMarket.outcomes).load_only(
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesOutcome.current_probability,
+                FuturesOutcome.probability_change_24h,
+                FuturesOutcome.rank,
+            ),
+            selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
+        )
+        .where(*filters)
+        .order_by(*ordering)
+        .limit(limit)
+    )
+
+
+def _serialize_labeling_candidate(
+    market: FuturesMarket,
+    *,
+    rank: int,
+    stratum: str,
+) -> dict[str, Any]:
+    outcomes = sorted(
+        market.outcomes or [],
+        key=lambda outcome: (
+            float(outcome.current_probability)
+            if outcome.current_probability is not None
+            else 0.0
+        ),
+        reverse=True,
+    )
+    top_outcomes = [
+        {
+            "id": outcome.id,
+            "name": outcome.name,
+            "probability": (
+                float(outcome.current_probability)
+                if outcome.current_probability is not None
+                else None
+            ),
+            "movement": (
+                float(outcome.probability_change_24h)
+                if outcome.probability_change_24h is not None
+                else None
+            ),
+            "rank": outcome.rank,
+        }
+        for outcome in outcomes[:5]
+    ]
+    category = market.llm_sport_category or (market.sport.name if market.sport else None)
+    quality = classify_market_quality(
+        market_name=market.name,
+        sport_category=category,
+        outcome_names=[outcome["name"] for outcome in top_outcomes if outcome.get("name")],
+    )
+    return {
+        "rank": rank,
+        "type": "futures",
+        "item_type": "futures",
+        "id": market.id,
+        "market_id": market.id,
+        "stable_id": f"futures:{market.id}",
+        "name": market.name,
+        "category": category,
+        "archetype": editorial_archetype(market.name, category),
+        "source": market.source,
+        "stratum": stratum,
+        "selection_reason": f"labeling:{stratum}",
+        "candidate_source": "labeling_sampler_v1",
+        "score": None,
+        "headline": None,
+        "reason": None,
+        "context": market.description,
+        "hook_description": market.hook_description,
+        "image_url": market.image_url,
+        "group_id": market.group_id,
+        "quality_class": quality.quality_class,
+        "family_key": quality.family_key,
+        "story_key": quality.story_key,
+        "ladder": quality.is_ladder_or_bucket,
+        "reasons": quality.reasons,
+        "top_outcomes": top_outcomes,
+        "rendered_probability": top_outcomes[0]["probability"] if top_outcomes else None,
+        "resolution_date": (
+            market.resolution_date.isoformat() if market.resolution_date else None
+        ),
+        "created_at": market.created_at.isoformat() if market.created_at else None,
+        "updated_at": market.updated_at.isoformat() if market.updated_at else None,
+    }
 
 
 def _merged_value(
@@ -447,6 +696,85 @@ async def create_judgment(
     await db.commit()
     await db.refresh(judgment)
     return {"status": "ok", "id": judgment.id, "label": judgment.label}
+
+
+@router.get("/candidates")
+async def list_labeling_candidates(
+    request: Request,
+    secret: str | None = Query(None),
+    reviewer: str | None = Query("native"),
+    reviewed_surface: str | None = Query("native_discover"),
+    strata: str | None = Query(
+        None,
+        description="Comma-separated labeling strata. Defaults to all supported strata.",
+    ),
+    limit: int = Query(40, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _check_admin_secret(secret) and not await _check_admin_auth(
+        secret, request, db
+    ):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    now = datetime.now(timezone.utc)
+    selected_strata = _parse_candidate_strata(strata)
+    per_stratum_limit = min(100, max(limit * 2, 40))
+    reviewed_keys = await load_reviewed_ranking_keys(
+        db,
+        reviewer=reviewer,
+        surface=reviewed_surface,
+    )
+
+    sampled: list[tuple[str, FuturesMarket]] = []
+    seen_market_ids: set[int] = set()
+    stratum_counts: dict[str, int] = {}
+    for stratum in selected_strata:
+        result = await db.execute(
+            _labeling_stratum_query(
+                stratum,
+                now=now,
+                limit=per_stratum_limit,
+            )
+        )
+        rows = result.scalars().unique().all()
+        stratum_counts[stratum] = len(rows)
+        for market in rows:
+            if market.id in seen_market_ids:
+                continue
+            seen_market_ids.add(market.id)
+            sampled.append((stratum, market))
+
+    candidates: list[dict[str, Any]] = []
+    filtered_reviewed = 0
+    for stratum, market in sampled:
+        if ("futures", market.id) in reviewed_keys:
+            filtered_reviewed += 1
+            continue
+        candidates.append(
+            _serialize_labeling_candidate(
+                market,
+                rank=len(candidates) + 1,
+                stratum=stratum,
+            )
+        )
+
+    return {
+        "items": candidates[:limit],
+        "total_available": len(candidates),
+        "limit": limit,
+        "offset": 0,
+        "has_more": len(candidates) > limit,
+        "candidate_source": "labeling_sampler_v1",
+        "strata": selected_strata,
+        "stratum_sample_counts": stratum_counts,
+        "reviewed_filter": {
+            "enabled": True,
+            "reviewer": reviewer,
+            "surface": reviewed_surface,
+            "reviewed_key_count": len(reviewed_keys),
+            "filtered_count": filtered_reviewed,
+        },
+    }
 
 
 @router.get("")

@@ -50,6 +50,9 @@ class _ExecuteResult:
     def scalars(self):
         return self
 
+    def unique(self):
+        return self
+
     def all(self):
         return self.scalar_rows or self.rows
 
@@ -230,6 +233,61 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
             "fix_type": "staleness",
         }
     }
+
+
+def test_labeling_candidate_strata_parser_ignores_unknown_values():
+    assert admin_judgments._parse_candidate_strata("weather,nope,finance_ladder") == [
+        "weather",
+        "finance_ladder",
+    ]
+
+
+def test_labeling_candidates_returns_stratified_items(monkeypatch):
+    market = SimpleNamespace(
+        id=123,
+        name="Will it rain in New York?",
+        description="Weather context",
+        llm_sport_category="weather",
+        sport=None,
+        source="kalshi",
+        hook_description=None,
+        image_url=None,
+        group_id="weather-nyc",
+        resolution_date=None,
+        created_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        outcomes=[
+            SimpleNamespace(
+                id=1,
+                name="Yes",
+                current_probability=0.62,
+                probability_change_24h=0.03,
+                rank=1,
+            )
+        ],
+    )
+    db = _ReadDB(
+        [
+            _ExecuteResult(rows=[]),
+            _ExecuteResult(scalar_rows=[market]),
+        ]
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/candidates?secret=ok&strata=weather&limit=10"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["candidate_source"] == "labeling_sampler_v1"
+    assert body["strata"] == ["weather"]
+    assert body["items"][0]["id"] == 123
+    assert body["items"][0]["stratum"] == "weather"
+    assert body["items"][0]["selection_reason"] == "labeling:weather"
+    assert body["reviewed_filter"]["filtered_count"] == 0
 
 
 def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
