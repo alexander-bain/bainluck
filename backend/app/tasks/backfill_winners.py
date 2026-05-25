@@ -2108,51 +2108,7 @@ async def _compute_calibration_prices():
 
     try:
         async with get_task_session() as session:
-            # Reset: NULL out calibration_probability on non-event markets
-            # where old Part C set it to a near-settlement value. This lets
-            # Part B reprocess them with the honest opening/settled price.
-            reset_result = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fm.id = fo.market_id
-                      AND fm.status = 'resolved'
-                      AND fm.event_id IS NULL
-                      AND fo.calibration_probability IS NOT NULL
-                      AND fo.opening_probability IS NOT NULL
-                      AND fo.calibration_probability != fo.opening_probability
-                      AND (fo.calibration_probability < 0.02
-                           OR fo.calibration_probability > 0.98)
-                """)
-            )
-            stats["reset"] = reset_result.rowcount
-            if stats["reset"] > 0:
-                logger.info("Reset %d bad calibration prices on non-event markets",
-                            stats["reset"])
-                await session.commit()
-
-            # Also reset event-linked markets so Part A reprocesses with
-            # events.commence_time instead of the old fm.commence_time logic.
-            reset_event_result = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fm.id = fo.market_id
-                      AND fm.status = 'resolved'
-                      AND fm.event_id IS NOT NULL
-                      AND fo.calibration_probability IS NOT NULL
-                      AND fo.opening_probability IS NOT NULL
-                      AND (fo.calibration_probability < 0.02
-                           OR fo.calibration_probability > 0.98)
-                """)
-            )
-            stats["reset"] += reset_event_result.rowcount
-            if reset_event_result.rowcount > 0:
-                logger.info("Reset %d bad calibration prices on event-linked markets",
-                            reset_event_result.rowcount)
-                await session.commit()
+            stats["reset"] = 0
 
             # Part A: Event-linked markets — real pre-event closing line
             # Batched at 50K to avoid Heroku Postgres timeouts.
