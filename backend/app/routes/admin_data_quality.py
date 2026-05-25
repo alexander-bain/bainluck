@@ -2971,8 +2971,10 @@ async def admin_query(
         raise HTTPException(status_code=400, detail="Query must start with SELECT")
 
     try:
-        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
-        result = await db.execute(text(sql_stripped + " LIMIT 1000"))
+        has_limit = "limit" in sql_stripped.lower().split("order")[-1] or "fetch" in sql_stripped.lower()
+        bounded = sql_stripped if has_limit else sql_stripped + " LIMIT 1000"
+        await db.execute(text("SET LOCAL statement_timeout = '30s'"))
+        result = await db.execute(text(bounded))
         columns = list(result.keys())
         rows = [dict(zip(columns, row)) for row in result.fetchall()]
         return {"columns": columns, "rows": rows, "count": len(rows)}
