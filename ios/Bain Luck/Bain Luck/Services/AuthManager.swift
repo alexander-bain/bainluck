@@ -135,6 +135,15 @@ final class AuthManager: ObservableObject {
         }
     }
 
+    // MARK: - Delete Account
+
+    /// Deletes the user's account on the backend, then clears all local state.
+    func deleteAccount() async throws {
+        let _: [String: String] = try await APIClient.shared.deleteAccount()
+        signOut()
+        logger.info("Account deleted and signed out")
+    }
+
     // MARK: - Sign Out
 
     /// Clears local session state, provider state, and analytics identity.

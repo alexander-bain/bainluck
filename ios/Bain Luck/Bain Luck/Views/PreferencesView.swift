@@ -31,6 +31,8 @@ struct PreferencesView: View {
     @StateObject private var viewModel = PreferencesViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showOnboarding = false
+    @State private var showDeleteConfirmation = false
+    @State private var isDeletingAccount = false
 
     var body: some View {
         Group {
@@ -579,6 +581,57 @@ struct PreferencesView: View {
                 .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
             }
             .buttonStyle(.plain)
+
+            Button {
+                showDeleteConfirmation = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.red.opacity(0.7))
+                    Text("Delete Account")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.red)
+                    Spacer()
+                    if isDeletingAccount {
+                        ProgressView()
+                            .tint(.red)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.red.opacity(0.12), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+            .disabled(isDeletingAccount)
+            .confirmationDialog(
+                "Delete Account",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Account", role: .destructive) {
+                    isDeletingAccount = true
+                    Task {
+                        do {
+                            try await authManager.deleteAccount()
+                            dismiss()
+                        } catch {
+                            isDeletingAccount = false
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will permanently delete your account and all your data including predictions, favorites, and preferences. This action cannot be undone.")
+            }
         }
         .padding(.horizontal)
     }

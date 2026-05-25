@@ -553,6 +553,11 @@ actor APIClient {
         return try await fetch("/api/auth/status")
     }
 
+    /// Deletes the currently authenticated user's account and all associated data.
+    func deleteAccount() async throws -> [String: String] {
+        return try await delete("/api/auth/me")
+    }
+
     // MARK: - Onboarding
 
     /// Searches teams near a location during onboarding.
