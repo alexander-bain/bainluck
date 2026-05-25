@@ -1357,8 +1357,7 @@ async def _null_untradeable_openings():
             result = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL,
-                        calibration_probability = NULL
+                    SET opening_probability = NULL
                     WHERE fo.opening_probability IS NOT NULL
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
@@ -1379,8 +1378,7 @@ async def _null_untradeable_openings():
             result2 = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL,
-                        calibration_probability = NULL
+                    SET opening_probability = NULL
                     WHERE fo.opening_probability IS NOT NULL
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.calibration_probability = fo.opening_probability
@@ -1426,8 +1424,7 @@ async def _null_untradeable_openings():
                            AND MAX(fos.probability) - MIN(fos.probability) < 0.02
                     )
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL,
-                        calibration_probability = NULL
+                    SET opening_probability = NULL
                     FROM snap_stats ss
                     WHERE fo.id = ss.outcome_id
                 """)
@@ -1450,8 +1447,7 @@ async def _null_untradeable_openings():
                         HAVING COUNT(*) >= 50
                     )
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL,
-                        calibration_probability = NULL
+                    SET opening_probability = NULL
                     FROM big_winner_markets bm
                     WHERE fo.market_id = bm.market_id
                       AND fo.opening_probability > 0.50
@@ -1467,8 +1463,7 @@ async def _null_untradeable_openings():
             result4b = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL,
-                        calibration_probability = NULL
+                    SET opening_probability = NULL
                     WHERE fo.id IN (
                         SELECT fo2.id
                         FROM futures_outcomes fo2
