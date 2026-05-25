@@ -377,26 +377,9 @@ export async function signInWithGoogle(): Promise<string | null> {
     const accessToken = await getGoogleAccessToken();
     console.log("[Firebase] Got Google access token");
 
-    // Attempt 1: signInWithCredential (fast timeout — Safari ITP blocks this)
-    try {
-      const credential = GoogleAuthProvider.credential(null, accessToken);
-      const result = await withTimeout(
-        signInWithCredential(authInstance, credential),
-        4000,
-        "signInWithCredential"
-      );
-      console.log("[Firebase] signInWithCredential succeeded for", result.user.email);
-      return await result.user.getIdToken();
-    } catch (credError: unknown) {
-      const authError = credError as { code?: string; message?: string };
-      console.warn(
-        "[Firebase] signInWithCredential failed:",
-        authError.message || authError.code,
-        "- trying backend exchange..."
-      );
-    }
-
-    // Attempt 2+3: Exchange via backend → custom token → fallback
+    // Always exchange with backend first to get a durable localStorage token.
+    // Without this, signInWithCredential success creates a Firebase-only session
+    // that gets killed by Safari ITP or browser restarts with no fallback.
     let backendData: BackendExchangeData | null = null;
 
     try {
