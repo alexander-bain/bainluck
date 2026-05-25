@@ -53,6 +53,10 @@ class RankingJudgmentCreate(BaseModel):
     desired_entity_or_variant: str | None = None
     current_entity_or_variant: str | None = None
     create_issue_candidate: bool | None = None
+    fixable_interesting: bool | None = None
+    repair_type: str | None = None
+    repair_target_entity: str | None = None
+    repair_note: str | None = None
     reviewer: str | None = None
 
 
@@ -374,6 +378,10 @@ def _serialize_judgment(judgment: RankingJudgment) -> dict[str, Any]:
         "feed_request_id": judgment.feed_request_id,
         "label_metadata": metadata,
         "card_snapshot": metadata.get("card_snapshot") if isinstance(metadata, dict) else None,
+        "fixable_interesting": judgment.fixable_interesting,
+        "repair_type": judgment.repair_type,
+        "repair_target_entity": judgment.repair_target_entity,
+        "repair_note": judgment.repair_note,
         "reviewer": judgment.reviewer,
         "created_at": judgment.created_at.isoformat() if judgment.created_at else None,
     }
@@ -632,6 +640,8 @@ def _normalize_card_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "has_hook",
         "has_image",
         "explanation_ok",
+        "stratum",
+        "selection_reason",
     ]
     normalized: dict[str, Any] = {}
     for key in allowed_keys:
@@ -671,6 +681,10 @@ async def create_judgment(
     quality_class_at_review: str | None = Query(None),
     headline_at_review: str | None = Query(None),
     feed_request_id: str | None = Query(None),
+    fixable_interesting: bool | None = Query(None),
+    repair_type: str | None = Query(None),
+    repair_target_entity: str | None = Query(None),
+    repair_note: str | None = Query(None),
     reviewer: str | None = Query(None),
 ):
     body = payload.model_dump(exclude_unset=True) if payload else {}
@@ -721,6 +735,14 @@ async def create_judgment(
             body,
             _merged_value(body, "label_metadata", None),
         ),
+        fixable_interesting=bool(
+            _merged_value(body, "fixable_interesting", fixable_interesting, False)
+        ),
+        repair_type=_merged_value(body, "repair_type", repair_type),
+        repair_target_entity=_merged_value(
+            body, "repair_target_entity", repair_target_entity
+        ),
+        repair_note=_merged_value(body, "repair_note", repair_note),
         reviewer=reviewer_value,
     )
     db.add(judgment)
@@ -855,6 +877,150 @@ async def list_judgments(
     }
 
 
+@router.get("/coverage")
+async def labeling_coverage(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str | None = Query(None),
+    window: str = Query(
+        "all",
+        description="Time window: 24h, 7d, 30d, or all",
+    ),
+):
+    """Coverage dashboard for labeling effort.
+
+    Returns reviewed counts grouped by stratum, verdict, category, and
+    reviewer (hashed), plus queue health showing unreviewed candidates
+    per stratum.
+    """
+    if not _check_admin_secret(secret) and not await _check_admin_auth(
+        secret, request, db
+    ):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    now = datetime.now(timezone.utc)
+    window_map = {
+        "24h": timedelta(hours=24),
+        "7d": timedelta(days=7),
+        "30d": timedelta(days=30),
+    }
+    base_filters: list = []
+    if window in window_map:
+        cutoff = now - window_map[window]
+        base_filters.append(RankingJudgment.created_at >= cutoff)
+
+    judgment_q = select(RankingJudgment)
+    for f in base_filters:
+        judgment_q = judgment_q.where(f)
+
+    stratum_rows = (await db.execute(judgment_q)).scalars().all()
+
+    by_stratum: dict[str, dict[str, int]] = {}
+    by_verdict: dict[str, int] = {}
+    by_category: dict[str, dict[str, int]] = {}
+    by_reviewer: dict[str, int] = {}
+    reviewer_daily: dict[str, dict[str, int]] = {}
+    total_reviewed = 0
+    today_str = now.strftime("%Y-%m-%d")
+    week_ago = now - timedelta(days=7)
+
+    for j in stratum_rows:
+        total_reviewed += 1
+        metadata = j.label_metadata if isinstance(j.label_metadata, dict) else {}
+        snapshot = metadata.get("card_snapshot") if isinstance(metadata, dict) else {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        stratum = snapshot.get("stratum") or ""
+        if not stratum:
+            selection_reason = snapshot.get("selection_reason") or ""
+            if selection_reason.startswith("labeling:"):
+                stratum = selection_reason[len("labeling:"):]
+        if not stratum:
+            stratum = "unknown"
+
+        label = j.label or "unknown"
+        category = j.category_at_review or snapshot.get("category") or "uncategorized"
+        reviewer_h = _reviewer_hash(j.reviewer)
+
+        by_stratum.setdefault(stratum, {})
+        by_stratum[stratum][label] = by_stratum[stratum].get(label, 0) + 1
+
+        by_verdict[label] = by_verdict.get(label, 0) + 1
+
+        by_category.setdefault(category, {})
+        by_category[category][label] = by_category[category].get(label, 0) + 1
+
+        by_reviewer[reviewer_h] = by_reviewer.get(reviewer_h, 0) + 1
+
+        if j.created_at:
+            day_key = j.created_at.strftime("%Y-%m-%d")
+            reviewer_daily.setdefault(reviewer_h, {})
+            reviewer_daily[reviewer_h][day_key] = (
+                reviewer_daily[reviewer_h].get(day_key, 0) + 1
+            )
+
+    stratum_heatmap = []
+    for stratum, verdicts in sorted(by_stratum.items()):
+        stratum_total = sum(verdicts.values())
+        stratum_heatmap.append({
+            "stratum": stratum,
+            "verdicts": verdicts,
+            "total": stratum_total,
+            "sufficient": stratum_total >= 50,
+        })
+
+    reviewer_progress = []
+    for rh, count in sorted(by_reviewer.items(), key=lambda x: -x[1]):
+        daily = reviewer_daily.get(rh, {})
+        today_count = daily.get(today_str, 0)
+        week_count = sum(
+            c for d, c in daily.items()
+            if d >= week_ago.strftime("%Y-%m-%d")
+        )
+        reviewer_progress.append({
+            "reviewer_hash": rh,
+            "total": count,
+            "today": today_count,
+            "this_week": week_count,
+        })
+
+    reviewed_keys = await load_reviewed_ranking_keys(db, reviewer=None, surface=None)
+    queue_health = []
+    for stratum in DEFAULT_LABELING_STRATA:
+        result = await db.execute(
+            _labeling_stratum_query(stratum, now=now, limit=200)
+        )
+        markets = result.scalars().unique().all()
+        unreviewed = sum(
+            1 for m in markets
+            if ("futures", m.id) not in reviewed_keys
+        )
+        reviewed_count = len(markets) - unreviewed
+        queue_health.append({
+            "stratum": stratum,
+            "total_candidates": len(markets),
+            "reviewed": reviewed_count,
+            "unreviewed": unreviewed,
+            "exhausted": unreviewed == 0 and len(markets) > 0,
+        })
+
+    insufficient_strata = [
+        s["stratum"] for s in stratum_heatmap if not s["sufficient"]
+    ]
+
+    return {
+        "window": window,
+        "total_reviewed": total_reviewed,
+        "by_stratum": stratum_heatmap,
+        "by_verdict": by_verdict,
+        "by_category": by_category,
+        "reviewer_progress": reviewer_progress,
+        "queue_health": queue_health,
+        "insufficient_strata": insufficient_strata,
+        "generated_at": now.isoformat(),
+    }
+
+
 @router.get("/summary")
 async def judgment_summary(db: AsyncSession = Depends(get_db), secret: str = Query(...)):
     if not _check_admin_secret(secret):
@@ -942,6 +1108,79 @@ async def fixable_interest_clusters(
         clusters = [cluster for cluster in clusters if cluster["status"] == status]
     return {
         "status": status,
+        "total": len(clusters),
+        "clusters": clusters[:limit],
+    }
+
+
+@router.get("/repair-clusters")
+async def repair_clusters(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    secret: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Cluster fixable-interest judgments by repair_type, category, and entity.
+
+    Groups judgments where ``fixable_interesting=True`` using the first-class
+    ``repair_type`` column, ``category_at_review``, and ``repair_target_entity``.
+    Returns clusters sorted by count (most common first), each with sample
+    market IDs and reviewer count.
+    """
+    if not _check_admin_secret(secret) and not await _check_admin_auth(
+        secret, request, db
+    ):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    rows = (
+        await db.execute(
+            select(RankingJudgment)
+            .where(RankingJudgment.fixable_interesting.is_(True))
+            .order_by(desc(RankingJudgment.created_at))
+            .limit(2000)
+        )
+    ).scalars().all()
+
+    grouped: dict[str, list[RankingJudgment]] = {}
+    for row in rows:
+        key = (
+            f"{row.repair_type or 'unspecified'}"
+            f"::{row.category_at_review or 'uncategorized'}"
+            f"::{row.repair_target_entity or ''}"
+        )
+        grouped.setdefault(key, []).append(row)
+
+    clusters: list[dict[str, Any]] = []
+    for key, cluster_rows in grouped.items():
+        parts = key.split("::", 2)
+        repair_type = parts[0]
+        category = parts[1]
+        entity = parts[2] if len(parts) > 2 else ""
+
+        market_ids: list[int] = []
+        reviewers: set[str] = set()
+        for row in cluster_rows:
+            if row.market_id is not None and row.market_id not in market_ids:
+                market_ids.append(row.market_id)
+            if row.reviewer:
+                reviewers.add(row.reviewer)
+
+        clusters.append({
+            "repair_type": repair_type,
+            "category": category,
+            "entity": entity,
+            "count": len(cluster_rows),
+            "reviewer_count": len(reviewers),
+            "sample_market_ids": market_ids[:10],
+            "latest_created_at": (
+                cluster_rows[0].created_at.isoformat()
+                if cluster_rows[0].created_at
+                else None
+            ),
+        })
+
+    clusters.sort(key=lambda c: -c["count"])
+    return {
         "total": len(clusters),
         "clusters": clusters[:limit],
     }

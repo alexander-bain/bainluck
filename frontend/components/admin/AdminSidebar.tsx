@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Tags,
 } from "lucide-react";
 
 interface NavItem {
@@ -48,9 +49,17 @@ const PILLARS: NavPillar[] = [
     items: [{ label: "Discover Quality", href: "/admin/discover-quality" }],
   },
   {
+    label: "Labeling",
+    icon: <Tags className="w-4 h-4" />,
+    items: [{ label: "Labeling Workbench", href: "/admin/labeling" }],
+  },
+  {
     label: "Human Eval",
     icon: <FlaskConical className="w-4 h-4" />,
-    items: [{ label: "Bain-in-the-Loop", href: "/admin/eval" }],
+    items: [
+      { label: "Bain-in-the-Loop", href: "/admin/eval" },
+      { label: "Labeling Coverage", href: "/admin/labeling-coverage" },
+    ],
   },
   {
     label: "User Feedback",

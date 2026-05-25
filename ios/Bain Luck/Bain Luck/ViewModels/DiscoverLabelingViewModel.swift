@@ -1,6 +1,14 @@
 import Combine
 import Foundation
 
+/// A snapshot of a submitted or skipped judgment, used for undo.
+private struct UndoEntry {
+    let index: Int
+    let label: String
+    let reasonTags: Set<String>
+    let notes: String
+}
+
 @MainActor
 final class DiscoverLabelingViewModel: ObservableObject {
     @Published private(set) var items: [DiscoverLabelingDebugItem] = []
@@ -11,6 +19,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
     @Published private(set) var submittedCount = 0
     @Published private(set) var labelCounts: [String: Int] = [:]
     @Published private(set) var loadSummary: String?
+    @Published private(set) var canUndo = false
 
     private var feedRequestId: String?
     private let batchId = "native-review-\(UUID().uuidString)"
@@ -24,6 +33,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
     private var reviewedItemKeys: Set<String>
     private var itemFeedRequestIds: [String: String] = [:]
     private var userEmail: String?
+    private var undoStack: [UndoEntry] = []
 
     init() {
         let stored = UserDefaults.standard.stringArray(forKey: reviewedStorageKey) ?? []
@@ -135,7 +145,28 @@ final class DiscoverLabelingViewModel: ObservableObject {
 
     func skip() {
         guard currentIndex < items.count else { return }
+        undoStack.append(UndoEntry(index: currentIndex, label: "skip", reasonTags: [], notes: ""))
+        canUndo = true
         currentIndex += 1
+    }
+
+    /// Rewind to the previous card. Only reverses the local pointer --
+    /// the server-side judgment is NOT deleted (labels are append-only).
+    func undo() {
+        guard let entry = undoStack.popLast() else { return }
+        currentIndex = entry.index
+        if entry.label != "skip" {
+            submittedCount = max(submittedCount - 1, 0)
+            if let count = labelCounts[entry.label] {
+                let next = count - 1
+                if next <= 0 {
+                    labelCounts.removeValue(forKey: entry.label)
+                } else {
+                    labelCounts[entry.label] = next
+                }
+            }
+        }
+        canUndo = !undoStack.isEmpty
     }
 
     func submit(
@@ -175,6 +206,8 @@ final class DiscoverLabelingViewModel: ObservableObject {
         do {
             _ = try await APIClient.shared.submitRankingJudgment(request)
             markReviewed(item)
+            undoStack.append(UndoEntry(index: currentIndex, label: label, reasonTags: reasonTags, notes: notes))
+            canUndo = true
             submittedCount += 1
             labelCounts[label, default: 0] += 1
             currentIndex += 1

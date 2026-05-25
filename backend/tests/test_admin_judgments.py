@@ -89,6 +89,10 @@ def _judgment(**overrides):
         "headline_at_review": "Test headline",
         "feed_request_id": "feed-1",
         "label_metadata": {},
+        "fixable_interesting": False,
+        "repair_type": None,
+        "repair_target_entity": None,
+        "repair_note": None,
         "reviewer": "alex",
         "created_at": datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
     }
@@ -859,3 +863,179 @@ def test_create_judgment_native_reviewer_fallback_when_unauthenticated(monkeypat
 
     assert response.status_code == 200
     assert db.added.reviewer == "native"
+
+
+# ---------------------------------------------------------------------------
+# Coverage endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class _CoverageDB:
+    """Mock DB for coverage endpoint that handles both judgment query and
+    queue health queries (reviewed keys + per-stratum market queries)."""
+
+    def __init__(self, judgments, reviewed_rows=None, stratum_markets=None):
+        self._judgments = judgments
+        self._reviewed_rows = reviewed_rows or []
+        self._stratum_markets = stratum_markets or []
+        self._call_count = 0
+
+    async def execute(self, statement):
+        self._call_count += 1
+        # First call: judgment query
+        if self._call_count == 1:
+            return _ExecuteResult(scalar_rows=self._judgments)
+        # Second call: load_reviewed_ranking_keys
+        if self._call_count == 2:
+            return _ExecuteResult(rows=self._reviewed_rows)
+        # Remaining calls: per-stratum market queries
+        return _ExecuteResult(scalar_rows=list(self._stratum_markets))
+
+
+def test_coverage_returns_stratum_heatmap_and_queue_health(monkeypatch):
+    j1 = _judgment(
+        id=1,
+        label="love",
+        reviewer="alex",
+        category_at_review="politics",
+        label_metadata={
+            "card_snapshot": {
+                "stratum": "top_feed_like",
+                "selection_reason": "labeling:top_feed_like",
+                "category": "politics",
+            }
+        },
+    )
+    j2 = _judgment(
+        id=2,
+        label="bad",
+        reviewer="alex",
+        category_at_review="weather",
+        label_metadata={
+            "card_snapshot": {
+                "selection_reason": "labeling:weather",
+                "category": "weather",
+            }
+        },
+    )
+    db = _CoverageDB([j1, j2])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_reviewed"] == 2
+    assert body["window"] == "all"
+
+    # by_stratum should have top_feed_like and weather
+    strata_names = [s["stratum"] for s in body["by_stratum"]]
+    assert "top_feed_like" in strata_names
+    assert "weather" in strata_names
+
+    # by_verdict
+    assert body["by_verdict"]["love"] == 1
+    assert body["by_verdict"]["bad"] == 1
+
+    # by_category
+    assert "politics" in body["by_category"]
+    assert "weather" in body["by_category"]
+
+    # reviewer_progress
+    assert len(body["reviewer_progress"]) == 1
+    assert body["reviewer_progress"][0]["total"] == 2
+
+    # queue_health has one entry per DEFAULT_LABELING_STRATA
+    assert len(body["queue_health"]) == len(admin_judgments.DEFAULT_LABELING_STRATA)
+
+    # insufficient_strata flags strata with < 50 labels
+    assert "top_feed_like" in body["insufficient_strata"]
+
+    assert "generated_at" in body
+
+
+def test_coverage_window_filter(monkeypatch):
+    """Passing window=24h filters to recent judgments only."""
+    j_old = _judgment(
+        id=1,
+        label="love",
+        created_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        label_metadata={},
+    )
+    j_new = _judgment(
+        id=2,
+        label="bad",
+        created_at=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc),
+        label_metadata={},
+    )
+    # The endpoint filters in the SQL query, but our mock returns all rows.
+    # We just verify the endpoint accepts the window param without error.
+    db = _CoverageDB([j_old, j_new])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok&window=7d"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["window"] == "7d"
+
+
+def test_coverage_requires_auth(monkeypatch):
+    db = _CoverageDB([])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: False
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=wrong"
+    )
+
+    assert response.status_code == 403
+
+
+def test_coverage_unknown_stratum_fallback(monkeypatch):
+    """Judgments without stratum info in snapshot are classified as 'unknown'."""
+    j = _judgment(id=1, label="love", label_metadata=None)
+    db = _CoverageDB([j])
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/coverage?secret=ok"
+    )
+
+    assert response.status_code == 200
+    strata = [s["stratum"] for s in response.json()["by_stratum"]]
+    assert "unknown" in strata
+
+
+def test_card_snapshot_preserves_stratum_and_selection_reason(monkeypatch):
+    """The stratum and selection_reason fields are now in the allowed snapshot keys."""
+    db = _WriteDB()
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).post(
+        "/admin/ranking-judgments?secret=ok&label=love",
+        json={
+            "card_snapshot": {
+                "stratum": "weather",
+                "selection_reason": "labeling:weather",
+                "name": "Rain market",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    snapshot = db.added.label_metadata["card_snapshot"]
+    assert snapshot["stratum"] == "weather"
+    assert snapshot["selection_reason"] == "labeling:weather"

@@ -1478,6 +1478,12 @@ class RankingJudgment(Base):
     headline_at_review: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     feed_request_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     label_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    fixable_interesting: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    repair_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    repair_target_entity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    repair_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reviewer: Mapped[str] = mapped_column(String(100), default="alex")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

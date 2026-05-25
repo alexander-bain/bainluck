@@ -167,6 +167,9 @@ struct DiscoverLabelingView: View {
             }
 
             FlowLayout(spacing: 6) {
+                if let stratum = item.stratum {
+                    pill(displayTag(stratum))
+                }
                 pill(item.category)
                 pill(item.archetype ?? "unknown")
                 pill(item.source ?? "unknown")
@@ -174,6 +177,12 @@ struct DiscoverLabelingView: View {
                 if item.hook == true { pill("hook") }
                 if item.image == true { pill("image") }
                 if let storyKey = item.storyKey { pill(storyKey) }
+            }
+
+            if let selectionReason = item.selectionReason {
+                Text("Selection: \(selectionReason)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             if let context = item.context ?? item.reason, !context.isEmpty {
@@ -266,13 +275,26 @@ struct DiscoverLabelingView: View {
             .buttonStyle(.borderedProminent)
             .disabled(selectedLabel == nil || viewModel.submitting)
 
-            Button("Skip") {
-                viewModel.skip()
-                resetForm()
+            HStack(spacing: 16) {
+                Button("Skip") {
+                    viewModel.skip()
+                    resetForm()
+                }
+                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                if viewModel.canUndo {
+                    Button {
+                        viewModel.undo()
+                        resetForm()
+                    } label: {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
         }
     }
 

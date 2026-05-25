@@ -48,6 +48,8 @@ nonisolated struct DiscoverLabelingDebugItem: Decodable, Identifiable, Sendable 
     let category: String
     let archetype: String?
     let source: String?
+    let stratum: String?
+    let selectionReason: String?
     let headline: String?
     let reason: String?
     let context: String?
