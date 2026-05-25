@@ -995,6 +995,10 @@ async def _backfill_kalshi_price_history(
                         stats["snapshots_created"] += len(batch_values)
 
                     stats["outcomes_processed"] += 1
+                    if stats["outcomes_processed"] % 50 == 0:
+                        await session.commit()
+                        logger.info("Kalshi history backfill: committed %d outcomes, %d snapshots",
+                                    stats["outcomes_processed"], stats["snapshots_created"])
                     await asyncio.sleep(0.1)
 
                 await session.commit()
