@@ -242,6 +242,63 @@ def test_labeling_candidate_strata_parser_ignores_unknown_values():
     ]
 
 
+def test_labeling_candidate_strata_parser_accepts_low_confidence():
+    result = admin_judgments._parse_candidate_strata("low_confidence,weather")
+    assert result == ["low_confidence", "weather"]
+
+
+def test_low_confidence_stratum_included_in_defaults():
+    assert "low_confidence" in admin_judgments.DEFAULT_LABELING_STRATA
+
+
+def test_labeling_candidates_low_confidence_stratum(monkeypatch):
+    """The low_confidence stratum returns boundary markets with moderate volume."""
+    market = SimpleNamespace(
+        id=456,
+        name="Will Tesla stock close above $200 this week?",
+        description="Boundary market",
+        llm_sport_category="tech",
+        sport=None,
+        source="kalshi",
+        hook_description="A moderate-confidence market",
+        image_url=None,
+        group_id=None,
+        resolution_date=None,
+        created_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+        outcomes=[
+            SimpleNamespace(
+                id=10,
+                name="Yes",
+                current_probability=0.45,
+                probability_change_24h=0.02,
+                rank=1,
+            )
+        ],
+    )
+    db = _ReadDB(
+        [
+            _ExecuteResult(rows=[]),  # reviewed keys
+            _ExecuteResult(scalar_rows=[market]),  # low_confidence stratum
+        ]
+    )
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+    )
+
+    response = _client_with_db(db).get(
+        "/admin/ranking-judgments/candidates?secret=ok&strata=low_confidence&limit=10"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strata"] == ["low_confidence"]
+    assert len(body["items"]) == 1
+    assert body["items"][0]["id"] == 456
+    assert body["items"][0]["stratum"] == "low_confidence"
+    assert body["items"][0]["selection_reason"] == "labeling:low_confidence"
+
+
 def test_labeling_candidates_returns_stratified_items(monkeypatch):
     market = SimpleNamespace(
         id=123,

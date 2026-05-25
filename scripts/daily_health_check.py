@@ -81,23 +81,38 @@ class HealthReport:
         return "\n".join(lines)
 
 
-def _fetch_json(url: str, headers: dict | None = None, timeout: int = 15) -> dict | None:
+def _fetch_json(
+    url: str,
+    headers: dict | None = None,
+    timeout: int = 30,
+) -> tuple[dict | None, str]:
+    """Fetch JSON from *url*, returning ``(data, error_reason)``.
+
+    *error_reason* is an empty string on success.  On failure it holds a
+    short diagnostic such as ``"timeout"`` or ``"403 Forbidden"`` so callers
+    can surface it in the health report instead of a generic "UNREACHABLE".
+    """
     req = urllib.request.Request(url, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
-        return None
+            return json.loads(resp.read().decode()), ""
+    except urllib.error.HTTPError as exc:
+        return None, f"{exc.code} {exc.reason}"
+    except (TimeoutError, OSError) as exc:
+        return None, f"timeout ({timeout}s)"
+    except urllib.error.URLError as exc:
+        return None, f"unreachable: {exc.reason}"
 
 
 def check_api_reachable(report: HealthReport) -> None:
-    result = _fetch_json(f"{API_BASE}/api/auth/health", timeout=10)
+    result, err = _fetch_json(f"{API_BASE}/api/auth/health", timeout=10)
     if result is None or not result.get("healthy", False):
         report.api_reachable = False
+        value = f"UNREACHABLE ({err})" if result is None else "UNHEALTHY"
         report.checks.append(CheckResult(
             name="API Reachable",
             status="fail",
-            value="UNREACHABLE" if result is None else "UNHEALTHY",
+            value=value,
             threshold="200 OK + healthy=true",
             priority="p0",
         ))
@@ -111,16 +126,24 @@ def check_api_reachable(report: HealthReport) -> None:
 
 
 def check_dashboard(report: HealthReport, admin_token: str) -> None:
-    data = _fetch_json(f"{API_BASE}/api/admin/dashboard?secret={admin_token}")
+    data, err = _fetch_json(f"{API_BASE}/api/admin/dashboard?secret={admin_token}", timeout=30)
     if data is None:
         report.checks.append(CheckResult(
             name="Admin Dashboard",
             status="fail",
-            value="UNREACHABLE",
+            value=f"UNREACHABLE ({err})" if err else "UNREACHABLE",
             threshold="200 OK",
             priority="p1",
         ))
         return
+
+    # Dashboard itself is reachable — always record this.
+    report.checks.append(CheckResult(
+        name="Admin Dashboard",
+        status="pass",
+        value="reachable",
+        threshold="200 OK",
+    ))
 
     # Quota
     quota = data.get("quota", {})
@@ -186,12 +209,12 @@ def check_dashboard(report: HealthReport, admin_token: str) -> None:
 
 
 def check_celery_queue(report: HealthReport, admin_token: str) -> None:
-    data = _fetch_json(f"{API_BASE}/api/admin/celery-debug?secret={admin_token}")
+    data, err = _fetch_json(f"{API_BASE}/api/admin/celery-debug?secret={admin_token}", timeout=30)
     if data is None:
         report.checks.append(CheckResult(
             name="Celery Queue",
             status="warn",
-            value="endpoint unreachable",
+            value=f"endpoint unreachable ({err})" if err else "endpoint unreachable",
             threshold="background < 50",
         ))
         return
@@ -222,12 +245,16 @@ def check_celery_queue(report: HealthReport, admin_token: str) -> None:
 
 
 def check_backfill_coverage(report: HealthReport, admin_token: str) -> None:
-    data = _fetch_json(f"{API_BASE}/api/admin/backfill-winners/status?secret={admin_token}")
+    # This endpoint runs a heavy aggregate query; give it extra time.
+    data, err = _fetch_json(
+        f"{API_BASE}/api/admin/backfill-winners/status?secret={admin_token}",
+        timeout=60,
+    )
     if data is None:
         report.checks.append(CheckResult(
             name="is_winner Coverage",
             status="warn",
-            value="endpoint unreachable",
+            value=f"endpoint unreachable ({err})" if err else "endpoint unreachable",
             threshold="> 90% all sources",
         ))
         return
@@ -271,27 +298,50 @@ def check_backfill_coverage(report: HealthReport, admin_token: str) -> None:
             ))
 
 
+def _sentry_24h_count(issue: dict) -> int:
+    """Extract the 24-hour event count from a Sentry issue dict.
+
+    When ``expand=stats`` is present, the response includes a
+    ``stats`` dict keyed by stat period with bucketed time-series
+    data.  We sum the ``24h`` buckets to get the true 24h count.
+
+    Falls back to the ``count`` field (all-time) if stats are missing,
+    which is still directionally useful but may over-count.
+    """
+    stats = issue.get("stats", {})
+    buckets = stats.get("24h")
+    if isinstance(buckets, list) and buckets:
+        return sum(v for _ts, v in buckets)
+    # Fallback: all-time count (may exceed the 24h threshold unfairly
+    # but is better than silently ignoring the issue).
+    return int(issue.get("count", "0"))
+
+
 def check_sentry(report: HealthReport, sentry_token: str, sentry_org: str, sentry_project: str) -> None:
     url = (
         f"{SENTRY_API}/projects/{sentry_org}/{sentry_project}/issues/"
-        f"?query=is:unresolved&statsPeriod=24h&limit=10&sort=freq"
+        f"?query=is:unresolved&statsPeriod=24h&expand=stats&limit=10&sort=freq"
     )
-    data = _fetch_json(url, headers={"Authorization": f"Bearer {sentry_token}"})
+    data, err = _fetch_json(url, headers={"Authorization": f"Bearer {sentry_token}"})
     if data is None:
         report.checks.append(CheckResult(
             name="Sentry Errors",
             status="warn",
-            value="API unreachable",
+            value=f"API unreachable ({err})" if err else "API unreachable",
             threshold="< 100 events/24h per issue",
         ))
         return
 
-    high_freq = [
-        issue for issue in data
-        if int(issue.get("count", "0")) > 100
-    ]
+    high_freq: list[tuple[dict, int]] = []
+    for issue in data:
+        count_24h = _sentry_24h_count(issue)
+        if count_24h > 100:
+            high_freq.append((issue, count_24h))
+
     if high_freq:
-        names = "; ".join(f"{i['shortId']}({i['count']})" for i in high_freq[:3])
+        names = "; ".join(
+            f"{iss['shortId']}({cnt})" for iss, cnt in high_freq[:3]
+        )
         report.checks.append(CheckResult(
             name="Sentry High-Frequency",
             status="fail",
@@ -300,11 +350,11 @@ def check_sentry(report: HealthReport, sentry_token: str, sentry_org: str, sentr
             priority="p1",
         ))
     else:
-        total = sum(int(i.get("count", "0")) for i in data)
+        total = sum(_sentry_24h_count(i) for i in data)
         report.checks.append(CheckResult(
             name="Sentry Errors",
             status="pass",
-            value=f"{total} events across {len(data)} issues",
+            value=f"{total} events across {len(data)} issues (24h)",
             threshold="< 100 events/24h per issue",
         ))
 

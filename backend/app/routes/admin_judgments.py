@@ -72,6 +72,7 @@ DEFAULT_LABELING_STRATA = [
     "stale_fixable",
     "weather",
     "finance_ladder",
+    "low_confidence",
     "duplicate_group",
     "explanation_image_gap",
     "movement_boundary",
@@ -171,6 +172,27 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
         ordering = [
             FuturesMarket.resolution_date.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
+        ]
+    elif stratum == "low_confidence":
+        # Markets near the ranking boundary (score ~30-50 proxy): moderate
+        # volume but not top-tier, with some enrichment. These sit at the
+        # edge of feed inclusion and are the most valuable for calibrating
+        # the scoring function.
+        filters = [
+            *base_filters,
+            FuturesMarket.volume_24h.isnot(None),
+            FuturesMarket.volume_24h > 0,
+            FuturesMarket.volume_24h < 5000,
+            or_(
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.image_url.isnot(None),
+            ),
+            FuturesMarket.llm_sport_category.isnot(None),
+        ]
+        ordering = [
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.max_movement_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
         ]
     elif stratum == "duplicate_group":
         filters = [*base_filters, FuturesMarket.group_id.isnot(None)]
