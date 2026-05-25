@@ -12,14 +12,18 @@ nonisolated struct DiscoverLabelingFeedResponse: Decodable, Sendable {
     let reviewedFilter: DiscoverLabelingReviewedFilter?
 
     private enum CodingKeys: String, CodingKey {
-        case feedRequestId, debugItems, total, limit, offset, hasMore, reviewedFilter
+        case feedRequestId, debugItems, items, total, totalAvailable, limit, offset, hasMore, reviewedFilter
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         feedRequestId = try container.decodeIfPresent(String.self, forKey: .feedRequestId)
-        debugItems = try container.decodeIfPresent([DiscoverLabelingDebugItem].self, forKey: .debugItems) ?? []
-        total = try container.decodeIfPresent(Int.self, forKey: .total) ?? debugItems.count
+        debugItems = try container.decodeIfPresent([DiscoverLabelingDebugItem].self, forKey: .debugItems)
+            ?? container.decodeIfPresent([DiscoverLabelingDebugItem].self, forKey: .items)
+            ?? []
+        total = try container.decodeIfPresent(Int.self, forKey: .total)
+            ?? container.decodeIfPresent(Int.self, forKey: .totalAvailable)
+            ?? debugItems.count
         limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? debugItems.count
         offset = try container.decodeIfPresent(Int.self, forKey: .offset) ?? 0
         hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false

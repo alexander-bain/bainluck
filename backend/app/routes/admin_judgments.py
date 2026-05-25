@@ -269,7 +269,11 @@ def _serialize_labeling_candidate(
         }
         for outcome in outcomes[:5]
     ]
-    category = market.llm_sport_category or (market.sport.name if market.sport else None)
+    category = (
+        market.llm_sport_category
+        or (market.sport.name if market.sport else None)
+        or "?"
+    )
     quality = classify_market_quality(
         market_name=market.name,
         sport_category=category,
@@ -289,7 +293,7 @@ def _serialize_labeling_candidate(
         "stratum": stratum,
         "selection_reason": f"labeling:{stratum}",
         "candidate_source": "labeling_sampler_v1",
-        "score": None,
+        "score": 0.0,
         "headline": None,
         "reason": None,
         "context": market.description,
