@@ -147,7 +147,7 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
             *base_filters,
             FuturesMarket.name.op("~*")(
                 r"\m(weather|temperature|hurricane|rain|rainfall|precipitation|"
-                r"storm|snow|tornado|wildfire|heat)\M"
+                r"snow|tornado|wildfire|heat)\M"
             ),
         ]
         ordering = [
