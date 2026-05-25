@@ -146,7 +146,6 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
         filters = [
             *base_filters,
             or_(
-                FuturesMarket.llm_sport_category == "weather",
                 FuturesMarket.name.ilike("%weather%"),
                 FuturesMarket.name.ilike("%temperature%"),
                 FuturesMarket.name.ilike("%hurricane%"),
@@ -161,7 +160,6 @@ def _labeling_stratum_query(stratum: str, *, now: datetime, limit: int):
         filters = [
             *base_filters,
             or_(
-                FuturesMarket.llm_sport_category == "economics",
                 FuturesMarket.name.ilike("%S&P%"),
                 FuturesMarket.name.ilike("%SPX%"),
                 FuturesMarket.name.ilike("%Nasdaq%"),
