@@ -240,24 +240,60 @@ class KalshiAPIService(BaseAPIClient):
         self,
         ticker: str,
         period_interval: int = 60,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
     ) -> list[dict]:
         """Get historical candlestick data for a market.
 
+        Uses the batch endpoint GET /markets/candlesticks (the old per-market
+        endpoint /markets/{ticker}/candlesticks was deprecated).
+
         Args:
-            ticker: Market ticker (e.g., 'KXNBAGAME-26FEB21DETCHI-NY')
+            ticker: Market ticker
             period_interval: Candle width in minutes (1, 5, 15, 60, 1440)
+            start_ts: Unix timestamp for start of range (default: 90 days ago)
+            end_ts: Unix timestamp for end of range (default: now)
 
         Returns:
-            List of {"t": unix_ts, "yes_price": float, ...} dicts
+            List of normalized dicts with "t" (unix_ts) and "yes_price" (0-1 float)
         """
+        import time as _time
+        if start_ts is None:
+            start_ts = int(_time.time()) - 90 * 86400
+        if end_ts is None:
+            end_ts = int(_time.time())
+
         try:
             response = await self.client.get(
-                f"{self.BASE_URL}/markets/{ticker}/candlesticks",
-                params={"period_interval": period_interval},
+                f"{self.BASE_URL}/markets/candlesticks",
+                params={
+                    "market_tickers": ticker,
+                    "period_interval": period_interval,
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                },
             )
             response.raise_for_status()
             data = response.json()
-            return data.get("candlesticks", [])
+
+            raw_markets = data.get("markets", [])
+            if not raw_markets:
+                return []
+
+            raw_candles = raw_markets[0].get("candlesticks", [])
+            normalized = []
+            for c in raw_candles:
+                ts = c.get("end_period_ts")
+                yes_bid = c.get("yes_bid", {})
+                close_str = yes_bid.get("close_dollars")
+                if ts is None or close_str is None:
+                    continue
+                try:
+                    price = float(close_str)
+                except (ValueError, TypeError):
+                    continue
+                normalized.append({"t": ts, "yes_price": price})
+            return normalized
         except Exception as e:
             logger.warning("Failed to get candlesticks for %s: %s", ticker, e)
             return []
