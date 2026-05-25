@@ -21,7 +21,7 @@ def _check_admin_secret(secret: str | None) -> bool:
 
 
 DEFAULT_ADMIN_USER_IDS = {364}
-DEFAULT_ADMIN_EMAILS = {"alex.bain@gmail.com", "alex.bain@bainluck.com"}
+DEFAULT_ADMIN_EMAILS = {"alex.bain@gmail.com", "alex.bain@bainluck.com", "olivercbain@gmail.com"}
 
 
 def _admin_user_ids() -> set[int]:
