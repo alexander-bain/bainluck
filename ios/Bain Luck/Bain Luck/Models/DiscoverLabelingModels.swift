@@ -9,9 +9,10 @@ nonisolated struct DiscoverLabelingFeedResponse: Decodable, Sendable {
     let limit: Int
     let offset: Int
     let hasMore: Bool
+    let reviewedFilter: DiscoverLabelingReviewedFilter?
 
     private enum CodingKeys: String, CodingKey {
-        case feedRequestId, debugItems, total, limit, offset, hasMore
+        case feedRequestId, debugItems, total, limit, offset, hasMore, reviewedFilter
     }
 
     init(from decoder: Decoder) throws {
@@ -22,7 +23,16 @@ nonisolated struct DiscoverLabelingFeedResponse: Decodable, Sendable {
         limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? debugItems.count
         offset = try container.decodeIfPresent(Int.self, forKey: .offset) ?? 0
         hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        reviewedFilter = try container.decodeIfPresent(DiscoverLabelingReviewedFilter.self, forKey: .reviewedFilter)
     }
+}
+
+nonisolated struct DiscoverLabelingReviewedFilter: Decodable, Sendable {
+    let enabled: Bool
+    let reviewer: String?
+    let surface: String?
+    let reviewedKeyCount: Int
+    let filteredCount: Int
 }
 
 nonisolated struct DiscoverLabelingDebugItem: Decodable, Identifiable, Sendable {

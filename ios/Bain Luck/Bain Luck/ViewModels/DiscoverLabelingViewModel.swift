@@ -50,6 +50,8 @@ final class DiscoverLabelingViewModel: ObservableObject {
             var apiItemCount = 0
             var filteredReviewedCount = 0
             var filteredDuplicateCount = 0
+            var serverReviewedKeyCount = 0
+            var serverFilteredReviewedCount = 0
             var latestTotal = 0
             var latestHasMore = false
 
@@ -63,6 +65,10 @@ final class DiscoverLabelingViewModel: ObservableObject {
                 apiItemCount += response.debugItems.count
                 latestTotal = response.total
                 latestHasMore = response.hasMore
+                if let reviewedFilter = response.reviewedFilter {
+                    serverReviewedKeyCount = reviewedFilter.reviewedKeyCount
+                    serverFilteredReviewedCount = reviewedFilter.filteredCount
+                }
 
                 for item in response.debugItems {
                     let key = reviewKey(for: item)
@@ -89,7 +95,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
             items = Array(loadedItems.prefix(targetQueueSize))
             itemFeedRequestIds = feedRequestIds
             currentIndex = 0
-            loadSummary = "Loaded \(items.count) of \(apiItemCount) fetched; filtered \(filteredReviewedCount) reviewed, \(filteredDuplicateCount) duplicate; pages \(pagesLoaded), total \(latestTotal), more \(latestHasMore ? "yes" : "no"). Local reviewed: \(reviewedItemKeys.count)."
+            loadSummary = "Loaded \(items.count) of \(apiItemCount) fetched; server filtered \(serverFilteredReviewedCount) reviewed (\(serverReviewedKeyCount) known), local filtered \(filteredReviewedCount) reviewed, \(filteredDuplicateCount) duplicate; pages \(pagesLoaded), total \(latestTotal), more \(latestHasMore ? "yes" : "no"). Local reviewed: \(reviewedItemKeys.count)."
             if items.isEmpty {
                 error = sawAnyDebugItems ? "No new debug feed items returned." : "No debug feed items returned."
             }

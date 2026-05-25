@@ -670,6 +670,9 @@ actor APIClient {
             "event_pct": "0.15",
             "debug": "true",
             "debug_ground_truth": "false",
+            "exclude_reviewed": "true",
+            "reviewer": "native",
+            "reviewed_surface": "native_discover",
         ]
         if let secret, !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             query["secret"] = secret

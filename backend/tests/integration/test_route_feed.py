@@ -10,7 +10,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.routes.feed import _apply_manual_review_decision_map
+from app.routes.feed import (
+    _apply_manual_review_decision_map,
+    _filter_reviewed_feed_items,
+    _review_key_for_feed_item,
+)
 
 
 class TestFeedEmptyShape:
@@ -295,6 +299,35 @@ class TestFeedDebug:
         assert "x-feed-elapsed-ms" in resp.headers
         assert body["debug_summary"]["items"] == 0
         assert body["debug_items"] == []
+
+    async def test_exclude_reviewed_requires_admin_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/feed?exclude_reviewed=true")
+
+        assert resp.status_code == 403
+
+
+class TestFeedReviewedFiltering:
+    def test_review_key_for_feed_item_uses_type_and_data_id(self):
+        item = {"type": "futures", "data": {"id": "123"}}
+
+        assert _review_key_for_feed_item(item) == ("futures", 123)
+
+    def test_filter_reviewed_feed_items_removes_matching_items(self):
+        items = [
+            {"type": "futures", "data": {"id": 1}},
+            {"type": "event", "data": {"id": 2}},
+            {"type": "futures", "data": {"id": 3}},
+        ]
+
+        kept, filtered = _filter_reviewed_feed_items(
+            items,
+            {("futures", 1), ("event", 2)},
+        )
+
+        assert filtered == 2
+        assert [item["data"]["id"] for item in kept] == [3]
 
 
 class TestDiscoverQualityTrace:

@@ -32,6 +32,7 @@ from app.models.models import (
     DiscoverInteraction,
     DiscoverReviewDecision,
     ExternalCuratorGroundTruthItem,
+    RankingJudgment,
     User,
     UserFavorite,
     UserPreference,
@@ -835,6 +836,67 @@ def _ei_label(score: int) -> str:
 _pulse_label = _ei_label
 
 
+def _review_key_for_feed_item(item: dict) -> tuple[str, int] | None:
+    """Return the stable judgment identity key for a feed item."""
+    item_type = item.get("type")
+    if item_type not in {"futures", "event"}:
+        return None
+    data = item.get("data") or {}
+    item_id = data.get("id")
+    if item_id is None:
+        return None
+    try:
+        return item_type, int(item_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_reviewed_feed_items(
+    items: list[dict],
+    reviewed_keys: set[tuple[str, int]],
+) -> tuple[list[dict], int]:
+    if not reviewed_keys:
+        return items, 0
+    kept: list[dict] = []
+    filtered = 0
+    for item in items:
+        key = _review_key_for_feed_item(item)
+        if key and key in reviewed_keys:
+            filtered += 1
+            continue
+        kept.append(item)
+    return kept, filtered
+
+
+async def _load_reviewed_ranking_keys(
+    db: AsyncSession,
+    *,
+    reviewer: str | None,
+    surface: str | None,
+) -> set[tuple[str, int]]:
+    """Load futures/event keys that already have human ranking judgments."""
+    filters = [RankingJudgment.item_type.in_(["futures", "event"])]
+    if reviewer:
+        filters.append(RankingJudgment.reviewer == reviewer)
+    if surface:
+        filters.append(RankingJudgment.surface == surface)
+
+    result = await db.execute(
+        select(
+            RankingJudgment.item_type,
+            RankingJudgment.market_id,
+            RankingJudgment.event_id,
+        ).where(*filters)
+    )
+    reviewed: set[tuple[str, int]] = set()
+    for item_type, market_id, event_id in result.all():
+        if item_type == "futures" and market_id is not None:
+            reviewed.add(("futures", int(market_id)))
+        elif item_type == "event" and event_id is not None:
+            reviewed.add(("event", int(event_id)))
+    return reviewed
+
+
 @router.get("")
 async def get_feed(
     response: Response,
@@ -876,6 +938,21 @@ async def get_feed(
             "Default debug mode is global for admin labeling."
         ),
     ),
+    exclude_reviewed: bool = Query(
+        False,
+        description=(
+            "Admin/debug labeling helper: exclude cards already present in "
+            "ranking_judgments for the reviewer/surface."
+        ),
+    ),
+    reviewer: Optional[str] = Query(
+        None,
+        description="Reviewer key used when exclude_reviewed=true.",
+    ),
+    reviewed_surface: Optional[str] = Query(
+        None,
+        description="Optional ranking_judgments surface filter for reviewed exclusion.",
+    ),
     secret: Optional[str] = Query(
         None, description="Admin secret for debug diagnostics"
     ),
@@ -903,7 +980,7 @@ async def get_feed(
     _previous_at = _started_at
     _timings: list[dict[str, float | str]] = []
 
-    if debug and not await _check_admin_auth(secret, request, db):
+    if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -925,7 +1002,7 @@ async def get_feed(
     # quickly to "already seen" suppression.
     _cache_ttl = 30 if my_teams_only else (5 if (feed_user or feed_session_id) else 60)
     _async_redis = None
-    if not debug:
+    if not debug and not exclude_reviewed:
         try:
             from app.tasks.redis_state import get_async_redis_client
 
@@ -1170,6 +1247,28 @@ async def get_feed(
         )
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
 
+    reviewed_filter = None
+    if exclude_reviewed:
+        reviewed_keys = await _load_reviewed_ranking_keys(
+            db,
+            reviewer=reviewer,
+            surface=reviewed_surface,
+        )
+        feed_items, reviewed_filtered_count = _filter_reviewed_feed_items(
+            feed_items,
+            reviewed_keys,
+        )
+        reviewed_filter = {
+            "enabled": True,
+            "reviewer": reviewer,
+            "surface": reviewed_surface,
+            "reviewed_key_count": len(reviewed_keys),
+            "filtered_count": reviewed_filtered_count,
+        }
+    _previous_at = _record_feed_timing(
+        _timings, _started_at, _previous_at, "reviewed_filter"
+    )
+
     total = len(feed_items)
     paginated = feed_items[offset : offset + limit]
 
@@ -1324,6 +1423,8 @@ async def get_feed(
 
     if debug_payload is not None:
         payload["debug_global"] = debug_global
+        if reviewed_filter is not None:
+            payload["reviewed_filter"] = reviewed_filter
         payload["debug_summary"] = debug_payload["summary"]
         payload["debug_items"] = debug_payload["items"]
         payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
