@@ -879,6 +879,179 @@ async def _fix_hockey_commence_times() -> int:
         return total_fixed
 
 
+async def _backfill_from_settled_events(limit: int = 5000):
+    """Recover historical prices from Kalshi's settled events API.
+
+    Instead of hitting the candlestick API per-outcome (which returns empty
+    for old settled markets), this paginates the events API with
+    status=settled and with_nested_markets=true to get last_price_dollars
+    directly from the market data.
+    """
+    import asyncio
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+
+    stats = {
+        "events_scanned": 0, "markets_matched": 0,
+        "snapshots_created": 0, "opening_set": 0,
+        "api_pages": 0, "errors": [],
+    }
+
+    # Series prefixes with the most missing outcomes
+    SERIES_PREFIXES = [
+        "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
+        "KXNBAREB", "KXNBAAST", "KXNBA2HWINNER",
+        "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL", "KXNCAABBGAME",
+        "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
+        "KXMLBSTGAME", "KXMLSGAME",
+        "KXNASDAQ", "KXINXU", "KXEURUSD", "KXBITCOIN",
+    ]
+
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        service = KalshiAPIService()
+        try:
+            async with get_task_session() as session:
+                total_matched = 0
+
+                for series in SERIES_PREFIXES:
+                    if total_matched >= limit:
+                        break
+
+                    cursor = None
+                    for _ in range(50):  # max 50 pages per series
+                        events, cursor = await service.get_events(
+                            status="settled",
+                            series_ticker=series,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=cursor,
+                        )
+                        stats["api_pages"] += 1
+
+                        if not events:
+                            break
+
+                        for event_data in events:
+                            stats["events_scanned"] += 1
+                            nested = event_data.get("markets") or []
+
+                            # Collect tickers from this page of events
+                        page_tickers = []
+                        for mkt in nested:
+                            ticker = mkt.get("ticker", "")
+                            if ticker:
+                                page_tickers.append(ticker)
+
+                        if not page_tickers:
+                            continue
+
+                        # Match tickers to our outcomes in bulk
+                        matched = await session.execute(
+                            text("""
+                                SELECT fo.id, fo.external_id, fo.opening_probability
+                                FROM futures_outcomes fo
+                                JOIN futures_markets fm ON fo.market_id = fm.id
+                                WHERE fo.external_id = ANY(:tickers)
+                                  AND fm.source = 'kalshi'
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM futures_odds_snapshots fos
+                                      WHERE fos.outcome_id = fo.id
+                                  )
+                            """),
+                            {"tickers": page_tickers},
+                        )
+                        needs_backfill = {r.external_id: (r.id, r.opening_probability) for r in matched.fetchall()}
+
+                        if not needs_backfill:
+                            continue
+
+                        # Fetch full candlestick history for matched tickers (batch of 50)
+                        matched_tickers = list(needs_backfill.keys())
+                        for batch_start in range(0, len(matched_tickers), 50):
+                            batch = matched_tickers[batch_start:batch_start + 50]
+                            try:
+                                candle_results = await service.get_market_candlesticks_batch(
+                                    tickers=batch, period_interval=60,
+                                )
+                            except Exception as e:
+                                stats["errors"].append(f"candle_batch: {str(e)[:80]}")
+                                continue
+
+                            for ticker, candles in candle_results.items():
+                                if ticker not in needs_backfill:
+                                    continue
+                                outcome_id, opening_prob = needs_backfill[ticker]
+
+                                if not candles:
+                                    stats["api_empty"] += 1
+                                    continue
+
+                                stats["markets_matched"] += 1
+                                total_matched += 1
+
+                                batch_values = []
+                                for c in candles:
+                                    ts = c.get("t")
+                                    prob = c.get("yes_price")
+                                    if ts is None or prob is None:
+                                        continue
+                                    prob = float(prob)
+                                    if prob <= 0 or prob >= 1:
+                                        continue
+                                    batch_values.append({
+                                        "outcome_id": outcome_id,
+                                        "bookmaker": "kalshi",
+                                        "probability": round(prob, 6),
+                                        "last_price": round(prob, 4),
+                                        "captured_at": datetime.fromtimestamp(ts, tz=timezone.utc),
+                                    })
+
+                                if batch_values:
+                                    for i in range(0, len(batch_values), 100):
+                                        stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                                        await session.execute(stmt.on_conflict_do_nothing())
+                                    stats["snapshots_created"] += len(batch_values)
+
+                                    # Set opening_probability from first candle if NULL
+                                    if opening_prob is None:
+                                        first_price = batch_values[0]["probability"]
+                                        first_ts = batch_values[0]["captured_at"]
+                                        await session.execute(
+                                            text("""
+                                                UPDATE futures_outcomes
+                                                SET opening_probability = :price,
+                                                    opening_captured_at = :ts
+                                                WHERE id = :id AND opening_probability IS NULL
+                                            """),
+                                            {"price": first_price, "ts": first_ts, "id": outcome_id},
+                                        )
+                                        stats["opening_set"] += 1
+
+                                    stats["api_empty"] = stats.get("api_empty", 0)  # ensure key exists
+
+                        await session.commit()
+                        logger.info(
+                            "Settled events backfill: series=%s page=%d matched=%d snapshots=%d",
+                            series, stats["api_pages"], stats["markets_matched"],
+                            stats["snapshots_created"],
+                        )
+
+                        if not cursor or total_matched >= limit:
+                            break
+                        await asyncio.sleep(0.2)
+
+        finally:
+            await service.close()
+
+    except Exception as e:
+        logger.error("Settled events backfill error: %s", e)
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+
+    return stats
+
+
 async def _backfill_kalshi_price_history(
     limit: int = 500,
     mode: str = "resolved_zero",

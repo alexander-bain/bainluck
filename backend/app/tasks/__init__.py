@@ -351,6 +351,13 @@ def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero")
     return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit, mode))
 
 
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_settled")
+def backfill_kalshi_settled(self, limit: int = 5000):
+    """Recover prices from Kalshi settled events API (much faster than candlesticks)."""
+    from app.tasks.kalshi import _backfill_from_settled_events
+    return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
+
+
 # --- Categorization ---
 
 @celery_app.task(bind=True, name="app.tasks.categorize_futures")

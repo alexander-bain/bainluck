@@ -1903,6 +1903,19 @@ async def trigger_backfill_kalshi_history(
     return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
+@router.post("/backfill-kalshi-settled")
+async def trigger_backfill_kalshi_settled(
+    secret: str = Query(...),
+    limit: int = Query(5000, description="Max outcomes to process"),
+):
+    """Recover full price history from Kalshi settled events API."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.backfill_kalshi_settled", args=[limit])
+    return {"status": "queued", "task_id": str(result.id), "limit": limit}
+
+
 @router.post("/fix-commence-times")
 async def fix_commence_times(secret: str = Query(...)):
     """Run golf + hockey commence_time fixes synchronously (no Celery)."""
@@ -2959,7 +2972,7 @@ async def admin_query(
     """Run a read-only SQL query and return JSON results.
 
     Admin-secret gated. Only SELECT statements allowed.
-    1000 row limit, 10 second statement timeout.
+    1000 row limit, 30 second statement timeout.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -2980,4 +2993,3 @@ async def admin_query(
         return {"columns": columns, "rows": rows, "count": len(rows)}
     except Exception as e:
         return {"error": str(e)[:500], "columns": [], "rows": [], "count": 0}
-
