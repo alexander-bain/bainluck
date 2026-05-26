@@ -955,7 +955,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 JOIN futures_markets fm ON fo.market_id = fm.id
                                 WHERE fo.external_id = ANY(:tickers)
                                   AND fm.source = 'kalshi'
-                                  AND fo.opening_probability IS NULL
+                                  AND fo.calibration_probability IS NULL
                             """),
                             {"tickers": page_tickers},
                         )
