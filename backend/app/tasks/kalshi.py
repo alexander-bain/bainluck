@@ -933,16 +933,14 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if not events:
                             break
 
+                        page_tickers = []
                         for event_data in events:
                             stats["events_scanned"] += 1
                             nested = event_data.get("markets") or []
-
-                            # Collect tickers from this page of events
-                        page_tickers = []
-                        for mkt in nested:
-                            ticker = mkt.get("ticker", "")
-                            if ticker:
-                                page_tickers.append(ticker)
+                            for mkt in nested:
+                                ticker = mkt.get("ticker", "")
+                                if ticker:
+                                    page_tickers.append(ticker)
 
                         if not page_tickers:
                             continue
