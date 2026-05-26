@@ -964,69 +964,62 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if not needs_backfill:
                             continue
 
-                        # Fetch full candlestick history for matched tickers (batch of 50)
-                        matched_tickers = list(needs_backfill.keys())
-                        for batch_start in range(0, len(matched_tickers), 50):
-                            batch = matched_tickers[batch_start:batch_start + 50]
-                            try:
-                                candle_results = await service.get_market_candlesticks_batch(
-                                    tickers=batch, period_interval=60,
-                                )
-                            except Exception as e:
-                                stats["errors"].append(f"candle_batch: {str(e)[:80]}")
-                                continue
-
-                            for ticker, candles in candle_results.items():
+                        # Use last_price from the settled event data directly
+                        # (the events API already returned market prices)
+                        for event_data in events:
+                            for mkt in (event_data.get("markets") or []):
+                                ticker = mkt.get("ticker", "")
                                 if ticker not in needs_backfill:
                                     continue
-                                outcome_id, opening_prob = needs_backfill[ticker]
 
-                                if not candles:
+                                outcome_id, opening_prob = needs_backfill[ticker]
+                                last_price_str = mkt.get("last_price_dollars")
+                                close_time_str = mkt.get("close_time") or mkt.get("expiration_time")
+
+                                if not last_price_str:
                                     stats["api_empty"] += 1
                                     continue
 
+                                try:
+                                    price = float(last_price_str)
+                                except (ValueError, TypeError):
+                                    continue
+
+                                if price <= 0 or price >= 1:
+                                    continue
+
+                                # Parse close time for the snapshot timestamp
+                                try:
+                                    from dateutil.parser import parse as dt_parse
+                                    captured = dt_parse(close_time_str) if close_time_str else datetime.now(timezone.utc)
+                                except Exception:
+                                    captured = datetime.now(timezone.utc)
+
+                                # Create snapshot
+                                stmt = pg_insert(FuturesOddsSnapshot).values(
+                                    outcome_id=outcome_id,
+                                    bookmaker="kalshi",
+                                    probability=round(price, 6),
+                                    last_price=round(price, 4),
+                                    captured_at=captured,
+                                ).on_conflict_do_nothing()
+                                await session.execute(stmt)
+                                stats["snapshots_created"] += 1
                                 stats["markets_matched"] += 1
                                 total_matched += 1
 
-                                batch_values = []
-                                for c in candles:
-                                    ts = c.get("t")
-                                    prob = c.get("yes_price")
-                                    if ts is None or prob is None:
-                                        continue
-                                    prob = float(prob)
-                                    if prob <= 0 or prob >= 1:
-                                        continue
-                                    batch_values.append({
-                                        "outcome_id": outcome_id,
-                                        "bookmaker": "kalshi",
-                                        "probability": round(prob, 6),
-                                        "last_price": round(prob, 4),
-                                        "captured_at": datetime.fromtimestamp(ts, tz=timezone.utc),
-                                    })
-
-                                if batch_values:
-                                    for i in range(0, len(batch_values), 100):
-                                        stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
-                                        await session.execute(stmt.on_conflict_do_nothing())
-                                    stats["snapshots_created"] += len(batch_values)
-
-                                    # Set opening_probability from first candle if NULL
-                                    if opening_prob is None:
-                                        first_price = batch_values[0]["probability"]
-                                        first_ts = batch_values[0]["captured_at"]
-                                        await session.execute(
-                                            text("""
-                                                UPDATE futures_outcomes
-                                                SET opening_probability = :price,
-                                                    opening_captured_at = :ts
-                                                WHERE id = :id AND opening_probability IS NULL
-                                            """),
-                                            {"price": first_price, "ts": first_ts, "id": outcome_id},
-                                        )
-                                        stats["opening_set"] += 1
-
-                                    stats["api_empty"] = stats.get("api_empty", 0)  # ensure key exists
+                                # Set opening_probability
+                                if opening_prob is None:
+                                    await session.execute(
+                                        text("""
+                                            UPDATE futures_outcomes
+                                            SET opening_probability = :price,
+                                                opening_captured_at = :ts
+                                            WHERE id = :id AND opening_probability IS NULL
+                                        """),
+                                        {"price": price, "ts": captured, "id": outcome_id},
+                                    )
+                                    stats["opening_set"] += 1
 
                         await session.commit()
                         logger.info(
