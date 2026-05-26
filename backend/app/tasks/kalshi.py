@@ -948,6 +948,8 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             continue
 
                         # Match tickers to our outcomes in bulk
+                        # Skip the expensive NOT EXISTS check — ON CONFLICT DO NOTHING
+                        # handles duplicates on insert
                         matched = await session.execute(
                             text("""
                                 SELECT fo.id, fo.external_id, fo.opening_probability
@@ -955,10 +957,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 JOIN futures_markets fm ON fo.market_id = fm.id
                                 WHERE fo.external_id = ANY(:tickers)
                                   AND fm.source = 'kalshi'
-                                  AND NOT EXISTS (
-                                      SELECT 1 FROM futures_odds_snapshots fos
-                                      WHERE fos.outcome_id = fo.id
-                                  )
+                                  AND fo.opening_probability IS NULL
                             """),
                             {"tickers": page_tickers},
                         )
