@@ -1903,6 +1903,55 @@ async def trigger_backfill_kalshi_history(
     return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
+@router.get("/debug-kalshi-settled")
+async def debug_kalshi_settled(
+    secret: str = Query(...),
+    series: str = Query("KXNBAPTS"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug the settled events backfill — show what it finds."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.kalshi_api import KalshiAPIService
+    service = KalshiAPIService()
+
+    try:
+        events, cursor = await service.get_events(
+            status="settled", series_ticker=series,
+            with_nested_markets=True, limit=5,
+        )
+
+        page_tickers = []
+        for ev in events:
+            for mkt in (ev.get("markets") or []):
+                t = mkt.get("ticker", "")
+                if t:
+                    page_tickers.append(t)
+
+        matched = await db.execute(
+            text("""
+                SELECT fo.id, fo.external_id, fo.opening_probability, fo.calibration_probability
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fo.market_id = fm.id
+                WHERE fo.external_id = ANY(:tickers)
+                  AND fm.source = 'kalshi'
+                  AND fo.calibration_probability IS NULL
+            """),
+            {"tickers": page_tickers},
+        )
+        rows = [{"id": r.id, "ticker": r.external_id, "opening": float(r.opening_probability) if r.opening_probability else None, "cal": float(r.calibration_probability) if r.calibration_probability else None} for r in matched.fetchall()]
+
+        return {
+            "events": len(events),
+            "page_tickers": page_tickers[:20],
+            "matched_needing_cal": len(rows),
+            "sample_matches": rows[:10],
+        }
+    finally:
+        await service.close()
+
+
 @router.post("/backfill-kalshi-settled")
 async def trigger_backfill_kalshi_settled(
     secret: str = Query(...),
