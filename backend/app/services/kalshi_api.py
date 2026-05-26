@@ -325,15 +325,15 @@ class KalshiAPIService(BaseAPIClient):
             end_ts = int(_time.time())
 
         try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/markets/candlesticks",
-                params={
-                    "market_tickers": ",".join(tickers),
-                    "period_interval": period_interval,
-                    "start_ts": start_ts,
-                    "end_ts": end_ts,
-                },
+            ticker_str = ",".join(tickers)
+            url = (
+                f"{self.BASE_URL}/markets/candlesticks"
+                f"?market_tickers={ticker_str}"
+                f"&period_interval={period_interval}"
+                f"&start_ts={start_ts}"
+                f"&end_ts={end_ts}"
             )
+            response = await self.client.get(url)
             response.raise_for_status()
             data = response.json()
 
