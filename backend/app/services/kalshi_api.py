@@ -307,6 +307,66 @@ class KalshiAPIService(BaseAPIClient):
             logger.warning("Failed to get candlesticks for %s: %s", ticker, e)
             return []
 
+    async def get_market_candlesticks_batch(
+        self,
+        tickers: list[str],
+        period_interval: int = 60,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+    ) -> dict[str, list[dict]]:
+        """Get candlestick data for multiple markets in one API call.
+
+        Returns dict of ticker → normalized candle list.
+        """
+        import time as _time
+        if start_ts is None:
+            start_ts = int(_time.time()) - 90 * 86400
+        if end_ts is None:
+            end_ts = int(_time.time())
+
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/markets/candlesticks",
+                params={
+                    "market_tickers": ",".join(tickers),
+                    "period_interval": period_interval,
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            results: dict[str, list[dict]] = {}
+            for market in data.get("markets", []):
+                ticker = market.get("market_ticker", "")
+                normalized = []
+                for c in market.get("candlesticks", []):
+                    ts = c.get("end_period_ts")
+                    if ts is None:
+                        continue
+                    yes_bid = c.get("yes_bid", {})
+                    yes_ask = c.get("yes_ask", {})
+                    try:
+                        bid = float(yes_bid.get("close_dollars") or 0)
+                        ask = float(yes_ask.get("close_dollars") or 0)
+                    except (ValueError, TypeError):
+                        continue
+                    if bid > 0 and ask > 0:
+                        price = (bid + ask) / 2
+                    elif ask > 0:
+                        price = ask
+                    elif bid > 0:
+                        price = bid
+                    else:
+                        continue
+                    normalized.append({"t": ts, "yes_price": price})
+                results[ticker] = normalized
+            return results
+        except Exception as e:
+            logger.warning("Failed to get batch candlesticks: %s", e)
+            return {}
+
     async def _discover_series_tickers(
         self,
         categories: list[str],

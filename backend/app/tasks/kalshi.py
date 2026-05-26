@@ -955,51 +955,65 @@ async def _backfill_kalshi_price_history(
 
             service = KalshiAPIService()
             try:
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                # Build ticker → outcome_ids map for batching
+                ticker_to_outcomes: dict[str, list[int]] = {}
                 for row in outcomes:
+                    ticker_to_outcomes.setdefault(row.ticker, []).append(row.outcome_id)
+
+                tickers = list(ticker_to_outcomes.keys())
+                BATCH_SIZE = 50
+
+                for batch_start in range(0, len(tickers), BATCH_SIZE):
+                    batch_tickers = tickers[batch_start:batch_start + BATCH_SIZE]
+
                     try:
-                        candles = await service.get_market_candlesticks(
-                            ticker=row.ticker, period_interval=60,
+                        candle_results = await service.get_market_candlesticks_batch(
+                            tickers=batch_tickers, period_interval=60,
                         )
                     except Exception as e:
-                        stats["errors"].append(f"{row.ticker}: {str(e)[:80]}")
+                        stats["errors"].append(f"batch_{batch_start}: {str(e)[:80]}")
                         continue
 
-                    if not candles:
-                        stats["api_empty"] += 1
-                        continue
-
-                    from sqlalchemy.dialects.postgresql import insert as pg_insert
-                    batch_values = []
-                    for c in candles:
-                        # Service returns normalized {"t": unix_ts, "yes_price": 0-1 float}
-                        ts = c.get("t")
-                        prob = c.get("yes_price")
-                        if ts is None or prob is None:
+                    for ticker, candles in candle_results.items():
+                        outcome_ids = ticker_to_outcomes.get(ticker, [])
+                        if not candles:
+                            stats["api_empty"] += len(outcome_ids)
                             continue
-                        prob = float(prob)
-                        if prob <= 0 or prob >= 1:
-                            continue
-                        captured = datetime.fromtimestamp(ts, tz=timezone.utc) if isinstance(ts, (int, float)) else ts
-                        batch_values.append({
-                            "outcome_id": row.outcome_id,
-                            "bookmaker": "kalshi",
-                            "probability": round(prob, 6),
-                            "last_price": round(prob, 4),
-                            "captured_at": captured,
-                        })
 
-                    if batch_values:
-                        for i in range(0, len(batch_values), 100):
-                            stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
-                            await session.execute(stmt.on_conflict_do_nothing())
-                        stats["snapshots_created"] += len(batch_values)
+                        for outcome_id in outcome_ids:
+                            batch_values = []
+                            for c in candles:
+                                ts = c.get("t")
+                                prob = c.get("yes_price")
+                                if ts is None or prob is None:
+                                    continue
+                                prob = float(prob)
+                                if prob <= 0 or prob >= 1:
+                                    continue
+                                captured = datetime.fromtimestamp(ts, tz=timezone.utc)
+                                batch_values.append({
+                                    "outcome_id": outcome_id,
+                                    "bookmaker": "kalshi",
+                                    "probability": round(prob, 6),
+                                    "last_price": round(prob, 4),
+                                    "captured_at": captured,
+                                })
 
-                    stats["outcomes_processed"] += 1
-                    if stats["outcomes_processed"] % 50 == 0:
-                        await session.commit()
-                        logger.info("Kalshi history backfill: committed %d outcomes, %d snapshots",
-                                    stats["outcomes_processed"], stats["snapshots_created"])
-                    await asyncio.sleep(0.1)
+                            if batch_values:
+                                for i in range(0, len(batch_values), 100):
+                                    stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                                    await session.execute(stmt.on_conflict_do_nothing())
+                                stats["snapshots_created"] += len(batch_values)
+
+                            stats["outcomes_processed"] += 1
+
+                    await session.commit()
+                    logger.info("Kalshi history backfill: batch %d-%d, %d outcomes, %d snapshots",
+                                batch_start, batch_start + len(batch_tickers),
+                                stats["outcomes_processed"], stats["snapshots_created"])
+                    await asyncio.sleep(0.5)
 
                 await session.commit()
             finally:
