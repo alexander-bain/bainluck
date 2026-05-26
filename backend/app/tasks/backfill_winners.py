@@ -1797,9 +1797,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0b: Backfill Kalshi group_id (no API, fast)
     kalshi_group_stats = await _backfill_kalshi_group_ids()
 
-    # Phase 0c: Null out opening_probability on outcomes with no snapshots
-    # (placeholder prices with no trading activity — not real predictions)
-    no_snap_stats = await _null_untradeable_openings()
+    # Phase 0c: DISABLED — the untradeable filter was nulling opening_probability
+    # on outcomes the backfill pipeline is trying to recover, causing calibration
+    # to regress every run (bugs #7, #8, #12). One-time cleanup that became an
+    # ongoing regression source.
+    no_snap_stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "nulled_no_movement": 0}
 
     # Phase 0c-repair: Restore opening_probability from first snapshot for
     # outcomes with null opening but real snapshot data. Uses DISTINCT ON
