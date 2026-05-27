@@ -876,7 +876,7 @@ async def _fix_hockey_commence_times() -> int:
                 len(fixed_ids), linked_fixed, ticker_fixed, len(fixed_ids),
             )
 
-        return total_fixed
+        return linked_fixed + ticker_fixed
 
 
 async def _backfill_from_settled_events(limit: int = 5000):
@@ -893,7 +893,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
     stats = {
         "events_scanned": 0, "markets_matched": 0,
         "snapshots_created": 0, "opening_set": 0,
-        "api_pages": 0, "errors": [],
+        "api_pages": 0, "api_empty": 0, "errors": [],
     }
 
     # Series prefixes with the most missing outcomes

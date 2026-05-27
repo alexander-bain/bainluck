@@ -170,6 +170,9 @@ def poll_manus_task(
             headers={"x-manus-api-key": api_key},
             timeout=30,
         )
+        if detail.status_code == 404:
+            time.sleep(interval_seconds)
+            continue
         detail.raise_for_status()
         task = detail.json().get("task", {})
         status = task.get("status")

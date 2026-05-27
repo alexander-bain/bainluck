@@ -228,6 +228,7 @@ class TestBeatScheduleCompleteness:
         "compute-fair-fight-comparison",
         "precompute-category-pages",
         "data-quality-watchdog",
+        "backfill-kalshi-settled-events",
     }
 
     def test_no_missing_entries(self):

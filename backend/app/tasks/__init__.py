@@ -1519,6 +1519,12 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 100, "mode": "open_sparse"},
         "options": {"queue": "background"},
     },
+    "backfill-kalshi-settled-events": {
+        "task": "app.tasks.backfill_kalshi_settled",
+        "schedule": crontab(minute=0, hour="5,11,17,23"),  # Every 6h, offset from candlestick backfill
+        "kwargs": {"limit": 5000},
+        "options": {"queue": "background"},
+    },
     "backfill-box-scores": {
         "task": "app.tasks.backfill_box_scores",
         "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, offset from others
