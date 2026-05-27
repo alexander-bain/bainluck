@@ -3107,3 +3107,64 @@ async def debug_cal_prob(
         "earliest_snapshot": str(row.earliest_snapshot) if row.earliest_snapshot else None,
         "latest_snapshot": str(row.latest_snapshot) if row.latest_snapshot else None,
     }
+
+
+@router.post("/debug-compute-cal-prob")
+async def debug_compute_cal_prob(
+    secret: str = Query(...),
+    outcome_ids: str = Query("125766040,125766041"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Run Part A calibration computation for specific outcomes and return results."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    ids = [int(x.strip()) for x in outcome_ids.split(",") if x.strip().isdigit()]
+
+    result = await db.execute(
+        text("""
+            WITH needs_cal AS (
+                SELECT fo.id AS outcome_id, e.commence_time,
+                       fo.opening_probability
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                JOIN events e ON e.id = fm.event_id
+                WHERE fm.status = 'resolved'
+                  AND fo.calibration_probability IS NULL
+                  AND fm.event_id IS NOT NULL
+                  AND e.commence_time IS NOT NULL
+                  AND fo.id = ANY(:ids)
+            ),
+            closing AS (
+                SELECT DISTINCT ON (nc.outcome_id)
+                    nc.outcome_id,
+                    fos.probability
+                FROM needs_cal nc
+                JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
+                WHERE fos.captured_at < nc.commence_time
+                  AND fos.probability > 0 AND fos.probability < 1
+                ORDER BY nc.outcome_id, fos.captured_at DESC
+            ),
+            final_price AS (
+                SELECT nc.outcome_id,
+                       COALESCE(cl.probability, nc.opening_probability) AS cal_prob
+                FROM needs_cal nc
+                LEFT JOIN closing cl ON cl.outcome_id = nc.outcome_id
+            )
+            SELECT fp.outcome_id, fp.cal_prob
+            FROM final_price fp
+            WHERE fp.cal_prob IS NOT NULL
+        """),
+        {"ids": ids},
+    )
+    rows = [{"outcome_id": r.outcome_id, "cal_prob": float(r.cal_prob)} for r in result.fetchall()]
+
+    if rows:
+        for row in rows:
+            await db.execute(
+                text("UPDATE futures_outcomes SET calibration_probability = :p WHERE id = :id"),
+                {"p": row["cal_prob"], "id": row["outcome_id"]},
+            )
+        await db.commit()
+
+    return {"outcomes_found": len(rows), "results": rows}
