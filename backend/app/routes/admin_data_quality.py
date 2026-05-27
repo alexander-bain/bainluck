@@ -3053,3 +3053,57 @@ async def admin_query(
         return {"columns": columns, "rows": rows, "count": len(rows)}
     except Exception as e:
         return {"error": str(e)[:500], "columns": [], "rows": [], "count": 0}
+
+
+@router.get("/debug-cal-prob")
+async def debug_cal_prob(
+    secret: str = Query(...),
+    outcome_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug why calibration_probability is NULL for a specific outcome."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        text("""
+            SELECT fo.id, fo.external_id, fo.opening_probability,
+                   fo.calibration_probability, fo.is_winner,
+                   fm.status AS market_status, fm.event_id,
+                   e.commence_time AS event_commence_time,
+                   fm.commence_time AS market_commence_time,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id) AS total_snapshots,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id
+                      AND fos.captured_at < e.commence_time) AS pre_game_snapshots,
+                   (SELECT MIN(fos.captured_at) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id) AS earliest_snapshot,
+                   (SELECT MAX(fos.captured_at) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id) AS latest_snapshot
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            LEFT JOIN events e ON e.id = fm.event_id
+            WHERE fo.id = :oid
+        """),
+        {"oid": outcome_id},
+    )
+    row = result.fetchone()
+    if not row:
+        return {"error": "outcome not found"}
+
+    return {
+        "outcome_id": row.id,
+        "ticker": row.external_id,
+        "opening_probability": float(row.opening_probability) if row.opening_probability else None,
+        "calibration_probability": float(row.calibration_probability) if row.calibration_probability else None,
+        "is_winner": row.is_winner,
+        "market_status": row.market_status,
+        "event_id": row.event_id,
+        "event_commence_time": str(row.event_commence_time) if row.event_commence_time else None,
+        "market_commence_time": str(row.market_commence_time) if row.market_commence_time else None,
+        "total_snapshots": row.total_snapshots,
+        "pre_game_snapshots": row.pre_game_snapshots,
+        "earliest_snapshot": str(row.earliest_snapshot) if row.earliest_snapshot else None,
+        "latest_snapshot": str(row.latest_snapshot) if row.latest_snapshot else None,
+    }
