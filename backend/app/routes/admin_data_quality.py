@@ -1931,7 +1931,11 @@ async def debug_kalshi_settled(
 
         matched = await db.execute(
             text("""
-                SELECT fo.id, fo.external_id, fo.opening_probability, fo.calibration_probability
+                SELECT fo.id, fo.external_id, fo.opening_probability,
+                       fo.calibration_probability,
+                       fm.status AS market_status, fm.event_id,
+                       (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = fo.id) AS snapshot_count
                 FROM futures_outcomes fo
                 JOIN futures_markets fm ON fo.market_id = fm.id
                 WHERE fo.external_id = ANY(:tickers)
@@ -1940,7 +1944,14 @@ async def debug_kalshi_settled(
             """),
             {"tickers": page_tickers},
         )
-        rows = [{"id": r.id, "ticker": r.external_id, "opening": float(r.opening_probability) if r.opening_probability else None, "cal": float(r.calibration_probability) if r.calibration_probability else None} for r in matched.fetchall()]
+        rows = [{
+            "id": r.id, "ticker": r.external_id,
+            "opening": float(r.opening_probability) if r.opening_probability else None,
+            "cal": float(r.calibration_probability) if r.calibration_probability else None,
+            "market_status": r.market_status,
+            "event_id": r.event_id,
+            "snapshot_count": r.snapshot_count,
+        } for r in matched.fetchall()]
 
         return {
             "events": len(events),
