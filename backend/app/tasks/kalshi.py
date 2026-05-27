@@ -893,6 +893,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
     stats = {
         "events_scanned": 0, "markets_matched": 0,
         "snapshots_created": 0, "opening_set": 0,
+        "markets_resolved": 0,
         "api_pages": 0, "api_empty": 0, "errors": [],
     }
 
@@ -945,34 +946,54 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if not page_tickers:
                             continue
 
-                        # Match tickers to our outcomes in bulk
-                        # Skip the expensive NOT EXISTS check — ON CONFLICT DO NOTHING
-                        # handles duplicates on insert
+                        # Match tickers to our outcomes — include outcomes
+                        # that need snapshots OR whose market status needs updating
                         matched = await session.execute(
                             text("""
-                                SELECT fo.id, fo.external_id, fo.opening_probability
+                                SELECT fo.id, fo.external_id, fo.opening_probability,
+                                       fm.id AS market_id, fm.status AS market_status,
+                                       fm.external_id AS market_external_id
                                 FROM futures_outcomes fo
                                 JOIN futures_markets fm ON fo.market_id = fm.id
                                 WHERE fo.external_id = ANY(:tickers)
                                   AND fm.source = 'kalshi'
-                                  AND fo.calibration_probability IS NULL
+                                  AND (fo.calibration_probability IS NULL
+                                       OR fm.status != 'resolved')
                             """),
                             {"tickers": page_tickers},
                         )
-                        needs_backfill = {r.external_id: (r.id, r.opening_probability) for r in matched.fetchall()}
+                        rows = matched.fetchall()
+                        needs_backfill = {r.external_id: r for r in rows}
 
                         if not needs_backfill:
                             continue
 
+                        # Update market status to 'resolved' for all matched
+                        # markets that aren't already resolved
+                        market_ids_to_resolve = list({
+                            r.market_id for r in rows
+                            if r.market_status != "resolved"
+                        })
+                        if market_ids_to_resolve:
+                            await session.execute(
+                                text("""
+                                    UPDATE futures_markets
+                                    SET status = 'resolved'
+                                    WHERE id = ANY(:ids)
+                                      AND status != 'resolved'
+                                """),
+                                {"ids": market_ids_to_resolve},
+                            )
+                            stats["markets_resolved"] += len(market_ids_to_resolve)
+
                         # Use last_price from the settled event data directly
-                        # (the events API already returned market prices)
                         for event_data in events:
                             for mkt in (event_data.get("markets") or []):
                                 ticker = mkt.get("ticker", "")
                                 if ticker not in needs_backfill:
                                     continue
 
-                                outcome_id, opening_prob = needs_backfill[ticker]
+                                row = needs_backfill[ticker]
                                 last_price_str = mkt.get("last_price_dollars")
                                 close_time_str = mkt.get("close_time") or mkt.get("expiration_time")
 
@@ -997,7 +1018,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                                 # Create snapshot
                                 stmt = pg_insert(FuturesOddsSnapshot).values(
-                                    outcome_id=outcome_id,
+                                    outcome_id=row.id,
                                     bookmaker="kalshi",
                                     probability=round(price, 6),
                                     last_price=round(price, 4),
@@ -1009,7 +1030,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 total_matched += 1
 
                                 # Set opening_probability
-                                if opening_prob is None:
+                                if row.opening_probability is None:
                                     await session.execute(
                                         text("""
                                             UPDATE futures_outcomes
@@ -1017,7 +1038,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                                 opening_captured_at = :ts
                                             WHERE id = :id AND opening_probability IS NULL
                                         """),
-                                        {"price": price, "ts": captured, "id": outcome_id},
+                                        {"price": price, "ts": captured, "id": row.id},
                                     )
                                     stats["opening_set"] += 1
 
