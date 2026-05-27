@@ -946,8 +946,31 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if not page_tickers:
                             continue
 
-                        # Match tickers to our outcomes — include outcomes
-                        # that need snapshots OR whose market status needs updating
+                        # Always update market status to 'resolved' for
+                        # any Kalshi market whose ticker appears in the
+                        # settled events API — regardless of snapshot limits
+                        resolve_result = await session.execute(
+                            text("""
+                                UPDATE futures_markets
+                                SET status = 'resolved'
+                                WHERE source = 'kalshi'
+                                  AND status != 'resolved'
+                                  AND id IN (
+                                      SELECT DISTINCT fm.id
+                                      FROM futures_outcomes fo
+                                      JOIN futures_markets fm ON fo.market_id = fm.id
+                                      WHERE fo.external_id = ANY(:tickers)
+                                        AND fm.source = 'kalshi'
+                                        AND fm.status != 'resolved'
+                                  )
+                            """),
+                            {"tickers": page_tickers},
+                        )
+                        if resolve_result.rowcount > 0:
+                            stats["markets_resolved"] += resolve_result.rowcount
+                            await session.commit()
+
+                        # Now find outcomes needing snapshot backfill
                         matched = await session.execute(
                             text("""
                                 SELECT fo.id, fo.external_id, fo.opening_probability,
@@ -957,8 +980,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 JOIN futures_markets fm ON fo.market_id = fm.id
                                 WHERE fo.external_id = ANY(:tickers)
                                   AND fm.source = 'kalshi'
-                                  AND (fo.calibration_probability IS NULL
-                                       OR fm.status != 'resolved')
+                                  AND fo.calibration_probability IS NULL
                             """),
                             {"tickers": page_tickers},
                         )
@@ -967,24 +989,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         if not needs_backfill:
                             continue
-
-                        # Update market status to 'resolved' for all matched
-                        # markets that aren't already resolved
-                        market_ids_to_resolve = list({
-                            r.market_id for r in rows
-                            if r.market_status != "resolved"
-                        })
-                        if market_ids_to_resolve:
-                            await session.execute(
-                                text("""
-                                    UPDATE futures_markets
-                                    SET status = 'resolved'
-                                    WHERE id = ANY(:ids)
-                                      AND status != 'resolved'
-                                """),
-                                {"ids": market_ids_to_resolve},
-                            )
-                            stats["markets_resolved"] += len(market_ids_to_resolve)
 
                         # Use last_price from the settled event data directly
                         for event_data in events:
