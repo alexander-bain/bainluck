@@ -1179,6 +1179,13 @@ def send_big_move_alerts(self):
     return _tracked_run("big_move_alerts", _send_big_move_alerts())
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_calibration_main")
+def precompute_calibration_main(self):
+    """Precompute main /api/calibration response and cache in Redis (every 1h)."""
+    from app.tasks.precompute_calibration import _precompute_calibration_main
+    return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_time_horizon_calibration")
 def compute_time_horizon_calibration(self):
     """Precompute time-horizon calibration and cache in Redis (every 6h)."""
@@ -1613,6 +1620,11 @@ celery_app.conf.beat_schedule = {
     "big-move-alerts": {
         "task": "app.tasks.send_big_move_alerts",
         "schedule": crontab(minute="*/30"),  # Every 30 minutes
+        "options": {"queue": "background"},
+    },
+    "precompute-calibration-main": {
+        "task": "app.tasks.precompute_calibration_main",
+        "schedule": crontab(minute=15),  # Every 1 hour at :15
         "options": {"queue": "background"},
     },
     "compute-time-horizon-calibration": {

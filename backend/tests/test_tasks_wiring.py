@@ -224,6 +224,7 @@ class TestBeatScheduleCompleteness:
         "export-engagement-nightly",
         "daily-challenge-push",
         "big-move-alerts",
+        "precompute-calibration-main",
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
         "precompute-category-pages",
