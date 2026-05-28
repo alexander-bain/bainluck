@@ -1129,9 +1129,12 @@ async def _backfill_kalshi_price_history(
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'kalshi'
                           AND fm.status = 'resolved'
-                          AND NOT EXISTS (
-                              SELECT 1 FROM futures_odds_snapshots fos
-                              WHERE fos.outcome_id = fo.id
+                          AND (
+                              NOT EXISTS (
+                                  SELECT 1 FROM futures_odds_snapshots fos
+                                  WHERE fos.outcome_id = fo.id
+                              )
+                              OR fo.opening_probability IS NULL
                           )
                         ORDER BY fm.resolution_date DESC NULLS LAST
                         LIMIT :limit
