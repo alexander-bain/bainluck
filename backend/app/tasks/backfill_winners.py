@@ -990,10 +990,9 @@ async def _backfill_datagolf_winners():
                     {"mid": row.id},
                 )
 
-                # For win/top_5/top_10/top_20: anyone NOT in the top-50
-                # leaderboard is definitively a loser (position > 50).
-                # For make_cut: can't determine (cut line is ~70, beyond top 50).
-                can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20")
+                # Anyone NOT in the full leaderboard was never in the field
+                # and is definitively a loser for any market type.
+                can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20", "make_cut")
 
                 for out_row in outcomes.all():
                     ext = out_row.external_id or ""
@@ -1722,27 +1721,38 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         # Determine winner from settlement prices
                         yes_won = prices[0] >= 0.90
                         cid = market_data.get("conditionId") or market_data.get("condition_id") or condition_id
-                        yes_ext = f"{cid}_yes"
-                        no_ext = f"{cid}_no"
 
-                        r1 = await session.execute(
+                        # Try bare condition_id first (NegRisk + single-market),
+                        # then _yes/_no suffix (sub-market game props)
+                        r_bare = await session.execute(
                             update(FuturesOutcome)
                             .where(
                                 FuturesOutcome.market_id == row.id,
-                                FuturesOutcome.external_id == yes_ext,
+                                FuturesOutcome.external_id == cid,
                             )
                             .values(is_winner=yes_won, resolution_source="api_settlement")
                         )
-                        r2 = await session.execute(
-                            update(FuturesOutcome)
-                            .where(
-                                FuturesOutcome.market_id == row.id,
-                                FuturesOutcome.external_id == no_ext,
-                            )
-                            .values(is_winner=(not yes_won), resolution_source="api_settlement")
-                        )
 
-                        updated = r1.rowcount + r2.rowcount
+                        if r_bare.rowcount == 0:
+                            r1 = await session.execute(
+                                update(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == f"{cid}_yes",
+                                )
+                                .values(is_winner=yes_won, resolution_source="api_settlement")
+                            )
+                            r2 = await session.execute(
+                                update(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == f"{cid}_no",
+                                )
+                                .values(is_winner=(not yes_won), resolution_source="api_settlement")
+                            )
+                            updated = r1.rowcount + r2.rowcount
+                        else:
+                            updated = r_bare.rowcount
                         if updated > 0:
                             if yes_won:
                                 stats["winners_set"] += r1.rowcount

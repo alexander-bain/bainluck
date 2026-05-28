@@ -506,7 +506,7 @@ async def _poll_datagolf_live() -> dict:
 
                         market.market_metadata = {
                             **(market.market_metadata or {}),
-                            "leaderboard": leaderboard[:50],  # Top 50 for metadata size
+                            "leaderboard": leaderboard,
                         }
 
                         # Update outcomes + write snapshots.

@@ -1186,6 +1186,18 @@ async def _backfill_kalshi_price_history(
                             await session.execute(stmt.on_conflict_do_nothing())
                         stats["snapshots_created"] += len(batch_values)
 
+                        # Set opening_probability from earliest snapshot if not already set
+                        earliest = batch_values[0]  # candles are sorted chronologically
+                        await session.execute(
+                            text("""
+                                UPDATE futures_outcomes
+                                SET opening_probability = :prob,
+                                    opening_captured_at = :ts
+                                WHERE id = :id AND opening_probability IS NULL
+                            """),
+                            {"prob": earliest["probability"], "ts": earliest["captured_at"], "id": row.outcome_id},
+                        )
+
                     stats["outcomes_processed"] += 1
                     if stats["outcomes_processed"] % 50 == 0:
                         await session.commit()

@@ -1175,8 +1175,11 @@ async def _sync_polymarket_resolved_status():
     import asyncio
     from app.services.polymarket_api import PolymarketAPIService
 
+    import json as json_module
+
     stats = {
         "events_fetched": 0, "markets_resolved": 0,
+        "outcomes_updated": 0,
         "already_resolved": 0, "not_in_db": 0, "errors": [],
     }
 
@@ -1214,11 +1217,26 @@ async def _sync_polymarket_resolved_status():
             stats["events_fetched"] += len(events_data)
 
             condition_ids = []
+            # Map condition_id -> settlement price (first outcome = Yes side)
+            settlement_prices: dict[str, float] = {}
             for event_data in events_data:
                 for market in event_data.get("markets") or []:
                     cid = market.get("conditionId")
                     if cid:
                         condition_ids.append(cid)
+                        # Parse outcomePrices — JSON-encoded string array
+                        raw_prices = market.get("outcomePrices", "[]")
+                        try:
+                            if isinstance(raw_prices, str):
+                                prices = json_module.loads(raw_prices)
+                            elif isinstance(raw_prices, list):
+                                prices = raw_prices
+                            else:
+                                prices = []
+                            if prices:
+                                settlement_prices[cid] = float(prices[0])
+                        except (json_module.JSONDecodeError, ValueError, IndexError):
+                            pass
 
             if condition_ids:
                 async with get_task_session() as session:
@@ -1237,9 +1255,26 @@ async def _sync_polymarket_resolved_status():
                         {"cids": condition_ids},
                     )
                     page_resolved = result.rowcount
-                    if page_resolved > 0:
+
+                    # Update settlement prices on outcomes (Core SQL, not ORM)
+                    page_outcomes_updated = 0
+                    for cid, price in settlement_prices.items():
+                        price_result = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes
+                                SET current_probability = :price
+                                WHERE external_id = :cid
+                                  AND (current_probability IS NULL
+                                       OR ABS(current_probability - :price) > 0.001)
+                            """),
+                            {"cid": cid, "price": price},
+                        )
+                        page_outcomes_updated += price_result.rowcount
+
+                    if page_resolved > 0 or page_outcomes_updated > 0:
                         await session.commit()
                         stats["markets_resolved"] += page_resolved
+                        stats["outcomes_updated"] += page_outcomes_updated
                         zero_update_pages = 0
                     else:
                         zero_update_pages += 1
@@ -1252,8 +1287,9 @@ async def _sync_polymarket_resolved_status():
 
             if stats["events_fetched"] % 5000 == 0:
                 logger.info(
-                    "Polymarket status sync: %d events, %d resolved",
+                    "Polymarket status sync: %d events, %d resolved, %d outcomes updated",
                     stats["events_fetched"], stats["markets_resolved"],
+                    stats["outcomes_updated"],
                 )
 
     except Exception as e:
@@ -1262,7 +1298,7 @@ async def _sync_polymarket_resolved_status():
         await service.close()
 
     logger.info(
-        "Polymarket status sync: %d events fetched, %d markets resolved",
-        stats["events_fetched"], stats["markets_resolved"],
+        "Polymarket status sync: %d events fetched, %d markets resolved, %d outcomes updated",
+        stats["events_fetched"], stats["markets_resolved"], stats["outcomes_updated"],
     )
     return stats
