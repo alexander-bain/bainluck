@@ -232,6 +232,7 @@ class TestBeatScheduleCompleteness:
         "backfill-kalshi-settled-events",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
+        "snapshot-coverage-metrics-daily",
     }
 
     def test_no_missing_entries(self):

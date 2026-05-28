@@ -3289,3 +3289,51 @@ async def trigger_backfill_espn_win_prob(
         "app.tasks.backfill_espn_win_prob", args=[limit, days_back]
     )
     return {"status": "queued", "task_id": str(result.id), "limit": limit, "days_back": days_back}
+
+
+@router.get("/coverage-trends")
+async def get_coverage_trends(
+    secret: str = Query(...),
+    days: int = Query(30, description="Number of days of history"),
+):
+    """Get daily coverage metric snapshots for tracking progress over time."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.redis_state import get_redis_client
+    import json as _json
+
+    rc = get_redis_client()
+    all_snapshots = rc.hgetall("bainluck:coverage_snapshots")
+
+    snapshots = []
+    for date_key, snapshot_json in sorted(all_snapshots.items()):
+        try:
+            snap = _json.loads(snapshot_json)
+            snapshots.append(snap)
+        except Exception:
+            pass
+
+    if days and len(snapshots) > days:
+        snapshots = snapshots[-days:]
+
+    return {
+        "days": len(snapshots),
+        "snapshots": [
+            {"date": s["date"], "totals": s.get("totals", {})}
+            for s in snapshots
+        ],
+        "latest": snapshots[-1] if snapshots else None,
+    }
+
+
+@router.post("/coverage-trends/snapshot")
+async def trigger_coverage_snapshot(
+    secret: str = Query(...),
+):
+    """Take a coverage metrics snapshot right now."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.snapshot_coverage_metrics")
+    return {"status": "queued", "task_id": str(result.id)}

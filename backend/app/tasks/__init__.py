@@ -1200,6 +1200,13 @@ def compute_fair_fight_comparison(self):
     return _tracked_run("compute_fair_fight_comparison", _compute_fair_fight_comparison())
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.snapshot_coverage_metrics")
+def snapshot_coverage_metrics(self):
+    """Daily snapshot of coverage metrics for tracking progress."""
+    from app.tasks.precompute_calibration import _snapshot_coverage_metrics
+    return _tracked_run("coverage_metrics", _snapshot_coverage_metrics())
+
+
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_category_pages")
 def precompute_category_pages(self):
     """Precompute category page responses and cache in Redis (every 1h)."""
@@ -1610,6 +1617,11 @@ celery_app.conf.beat_schedule = {
     "export-engagement-nightly": {
         "task": "app.tasks.export_engagement",
         "schedule": crontab(hour=2, minute=0),  # 2:00 AM UTC
+        "options": {"queue": "background"},
+    },
+    "snapshot-coverage-metrics-daily": {
+        "task": "app.tasks.snapshot_coverage_metrics",
+        "schedule": crontab(hour=3, minute=0),  # 3:00 AM UTC daily
         "options": {"queue": "background"},
     },
     "daily-challenge-push": {

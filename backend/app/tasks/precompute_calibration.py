@@ -1116,3 +1116,105 @@ async def _compute_fair_fight_comparison():
     rc.set("bainluck:calibration:fair_fight", json.dumps(response), ex=_CACHE_TTL)
     logger.info("Cached fair-fight comparison in Redis")
     return {"status": "ok", "pairs": len(futures_pairs) + len(sports_pairs)}
+
+
+async def _snapshot_coverage_metrics():
+    """Daily snapshot of coverage metrics for tracking progress over time.
+
+    Stores one row per day in a Redis sorted set keyed by date. Each row
+    captures opening_probability, is_winner, and calibration_probability
+    coverage per source and time window. This lets us answer "is coverage
+    improving?" without re-running heavy queries.
+    """
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {"snapshots": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        fm.source,
+                        CASE
+                            WHEN fm.resolution_date >= NOW() - INTERVAL '7 days' THEN '7d'
+                            WHEN fm.resolution_date >= NOW() - INTERVAL '30 days' THEN '30d'
+                            ELSE '90d+'
+                        END AS age_bucket,
+                        s.key AS league,
+                        COUNT(*) AS total_resolved,
+                        COUNT(fo.opening_probability) AS has_opening,
+                        COUNT(fo.calibration_probability) AS has_cal_prob,
+                        COUNT(CASE WHEN fo.is_winner IS NOT NULL THEN 1 END) AS has_winner,
+                        AVG(CASE WHEN snap_counts.cnt IS NOT NULL THEN snap_counts.cnt ELSE 0 END)::int AS avg_snapshots
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fo.market_id = fm.id
+                    LEFT JOIN sports s ON s.id = fm.sport_id
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*) AS cnt
+                        FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = fo.id
+                    ) snap_counts ON true
+                    WHERE fm.status = 'resolved'
+                      AND fm.resolution_date IS NOT NULL
+                    GROUP BY fm.source, age_bucket, s.key
+                    ORDER BY fm.source, age_bucket, total_resolved DESC
+                """)
+            )
+            rows = result.fetchall()
+
+            snapshot = {
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "computed_at": datetime.now(timezone.utc).isoformat(),
+                "by_source_age_league": [
+                    {
+                        "source": r.source,
+                        "age": r.age_bucket,
+                        "league": r.league or "unknown",
+                        "total": r.total_resolved,
+                        "has_opening": r.has_opening,
+                        "has_cal_prob": r.has_cal_prob,
+                        "has_winner": r.has_winner,
+                        "avg_snapshots": r.avg_snapshots,
+                    }
+                    for r in rows
+                ],
+                "totals": {},
+            }
+
+            from collections import defaultdict
+            by_source = defaultdict(lambda: {"total": 0, "opening": 0, "cal_prob": 0, "winner": 0})
+            for r in rows:
+                by_source[r.source]["total"] += r.total_resolved
+                by_source[r.source]["opening"] += r.has_opening
+                by_source[r.source]["cal_prob"] += r.has_cal_prob
+                by_source[r.source]["winner"] += r.has_winner
+
+            snapshot["totals"] = {
+                src: {
+                    "total": s["total"],
+                    "opening_pct": round(100 * s["opening"] / max(s["total"], 1), 1),
+                    "cal_prob_pct": round(100 * s["cal_prob"] / max(s["total"], 1), 1),
+                    "winner_pct": round(100 * s["winner"] / max(s["total"], 1), 1),
+                }
+                for src, s in by_source.items()
+            }
+
+            rc = get_redis_client()
+            date_key = snapshot["date"]
+            rc.hset("bainluck:coverage_snapshots", date_key, json.dumps(snapshot))
+            rc.expire("bainluck:coverage_snapshots", 90 * 86400)
+
+            stats["snapshots"] = len(rows)
+            logger.info(
+                "Coverage snapshot: %s — %s",
+                date_key,
+                {src: f'{s["cal_prob_pct"]}% cal_prob' for src, s in snapshot["totals"].items()},
+            )
+
+    except Exception as e:
+        stats["errors"].append(str(e)[:200])
+        logger.error("Coverage snapshot error: %s", e)
+
+    return stats
