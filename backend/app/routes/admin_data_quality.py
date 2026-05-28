@@ -3273,3 +3273,19 @@ async def trigger_sync_polymarket_resolved(
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.sync_polymarket_resolved")
     return {"status": "queued", "task_id": str(result.id)}
+
+
+@router.post("/backfill-espn-win-prob")
+async def trigger_backfill_espn_win_prob(
+    secret: str = Query(...),
+    limit: int = Query(50),
+    days_back: int = Query(14),
+):
+    """Backfill ESPN win probability history for completed events with sparse snapshots."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.backfill_espn_win_prob", args=[limit, days_back]
+    )
+    return {"status": "queued", "task_id": str(result.id), "limit": limit, "days_back": days_back}

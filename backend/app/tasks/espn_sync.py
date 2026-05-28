@@ -1164,3 +1164,135 @@ async def _transition_event_statuses_impl() -> dict:
             )
 
     return stats
+
+
+async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
+    """Backfill ESPN win probability for completed events with sparse snapshots.
+
+    The live sync captures probability every 60s, but if it misses a game
+    (worker downtime, task starvation), that game's probability chart is lost.
+    ESPN's /summary endpoint has the full play-by-play probability curve
+    retroactively — this task fetches it for recently completed games.
+
+    Only processes events with espn_id (confirmed match) and fewer than 10
+    win_prob_snapshots from the espn source.
+    """
+    import asyncio as _asyncio
+    from sqlalchemy import text
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.services.espn_api import ESPNAPIService
+    from app.models.models import WinProbSnapshot
+
+    stats = {
+        "events_checked": 0, "events_backfilled": 0,
+        "snapshots_created": 0, "api_empty": 0, "already_covered": 0,
+        "errors": [],
+    }
+
+    try:
+        async with get_task_session() as session:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+
+            result = await session.execute(
+                text("""
+                    SELECT e.id, e.espn_id, e.commence_time,
+                           s.key AS sport_key,
+                           (SELECT COUNT(*) FROM win_prob_snapshots wps
+                            WHERE wps.event_id = e.id AND wps.source = 'espn') AS espn_snap_count
+                    FROM events e
+                    JOIN sports s ON s.id = e.sport_id
+                    WHERE e.status IN ('completed', 'closed')
+                      AND e.espn_id IS NOT NULL
+                      AND e.commence_time > :cutoff
+                      AND (SELECT COUNT(*) FROM win_prob_snapshots wps
+                           WHERE wps.event_id = e.id AND wps.source = 'espn') < 10
+                    ORDER BY e.commence_time DESC
+                    LIMIT :limit
+                """),
+                {"cutoff": cutoff, "limit": limit},
+            )
+            events = result.fetchall()
+
+            if not events:
+                return {**stats, "status": "nothing_to_backfill"}
+
+            logger.info("ESPN win prob backfill: %d events to process", len(events))
+
+            service = ESPNAPIService()
+            try:
+                for event_row in events:
+                    stats["events_checked"] += 1
+                    sport_key = event_row.sport_key
+
+                    if sport_key not in ESPN_SPORT_MAPPING:
+                        continue
+
+                    try:
+                        wp_data = await service.get_win_probability(
+                            sport_key, event_row.espn_id,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(f"event_{event_row.id}: {str(e)[:80]}")
+                        continue
+
+                    if not wp_data:
+                        stats["api_empty"] += 1
+                        continue
+
+                    event_snapshots = 0
+                    commence = event_row.commence_time
+
+                    for i, point in enumerate(wp_data):
+                        home_wp = point.get("home_win_probability")
+                        if home_wp is None:
+                            continue
+
+                        seconds_left = point.get("seconds_left")
+                        snap_time = (
+                            commence + timedelta(seconds=i * 30)
+                            if commence
+                            else datetime.now(timezone.utc)
+                        )
+
+                        stmt = pg_insert(WinProbSnapshot).values(
+                            event_id=event_row.id,
+                            source="espn",
+                            home_win_probability=round(home_wp, 4),
+                            away_win_probability=round(1.0 - home_wp, 4),
+                            captured_at=snap_time,
+                            game_state={
+                                "seconds_left": seconds_left,
+                                "backfilled": True,
+                            },
+                        ).on_conflict_do_nothing()
+                        await session.execute(stmt)
+                        event_snapshots += 1
+
+                    if event_snapshots > 0:
+                        stats["events_backfilled"] += 1
+                        stats["snapshots_created"] += event_snapshots
+
+                    if stats["events_checked"] % 10 == 0:
+                        await session.commit()
+                        logger.info(
+                            "ESPN win prob backfill: %d/%d events, %d snapshots",
+                            stats["events_checked"], len(events),
+                            stats["snapshots_created"],
+                        )
+
+                    await _asyncio.sleep(0.5)
+
+                await session.commit()
+            finally:
+                await service.close()
+
+    except Exception as e:
+        logger.error("ESPN win prob backfill error: %s", e)
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+
+    logger.info(
+        "ESPN win prob backfill: %d checked, %d backfilled, %d snapshots",
+        stats["events_checked"], stats["events_backfilled"],
+        stats["snapshots_created"],
+    )
+    return stats
