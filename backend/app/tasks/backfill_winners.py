@@ -43,16 +43,18 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     async with get_task_session() as session:
         needs_backfill = await session.execute(
             text("""
-                SELECT external_id FROM (
-                    SELECT DISTINCT ON (fm.external_id)
-                        fm.external_id, fm.updated_at
-                    FROM futures_markets fm
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
-                      AND fm.updated_at >= NOW() - INTERVAL '90 days'
-                    ORDER BY fm.external_id, fm.updated_at DESC
-                ) sub
-                ORDER BY updated_at DESC
+                SELECT fm.external_id
+                FROM futures_markets fm
+                WHERE fm.source = 'kalshi'
+                  AND fm.status = 'resolved'
+                  AND fm.updated_at >= NOW() - INTERVAL '90 days'
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND fo.is_winner IS NULL
+                  )
+                GROUP BY fm.external_id
+                ORDER BY MAX(fm.updated_at) DESC
                 LIMIT :limit
             """),
             {"limit": limit},
