@@ -1159,3 +1159,113 @@ def _extract_outcome_name(question: str, event_title: str) -> str:
 
     # Last resort: use first 60 chars
     return cleaned[:60]
+
+
+async def _sync_polymarket_resolved_status():
+    """Scan closed Polymarket events and update market status to 'resolved'.
+
+    The regular polling task only fetches active events (active=True,
+    closed=False). Once a Polymarket event closes, we never see it again
+    and the market status stays 'open' in our DB. This blocks all
+    downstream pipelines (calibration, winner backfill, snapshot backfill).
+
+    This task is the Polymarket equivalent of Kalshi's settled events
+    backfill Phase 1 (gotcha #97).
+    """
+    import asyncio
+    from app.services.polymarket_api import PolymarketAPIService
+
+    stats = {
+        "events_fetched": 0, "markets_resolved": 0,
+        "already_resolved": 0, "not_in_db": 0, "errors": [],
+    }
+
+    async with get_task_session() as session:
+        open_count = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM futures_markets
+                WHERE source = 'polymarket' AND status != 'resolved'
+            """)
+        )
+        total_open = open_count.scalar()
+        if total_open == 0:
+            logger.info("Polymarket status sync: no open markets, skipping")
+            return {**stats, "skipped": True}
+
+    service = PolymarketAPIService()
+    try:
+        offset = 0
+        max_events = 100000
+        zero_update_pages = 0
+
+        while stats["events_fetched"] < max_events:
+            try:
+                events_data = await service.get_events(
+                    active=False, closed=True,
+                    limit=100, offset=offset,
+                )
+            except Exception as e:
+                stats["errors"].append(f"API page {offset}: {e}")
+                break
+
+            if not events_data:
+                break
+
+            stats["events_fetched"] += len(events_data)
+
+            condition_ids = []
+            for event_data in events_data:
+                for market in event_data.get("markets") or []:
+                    cid = market.get("conditionId")
+                    if cid:
+                        condition_ids.append(cid)
+
+            if condition_ids:
+                async with get_task_session() as session:
+                    result = await session.execute(
+                        text("""
+                            UPDATE futures_markets
+                            SET status = 'resolved'
+                            WHERE source = 'polymarket'
+                              AND status != 'resolved'
+                              AND id IN (
+                                  SELECT DISTINCT fm.id
+                                  FROM futures_outcomes fo
+                                  JOIN futures_markets fm ON fo.market_id = fm.id
+                                  WHERE fo.external_id = ANY(:cids)
+                                    AND fm.source = 'polymarket'
+                                    AND fm.status != 'resolved'
+                              )
+                        """),
+                        {"cids": condition_ids},
+                    )
+                    page_resolved = result.rowcount
+                    if page_resolved > 0:
+                        await session.commit()
+                        stats["markets_resolved"] += page_resolved
+                        zero_update_pages = 0
+                    else:
+                        zero_update_pages += 1
+
+            if zero_update_pages >= 20:
+                break
+
+            offset += 100
+            await asyncio.sleep(0.1)
+
+            if stats["events_fetched"] % 5000 == 0:
+                logger.info(
+                    "Polymarket status sync: %d events, %d resolved",
+                    stats["events_fetched"], stats["markets_resolved"],
+                )
+
+    except Exception as e:
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+    finally:
+        await service.close()
+
+    logger.info(
+        "Polymarket status sync: %d events fetched, %d markets resolved",
+        stats["events_fetched"], stats["markets_resolved"],
+    )
+    return stats

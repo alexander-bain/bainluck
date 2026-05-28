@@ -3199,3 +3199,15 @@ async def fix_market_status(
     )
     await db.commit()
     return {"markets_resolved": result.rowcount}
+
+
+@router.post("/sync-polymarket-resolved")
+async def trigger_sync_polymarket_resolved(
+    secret: str = Query(...),
+):
+    """Scan closed Polymarket events and update stuck market statuses to 'resolved'."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.sync_polymarket_resolved")
+    return {"status": "queued", "task_id": str(result.id)}

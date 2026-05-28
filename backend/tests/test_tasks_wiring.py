@@ -229,6 +229,7 @@ class TestBeatScheduleCompleteness:
         "precompute-category-pages",
         "data-quality-watchdog",
         "backfill-kalshi-settled-events",
+        "sync-polymarket-resolved-status",
     }
 
     def test_no_missing_entries(self):

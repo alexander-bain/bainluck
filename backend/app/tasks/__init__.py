@@ -344,6 +344,13 @@ def backfill_polymarket_history(self, limit: int = 500, fidelity: int = 60, inte
     return _tracked_run("polymarket_history", _backfill_polymarket_price_history(limit, fidelity, interval, mode))
 
 
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.sync_polymarket_resolved")
+def sync_polymarket_resolved(self):
+    """Scan closed Polymarket events and update market status to 'resolved'."""
+    from app.tasks.polymarket import _sync_polymarket_resolved_status
+    return _tracked_run("polymarket_resolved_sync", _sync_polymarket_resolved_status())
+
+
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_history")
 def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero"):
     """Backfill historical prices from Kalshi candlesticks API for outcomes with sparse data."""
@@ -1523,6 +1530,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_settled",
         "schedule": crontab(minute=0, hour="5,11,17,23"),  # Every 6h, offset from candlestick backfill
         "kwargs": {"limit": 5000},
+        "options": {"queue": "background"},
+    },
+    "sync-polymarket-resolved-status": {
+        "task": "app.tasks.sync_polymarket_resolved",
+        "schedule": crontab(minute=30, hour="5,11,17,23"),  # Every 6h, 30min after Kalshi settled
         "options": {"queue": "background"},
     },
     "backfill-box-scores": {
