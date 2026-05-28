@@ -117,6 +117,7 @@ app.add_middleware(LatencyMiddleware)
 
 
 CACHE_RULES: list[tuple[str, int]] = [
+    ("/api/events", 10),
     ("/api/feed", 10),
     ("/api/playoffs/", 300),
     ("/api/sports", 120),

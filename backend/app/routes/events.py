@@ -1980,6 +1980,8 @@ async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     status: Optional[str] = Query(None, description="Filter by status"),
     days: int = Query(7, description="Number of days ahead to show"),
+    limit: int = Query(50, ge=1, le=200, description="Max events to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2035,7 +2037,7 @@ async def list_events(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(Event.commence_time)
+    query = query.order_by(Event.commence_time).limit(limit).offset(offset)
 
     result = await db.execute(query)
     events = result.scalars().all()

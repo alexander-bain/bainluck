@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
@@ -263,27 +263,35 @@ async def get_futures_movers(
 
     Useful for discovering betting line movement and market sentiment shifts.
     """
-    # Get outcomes with significant 24h changes
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    cache_key = f"bainluck:movers:{hours}:{limit}"
+    try:
+        redis = get_redis_client()
+        cached = redis.get(cache_key)
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc)
     query = (
         select(FuturesOutcome)
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .options(selectinload(FuturesOutcome.market))
+        .options(joinedload(FuturesOutcome.market))
         .where(
             FuturesOutcome.probability_change_24h.isnot(None),
-            or_(
-                FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= now,
-            ),
+            FuturesMarket.status.in_(["open", "active"]),
         )
         .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
         .limit(limit)
     )
 
     result = await db.execute(query)
-    outcomes = result.scalars().all()
+    outcomes = result.unique().scalars().all()
 
-    return {
+    response = {
         "movers": [
             {
                 "outcome_id": o.id,
@@ -301,6 +309,13 @@ async def get_futures_movers(
         ],
         "timeframe_hours": hours,
     }
+
+    try:
+        redis.setex(cache_key, 60, _json.dumps(response, default=str))
+    except Exception:
+        pass
+
+    return response
 
 
 @router.get("/live/{sport_key}")
