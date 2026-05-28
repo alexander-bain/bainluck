@@ -1825,16 +1825,19 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 r = await session.execute(
                     text("""
                         WITH first_snaps AS (
-                            SELECT DISTINCT ON (fos.outcome_id)
-                                fos.outcome_id, fos.probability
-                            FROM futures_odds_snapshots fos
-                            JOIN futures_outcomes fo ON fo.id = fos.outcome_id
-                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            SELECT fo2.id AS outcome_id, snap.probability
+                            FROM futures_outcomes fo2
+                            JOIN futures_markets fm ON fm.id = fo2.market_id
+                            CROSS JOIN LATERAL (
+                                SELECT fos.probability
+                                FROM futures_odds_snapshots fos
+                                WHERE fos.outcome_id = fo2.id
+                                  AND fos.probability > 0 AND fos.probability < 1
+                                ORDER BY fos.captured_at ASC
+                                LIMIT 1
+                            ) snap
                             WHERE fm.status = 'resolved'
-                              AND fo.opening_probability IS NULL
-                              AND fos.probability > 0.005
-                              AND fos.probability < 0.995
-                            ORDER BY fos.outcome_id, fos.captured_at ASC
+                              AND fo2.opening_probability IS NULL
                             LIMIT 100000
                         )
                         UPDATE futures_outcomes fo
