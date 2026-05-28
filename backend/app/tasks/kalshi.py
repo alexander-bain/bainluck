@@ -880,12 +880,16 @@ async def _fix_hockey_commence_times() -> int:
 
 
 async def _backfill_from_settled_events(limit: int = 5000):
-    """Recover historical prices from Kalshi's settled events API.
+    """Recover historical prices and fix market status from Kalshi settled events.
 
-    Instead of hitting the candlestick API per-outcome (which returns empty
-    for old settled markets), this paginates the events API with
-    status=settled and with_nested_markets=true to get last_price_dollars
-    directly from the market data.
+    Two-phase approach:
+    Phase 1 (status resolution): Scan ALL series and update market status
+      to 'resolved' for any Kalshi market appearing in the settled events API.
+      This runs unconditionally — no limit, no early exit. Ensures the
+      calibration pipeline, is_winner backfill, and candlestick backfill
+      can process these markets.
+    Phase 2 (snapshot backfill): Create closing-price snapshots for outcomes
+      that have no snapshots at all. Respects the limit parameter.
     """
     import asyncio
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
@@ -897,7 +901,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
         "api_pages": 0, "api_empty": 0, "errors": [],
     }
 
-    # Series prefixes with the most missing outcomes
     SERIES_PREFIXES = [
         "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
         "KXNBAREB", "KXNBAAST", "KXNBA2HWINNER",
@@ -914,14 +917,14 @@ async def _backfill_from_settled_events(limit: int = 5000):
         service = KalshiAPIService()
         try:
             async with get_task_session() as session:
-                total_matched = 0
+                total_snapshots = 0
 
                 for series in SERIES_PREFIXES:
-                    if total_matched >= limit:
-                        break
-
                     cursor = None
-                    for _ in range(50):  # max 50 pages per series
+                    series_resolved = 0
+                    series_snapshots = 0
+
+                    for page_num in range(50):
                         events, cursor = await service.get_events(
                             status="settled",
                             series_ticker=series,
@@ -937,18 +940,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         page_tickers = []
                         for event_data in events:
                             stats["events_scanned"] += 1
-                            nested = event_data.get("markets") or []
-                            for mkt in nested:
+                            for mkt in (event_data.get("markets") or []):
                                 ticker = mkt.get("ticker", "")
                                 if ticker:
                                     page_tickers.append(ticker)
 
                         if not page_tickers:
+                            if not cursor:
+                                break
                             continue
 
-                        # Always update market status to 'resolved' for
-                        # any Kalshi market whose ticker appears in the
-                        # settled events API — regardless of snapshot limits
+                        # --- Phase 1: Always resolve market status ---
                         resolve_result = await session.execute(
                             text("""
                                 UPDATE futures_markets
@@ -967,95 +969,100 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             {"tickers": page_tickers},
                         )
                         if resolve_result.rowcount > 0:
+                            series_resolved += resolve_result.rowcount
                             stats["markets_resolved"] += resolve_result.rowcount
-                            await session.commit()
 
-                        # Now find outcomes needing snapshot backfill
-                        matched = await session.execute(
-                            text("""
-                                SELECT fo.id, fo.external_id, fo.opening_probability,
-                                       fm.id AS market_id, fm.status AS market_status,
-                                       fm.external_id AS market_external_id
-                                FROM futures_outcomes fo
-                                JOIN futures_markets fm ON fo.market_id = fm.id
-                                WHERE fo.external_id = ANY(:tickers)
-                                  AND fm.source = 'kalshi'
-                                  AND fo.calibration_probability IS NULL
-                            """),
-                            {"tickers": page_tickers},
-                        )
-                        rows = matched.fetchall()
-                        needs_backfill = {r.external_id: r for r in rows}
+                        # --- Phase 2: Snapshot backfill (respects limit) ---
+                        if total_snapshots < limit:
+                            matched = await session.execute(
+                                text("""
+                                    SELECT fo.id, fo.external_id,
+                                           fo.opening_probability
+                                    FROM futures_outcomes fo
+                                    JOIN futures_markets fm ON fo.market_id = fm.id
+                                    WHERE fo.external_id = ANY(:tickers)
+                                      AND fm.source = 'kalshi'
+                                      AND fo.calibration_probability IS NULL
+                                      AND NOT EXISTS (
+                                          SELECT 1 FROM futures_odds_snapshots fos
+                                          WHERE fos.outcome_id = fo.id
+                                      )
+                                """),
+                                {"tickers": page_tickers},
+                            )
+                            needs_snap = {r.external_id: r for r in matched.fetchall()}
 
-                        if not needs_backfill:
-                            continue
+                            for event_data in events:
+                                for mkt in (event_data.get("markets") or []):
+                                    ticker = mkt.get("ticker", "")
+                                    if ticker not in needs_snap:
+                                        continue
 
-                        # Use last_price from the settled event data directly
-                        for event_data in events:
-                            for mkt in (event_data.get("markets") or []):
-                                ticker = mkt.get("ticker", "")
-                                if ticker not in needs_backfill:
-                                    continue
-
-                                row = needs_backfill[ticker]
-                                last_price_str = mkt.get("last_price_dollars")
-                                close_time_str = mkt.get("close_time") or mkt.get("expiration_time")
-
-                                if not last_price_str:
-                                    stats["api_empty"] += 1
-                                    continue
-
-                                try:
-                                    price = float(last_price_str)
-                                except (ValueError, TypeError):
-                                    continue
-
-                                if price <= 0 or price >= 1:
-                                    continue
-
-                                # Parse close time for the snapshot timestamp
-                                try:
-                                    from dateutil.parser import parse as dt_parse
-                                    captured = dt_parse(close_time_str) if close_time_str else datetime.now(timezone.utc)
-                                except Exception:
-                                    captured = datetime.now(timezone.utc)
-
-                                # Create snapshot
-                                stmt = pg_insert(FuturesOddsSnapshot).values(
-                                    outcome_id=row.id,
-                                    bookmaker="kalshi",
-                                    probability=round(price, 6),
-                                    last_price=round(price, 4),
-                                    captured_at=captured,
-                                ).on_conflict_do_nothing()
-                                await session.execute(stmt)
-                                stats["snapshots_created"] += 1
-                                stats["markets_matched"] += 1
-                                total_matched += 1
-
-                                # Set opening_probability
-                                if row.opening_probability is None:
-                                    await session.execute(
-                                        text("""
-                                            UPDATE futures_outcomes
-                                            SET opening_probability = :price,
-                                                opening_captured_at = :ts
-                                            WHERE id = :id AND opening_probability IS NULL
-                                        """),
-                                        {"price": price, "ts": captured, "id": row.id},
+                                    row = needs_snap[ticker]
+                                    last_price_str = mkt.get("last_price_dollars")
+                                    close_time_str = (
+                                        mkt.get("close_time")
+                                        or mkt.get("expiration_time")
                                     )
-                                    stats["opening_set"] += 1
+
+                                    if not last_price_str:
+                                        stats["api_empty"] += 1
+                                        continue
+
+                                    try:
+                                        price = float(last_price_str)
+                                    except (ValueError, TypeError):
+                                        continue
+
+                                    if price <= 0 or price >= 1:
+                                        continue
+
+                                    try:
+                                        from dateutil.parser import parse as dt_parse
+                                        captured = (
+                                            dt_parse(close_time_str)
+                                            if close_time_str
+                                            else datetime.now(timezone.utc)
+                                        )
+                                    except Exception:
+                                        captured = datetime.now(timezone.utc)
+
+                                    stmt = pg_insert(FuturesOddsSnapshot).values(
+                                        outcome_id=row.id,
+                                        bookmaker="kalshi",
+                                        probability=round(price, 6),
+                                        last_price=round(price, 4),
+                                        captured_at=captured,
+                                    ).on_conflict_do_nothing()
+                                    await session.execute(stmt)
+                                    stats["snapshots_created"] += 1
+                                    series_snapshots += 1
+                                    total_snapshots += 1
+
+                                    if row.opening_probability is None:
+                                        await session.execute(
+                                            text("""
+                                                UPDATE futures_outcomes
+                                                SET opening_probability = :price,
+                                                    opening_captured_at = :ts
+                                                WHERE id = :id
+                                                  AND opening_probability IS NULL
+                                            """),
+                                            {"price": price, "ts": captured, "id": row.id},
+                                        )
+                                        stats["opening_set"] += 1
 
                         await session.commit()
-                        logger.info(
-                            "Settled events backfill: series=%s page=%d matched=%d snapshots=%d",
-                            series, stats["api_pages"], stats["markets_matched"],
-                            stats["snapshots_created"],
-                        )
 
-                        if not cursor or total_matched >= limit:
+                        if not cursor:
                             break
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.1)
+
+                    if series_resolved > 0 or series_snapshots > 0:
+                        logger.info(
+                            "Settled events: series=%s resolved=%d snapshots=%d",
+                            series, series_resolved, series_snapshots,
+                        )
 
         finally:
             await service.close()
