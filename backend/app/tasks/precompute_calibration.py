@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Redis cache TTL: 24 hours (results don't change quickly)
 _CACHE_TTL = 86400
 
+# Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
+_MAIN_CACHE_TTL = 7200
+
 # Horizons: (label, days_before_resolution)
 _HORIZONS = [
     ("T-30", 30),
@@ -77,6 +80,518 @@ def _compute_horizon_mce(buckets: list[dict]) -> float | None:
     if count == 0:
         return None
     return round(total_abs_err / count * 100, 2)
+
+
+async def _precompute_calibration_main():
+    """Precompute the main /api/calibration response and store in Redis.
+
+    This mirrors the logic in routes/calibration.py public_calibration() but
+    runs as a Celery background task so the HTTP endpoint can serve instantly
+    from the Redis cache instead of running 6 heavy queries in-request.
+    """
+    from sqlalchemy import func, select
+
+    from app.models import FuturesMarket
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    async with get_task_session() as db:
+        # -----------------------------------------------------------
+        # Query 1: Main futures calibration buckets
+        # -----------------------------------------------------------
+        main_sql = text("""
+            WITH market_info AS (
+                SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
+                    fm.commence_time,
+                    COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
+                    fm.mutually_exclusive
+                FROM futures_markets fm
+                WHERE fm.status = 'resolved'
+            ),
+            group_sizes AS (
+                SELECT group_id, source, COUNT(*) AS group_size
+                FROM market_info
+                WHERE group_id IS NOT NULL
+                GROUP BY group_id, source
+            ),
+            event_sizes AS (
+                SELECT event_id, source, COUNT(*) AS event_size
+                FROM market_info
+                WHERE event_id IS NOT NULL
+                GROUP BY event_id, source
+            ),
+            virtual_market AS (
+                SELECT
+                    mi.market_id, mi.source, mi.category, mi.event_id,
+                    CASE WHEN gs.group_size >= 3
+                         THEN 'g:' || mi.group_id
+                         WHEN es.event_size >= 3
+                         THEN 'e:' || mi.event_id::text
+                         ELSE 'm:' || mi.market_id::text
+                    END AS vm_id,
+                    COALESCE(gs.group_size >= 3, false)
+                      OR COALESCE(es.event_size >= 3, false) AS is_grouped,
+                    mi.mutually_exclusive
+                FROM market_info mi
+                LEFT JOIN group_sizes gs
+                  ON gs.group_id = mi.group_id AND gs.source = mi.source
+                LEFT JOIN event_sizes es
+                  ON es.event_id = mi.event_id AND es.source = mi.source
+            ),
+            vm_stats AS (
+                SELECT
+                    vm.vm_id, vm.source, vm.category, vm.is_grouped,
+                    vm.mutually_exclusive,
+                    COUNT(DISTINCT vm.market_id) AS market_count,
+                    COUNT(*) AS total_outcomes,
+                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
+                    COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
+                                      AND fo.opening_probability > 0
+                                      AND fo.opening_probability < 1) AS eligible
+                FROM virtual_market vm
+                JOIN futures_outcomes fo ON fo.market_id = vm.market_id
+                GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
+                         vm.mutually_exclusive
+            ),
+            clean_vms AS (
+                SELECT * FROM vm_stats
+                WHERE eligible >= 1
+                  AND has_winner >= 1
+            ),
+            ranked_outcomes AS (
+                SELECT
+                    COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
+                    fo.is_winner AS is_winner,
+                    (fo.calibration_probability IS NOT NULL
+                     AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
+                    cv.vm_id, cv.source, cv.category,
+                    cv.eligible, cv.is_grouped,
+                    (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cv.vm_id
+                        ORDER BY ABS(fo.opening_probability - 0.5)
+                    ) AS rn
+                FROM futures_outcomes fo
+                JOIN virtual_market vm ON vm.market_id = fo.market_id
+                JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND (fo.resolution_source IS NULL
+                       OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
+            ),
+            mode_prices AS (
+                SELECT vm_id, adj_opening_probability AS mode_price
+                FROM ranked_outcomes
+                WHERE is_multi AND eligible >= 3
+                GROUP BY vm_id, adj_opening_probability, eligible
+                HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
+            ),
+            deduped AS (
+                SELECT ro.* FROM ranked_outcomes ro
+                LEFT JOIN mode_prices mp
+                  ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
+                WHERE
+                    CASE
+                        WHEN ro.is_multi
+                            THEN ro.adj_opening_probability > 0.005
+                             AND ro.adj_opening_probability < 0.98
+                             AND mp.vm_id IS NULL
+                        ELSE ro.rn = 1
+                    END
+            ),
+            bucketed AS (
+                SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
+                FROM deduped
+            )
+            SELECT bucket_idx, source, category, price_moved,
+                COUNT(*) AS n,
+                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
+                AVG(adj_opening_probability) AS avg_prob,
+                SUM(adj_opening_probability::float) AS sum_prob,
+                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            FROM bucketed
+            GROUP BY bucket_idx, source, category, price_moved
+            ORDER BY bucket_idx, source, category, price_moved
+        """)
+        result = await db.execute(main_sql)
+        rows = result.all()
+
+        # -----------------------------------------------------------
+        # Query 2: Ground-truth sports calibration from events table
+        # -----------------------------------------------------------
+        events_sql = text("""
+            SELECT
+                LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+                'odds_api' AS source,
+                s.key AS category,
+                COUNT(*) AS n,
+                SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+                AVG(prob) AS avg_prob,
+                SUM(prob::float) AS sum_prob,
+                SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            FROM (
+                SELECT COALESCE(closing_home_probability, opening_home_probability) AS prob,
+                       (home_score > away_score) AS won, sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
+                  AND COALESCE(closing_home_probability, opening_home_probability) > 0
+                  AND COALESCE(closing_home_probability, opening_home_probability) < 1
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND home_score != away_score
+                UNION ALL
+                SELECT COALESCE(closing_away_probability, opening_away_probability) AS prob,
+                       (away_score > home_score) AS won, sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
+                  AND COALESCE(closing_away_probability, opening_away_probability) > 0
+                  AND COALESCE(closing_away_probability, opening_away_probability) < 1
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND home_score != away_score
+            ) outcomes
+            JOIN sports s ON s.id = outcomes.sport_id
+            GROUP BY bucket_idx, s.key
+            ORDER BY bucket_idx, s.key
+        """)
+        events_result = await db.execute(events_sql)
+        events_rows = events_result.all()
+
+        # -----------------------------------------------------------
+        # Query 3: Spread calibration
+        # -----------------------------------------------------------
+        spreads_sql = text("""
+            SELECT
+                LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+                'odds_api_spreads' AS source,
+                s.key AS category,
+                COUNT(*) AS n,
+                SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+                AVG(prob) AS avg_prob,
+                SUM(prob::float) AS sum_prob,
+                SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            FROM (
+                SELECT
+                    (CASE WHEN closing_home_spread_odds < 0
+                          THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                          ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                    /
+                    ((CASE WHEN closing_home_spread_odds < 0
+                           THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                           ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                     +
+                     (CASE WHEN closing_away_spread_odds < 0
+                           THEN ABS(closing_away_spread_odds)::numeric / (ABS(closing_away_spread_odds) + 100.0)
+                           ELSE 100.0 / (closing_away_spread_odds + 100.0) END))
+                    AS prob,
+                    ((home_score - away_score) + closing_home_spread > 0) AS won,
+                    sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND closing_home_spread IS NOT NULL
+                  AND closing_home_spread_odds IS NOT NULL
+                  AND closing_away_spread_odds IS NOT NULL
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND (home_score - away_score) + closing_home_spread != 0
+            ) outcomes
+            JOIN sports s ON s.id = outcomes.sport_id
+            WHERE prob > 0 AND prob < 1
+            GROUP BY bucket_idx, s.key
+            ORDER BY bucket_idx, s.key
+        """)
+        spreads_result = await db.execute(spreads_sql)
+        spreads_rows = spreads_result.all()
+
+        # -----------------------------------------------------------
+        # Query 4: Totals calibration
+        # -----------------------------------------------------------
+        totals_sql = text("""
+            SELECT
+                LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+                'odds_api_totals' AS source,
+                s.key AS category,
+                COUNT(*) AS n,
+                SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+                AVG(prob) AS avg_prob,
+                SUM(prob::float) AS sum_prob,
+                SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            FROM (
+                SELECT
+                    (CASE WHEN closing_over_odds < 0
+                          THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                          ELSE 100.0 / (closing_over_odds + 100.0) END)
+                    /
+                    ((CASE WHEN closing_over_odds < 0
+                           THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                           ELSE 100.0 / (closing_over_odds + 100.0) END)
+                     +
+                     (CASE WHEN closing_under_odds < 0
+                           THEN ABS(closing_under_odds)::numeric / (ABS(closing_under_odds) + 100.0)
+                           ELSE 100.0 / (closing_under_odds + 100.0) END))
+                    AS prob,
+                    ((home_score + away_score) > closing_over_under) AS won,
+                    sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND closing_over_under IS NOT NULL
+                  AND closing_over_odds IS NOT NULL
+                  AND closing_under_odds IS NOT NULL
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND (home_score + away_score) != closing_over_under
+            ) outcomes
+            JOIN sports s ON s.id = outcomes.sport_id
+            WHERE prob > 0 AND prob < 1
+            GROUP BY bucket_idx, s.key
+            ORDER BY bucket_idx, s.key
+        """)
+        totals_result = await db.execute(totals_sql)
+        totals_rows = totals_result.all()
+
+        # -----------------------------------------------------------
+        # Query 5: Per-bookmaker calibration from Redis
+        # -----------------------------------------------------------
+        bookmaker_rows = []
+        try:
+            from types import SimpleNamespace as _NS
+            rc = get_redis_client()
+            _cached = rc.get("bainluck:bookmaker_calibration")
+            if _cached:
+                bookmaker_rows = [_NS(**row) for row in json.loads(_cached)]
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------
+        # Query 6: Total resolved markets count
+        # -----------------------------------------------------------
+        total_markets_result = await db.execute(
+            select(func.count()).select_from(FuturesMarket).where(
+                FuturesMarket.status == "resolved"
+            )
+        )
+        total_markets = total_markets_result.scalar()
+
+        # -----------------------------------------------------------
+        # Query 7: Closing line coverage
+        # -----------------------------------------------------------
+        closing_sql = text("""
+            SELECT
+                COUNT(*) FILTER (WHERE closing_home_probability IS NOT NULL) AS has_closing,
+                COUNT(*) FILTER (WHERE closing_home_probability IS NULL
+                                 AND commence_time IS NOT NULL) AS needs_closing,
+                COUNT(*) AS total_completed
+            FROM events
+            WHERE status IN ('completed', 'closed')
+              AND home_score IS NOT NULL AND away_score IS NOT NULL
+        """)
+        closing_result = await db.execute(closing_sql)
+        closing_row = closing_result.one()
+
+    # -----------------------------------------------------------
+    # Post-processing (runs outside the DB session)
+    # -----------------------------------------------------------
+    all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
+    total_outcomes = sum(r.n for r in all_rows)
+    total_winners = sum(r.winners for r in all_rows)
+
+    # Build bucket dicts with Wilson CIs
+    bucket_dicts = []
+    for r in all_rows:
+        ci_lo, ci_hi = _wilson_ci(r.winners, r.n)
+        bucket_dicts.append({
+            "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
+            "price_moved": getattr(r, "price_moved", None),
+            "n": r.n, "winners": r.winners,
+            "avg_prob": round(float(r.avg_prob), 4),
+            "sum_prob": round(float(r.sum_prob), 4),
+            "sum_sq_err": round(float(r.sum_sq_err), 4),
+            "ci_lower": round(ci_lo, 4),
+            "ci_upper": round(ci_hi, 4),
+        })
+
+    # Aggregate buckets for MCE bootstrap CI
+    agg: dict[int, dict] = {}
+    for b in bucket_dicts:
+        idx = b["bucket_idx"]
+        if idx not in agg:
+            agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        agg[idx]["n"] += b["n"]
+        agg[idx]["winners"] += b["winners"]
+        agg[idx]["sum_prob"] += b["sum_prob"]
+    agg_list = [
+        {"n": v["n"], "winners": v["winners"], "avg_prob": v["sum_prob"] / v["n"]}
+        for v in agg.values()
+        if v["n"] > 0
+    ]
+    mce_ci_lo, mce_ci_hi = _bootstrap_mce_ci(agg_list)
+
+    # Cohort-level MCE: closing line vs opening price
+    def _cohort_mce(buckets: list[dict], pred: object) -> float | None:
+        cohort_agg: dict[int, dict] = {}
+        for b in buckets:
+            if b.get("price_moved") != pred:
+                continue
+            idx = b["bucket_idx"]
+            if idx not in cohort_agg:
+                cohort_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            cohort_agg[idx]["n"] += b["n"]
+            cohort_agg[idx]["winners"] += b["winners"]
+            cohort_agg[idx]["sum_prob"] += b["sum_prob"]
+        if not cohort_agg:
+            return None
+        total_abs_err = 0.0
+        for v in cohort_agg.values():
+            if v["n"] == 0:
+                continue
+            avg_prob = v["sum_prob"] / v["n"]
+            actual = v["winners"] / v["n"]
+            total_abs_err += abs(actual - avg_prob)
+        return round(total_abs_err / len(cohort_agg) * 100, 2)
+
+    mce_closing_line = _cohort_mce(bucket_dicts, True)
+    mce_opening_price = _cohort_mce(bucket_dicts, False)
+
+    # Per-category MCE breakdown
+    cat_agg: dict[str, dict[int, dict]] = {}
+    cat_outcomes: dict[str, int] = {}
+    for b in bucket_dicts:
+        cat = b["category"]
+        idx = b["bucket_idx"]
+        if cat not in cat_agg:
+            cat_agg[cat] = {}
+            cat_outcomes[cat] = 0
+        if idx not in cat_agg[cat]:
+            cat_agg[cat][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        cat_agg[cat][idx]["n"] += b["n"]
+        cat_agg[cat][idx]["winners"] += b["winners"]
+        cat_agg[cat][idx]["sum_prob"] += b["sum_prob"]
+        cat_outcomes[cat] += b["n"]
+
+    by_category = []
+    for cat, buckets_by_idx in sorted(cat_agg.items()):
+        total_n = cat_outcomes[cat]
+        if total_n == 0:
+            continue
+        cat_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in buckets_by_idx.values()
+        ])
+        by_category.append({"category": cat, "mce": cat_mce, "outcomes": total_n})
+    by_category.sort(key=lambda x: x["outcomes"], reverse=True)
+
+    # Per-source MCE breakdown
+    src_agg: dict[str, dict[int, dict]] = {}
+    src_outcomes: dict[str, int] = {}
+    for b in bucket_dicts:
+        src = b["source"]
+        idx = b["bucket_idx"]
+        if src not in src_agg:
+            src_agg[src] = {}
+            src_outcomes[src] = 0
+        if idx not in src_agg[src]:
+            src_agg[src][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        src_agg[src][idx]["n"] += b["n"]
+        src_agg[src][idx]["winners"] += b["winners"]
+        src_agg[src][idx]["sum_prob"] += b["sum_prob"]
+        src_outcomes[src] += b["n"]
+
+    by_source = []
+    for src, buckets_by_idx in sorted(src_agg.items()):
+        total_n = src_outcomes[src]
+        if total_n == 0:
+            continue
+        src_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in buckets_by_idx.values()
+        ])
+        by_source.append({"source": src, "mce": src_mce, "outcomes": total_n})
+    by_source.sort(key=lambda x: x["outcomes"], reverse=True)
+
+    # Spread / Total summaries
+    def _source_summary(source_key: str) -> dict:
+        sport_agg: dict[str, dict[int, dict]] = {}
+        sport_outcomes: dict[str, int] = {}
+        total_n = 0
+        total_w = 0
+        for b in bucket_dicts:
+            if b["source"] != source_key:
+                continue
+            sport = b["category"]
+            idx = b["bucket_idx"]
+            if sport not in sport_agg:
+                sport_agg[sport] = {}
+                sport_outcomes[sport] = 0
+            if idx not in sport_agg[sport]:
+                sport_agg[sport][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            sport_agg[sport][idx]["n"] += b["n"]
+            sport_agg[sport][idx]["winners"] += b["winners"]
+            sport_agg[sport][idx]["sum_prob"] += b["sum_prob"]
+            sport_outcomes[sport] += b["n"]
+            total_n += b["n"]
+            total_w += b["winners"]
+
+        by_sport = []
+        for sport, buckets_by_idx in sorted(sport_agg.items()):
+            sn = sport_outcomes[sport]
+            if sn == 0:
+                continue
+            sport_mce = _compute_horizon_mce([
+                {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+                for v in buckets_by_idx.values()
+            ])
+            by_sport.append({"sport": sport, "mce": sport_mce, "outcomes": sn})
+        by_sport.sort(key=lambda x: x["outcomes"], reverse=True)
+
+        all_agg: dict[int, dict] = {}
+        for b in bucket_dicts:
+            if b["source"] != source_key:
+                continue
+            idx = b["bucket_idx"]
+            if idx not in all_agg:
+                all_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            all_agg[idx]["n"] += b["n"]
+            all_agg[idx]["winners"] += b["winners"]
+            all_agg[idx]["sum_prob"] += b["sum_prob"]
+        overall_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in all_agg.values()
+        ])
+
+        return {
+            "mce": overall_mce,
+            "outcomes": total_n,
+            "winners": total_w,
+            "by_sport": by_sport,
+        }
+
+    spreads_summary = _source_summary("odds_api_spreads")
+    totals_summary = _source_summary("odds_api_totals")
+
+    response = {
+        "closing_line_coverage": {
+            "has_closing": closing_row.has_closing,
+            "needs_closing": closing_row.needs_closing,
+            "total": closing_row.total_completed,
+        },
+        "buckets": bucket_dicts,
+        "by_category": by_category,
+        "by_source": by_source,
+        "spreads_summary": spreads_summary,
+        "totals_summary": totals_summary,
+        "total_markets": total_markets,
+        "total_outcomes": total_outcomes,
+        "total_winners": total_winners,
+        "mce_ci_lower": round(mce_ci_lo * 100, 2),
+        "mce_ci_upper": round(mce_ci_hi * 100, 2),
+        "mce_closing_line": mce_closing_line,
+        "mce_opening_price": mce_opening_price,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Store in Redis
+    rc = get_redis_client()
+    rc.set("bainluck:calibration:main", json.dumps(response), ex=_MAIN_CACHE_TTL)
+    logger.info("Cached main calibration in Redis (%d buckets, %d outcomes)", len(bucket_dicts), total_outcomes)
+    return {"status": "ok", "buckets": len(bucket_dicts), "outcomes": total_outcomes}
 
 
 async def _compute_time_horizon_calibration():
