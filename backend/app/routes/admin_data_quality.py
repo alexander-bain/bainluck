@@ -3168,3 +3168,34 @@ async def debug_compute_cal_prob(
         await db.commit()
 
     return {"outcomes_found": len(rows), "results": rows}
+
+
+@router.post("/fix-market-status")
+async def fix_market_status(
+    secret: str = Query(...),
+    outcome_ids: str = Query(...),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Fix market status to 'resolved' for markets containing specific outcomes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    ids = [int(x.strip()) for x in outcome_ids.split(",") if x.strip().isdigit()]
+
+    result = await db.execute(
+        text("""
+            UPDATE futures_markets
+            SET status = 'resolved'
+            WHERE id IN (
+                SELECT DISTINCT fm.id
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fo.market_id = fm.id
+                WHERE fo.id = ANY(:ids)
+                  AND fm.source = 'kalshi'
+                  AND fm.status != 'resolved'
+            )
+        """),
+        {"ids": ids},
+    )
+    await db.commit()
+    return {"markets_resolved": result.rowcount}
