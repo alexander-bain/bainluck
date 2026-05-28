@@ -2108,7 +2108,9 @@ async def _compute_calibration_prices():
             stats["reset"] = 0
 
             # Part A: Event-linked markets — real pre-event closing line
-            # Batched at 50K to avoid Heroku Postgres timeouts.
+            # Batched at 100K to avoid Heroku Postgres statement timeouts (~30s).
+            # Pure SQL — runs in Postgres, no Python memory risk.
+            # ORDER BY commence_time DESC so recent Tier 1 games get processed first.
             part_a_total = 0
             for _ in range(20):
                 result_a = await session.execute(
@@ -2123,7 +2125,8 @@ async def _compute_calibration_prices():
                               AND fo.calibration_probability IS NULL
                               AND fm.event_id IS NOT NULL
                               AND e.commence_time IS NOT NULL
-                            LIMIT 50000
+                            ORDER BY e.commence_time DESC
+                            LIMIT 100000
                         ),
                         closing AS (
                             SELECT DISTINCT ON (nc.outcome_id)
@@ -2156,7 +2159,7 @@ async def _compute_calibration_prices():
             stats["with_commence"] = part_a_total
 
             # Part B: Non-event markets — settled price or opening fallback.
-            # Batched at 50K to avoid Heroku Postgres timeouts.
+            # Batched at 100K. Pure SQL, no Python memory risk.
             part_b_total = 0
             for _ in range(20):
                 result_b = await session.execute(
@@ -2170,7 +2173,7 @@ async def _compute_calibration_prices():
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
                               AND (fm.event_id IS NULL OR e.commence_time IS NULL)
-                            LIMIT 50000
+                            LIMIT 100000
                         ),
                         settled AS (
                             SELECT DISTINCT ON (nc.outcome_id)
