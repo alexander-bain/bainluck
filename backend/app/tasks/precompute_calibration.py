@@ -111,17 +111,23 @@ async def _compute_time_horizon_calibration():
                            OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
                 ),
                 horizon_snap AS (
-                    SELECT DISTINCT ON (eo.outcome_id)
+                    SELECT
                         eo.outcome_id,
                         eo.is_winner,
                         eo.source,
                         eo.category,
-                        fos.probability AS horizon_prob
+                        horizon.probability AS horizon_prob
                     FROM eligible_outcomes eo
-                    JOIN futures_odds_snapshots fos ON fos.outcome_id = eo.outcome_id
-                    WHERE fos.captured_at <= {cutoff_expr}
-                      AND fos.probability > 0 AND fos.probability < 1
-                    ORDER BY eo.outcome_id, fos.captured_at DESC
+                    LEFT JOIN LATERAL (
+                        SELECT fos.probability
+                        FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = eo.outcome_id
+                          AND fos.captured_at <= {cutoff_expr}
+                          AND fos.probability > 0 AND fos.probability < 1
+                        ORDER BY fos.captured_at DESC
+                        LIMIT 1
+                    ) horizon ON true
+                    WHERE horizon.probability IS NOT NULL
                 ),
                 bucketed AS (
                     SELECT *,

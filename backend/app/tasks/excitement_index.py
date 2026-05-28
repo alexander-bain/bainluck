@@ -6,6 +6,7 @@ Replaces the old Pulse tasks with the standard GEI formula:
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -37,18 +38,23 @@ async def update_live_ei(session) -> int:
     if not live_events:
         return 0
 
+    # Batch-load all snapshots for live events in a single query
+    event_ids = [e.id for e in live_events]
+    all_snaps_result = await session.execute(
+        select(OddsSnapshot)
+        .where(OddsSnapshot.event_id.in_(event_ids))
+        .order_by(OddsSnapshot.event_id, OddsSnapshot.captured_at)
+    )
+    snaps_by_event: dict[int, list] = defaultdict(list)
+    for snap in all_snaps_result.scalars().all():
+        snaps_by_event[snap.event_id].append(snap)
+
     updated = 0
     now = datetime.now(timezone.utc)
 
     for event in live_events:
         try:
-            # Get all snapshots for this event
-            result = await session.execute(
-                select(OddsSnapshot)
-                .where(OddsSnapshot.event_id == event.id)
-                .order_by(OddsSnapshot.captured_at)
-            )
-            snapshots = result.scalars().all()
+            snapshots = snaps_by_event[event.id]
 
             if len(snapshots) < 3:
                 continue
@@ -215,17 +221,22 @@ async def _compute_ei_batch(limit: int):
         if not events:
             return {"processed": 0, "message": "No events to process"}
 
+        # Batch-load all snapshots for the event batch in a single query
+        event_ids = [e.id for e in events]
+        all_snaps_result = await session.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id.in_(event_ids))
+            .order_by(OddsSnapshot.event_id, OddsSnapshot.captured_at)
+        )
+        snaps_by_event: dict[int, list] = defaultdict(list)
+        for snap in all_snaps_result.scalars().all():
+            snaps_by_event[snap.event_id].append(snap)
+
         processed = 0
         errors = 0
 
         for event in events:
-            # Get snapshots for this event
-            result = await session.execute(
-                select(OddsSnapshot)
-                .where(OddsSnapshot.event_id == event.id)
-                .order_by(OddsSnapshot.captured_at)
-            )
-            snapshots = result.scalars().all()
+            snapshots = snaps_by_event[event.id]
 
             if len(snapshots) < 3:
                 continue
@@ -276,7 +287,6 @@ _compute_pulse_batch = _compute_ei_batch
 
 async def _compute_ei_percentiles():
     """Compute EI percentile thresholds for percentile-based scoring."""
-    from collections import defaultdict
     from app.models import EIPercentile
 
     async with get_task_session() as session:

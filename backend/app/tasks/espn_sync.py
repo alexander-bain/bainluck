@@ -1197,15 +1197,17 @@ async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
                 text("""
                     SELECT e.id, e.espn_id, e.commence_time,
                            s.key AS sport_key,
-                           (SELECT COUNT(*) FROM win_prob_snapshots wps
-                            WHERE wps.event_id = e.id AND wps.source = 'espn') AS espn_snap_count
+                           snap_cnt.cnt AS espn_snap_count
                     FROM events e
                     JOIN sports s ON s.id = e.sport_id
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*) AS cnt FROM win_prob_snapshots wps
+                        WHERE wps.event_id = e.id AND wps.source = 'espn'
+                    ) snap_cnt ON true
                     WHERE e.status IN ('completed', 'closed')
                       AND e.espn_id IS NOT NULL
                       AND e.commence_time > :cutoff
-                      AND (SELECT COUNT(*) FROM win_prob_snapshots wps
-                           WHERE wps.event_id = e.id AND wps.source = 'espn') < 10
+                      AND snap_cnt.cnt < 10
                     ORDER BY e.commence_time DESC
                     LIMIT :limit
                 """),

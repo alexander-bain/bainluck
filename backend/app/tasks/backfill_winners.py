@@ -2010,6 +2010,25 @@ async def _precompute_bookmaker_calibration():
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
+                    WITH eligible_events AS (
+                        SELECT e.id, e.commence_time, e.home_score, e.away_score,
+                               s.key AS category
+                        FROM events e
+                        JOIN sports s ON s.id = e.sport_id
+                        WHERE e.status IN ('completed', 'closed')
+                          AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+                          AND e.home_score != e.away_score
+                          AND e.commence_time IS NOT NULL
+                    ),
+                    event_bookmakers AS (
+                        SELECT DISTINCT ee.id AS event_id, ee.commence_time,
+                               ee.home_score, ee.away_score, ee.category,
+                               os.bookmaker
+                        FROM eligible_events ee
+                        JOIN odds_snapshots os ON os.event_id = ee.id
+                        WHERE os.captured_at < ee.commence_time
+                          AND os.home_win_probability IS NOT NULL
+                    )
                     SELECT
                         LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
                         category,
@@ -2019,25 +2038,26 @@ async def _precompute_bookmaker_calibration():
                         SUM(prob::float) AS sum_prob,
                         SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
                     FROM (
-                        SELECT DISTINCT ON (os.event_id, os.bookmaker)
-                            os.home_win_probability::float
-                            / NULLIF(os.home_win_probability::float + os.away_win_probability::float, 0)
+                        SELECT
+                            cl.home_win_probability::float
+                            / NULLIF(cl.home_win_probability::float + cl.away_win_probability::float, 0)
                             AS prob,
-                            (e.home_score > e.away_score) AS won,
-                            s.key AS category
-                        FROM odds_snapshots os
-                        JOIN events e ON e.id = os.event_id
-                        JOIN sports s ON s.id = e.sport_id
-                        WHERE e.status IN ('completed', 'closed')
-                          AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-                          AND e.home_score != e.away_score
-                          AND os.home_win_probability IS NOT NULL
-                          AND os.away_win_probability IS NOT NULL
-                          AND os.home_win_probability > 0
-                          AND os.away_win_probability > 0
-                          AND e.commence_time IS NOT NULL
-                          AND os.captured_at < e.commence_time
-                        ORDER BY os.event_id, os.bookmaker, os.captured_at DESC
+                            (eb.home_score > eb.away_score) AS won,
+                            eb.category
+                        FROM event_bookmakers eb
+                        CROSS JOIN LATERAL (
+                            SELECT os.home_win_probability, os.away_win_probability
+                            FROM odds_snapshots os
+                            WHERE os.event_id = eb.event_id
+                              AND os.bookmaker = eb.bookmaker
+                              AND os.captured_at < eb.commence_time
+                              AND os.home_win_probability IS NOT NULL
+                              AND os.away_win_probability IS NOT NULL
+                              AND os.home_win_probability > 0
+                              AND os.away_win_probability > 0
+                            ORDER BY os.captured_at DESC
+                            LIMIT 1
+                        ) cl
                     ) outcomes
                     WHERE prob > 0.01 AND prob < 0.99
                     GROUP BY bucket_idx, category
@@ -2218,21 +2238,21 @@ async def _compute_calibration_prices():
                               AND fo.opening_probability IS NOT NULL
                               AND fo.calibration_probability = fo.opening_probability
                             LIMIT 2000
-                        ),
-                        last_snap AS (
-                            SELECT DISTINCT ON (s.outcome_id)
-                                s.outcome_id,
-                                fos.probability
-                            FROM stuck s
-                            JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
-                            WHERE fos.probability > 0 AND fos.probability < 1
-                            ORDER BY s.outcome_id, fos.captured_at DESC
                         )
                         UPDATE futures_outcomes fo
                         SET calibration_probability = ls.probability
-                        FROM last_snap ls
-                        WHERE fo.id = ls.outcome_id
-                          AND ls.probability != fo.opening_probability
+                        FROM stuck s
+                        LEFT JOIN LATERAL (
+                            SELECT fos.probability
+                            FROM futures_odds_snapshots fos
+                            WHERE fos.outcome_id = s.outcome_id
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY fos.captured_at DESC
+                            LIMIT 1
+                        ) ls ON true
+                        WHERE fo.id = s.outcome_id
+                          AND ls.probability IS NOT NULL
+                          AND ls.probability != s.opening_probability
                     """)
                 )
                 await session.commit()
@@ -2279,24 +2299,24 @@ async def _backfill_closing_lines():
                           AND e.home_score IS NOT NULL
                           AND e.away_score IS NOT NULL
                         LIMIT 5000
-                    ),
-                    closing AS (
-                        SELECT DISTINCT ON (enc.id)
-                            enc.id AS event_id,
-                            os.home_win_probability
-                        FROM events_needing_closing enc
-                        JOIN odds_snapshots os ON os.event_id = enc.id
-                        WHERE os.captured_at < enc.commence_time
-                          AND os.home_win_probability IS NOT NULL
-                          AND os.home_win_probability > 0
-                          AND os.home_win_probability < 1
-                        ORDER BY enc.id, os.captured_at DESC
                     )
                     UPDATE events e
                     SET closing_home_probability = cl.home_win_probability,
                         closing_away_probability = 1.0 - cl.home_win_probability
-                    FROM closing cl
-                    WHERE e.id = cl.event_id
+                    FROM events_needing_closing enc
+                    LEFT JOIN LATERAL (
+                        SELECT os.home_win_probability
+                        FROM odds_snapshots os
+                        WHERE os.event_id = enc.id
+                          AND os.captured_at < enc.commence_time
+                          AND os.home_win_probability IS NOT NULL
+                          AND os.home_win_probability > 0
+                          AND os.home_win_probability < 1
+                        ORDER BY os.captured_at DESC
+                        LIMIT 1
+                    ) cl ON true
+                    WHERE e.id = enc.id
+                      AND cl.home_win_probability IS NOT NULL
                 """)
             )
             stats["updated"] = result.rowcount
@@ -2314,25 +2334,24 @@ async def _backfill_closing_lines():
                           AND e.commence_time IS NOT NULL
                           AND e.home_score IS NOT NULL
                         LIMIT 5000
-                    ),
-                    closing_spread AS (
-                        SELECT DISTINCT ON (ens.id)
-                            ens.id AS event_id,
-                            os.home_spread,
-                            os.home_spread_odds,
-                            os.away_spread_odds
-                        FROM events_needing_spread ens
-                        JOIN odds_snapshots os ON os.event_id = ens.id
-                        WHERE os.captured_at < ens.commence_time
-                          AND os.home_spread IS NOT NULL
-                        ORDER BY ens.id, os.captured_at DESC
                     )
                     UPDATE events e
                     SET closing_home_spread = cs.home_spread,
                         closing_home_spread_odds = cs.home_spread_odds,
                         closing_away_spread_odds = cs.away_spread_odds
-                    FROM closing_spread cs
-                    WHERE e.id = cs.event_id
+                    FROM events_needing_spread ens
+                    LEFT JOIN LATERAL (
+                        SELECT os.home_spread, os.home_spread_odds,
+                               os.away_spread_odds
+                        FROM odds_snapshots os
+                        WHERE os.event_id = ens.id
+                          AND os.captured_at < ens.commence_time
+                          AND os.home_spread IS NOT NULL
+                        ORDER BY os.captured_at DESC
+                        LIMIT 1
+                    ) cs ON true
+                    WHERE e.id = ens.id
+                      AND cs.home_spread IS NOT NULL
                 """)
             )
             stats["closing_spreads"] = spread_result.rowcount
@@ -2350,25 +2369,23 @@ async def _backfill_closing_lines():
                           AND e.commence_time IS NOT NULL
                           AND e.home_score IS NOT NULL
                         LIMIT 5000
-                    ),
-                    closing_total AS (
-                        SELECT DISTINCT ON (ent.id)
-                            ent.id AS event_id,
-                            os.over_under,
-                            os.over_odds,
-                            os.under_odds
-                        FROM events_needing_totals ent
-                        JOIN odds_snapshots os ON os.event_id = ent.id
-                        WHERE os.captured_at < ent.commence_time
-                          AND os.over_under IS NOT NULL
-                        ORDER BY ent.id, os.captured_at DESC
                     )
                     UPDATE events e
                     SET closing_over_under = ct.over_under,
                         closing_over_odds = ct.over_odds,
                         closing_under_odds = ct.under_odds
-                    FROM closing_total ct
-                    WHERE e.id = ct.event_id
+                    FROM events_needing_totals ent
+                    LEFT JOIN LATERAL (
+                        SELECT os.over_under, os.over_odds, os.under_odds
+                        FROM odds_snapshots os
+                        WHERE os.event_id = ent.id
+                          AND os.captured_at < ent.commence_time
+                          AND os.over_under IS NOT NULL
+                        ORDER BY os.captured_at DESC
+                        LIMIT 1
+                    ) ct ON true
+                    WHERE e.id = ent.id
+                      AND ct.over_under IS NOT NULL
                 """)
             )
             stats["closing_totals"] = totals_result.rowcount

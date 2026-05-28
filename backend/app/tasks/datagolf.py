@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, and_, update
+from sqlalchemy import func as sa_func, select, and_, update
 
 from app.tasks.base import get_task_session
 
@@ -167,6 +167,37 @@ async def _poll_datagolf_markets() -> dict:
 
                         # Upsert outcomes + snapshots
                         now = datetime.now(timezone.utc)
+
+                        # Batch-load latest snapshot per outcome for this market
+                        # to avoid N+1 per-player dedup queries (~750 → 1 per market).
+                        _latest_snap_subq = (
+                            select(
+                                FuturesOddsSnapshot.outcome_id,
+                                sa_func.max(FuturesOddsSnapshot.captured_at).label("max_at"),
+                            )
+                            .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
+                            .where(
+                                FuturesOutcome.market_id == market.id,
+                                FuturesOddsSnapshot.bookmaker == "datagolf_model",
+                            )
+                            .group_by(FuturesOddsSnapshot.outcome_id)
+                            .subquery()
+                        )
+                        _snap_rows = await session.execute(
+                            select(FuturesOddsSnapshot)
+                            .join(
+                                _latest_snap_subq,
+                                and_(
+                                    FuturesOddsSnapshot.outcome_id == _latest_snap_subq.c.outcome_id,
+                                    FuturesOddsSnapshot.captured_at == _latest_snap_subq.c.max_at,
+                                ),
+                            )
+                        )
+                        _latest_snaps_by_outcome = {
+                            snap.outcome_id: snap
+                            for snap in _snap_rows.scalars().all()
+                        }
+
                         for player in players:
                             prob = _get_prob(player, market_type)
                             if prob is None:
@@ -199,17 +230,8 @@ async def _poll_datagolf_markets() -> dict:
 
                             stats["outcomes_upserted"] += 1
 
-                            # Write-time dedup: check if last snapshot has same value
-                            last_snap = await session.execute(
-                                select(FuturesOddsSnapshot)
-                                .where(
-                                    FuturesOddsSnapshot.outcome_id == outcome.id,
-                                    FuturesOddsSnapshot.bookmaker == "datagolf_model",
-                                )
-                                .order_by(FuturesOddsSnapshot.captured_at.desc())
-                                .limit(1)
-                            )
-                            existing_snap = last_snap.scalar_one_or_none()
+                            # Write-time dedup: use batch-loaded latest snapshot
+                            existing_snap = _latest_snaps_by_outcome.get(outcome.id)
 
                             if existing_snap and abs(float(existing_snap.probability) - prob) < 0.0001:
                                 existing_snap.reading_count += 1

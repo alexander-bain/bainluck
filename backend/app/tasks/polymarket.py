@@ -1229,12 +1229,9 @@ async def _sync_polymarket_resolved_status():
                             WHERE source = 'polymarket'
                               AND status != 'resolved'
                               AND id IN (
-                                  SELECT DISTINCT fm.id
+                                  SELECT fo.market_id
                                   FROM futures_outcomes fo
-                                  JOIN futures_markets fm ON fo.market_id = fm.id
                                   WHERE fo.external_id = ANY(:cids)
-                                    AND fm.source = 'polymarket'
-                                    AND fm.status != 'resolved'
                               )
                         """),
                         {"cids": condition_ids},

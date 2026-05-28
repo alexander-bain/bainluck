@@ -958,12 +958,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 WHERE source = 'kalshi'
                                   AND status != 'resolved'
                                   AND id IN (
-                                      SELECT DISTINCT fm.id
+                                      SELECT fo.market_id
                                       FROM futures_outcomes fo
-                                      JOIN futures_markets fm ON fo.market_id = fm.id
                                       WHERE fo.external_id = ANY(:tickers)
-                                        AND fm.source = 'kalshi'
-                                        AND fm.status != 'resolved'
                                   )
                             """),
                             {"tickers": page_tickers},
