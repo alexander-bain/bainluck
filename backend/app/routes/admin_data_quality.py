@@ -3201,6 +3201,68 @@ async def fix_market_status(
     return {"markets_resolved": result.rowcount}
 
 
+@router.post("/fix-datagolf-market-status")
+async def fix_datagolf_market_status(
+    secret: str = Query(...),
+    dry_run: bool = Query(False, description="Preview without writing"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Resolve stuck DataGolf markets: transition closed -> resolved.
+
+    DataGolf markets carry their own leaderboard metadata for resolution,
+    so 'closed' is the wrong terminal status — the backfill_winners
+    pipeline only processes status='resolved'.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Find all DataGolf markets stuck at 'closed'
+    stuck = await db.execute(
+        text("""
+            SELECT fm.id, fm.name, fm.external_id, fm.status,
+                   (SELECT COUNT(*) FROM futures_outcomes fo
+                    WHERE fo.market_id = fm.id) AS outcome_count,
+                   (SELECT COUNT(*) FROM futures_outcomes fo
+                    WHERE fo.market_id = fm.id AND fo.is_winner IS NOT NULL) AS has_winner_count
+            FROM futures_markets fm
+            WHERE fm.source = 'datagolf'
+              AND fm.status = 'closed'
+            ORDER BY fm.id
+        """)
+    )
+    rows = stuck.all()
+
+    if not dry_run and rows:
+        result = await db.execute(
+            text("""
+                UPDATE futures_markets
+                SET status = 'resolved'
+                WHERE source = 'datagolf'
+                  AND status = 'closed'
+            """)
+        )
+        await db.commit()
+        updated = result.rowcount
+    else:
+        updated = 0
+
+    return {
+        "dry_run": dry_run,
+        "stuck_markets": len(rows),
+        "resolved": updated,
+        "markets": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "external_id": r.external_id,
+                "outcomes": r.outcome_count,
+                "has_winner": r.has_winner_count,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.post("/sync-polymarket-resolved")
 async def trigger_sync_polymarket_resolved(
     secret: str = Query(...),
