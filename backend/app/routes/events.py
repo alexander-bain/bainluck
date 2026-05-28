@@ -1980,7 +1980,7 @@ async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     status: Optional[str] = Query(None, description="Filter by status"),
     days: int = Query(7, description="Number of days ahead to show"),
-    limit: int = Query(50, ge=1, le=200, description="Max events to return"),
+    limit: int = Query(200, ge=1, le=500, description="Max events to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
 ):
