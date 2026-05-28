@@ -311,6 +311,8 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 30. **Codex command policy may reject literal `git push`**. Use `git -c push.default=simple push origin master` or the explicit HTTPS remote form.
 31. **Never use CREATE INDEX CONCURRENTLY in Alembic migrations** — Heroku's release phase has a timeout (~5 min). CONCURRENTLY on large tables hangs the release, causing a full outage. Create large indexes manually via psql, not in the migration chain. (Caused a May 22 outage on odds_snapshots index.)
 32. **Event Registry structured match MUST include completed/closed status** — the status filter on Step 3 must be `IN ('scheduled', 'live', 'completed', 'closed')`, not just scheduled+live. If completed events are excluded, any source that polls after game end creates orphaned duplicates instead of merging. This caused 98% of MLB/NBA/NHL events to have no Odds API data for weeks (May 2026). The merge task's SQL also needs swapped home/away and normalized name matching.
+33. **Kalshi settled markets stay status='open' in DB** — Regular polling only fetches open markets. Once a market settles on Kalshi, the polling stops seeing it and the DB status stays `'open'`. This blocks ALL downstream pipelines (cal_prob, is_winner, candlestick backfill — all require `status='resolved'`). The settled events backfill's Phase 1 fixes this unconditionally for all series.
+34. **Snapshot backfill shared-limit starvation** — Never share a single counter between status updates and data backfill across a series loop. Early series will exhaust the limit before later series get processed. Decouple unconditional metadata fixes from limit-aware data operations.
 
 ---
 
