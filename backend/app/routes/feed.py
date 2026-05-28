@@ -431,37 +431,6 @@ def _discover_editorial_recall_filter():
     )
 
 
-_editorial_recall_cache: dict = {"ids": None, "ts": 0}
-_EDITORIAL_RECALL_CACHE_TTL = 300
-
-
-async def _get_editorial_recall_ids(db) -> list[int]:
-    """Get editorial recall market IDs with 5-minute in-process cache.
-
-    The 44-ILIKE pattern scan is expensive (~580-1870ms). The patterns
-    are static code constants and markets change slowly, so caching
-    the IDs avoids re-scanning on every request.
-    """
-    import time
-    now = time.time()
-    if (
-        _editorial_recall_cache["ids"] is not None
-        and (now - _editorial_recall_cache["ts"]) < _EDITORIAL_RECALL_CACHE_TTL
-    ):
-        return _editorial_recall_cache["ids"]
-
-    result = await db.execute(
-        select(FuturesMarket.id).where(
-            FuturesMarket.status.in_(["open", "active"]),
-            _discover_editorial_recall_filter(),
-        )
-    )
-    ids = [r[0] for r in result.all()]
-    _editorial_recall_cache["ids"] = ids
-    _editorial_recall_cache["ts"] = now
-    return ids
-
-
 def _discover_sports_editorial_recall_filter():
     """SQL filter for sports futures that are broad enough for Discover."""
     return or_(
@@ -3863,7 +3832,7 @@ async def _score_futures(
             FuturesMarket.volume_24h.desc().nulls_last(),
             FuturesMarket.market_tier.asc().nulls_last(),
         )
-        .limit(120)
+        .limit(180)
     )
 
     # Pool 2b: non-sports by actual movement. Uses denormalized
@@ -3881,7 +3850,7 @@ async def _score_futures(
             FuturesMarket.max_movement_24h.desc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
         )
-        .limit(100)
+        .limit(160)
     )
 
     # Pool 2c: enriched markets. Hook/image enrichment is a useful prior that a
@@ -3901,25 +3870,24 @@ async def _score_futures(
             FuturesMarket.hook_generated_at.desc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
         )
-        .limit(100)
+        .limit(160)
     )
 
-    # Pool 2d: high-texture editorial recall. Uses a 5-minute cached ID list
-    # instead of running 44 ILIKE patterns (~580-1870ms) on every request.
-    _editorial_ids = await _get_editorial_recall_ids(db)
+    # Pool 2d: high-texture editorial recall. Some public-interest or fun
+    # markets are low-volume and not yet enriched, but should still be scored.
     nonsports_editorial_recall_query = (
         select(FuturesMarket.id)
         .where(
             *id_filters,
             non_sports_filter,
-            FuturesMarket.id.in_(_editorial_ids) if _editorial_ids else FuturesMarket.id == -1,
+            _discover_editorial_recall_filter(),
         )
         .order_by(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
             FuturesMarket.updated_at.desc().nulls_last(),
         )
-        .limit(80)
+        .limit(120)
     )
 
     # Pool 2e: soon-resolving markets. Timeliness matters, but this pool is
@@ -3936,7 +3904,7 @@ async def _score_futures(
             FuturesMarket.resolution_date.asc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
         )
-        .limit(80)
+        .limit(120)
     )
 
     candidate_queries_started_at = timing_previous_at
@@ -4918,7 +4886,7 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
 
 # In-memory cache for golf tournament data (avoids re-querying every feed call)
 _golf_cache: dict[str, tuple[float, list[dict]]] = {}
-_GOLF_CACHE_TTL = 300  # 5 minutes
+_GOLF_CACHE_TTL = 120  # 2 minutes
 
 
 _DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})

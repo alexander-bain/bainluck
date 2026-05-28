@@ -804,32 +804,12 @@ async def public_calibration(
     db: AsyncSession = Depends(get_db),
     bust: int = Query(0, include_in_schema=False),
 ):
-    """Public calibration data for the /calibration page.
+    """Public calibration data for the /calibration page. Cached for 1 hour."""
 
-    Served from Redis (precomputed by precompute_calibration_main task every 1h).
-    Falls back to in-process cache, then live computation if Redis is empty.
-    """
-    import json as _json
-
-    # 1. In-process cache (survives between requests on same dyno)
     now = time.time()
     if not bust and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
         return _cache["data"]
 
-    # 2. Redis precomputed cache (survives deploys)
-    try:
-        from app.tasks.redis_state import get_redis_client
-        rc = get_redis_client()
-        cached = rc.get("bainluck:calibration:main")
-        if cached:
-            data = _json.loads(cached)
-            _cache["data"] = data
-            _cache["timestamp"] = now
-            return data
-    except Exception:
-        pass
-
-    # 3. Fallback: compute in-request (slow, but ensures the endpoint always works)
     # Same query as admin calibration-data endpoint
     sql = text("""
         WITH market_info AS (
