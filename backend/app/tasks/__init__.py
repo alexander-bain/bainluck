@@ -1573,7 +1573,7 @@ celery_app.conf.beat_schedule = {
     "backfill-espn-win-prob": {
         "task": "app.tasks.backfill_espn_win_prob",
         "schedule": crontab(minute=0, hour="6,12,18,0"),  # Every 6h, offset from ESPN IDs
-        "kwargs": {"limit": 50, "days_back": 14},
+        "kwargs": {"limit": 50, "days_back": 90},
         "options": {"queue": "background"},
     },
     "backfill-canonical-keys-daily": {
