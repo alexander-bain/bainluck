@@ -2108,9 +2108,11 @@ async def _compute_calibration_prices():
             stats["reset"] = 0
 
             # Part A: Event-linked markets — real pre-event closing line
-            # Batched at 100K to avoid Heroku Postgres statement timeouts (~30s).
-            # Pure SQL — runs in Postgres, no Python memory risk.
-            # ORDER BY commence_time DESC so recent Tier 1 games get processed first.
+            # Batched at 100K. Pure SQL, no Python memory risk.
+            # LATERAL subquery does one index seek per outcome via
+            # idx_fos_outcome_captured(outcome_id, captured_at) instead
+            # of DISTINCT ON which joins then sorts the full result set.
+            # ORDER BY commence_time DESC so recent games are processed first.
             part_a_total = 0
             for _ in range(20):
                 result_a = await session.execute(
@@ -2123,32 +2125,26 @@ async def _compute_calibration_prices():
                             JOIN events e ON e.id = fm.event_id
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
-                              AND fm.event_id IS NOT NULL
                               AND e.commence_time IS NOT NULL
                             ORDER BY e.commence_time DESC
                             LIMIT 100000
-                        ),
-                        closing AS (
-                            SELECT DISTINCT ON (nc.outcome_id)
-                                nc.outcome_id,
-                                fos.probability
-                            FROM needs_cal nc
-                            JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
-                            WHERE fos.captured_at < nc.commence_time
-                              AND fos.probability > 0 AND fos.probability < 1
-                            ORDER BY nc.outcome_id, fos.captured_at DESC
-                        ),
-                        final_price AS (
-                            SELECT nc.outcome_id,
-                                   COALESCE(cl.probability, nc.opening_probability) AS cal_prob
-                            FROM needs_cal nc
-                            LEFT JOIN closing cl ON cl.outcome_id = nc.outcome_id
                         )
                         UPDATE futures_outcomes fo
-                        SET calibration_probability = fp.cal_prob
-                        FROM final_price fp
-                        WHERE fo.id = fp.outcome_id
-                          AND fp.cal_prob IS NOT NULL
+                        SET calibration_probability = COALESCE(
+                            closing.probability, nc.opening_probability
+                        )
+                        FROM needs_cal nc
+                        LEFT JOIN LATERAL (
+                            SELECT fos.probability
+                            FROM futures_odds_snapshots fos
+                            WHERE fos.outcome_id = nc.outcome_id
+                              AND fos.captured_at < nc.commence_time
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY fos.captured_at DESC
+                            LIMIT 1
+                        ) closing ON true
+                        WHERE fo.id = nc.outcome_id
+                          AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
                     """)
                 )
                 await session.commit()
@@ -2159,7 +2155,7 @@ async def _compute_calibration_prices():
             stats["with_commence"] = part_a_total
 
             # Part B: Non-event markets — settled price or opening fallback.
-            # Batched at 100K. Pure SQL, no Python memory risk.
+            # Batched at 100K. LATERAL subquery for efficient index seeks.
             part_b_total = 0
             for _ in range(20):
                 result_b = await session.execute(
@@ -2174,29 +2170,24 @@ async def _compute_calibration_prices():
                               AND fo.calibration_probability IS NULL
                               AND (fm.event_id IS NULL OR e.commence_time IS NULL)
                             LIMIT 100000
-                        ),
-                        settled AS (
-                            SELECT DISTINCT ON (nc.outcome_id)
-                                nc.outcome_id,
-                                fos.probability
-                            FROM needs_cal nc
-                            JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
-                            WHERE nc.opening_captured_at IS NOT NULL
-                              AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
-                              AND fos.probability > 0 AND fos.probability < 1
-                            ORDER BY nc.outcome_id, fos.captured_at ASC
-                        ),
-                        final_price AS (
-                            SELECT nc.outcome_id,
-                                   COALESCE(st.probability, nc.opening_probability) AS cal_prob
-                            FROM needs_cal nc
-                            LEFT JOIN settled st ON st.outcome_id = nc.outcome_id
                         )
                         UPDATE futures_outcomes fo
-                        SET calibration_probability = fp.cal_prob
-                        FROM final_price fp
-                        WHERE fo.id = fp.outcome_id
-                          AND fp.cal_prob IS NOT NULL
+                        SET calibration_probability = COALESCE(
+                            settled.probability, nc.opening_probability
+                        )
+                        FROM needs_cal nc
+                        LEFT JOIN LATERAL (
+                            SELECT fos.probability
+                            FROM futures_odds_snapshots fos
+                            WHERE fos.outcome_id = nc.outcome_id
+                              AND nc.opening_captured_at IS NOT NULL
+                              AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY fos.captured_at ASC
+                            LIMIT 1
+                        ) settled ON true
+                        WHERE fo.id = nc.outcome_id
+                          AND COALESCE(settled.probability, nc.opening_probability) IS NOT NULL
                     """)
                 )
                 await session.commit()
