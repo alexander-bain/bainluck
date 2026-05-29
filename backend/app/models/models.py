@@ -700,6 +700,12 @@ class FuturesMarket(Base):
     )
     hook_leader_at_generation: Mapped[Optional[str]] = mapped_column(String(200))
 
+    # Precomputed editorial recall flag — set during polling to avoid
+    # 44-ILIKE scan on every /api/feed request.
+    is_editorial_recall: Mapped[Optional[bool]] = mapped_column(
+        Boolean, server_default="false"
+    )
+
     # Volume/liquidity from prediction markets (internal signal, never user-facing)
     volume: Mapped[Optional[int]] = mapped_column(
         Integer

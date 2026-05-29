@@ -355,38 +355,16 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 
 ## Session Startup: Health Check
 
-At the start of every session, run a quick production health scan (~10 seconds):
-
-```bash
-source .env.claude
-
-# 1. Sentry — new/high-frequency errors since last session
-curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
-  "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=5&sort=date" \
-  | python3 -c "import json,sys; [print(f'  {i[\"shortId\"]:12s} {i[\"count\"]:>5s} evts  {i[\"title\"][:60]}') for i in json.load(sys.stdin)]"
-
-# 2. Heroku — dyno status + DB connections
-heroku apps:info -a bainluck 2>&1 | grep "Dynos:"
-heroku pg:info -a bainluck 2>&1 | grep "Connections:"
-
-# 3. CI — last 3 runs
-gh run list --repo alexander-bain/bainluck --limit 3
-
-# 4. Celery queue health — background queue > 50 = problem
-curl -s "https://api.bainluck.com/api/admin/celery-debug?secret=$ADMIN_TOKEN" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); q=d.get('queue_lengths',{}); bg=q.get('background',0); print(f'  Celery queues: bg={bg} rt={q.get(\"realtime\",0)}'); bg>50 and print('  ⚠️  BACKGROUND QUEUE BACKED UP — purge via POST /api/admin/celery-purge-background')"
-
-# 5. is_winner backfill coverage — all sources should be >95%
-curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN" \
-  | python3 -c "import json,sys; [print(f'  {s[\"source\"]:12s} {round(100*s[\"has_winner\"]/max(s[\"resolved\"],1),1)}% ({s[\"has_winner\"]}/{s[\"resolved\"]})') for s in json.load(sys.stdin)['sources']]"
-```
+Run `/health` at the start of every session. It covers all production checks: Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, feed quality, and Manus audit status. See `.claude/commands/health.md` for the full definition.
 
 **Thresholds for immediate action:**
 - Sentry issue >100 events in 24h → triage now
-- Background queue >50 → purge + investigate (see `docs/backlog.md` Celery workstream)
+- Background queue >50 → purge + investigate
+- Endpoint latency >2s → investigate (especially `/api/feed`)
 - is_winner coverage <80% on any source → run `POST /api/admin/backfill-winners/probability-only`
+- Grid health <100% → investigate missing columns/teams
 
-**Available tools:** Heroku CLI (`heroku`), Sentry API (`$SENTRY_AUTH_TOKEN`), GitHub CLI (`gh`). All authenticated and working as of April 21, 2026.
+**Available tools:** Heroku CLI (`heroku`), Sentry API (`$SENTRY_AUTH_TOKEN`), GitHub CLI (`gh`). All authenticated and working.
 
 ---
 

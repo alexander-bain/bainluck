@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Map Kalshi game ticker prefixes to sport labels.
 # Used to detect game-level events and construct better market names.
 from app.utils.sport_keys import KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS  # noqa: E402
+from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall  # noqa: E402
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -436,6 +437,7 @@ async def _poll_kalshi_markets():
                     market_status = "resolved" if all_settled else "open"
 
                     # Upsert the FuturesMarket
+                    _editorial = _matches_editorial_recall(market_name)
                     upsert_values = {
                         "source": "kalshi",
                         "external_id": event.event_ticker,
@@ -456,6 +458,7 @@ async def _poll_kalshi_markets():
                         "volume_24h": total_volume_24h,
                         "open_interest": total_open_interest,
                         "volume_updated_at": func.now(),
+                        "is_editorial_recall": _editorial,
                     }
                     update_set = {
                         "name": market_name,
@@ -474,6 +477,7 @@ async def _poll_kalshi_markets():
                         "volume_24h": total_volume_24h,
                         "open_interest": total_open_interest,
                         "volume_updated_at": func.now(),
+                        "is_editorial_recall": _editorial,
                     }
                     # Always update llm_sport_category unless new value is "other"
                     # and existing might be better (from LLM or previous categorization)

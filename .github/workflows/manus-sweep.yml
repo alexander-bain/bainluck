@@ -91,7 +91,7 @@ jobs:
           if [ -d "Manus/audit_results/$TODAY" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add "Manus/audit_results/$TODAY/" "Manus/audit_results/latest"
+            git add -f "Manus/audit_results/$TODAY/" "Manus/audit_results/latest"
             git commit -m "Manus sweep $TODAY — automated" || echo "No changes to commit"
             git push || echo "Push failed — results saved in workflow artifacts"
           fi

@@ -382,6 +382,7 @@ async def _process_event_batch(
         extract_olympic_discipline,
         generate_category_tags,
     )
+    from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall
 
     # Non-sport categories that shouldn't flip to "championship"
     _NON_SPORT_CATEGORIES = {
@@ -500,6 +501,7 @@ async def _process_event_batch(
                     int(m.volume_24h or 0) for m in event.markets
                 ) or None
 
+                _editorial = _matches_editorial_recall(event.title)
                 # Build update set for on-conflict
                 update_set = {
                     "name": event.title,
@@ -519,6 +521,7 @@ async def _process_event_batch(
                     "volume_24h": poly_volume_24h,
                     "liquidity": poly_liquidity,
                     "volume_updated_at": func.now(),
+                    "is_editorial_recall": _editorial,
                 }
                 # Only update llm_sport_category if we have a non-"other" value
                 if llm_sport_category and llm_sport_category != "other":
@@ -547,6 +550,7 @@ async def _process_event_batch(
                     volume_24h=poly_volume_24h,
                     liquidity=poly_liquidity,
                     volume_updated_at=func.now(),
+                    is_editorial_recall=_editorial,
                 ).on_conflict_do_update(
                     index_elements=["source", "external_id"],
                     set_=update_set,

@@ -5,119 +5,200 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # Health Check
 
-Run a comprehensive Bain Luck health check. Query all admin endpoints, analyze the results, and produce an actionable briefing with what's going well, what's not, and specific actions to improve.
+Run a comprehensive Bain Luck health check. Query all admin endpoints, analyze results, and produce an actionable briefing. Optionally file GitHub Issues for problems found.
+
+**Important:** Source `.env.claude` before every curl command. The admin token variable is `$ADMIN_TOKEN` (not `$ADMIN_SECRET`).
 
 ## Steps
 
-### 1. Gather data from all admin endpoints
+### 1. Gather data (run all in parallel where possible)
 
-Run these commands in parallel:
+Group these into parallel batches. Every `curl` must be prefixed with `source /Users/bain/bainluck/.env.claude &&`.
+
+#### Batch 1: Production infrastructure
 
 ```bash
-# Link rate health (game prop → event matching)
-curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_SECRET"
+# Sentry — new/high-frequency errors (last 24h)
+source .env.claude && curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+  "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=5&sort=date" \
+  | python3 -c "import json,sys; [print(f'  {i[\"shortId\"]:12s} {i[\"count\"]:>5s} evts  {i[\"title\"][:60]}') for i in json.load(sys.stdin)]"
 
-# Overall matching status
-curl -s "https://api.bainluck.com/api/admin/prediction-markets/status?secret=$ADMIN_SECRET"
+# Heroku — dyno status + DB connections
+heroku apps:info -a bainluck 2>&1 | grep "Dynos:"
+heroku pg:info -a bainluck 2>&1 | grep "Connections:"
 
-# Admin dashboard (quota, database, tasks, coverage)
-curl -s "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_SECRET"
+# CI — last 3 runs
+gh run list --repo alexander-bain/bainluck --limit 3
 
-# Grid health for active leagues
-curl -s "https://api.bainluck.com/api/playoffs/nba?secret=$ADMIN_SECRET" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps({k: d[k] for k in ['health_score','fill_rate','source_breakdown'] if k in d}))"
-curl -s "https://api.bainluck.com/api/playoffs/nhl?secret=$ADMIN_SECRET" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps({k: d[k] for k in ['health_score','fill_rate','source_breakdown'] if k in d}))"
+# Celery queue health
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/celery-debug?secret=$ADMIN_TOKEN" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); q=d.get('queue_lengths',{}); print(f'  bg={q.get(\"background\",0)} rt={q.get(\"realtime\",0)}')"
+```
 
+#### Batch 2: Data quality endpoints
+
+```bash
+# Admin dashboard (quota, sources, futures, database, workers)
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_TOKEN"
+
+# Link rate health
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN"
+
+# is_winner backfill coverage — all sources should be >95%
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN"
+
+# Calibration metrics (public, cached)
+curl -s "https://api.bainluck.com/api/calibration" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'MCE={d.get(\"mce_closing_line\",\"?\")}pp  outcomes={d.get(\"total_outcomes\",\"?\")}  winners={d.get(\"total_winners\",\"?\")}  closing_line_cov={d.get(\"closing_line_coverage\",\"?\")}')"
+```
+
+#### Batch 3: Grid health (active leagues only)
+
+```bash
+# Check each active grid — extract health_score and fill_rate
+for league in nba nhl mlb; do
+  source .env.claude && curl -s "https://api.bainluck.com/api/playoffs/$league" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'$league: health={d.get(\"health_score\",\"?\")} fill={d.get(\"fill_rate\",\"?\")} teams={len(d.get(\"teams\",[]))}')" 2>/dev/null || echo "$league: FAILED"
+done
+```
+
+#### Batch 4: Endpoint latency spot-checks
+
+```bash
+# Spot-check 5 key user-facing endpoints for latency
+for endpoint in \
+  "https://api.bainluck.com/api/feed" \
+  "https://api.bainluck.com/api/events/live" \
+  "https://api.bainluck.com/api/weather/featured" \
+  "https://api.bainluck.com/api/politics" \
+  "https://api.bainluck.com/api/calibration"; do
+  TIME=$(curl -s -o /dev/null -w "%{time_total}" "$endpoint" 2>/dev/null)
+  echo "  ${endpoint##*/}: ${TIME}s"
+done
+```
+
+#### Batch 5: Local checks
+
+```bash
 # Test count
-cd backend && python3 -m pytest tests/ --co -q 2>&1 | tail -1
+cd /Users/bain/bainluck/backend && python3 -m pytest tests/ --co -q 2>&1 | tail -1
 
 # Git status
-git log --oneline -3
-git status --short | head -10
+git -C /Users/bain/bainluck log --oneline -3
+git -C /Users/bain/bainluck status --short | head -10
 
-# Matching accuracy self-check (4 layers)
-cd backend && python3 scripts/audit_event_matching.py --self-check --sport basketball_nba 2>&1 | tail -15
+# Feed quality audit (if script exists)
+cd /Users/bain/bainluck/backend && python3 scripts/audit_feed_quality.py 2>&1 | tail -10
 
-# Market accuracy self-check (monotonicity)
-python3 scripts/audit_market_accuracy.py --self-check --sport basketball_nba 2>&1 | tail -10
-cd ..
-
-# Manus audit — last run date + status
-cat Manus/audit_results/latest/manifest.json 2>/dev/null || echo "No Manus audit results"
-
-# Manus audit — check task completion status via API (if key available)
-source ~/.zshrc 2>/dev/null; if [ -n "$MANUS_API_KEY" ]; then
-  for tid in $(cat Manus/audit_results/latest/manifest.json 2>/dev/null | python3 -c "import json,sys; [print(t['task_id']) for t in json.load(sys.stdin).get('tasks',{}).values()]" 2>/dev/null); do
-    curl -s "https://api.manus.ai/v2/task.detail?task_id=$tid" -H "x-manus-api-key: $MANUS_API_KEY" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin).get('task',{}); print(f'  {d.get(\"title\",\"?\")[:50]}: {d.get(\"status\",\"?\")} ({d.get(\"credit_usage\",0)} credits)')" 2>/dev/null
-  done
-fi
+# Manus audit — last run
+cat /Users/bain/bainluck/Manus/audit_results/latest/manifest.json 2>/dev/null \
+  | python3 -c "import json,sys; m=json.load(sys.stdin); tasks=m.get('tasks',{}); done=sum(1 for t in tasks.values() if t.get('status')=='complete'); print(f'Last Manus: {m.get(\"date\",\"?\")} — {done}/{len(tasks)} complete')" \
+  || echo "No Manus audit results"
 ```
 
 ### 2. Analyze and present results
 
-For each section below, present:
+For each section, present:
 - **Status**: 🟢 Good / 🟡 Needs attention / 🔴 Problem
-- **Numbers**: The key metrics
-- **What's going well**: Specific positive trends
-- **What's not**: Specific issues
-- **Recommended action**: One concrete next step
+- **Key metrics** on one line
+- **Issues found** (if any) — specific, not vague
 
-#### Sections to cover:
+#### Sections (in priority order):
 
-**A. Odds API Quota**
-- Current usage vs budget
+**A. Production Stability**
+- Sentry: any issue >100 events in 24h → 🔴
+- Heroku: dyno up, DB connections reasonable (<18)
+- CI: last 3 runs passing
+- Celery: background queue >50 → 🔴, >20 → 🟡
+
+**B. Endpoint Latency**
+- Target: all user-facing endpoints under 1s
+- Flag anything over 2s as 🔴, over 1s as 🟡
+- Note: `/api/feed` is the most critical — it's the landing page
+
+**C. Odds API Quota**
+- Current usage vs 5M monthly budget
 - Projected end-of-month surplus/deficit
-- Daily burn rate trend
-- Action: any tier adjustments needed?
+- Circuit breaker mode (Normal / LIVE_ONLY / FULL_STOP)
 
-**B. Game Prop Link Rate (Market ↔ Event matching)**
-- Target is **100%** for Tier 1 leagues (NBA, NHL, MLB, NFL, EPL). Any gap is either (1) a bug to fix, or (2) a link rate math error (e.g., including closed/resolved markets, or markets that can't be linked because they're season-level not game-level).
-- Per-sport open link rates for Kalshi and Polymarket, broken down by **league** within each sport (NBA vs WNBA vs NCAAB, not just "basketball")
-- For any league below 100%: classify each unlinked market as either **(1) urgent fix** (game-level market that SHOULD be linked) or **(2) math fix** (market incorrectly counted as linkable — e.g., season futures, non-game markets). If it's category (2), explain how the link rate calculation should be corrected.
-- Highlight Tier 1 leagues separately from Tier 2+
-- Action: which specific unlinked markets need fixing?
+**D. Game Prop Link Rate**
+- Target: 100% for Tier 1 leagues (NBA, NHL, MLB, NFL)
+- Per-league breakdown for Kalshi and Polymarket
+- For any league below 100%: classify unlinked markets as (1) bug to fix or (2) math error (season futures counted as linkable)
 
-**C. Championship Grid Health**
-- Target is **100%** for every grid. Any score below 100 means specific data is missing.
-- For each grid (NBA, NHL, MLB, Golf): list EVERY column, its fill rate, and its source breakdown
-- For any column below 100% fill: name the specific teams missing data and what source should provide it
-- Source diversity per column (Kalshi + Polymarket + Odds API) — single-source columns are fragile
-- Action: for each gap, specify the exact fix (missing market classification, source not ingesting, etc.)
+**E. Championship Grid Health**
+- Target: 100% for every grid
+- Per-grid: health score, fill rate, team count
+- For any grid below 100%: name the specific columns/teams with gaps
 
-**D. Source Coverage (Event ↔ Source matching)**
+**F. Calibration & Backfill Pipeline**
+- MCE (target: <3pp)
+- Closing line coverage
+- is_winner coverage per source (target: >95%)
+- Flag any source below 80% as 🔴
+
+**G. Source Coverage**
 - Average sources per live event
-- Any sources that went dark (0 snapshots recently)
-- Action: any integrations need attention?
+- Any source that went dark (0 recent snapshots)
+- Kalshi/Polymarket ingestion recency — when was the last successful poll?
 
-**E. Database & Infrastructure**
-- DB size and growth rate
-- Snapshots per hour (odds + win_prob)
-- Worker task health (success/failure rates)
-- Action: any retention or cleanup needed?
+**H. Feed Quality**
+- boring-rate@20 (target: 0)
+- ladder/bucket-rate@20 (target: 0)
+- duplicate-family-rate@20 (target: 0)
+- explanation-coverage@20 (target: 20/20)
 
-**F. Test Suite**
-- Total test count
-- Any failures
-- Coverage gaps worth noting
-- Action: any critical untested code?
+**I. Database & Infrastructure**
+- DB size and connection count
+- Snapshot volume trends
+- Worker task health
 
-**G. Recent Deploys**
+**J. Test Suite & Deploys**
+- Total test count, any failures
 - Last 3 commits
-- Any uncommitted changes
-- Action: anything that should be committed or reverted?
+- Uncommitted changes
 
-**H. Manus QA Audit**
-- Last audit date (from `Manus/audit_results/latest/manifest.json`)
-- Modules run and their status (complete/timeout/error)
-- Key findings from the latest reports (scan `Manus/audit_results/latest/*.md`)
-- Days since last audit — flag if >7 days
-- Action: run `python3 scripts/manus_health_suite.py --smoke` if stale, or full suite with no flags
-- Credit usage trend (from manifest)
+**K. Manus QA Audit**
+- Last audit date — flag if >7 days old
+- Module completion rate
+- Key findings from completed reports (scan `Manus/audit_results/latest/*.md` for lines containing "critical", "broken", "crash", "error", "0/100", "0%")
 
-### 3. Top 3 recommendations
+### 3. Summary table
 
-End with a prioritized list:
-1. The single highest-impact action to take right now
-2. Something that should be monitored over the next few days
-3. A structural improvement for the next session
+Present a single summary table:
 
-Keep the whole output concise — aim for a briefing you can read in 60 seconds.
+```
+| Area                  | Status | Key Metric              |
+|-----------------------|--------|-------------------------|
+| Production Stability  | 🟢/🟡/🔴 | ...                  |
+| Endpoint Latency      | ...    | ...                     |
+| Odds API Quota        | ...    | ...                     |
+| Link Rate             | ...    | ...                     |
+| Grid Health           | ...    | ...                     |
+| Calibration Pipeline  | ...    | ...                     |
+| Source Coverage        | ...    | ...                     |
+| Feed Quality          | ...    | ...                     |
+| Database & Infra      | ...    | ...                     |
+| Tests & Deploys       | ...    | ...                     |
+| Manus QA              | ...    | ...                     |
+```
+
+### 4. Top 3 recommendations
+
+1. **Highest-impact action** to take right now
+2. **Something to monitor** over the next few days
+3. **Structural improvement** for the next session
+
+### 5. File issues (optional — ask first)
+
+After presenting findings, if there are any 🔴 or 🟡 items:
+
+1. Ask: "Want me to file GitHub Issues for the problems found?"
+2. If yes, for each problem:
+   - Check for an existing open issue covering the same problem (`gh issue list --search "KEYWORD" --state open`)
+   - If no existing issue: create one with appropriate labels (`area:*`, `type:*`, `priority:*`, `needs-agent` or `needs-user`)
+   - If existing issue: comment with updated status from this health check
+   - Add all new issues to the project board (`gh project item-add 1 --owner alexander-bain`)
+3. Report what was filed/updated
+
+Keep the whole output concise — aim for a briefing readable in 60 seconds. Don't dump raw JSON; extract the metrics that matter.

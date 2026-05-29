@@ -360,55 +360,9 @@ DISCOVER_SPORTS_CATEGORIES = (
     "lacrosse",
 )
 
-_DISCOVER_EDITORIAL_RECALL_PATTERNS = (
-    "%aliens%",
-    "%ufo%",
-    "%extraterrestrial%",
-    # Serendipity / "text this to someone" culture markets. These are
-    # intentionally recall-only; quality scoring and first-page caps still
-    # decide whether they earn a visible slot.
-    "%taylor swift%",
-    "%bridesmaid%",
-    "%bridesmaids%",
-    "%wedding%",
-    "%engaged%",
-    "%engagement%",
-    "%pregnant%",
-    "%pregnancy%",
-    "%beyonce%",
-    "%kardashian%",
-    "%xi jinping%",
-    "%openai%",
-    "%anthropic%",
-    "%claude%",
-    "%gpt%",
-    "%gemini%",
-    "%deepseek%",
-    "%spacex%",
-    "%starship%",
-    "%best ai%",
-    "%met gala%",
-    "%attorney general%",
-    "%fbi director%",
-    "%save act%",
-    "%recession%",
-    "%eurovision%",
-    "%oscars%",
-    "%academy award%",
-    "%grammy%",
-    "%emmy%",
-    "%survivor%",
-    "%netflix%",
-    "%spotify%",
-    "%billboard%",
-    "%rotten tomatoes%",
-    "%hurricane%",
-    "%earthquake%",
-    "%wildfire%",
-    "%outbreak%",
-    "%pandemic%",
-    "%hantavirus%",
-)
+# Editorial recall patterns — canonical list lives in
+# app.utils.editorial_patterns. Polling tasks precompute
+# `is_editorial_recall` at ingest time; feed queries the column.
 
 _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS = (
     "%fifa world cup%",
@@ -422,44 +376,27 @@ _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS = (
 
 
 def _discover_editorial_recall_filter():
-    """SQL filter for high-texture Discover candidates that can be low volume."""
-    return or_(
-        *(
-            FuturesMarket.name.ilike(pattern)
-            for pattern in _DISCOVER_EDITORIAL_RECALL_PATTERNS
-        )
-    )
+    """SQL filter for high-texture Discover candidates that can be low volume.
 
-
-_editorial_recall_cache: dict = {"ids": None, "ts": 0}
-_EDITORIAL_RECALL_CACHE_TTL = 300
+    Uses the precomputed `is_editorial_recall` column set at polling time,
+    replacing the old 44-ILIKE scan.
+    """
+    return FuturesMarket.is_editorial_recall.is_(True)
 
 
 async def _get_editorial_recall_ids(db) -> list[int]:
-    """Get editorial recall market IDs with 5-minute in-process cache.
+    """Get editorial recall market IDs using precomputed column.
 
-    The 44-ILIKE pattern scan is expensive (~580-1870ms). The patterns
-    are static code constants and markets change slowly, so caching
-    the IDs avoids re-scanning on every request.
+    Polling tasks set `is_editorial_recall=True` at ingest time so this
+    is a simple indexed boolean filter instead of the old 44-ILIKE scan.
     """
-    import time
-    now = time.time()
-    if (
-        _editorial_recall_cache["ids"] is not None
-        and (now - _editorial_recall_cache["ts"]) < _EDITORIAL_RECALL_CACHE_TTL
-    ):
-        return _editorial_recall_cache["ids"]
-
     result = await db.execute(
         select(FuturesMarket.id).where(
             FuturesMarket.status.in_(["open", "active"]),
-            _discover_editorial_recall_filter(),
+            FuturesMarket.is_editorial_recall.is_(True),
         )
     )
-    ids = [r[0] for r in result.all()]
-    _editorial_recall_cache["ids"] = ids
-    _editorial_recall_cache["ts"] = now
-    return ids
+    return [r[0] for r in result.all()]
 
 
 def _discover_sports_editorial_recall_filter():
