@@ -38,14 +38,49 @@ source .env.claude && curl -s "https://api.bainluck.com/api/admin/celery-debug?s
 #### Batch 2: Data quality endpoints
 
 ```bash
-# Admin dashboard (quota, sources, futures, database, workers)
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_TOKEN"
+# Admin dashboard — extract quota, source coverage, database metrics
+# Note: source_coverage is a list of per-sport dicts, not a dict with .sources
+# quota is nested: quota.current.{remaining,used,total,health}, quota.budget.{projected_eom,projected_surplus,pace_48h_daily,days_remaining}
+# database keys: active_events, live_events, snapshots_last_hour, db_size_mb, growth_rate_mb_per_day
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_TOKEN" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+qc=d.get('quota',{}).get('current',{}); qb=d.get('quota',{}).get('budget',{})
+print(f'QUOTA: used={qc.get(\"used\",\"?\")} remaining={qc.get(\"remaining\",\"?\")} health={qc.get(\"health\",\"?\")}')
+print(f'  projected_eom={qb.get(\"projected_eom\",\"?\")} surplus={qb.get(\"projected_surplus\",\"?\")} daily={qb.get(\"pace_48h_daily\",\"?\")} days_left={qb.get(\"days_remaining\",\"?\")}')
+db=d.get('database',{})
+print(f'DB: events={db.get(\"active_events\",\"?\")} live={db.get(\"live_events\",\"?\")} snaps/h={db.get(\"snapshots_last_hour\",\"?\")} size={db.get(\"db_size_mb\",\"?\")}MB growth={db.get(\"growth_rate_mb_per_day\",\"?\")}MB/d')
+sc=d.get('source_coverage',[])
+tier1=[s for s in sc if s.get('sport','') in ('basketball_nba','icehockey_nhl','baseball_mlb','americanfootball_nfl')]
+for s in tier1:
+    print(f'  {s[\"sport\"]:25s} live={s.get(\"live\",0)} oa={s.get(\"odds_api\",0)} espn={s.get(\"espn\",0)} kalshi={s.get(\"kalshi\",0)} pm={s.get(\"polymarket\",0)} snaps24h={s.get(\"snapshots_24h\",0)}')
+"
 
-# Link rate health
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN"
+# Link rate health — structure: {overall: {link_rate_pct, open_total, open_linked}, kalshi: {totals, by_sport}, polymarket: {totals, by_sport}}
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+ov=d.get('overall',{})
+print(f'LINK RATE: open={ov.get(\"open_linked\",\"?\")}/{ov.get(\"open_total\",\"?\")} ({ov.get(\"link_rate_pct\",\"?\")}%) all={ov.get(\"link_rate_all_pct\",\"?\")}%')
+for src in ('kalshi','polymarket'):
+    s=d.get(src,{})
+    t=s.get('totals',{})
+    print(f'  {src}: open={t.get(\"open_linked\",\"?\")}/{t.get(\"open_total\",\"?\")} ({t.get(\"link_rate_pct\",\"?\")}%)')
+    for sp in s.get('by_sport',[]):
+        if sp.get('link_rate',0) < 100 and sp.get('open_total',0) > 0:
+            print(f'    {sp[\"sport\"]:15s} {sp.get(\"open_linked\",0)}/{sp.get(\"open_total\",0)} ({sp.get(\"link_rate\",0)}%)')
+"
 
-# is_winner backfill coverage — target is 100% for every source
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN"
+# is_winner backfill coverage — target is 100% for every source (any gap is a bug)
+source .env.claude && curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for s in d.get('sources',[]):
+    resolved=s.get('resolved',0); hw=s.get('has_winner',0)
+    pct=round(100*hw/max(resolved,1),1)
+    flag=' 🔴' if pct<100 else ''
+    print(f'  {s[\"source\"]:12s} {pct}% ({hw}/{resolved}){flag}')
+"
 
 # Calibration metrics (public, cached)
 curl -s "https://api.bainluck.com/api/calibration" \
@@ -55,10 +90,23 @@ curl -s "https://api.bainluck.com/api/calibration" \
 #### Batch 3: Grid health (active leagues only)
 
 ```bash
-# Check each active grid — extract health_score and fill_rate
+# Check each active grid — the endpoint returns a teams array (no health_score/fill_rate fields)
+# Check team count and sample championship probabilities to verify data freshness
 for league in nba nhl mlb; do
   source .env.claude && curl -s "https://api.bainluck.com/api/playoffs/$league" \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'$league: health={d.get(\"health_score\",\"?\")} fill={d.get(\"fill_rate\",\"?\")} teams={len(d.get(\"teams\",[]))}')" 2>/dev/null || echo "$league: FAILED"
+    | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    teams=d.get('teams',[])
+    champs=[t for t in teams if t.get('championship') and t['championship'] > 0.01]
+    top=sorted(champs, key=lambda t: t.get('championship',0), reverse=True)[:3]
+    names=', '.join(f'{t.get(\"name\",\"?\")}: {round(t[\"championship\"]*100,1)}%' for t in top)
+    col_sum=sum(t.get('championship',0) for t in teams)
+    print(f'$league: {len(teams)} teams, champ_sum={round(col_sum*100,1)}%, top=[{names}]')
+except Exception as e:
+    print(f'$league: FAILED ({e})')
+" 2>/dev/null || echo "$league: FAILED"
 done
 ```
 
