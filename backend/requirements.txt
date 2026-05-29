@@ -21,7 +21,7 @@ limits>=5.0.0
 
 # Validation
 pydantic>=2.5.3
-pydantic-settings>=2.1.0
+pydantic-settings>=2.14.1
 
 # Auth (optional)
 firebase-admin>=6.3.0
