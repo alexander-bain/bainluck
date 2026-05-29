@@ -3444,6 +3444,16 @@ async def get_game_markets(
         cleaned_period_totals.extend(_enforce_monotonicity(group))
     period_markets = period_non_totals + cleaned_period_totals
 
+    # 7c. Enforce monotonicity on team totals — group by team side
+    team_total_by_side: dict[str, list[dict]] = {}
+    for tt in team_total_items:
+        side = tt.get("team_side", "unknown")
+        team_total_by_side.setdefault(side, []).append(tt)
+    team_total_items = []
+    for group in team_total_by_side.values():
+        group.sort(key=lambda x: x.get("threshold", 0) or 0)
+        team_total_items.extend(_enforce_monotonicity(group))
+
     # 8. Calculate pace
     pace = _estimate_game_pace(
         event.home_score,
@@ -5214,6 +5224,91 @@ async def get_event_odds_history(
     except Exception:
         # Graceful degradation — frontend falls back to naive averaging
         pass
+
+    # ── Inject terminal "final result" data point for completed events ──
+    # Without this, the chart's last data point is whatever the last
+    # polled value was (e.g., 92%/8%), which can mislead users about
+    # the actual outcome. For completed games with scores, inject a
+    # resolved 100%/0% (or 0%/100%) point so the chart converges to
+    # the correct winner.
+    if is_finished and event.home_score is not None and event.away_score is not None:
+        if event.home_score != event.away_score:  # Skip ties
+            home_won = event.home_score > event.away_score
+            resolved_home_prob = 1.0 if home_won else 0.0
+            resolved_away_prob = 0.0 if home_won else 1.0
+
+            # Determine terminal timestamp: completed_at if available,
+            # otherwise last data point + 1 minute.
+            terminal_ts = None
+            if event.completed_at:
+                terminal_ts = event.completed_at
+            else:
+                # Find the latest timestamp across all data sources
+                latest_candidates = []
+                if history:
+                    latest_candidates.append(
+                        datetime.fromisoformat(history[-1]["timestamp"])
+                    )
+                if espn_history:
+                    latest_candidates.append(
+                        datetime.fromisoformat(espn_history[-1]["timestamp"])
+                    )
+                for wp_points in win_prob_history.values():
+                    if wp_points:
+                        latest_candidates.append(
+                            datetime.fromisoformat(wp_points[-1]["timestamp"])
+                        )
+                if latest_candidates:
+                    terminal_ts = max(latest_candidates) + timedelta(minutes=1)
+
+            if terminal_ts:
+                terminal_iso = terminal_ts.replace(second=0, microsecond=0).isoformat()
+
+                # Append to sportsbook history
+                if history:
+                    history.append({
+                        "timestamp": terminal_iso,
+                        "home_probability": resolved_home_prob,
+                        "away_probability": resolved_away_prob,
+                        "over_under": None,
+                        "projected_home_score": None,
+                        "projected_away_score": None,
+                        "bookmaker_count": 0,
+                        "probability_range": {
+                            "min": resolved_home_prob,
+                            "max": resolved_home_prob,
+                        },
+                    })
+
+                # Append to each win_prob_history source
+                for source_key in win_prob_history:
+                    if win_prob_history[source_key]:
+                        win_prob_history[source_key].append({
+                            "timestamp": terminal_iso,
+                            "home_probability": resolved_home_prob,
+                            "away_probability": resolved_away_prob,
+                            "draw_probability": None,
+                            "game_state": {"final": True},
+                        })
+
+                # Append to ESPN history
+                if espn_history:
+                    espn_history.append({
+                        "timestamp": terminal_iso,
+                        "home_probability": resolved_home_prob,
+                        "away_probability": resolved_away_prob,
+                        "home_score": event.home_score,
+                        "away_score": event.away_score,
+                        "game_clock": "Final",
+                        "period": "Final",
+                    })
+
+                # Append to aggregate line
+                if aggregate_line:
+                    aggregate_line.append({
+                        "timestamp": terminal_iso,
+                        "home_probability": resolved_home_prob,
+                    })
 
     return {
         "event_id": event_id,

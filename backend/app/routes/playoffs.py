@@ -478,6 +478,32 @@ def _is_future_season_market(market_name: str, max_year: int) -> bool:
     return any(y > max_year for y in years)
 
 
+def _is_past_season_market(market_name: str, max_year: int) -> bool:
+    """Check if a market name references a season before the current one.
+
+    A market is considered past-season if it contains year references and
+    the maximum year in the name is strictly less than max_year.  Markets
+    without any year reference pass through (assumed current season).
+
+    This prevents stale resolved markets from prior seasons (e.g.,
+    "2024-25 NBA Champion") from contaminating the current season grid
+    via the per-source dedup which keeps the lowest probability.
+
+    Examples with max_year=2026:
+      '2024-25 NBA Champion'      → True  (past season, max=2025 < 2026)
+      '2024 NBA Champion'         → True  (past season, max=2024 < 2026)
+      '2025 NBA Champion'         → True  (past season, max=2025 < 2026)
+      '2026 NBA Champion'         → False (current season)
+      '2025-26 NBA Champion'      → False (current season, max=2026)
+      'NBA Championship Winner'   → False (no year — assumed current)
+      '2027 NBA Champion'         → False (future, handled by _is_future_season_market)
+    """
+    years = _extract_years_from_name(market_name)
+    if not years:
+        return False
+    return max(years) < max_year
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -2333,25 +2359,31 @@ async def get_playoff_grid(
             markets.append(market)
 
     # -----------------------------------------------------------------------
-    # 1b. Filter out next-season markets
+    # 1b. Filter out non-current-season markets
     # -----------------------------------------------------------------------
-    # Markets like "NBA: 2027 Champion" belong to the 2026-27 season, not the
-    # current 2025-26 season.  When next-season and current-season markets
-    # both feed the same grid column, the per-source dedup (keep lowest prob)
-    # picks the wrong one because next-season probabilities are systematically
-    # lower.  Extract the max year from the season_pattern and reject markets
-    # whose name references a later year.
+    # Markets from other seasons contaminate the grid.  Two failure modes:
+    #
+    # Future seasons: "NBA: 2027 Champion" has systematically lower
+    # probabilities (preseason lines), so the per-source dedup (keep lowest
+    # prob) picks the wrong entry.
+    #
+    # Past seasons: "2024-25 NBA Champion" outcomes are settled near 0%/1%.
+    # When a resolved past-season market and a fresh current-season market
+    # both map to the championship column from the same source, the min()
+    # dedup picks the stale ~1% value instead of the live ~30% value.
+    # This caused 30x staleness on the NBA grid (issue #708).
     _season_max_year = _extract_season_max_year(config.season_pattern)
     if _season_max_year:
         before_filter = len(markets)
         markets = [
             m for m in markets
             if not _is_future_season_market(m.name or "", _season_max_year)
+            and not _is_past_season_market(m.name or "", _season_max_year)
         ]
         filtered_season = before_filter - len(markets)
         if filtered_season:
             logger.info(
-                "Playoff grid %s: filtered %d future-season markets (max_year=%d)",
+                "Playoff grid %s: filtered %d non-current-season markets (max_year=%d)",
                 league_slug, filtered_season, _season_max_year,
             )
 
@@ -3267,12 +3299,13 @@ async def _get_team_progression_for_event_uncached(
         elif not league_patterns:
             markets.append(market)
 
-    # Filter out next-season markets (same logic as main grid endpoint)
+    # Filter out non-current-season markets (same logic as main grid endpoint)
     _prog_season_max = _extract_season_max_year(config.season_pattern)
     if _prog_season_max:
         markets = [
             m for m in markets
             if not _is_future_season_market(m.name or "", _prog_season_max)
+            and not _is_past_season_market(m.name or "", _prog_season_max)
         ]
 
     # Match markets to columns and extract outcomes

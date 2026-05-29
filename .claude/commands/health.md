@@ -44,7 +44,7 @@ source .env.claude && curl -s "https://api.bainluck.com/api/admin/dashboard?secr
 # Link rate health
 source .env.claude && curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN"
 
-# is_winner backfill coverage — all sources should be >95%
+# is_winner backfill coverage — target is 100% for every source
 source .env.claude && curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN"
 
 # Calibration metrics (public, cached)
@@ -134,8 +134,8 @@ For each section, present:
 **F. Calibration & Backfill Pipeline**
 - MCE (target: <3pp)
 - Closing line coverage
-- is_winner coverage per source (target: >95%)
-- Flag any source below 80% as 🔴
+- is_winner coverage per source (target: 100% — any gap is a bug)
+- Flag any source below 100% as 🔴
 
 **G. Source Coverage**
 - Average sources per live event

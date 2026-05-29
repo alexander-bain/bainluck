@@ -361,7 +361,7 @@ Run `/health` at the start of every session. It covers all production checks: Se
 - Sentry issue >100 events in 24h → triage now
 - Background queue >50 → purge + investigate
 - Endpoint latency >2s → investigate (especially `/api/feed`)
-- is_winner coverage <80% on any source → run `POST /api/admin/backfill-winners/probability-only`
+- is_winner coverage <100% on any source → investigate and fix (any gap is a bug, not acceptable)
 - Grid health <100% → investigate missing columns/teams
 
 **Available tools:** Heroku CLI (`heroku`), Sentry API (`$SENTRY_AUTH_TOKEN`), GitHub CLI (`gh`). All authenticated and working.

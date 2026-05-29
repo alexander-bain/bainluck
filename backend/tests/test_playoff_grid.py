@@ -38,6 +38,7 @@ from app.routes.playoffs import (
     _alias_matches,
     _extract_season_max_year,
     _is_future_season_market,
+    _is_past_season_market,
 )
 
 
@@ -1300,6 +1301,53 @@ class TestIsFutureSeasonMarket:
     def test_mlb_current_season(self):
         """MLB current-season market should pass."""
         assert _is_future_season_market("2026 World Series Winner", 2026) is False
+
+
+class TestIsPastSeasonMarket:
+    """Tests for _is_past_season_market — guards against stale past-season contamination (#708)."""
+
+    def test_past_year_rejected(self):
+        """'2024 NBA Champion' with max_year=2026 should be rejected (past season)."""
+        assert _is_past_season_market("NBA: 2024 Champion", 2026) is True
+
+    def test_past_hyphenated_season_rejected(self):
+        """'2024-25 NBA Champion' with max_year=2026 should be rejected (max=2025 < 2026)."""
+        assert _is_past_season_market("2024-25 NBA Champion", 2026) is True
+
+    def test_one_year_prior_rejected(self):
+        """'2025 NBA Champion' with max_year=2026 should be rejected (2025 < 2026)."""
+        assert _is_past_season_market("NBA: 2025 Champion", 2026) is True
+
+    def test_current_year_accepted(self):
+        """'2026 NBA Champion' with max_year=2026 should be accepted (current season)."""
+        assert _is_past_season_market("2026 NBA Champion", 2026) is False
+
+    def test_current_hyphenated_season_accepted(self):
+        """'2025-26 NBA Champion' with max_year=2026 should be accepted (max=2026)."""
+        assert _is_past_season_market("NBA 2025-26 Champion", 2026) is False
+
+    def test_no_year_accepted(self):
+        """'NBA Championship Winner' (no year) passes through — assumed current."""
+        assert _is_past_season_market("NBA Championship Winner", 2026) is False
+
+    def test_future_year_not_past(self):
+        """'2027 NBA Champion' is not past (handled by future filter)."""
+        assert _is_past_season_market("2027 NBA Champion", 2026) is False
+
+    def test_conference_past_season(self):
+        """Past-season conference market should be rejected."""
+        assert _is_past_season_market("2024-25 Eastern Conference Winner", 2026) is True
+
+    def test_knicks_30x_staleness_scenario(self):
+        """Regression: past-season championship market contaminating grid (#708).
+
+        When a resolved '2024-25 NBA Champion' market has Knicks at ~1%
+        (settled loser) and the current '2025-26 NBA Champion' market has
+        Knicks at ~30%, the per-source dedup (min) picks the stale 1%.
+        Past season filter must block the old market.
+        """
+        assert _is_past_season_market("2024-25 NBA Championship Winner", 2026) is True
+        assert _is_past_season_market("2025-26 NBA Championship Winner", 2026) is False
 
 
 class TestColumnSumSanity:

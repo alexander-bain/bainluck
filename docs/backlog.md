@@ -743,7 +743,7 @@ Coverage now excludes untradeable ghost markets (42K total) from the denominator
 3. **[P2] Verify golf/DataGolf MCE improvement** — `_backfill_datagolf_winners()` shipped. Check after next backfill run.
 
 **Guard rails against 3 failure states:**
-- **Dropped/forgotten:** Check the status endpoint at session start. Coverage < 95% = P0.
+- **Dropped/forgotten:** Check the status endpoint at session start. Coverage < 100% = investigate and fix.
 - **Worker fails silently:** `stuck_diagnosis` section shows exactly what's stuck. If stuck_markets not decreasing between runs, investigate.
 - **Backfill harms live tasks:** Background queue, soft_time_limit=600s, per-batch commits, DB connection monitoring.
 
