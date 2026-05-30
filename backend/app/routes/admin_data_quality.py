@@ -3337,3 +3337,48 @@ async def trigger_coverage_snapshot(
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.snapshot_coverage_metrics")
     return {"status": "queued", "task_id": str(result.id)}
+
+
+@router.get("/debug-winner-backfill")
+async def debug_winner_backfill(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug: show what the Kalshi winner backfill query would select."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        text("""
+            SELECT fm.external_id, COUNT(*) AS outcome_count,
+                   COUNT(*) FILTER (WHERE fo.is_winner IS NULL) AS null_winners,
+                   COUNT(*) FILTER (WHERE fo.is_winner = true) AS winners,
+                   COUNT(*) FILTER (WHERE fo.is_winner = false) AS losers,
+                   COUNT(*) FILTER (WHERE fo.resolution_source = 'api_settlement') AS api_settled,
+                   COUNT(*) FILTER (WHERE fo.resolution_source IS NULL) AS null_source,
+                   array_agg(DISTINCT fo.resolution_source) FILTER (WHERE fo.resolution_source IS NOT NULL) AS sources
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.source = 'kalshi'
+              AND fm.status = 'resolved'
+              AND fm.updated_at >= NOW() - INTERVAL '90 days'
+              AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+            GROUP BY fm.external_id
+            ORDER BY MAX(fm.updated_at) ASC
+            LIMIT 10
+        """)
+    )
+    rows = [
+        {
+            "ticker": r.external_id,
+            "outcomes": r.outcome_count,
+            "null_winners": r.null_winners,
+            "winners": r.winners,
+            "losers": r.losers,
+            "api_settled": r.api_settled,
+            "null_source": r.null_source,
+            "sources": r.sources,
+        }
+        for r in result.fetchall()
+    ]
+    return {"tickers": len(rows), "sample": rows}
