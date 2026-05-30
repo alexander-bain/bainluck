@@ -974,11 +974,12 @@ async def _backfill_datagolf_leaderboards():
                     WHERE fm.source = 'datagolf'
                       AND fm.status = 'resolved'
                       AND fm.market_metadata IS NOT NULL
-                      AND fm.external_id LIKE '%:win'
+                      AND fm.external_id LIKE :win_suffix
                       AND jsonb_array_length(
                           COALESCE(fm.market_metadata->'leaderboard', '[]'::jsonb)
                       ) = 50
-                """)
+                """),
+                {"win_suffix": "%:win"},
             )
             truncated_markets = result.all()
 
