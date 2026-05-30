@@ -47,15 +47,15 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 FROM futures_markets fm
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
-                  AND COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at)
-                      >= NOW() - INTERVAL '60 days'
+                  AND (fm.resolution_date >= NOW() - INTERVAL '60 days'
+                       OR fm.commence_time >= NOW() - INTERVAL '60 days')
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
                         AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                   )
                 GROUP BY fm.external_id
-                ORDER BY MAX(COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at)) DESC
+                ORDER BY MAX(COALESCE(fm.resolution_date, fm.commence_time)) DESC NULLS LAST
                 LIMIT :limit
             """),
             {"limit": limit},
