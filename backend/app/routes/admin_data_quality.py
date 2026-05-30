@@ -1739,8 +1739,12 @@ async def trigger_backfill_winners(
     """Trigger the is_winner backfill task."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    from app.tasks import backfill_winners as task
-    result = task.delay(dry_run=dry_run, limit=limit)
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.backfill_winners",
+        kwargs={"dry_run": dry_run, "limit": limit},
+        queue="background",
+    )
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
 
 
