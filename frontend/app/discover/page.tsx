@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
-import useSWR, { useSWRConfig } from "swr";
+import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
@@ -19,7 +19,6 @@ import {
   sendDiscoverInteraction,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
-import { useCategoryInterests } from "@/hooks/useCategoryInterests";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -483,12 +482,12 @@ export default function DiscoverPage() {
   useScrollDepth({ pageType: "discover" });
   useEngagementTime({ pageType: "discover" });
 
-  const { setInterest } = useCategoryInterests();
-  const { mutate } = useSWRConfig();
+
+
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [dailyGuesses, setDailyGuesses] = useState(0);
   const [allItems, setAllItems] = useState<FeedItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -502,8 +501,8 @@ export default function DiscoverPage() {
   useEffect(() => {
     setDismissed(getDismissed());
     setInteractionProfile(readDiscoverInteractionProfile());
-    if (typeof window !== "undefined" && !localStorage.getItem("discover_onboarded")) {
-      setShowOnboarding(true);
+    if (typeof window !== "undefined" && !localStorage.getItem("discover_has_swiped")) {
+      setShowSwipeHint(true);
     }
     const today = new Date().toISOString().slice(0, 10);
     const stored = localStorage.getItem(`daily_guesses_${today}`);
@@ -515,6 +514,20 @@ export default function DiscoverPage() {
     window.addEventListener("discover-profile-updated", refreshProfile);
     return () => window.removeEventListener("discover-profile-updated", refreshProfile);
   }, []);
+
+  useEffect(() => {
+    if (!showSwipeHint) return;
+    const dismissHint = () => {
+      setShowSwipeHint(false);
+      localStorage.setItem("discover_has_swiped", "1");
+    };
+    window.addEventListener("discover-profile-updated", dismissHint);
+    const timer = window.setTimeout(dismissHint, 5000);
+    return () => {
+      window.removeEventListener("discover-profile-updated", dismissHint);
+      window.clearTimeout(timer);
+    };
+  }, [showSwipeHint]);
 
   const { data, isLoading, error: feedError } = useSWR(
     "discover-feed",
@@ -728,27 +741,14 @@ export default function DiscoverPage() {
         </div>
       </header>
 
-      {/* Onboarding overlay */}
-      {showOnboarding && (
-        <OnboardingFlow onComplete={(cats) => {
-          setShowOnboarding(false);
-          localStorage.setItem("discover_onboarded", "1");
-
-          // Persist selected categories as sport affinities (1.0 = "Love it").
-          // useCategoryInterests handles the dual path: API for auth'd users,
-          // localStorage for anonymous (migrated to server on first sign-in
-          // via useInterestSync in PinSyncEffect).
-          for (const cat of cats) {
-            setInterest(cat, 1.0);
-          }
-
-          // Revalidate the feed so server-side personalization picks up
-          // the freshly saved affinities on the next request.
-          if (cats.length > 0) {
-            void mutate("discover-feed");
-          }
-
-        }} />
+      {/* Swipe hint toast for first-time visitors */}
+      {showSwipeHint && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 animate-fade-in">
+          <div className="bg-gray-900 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-sm">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-xs font-bold">→</span>
+            <span>Swipe right for more like this</span>
+          </div>
+        </div>
       )}
 
       {challengeOpen && (
@@ -840,8 +840,10 @@ export default function DiscoverPage() {
                 }
               : undefined;
 
+            const isFirstCard = idx === 0 && showSwipeHint;
+
             return (
-              <div key={key} className="break-inside-avoid mb-4">
+              <div key={key} className={`break-inside-avoid mb-4${isFirstCard ? " animate-peek-right" : ""}`}>
                 <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
@@ -875,79 +877,3 @@ export default function DiscoverPage() {
   );
 }
 
-// ── Build Your Feed Onboarding ──
-
-function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: string[]) => void }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  const categories = [
-    { key: "basketball", emoji: "🏀", label: "Basketball" },
-    { key: "football", emoji: "🏈", label: "Football" },
-    { key: "baseball", emoji: "⚾", label: "Baseball" },
-    { key: "hockey", emoji: "🏒", label: "Hockey" },
-    { key: "soccer", emoji: "⚽", label: "Soccer" },
-    { key: "golf", emoji: "⛳", label: "Golf" },
-    { key: "politics", emoji: "🏛", label: "Politics" },
-    { key: "economics", emoji: "📈", label: "Economics" },
-    { key: "tech", emoji: "💻", label: "Tech" },
-    { key: "culture", emoji: "🎭", label: "Culture" },
-    { key: "weather", emoji: "🌤", label: "Weather" },
-    { key: "mma", emoji: "🥊", label: "MMA / Boxing" },
-  ];
-
-  const toggle = (key: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-surface-card rounded-3xl max-w-md w-full p-6 shadow-2xl">
-        <div className="text-center mb-6">
-          <div className="text-3xl mb-2">🎯</div>
-          <h2 className="text-xl font-black">Build Your Feed</h2>
-          <p className="text-sm text-text-secondary mt-1">Pick topics you&apos;re interested in. You can change these anytime.</p>
-        </div>
-
-        <div className="mb-5 grid gap-2 rounded-2xl border border-surface-border bg-surface-elevated p-3 text-sm">
-          <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">→</span>
-            <span className="text-text-secondary"><strong className="text-text-primary">Swipe right</strong> for more like this</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-rose-500 text-white">←</span>
-            <span className="text-text-secondary"><strong className="text-text-primary">Swipe left</strong> for less like this</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 mb-6">
-          {categories.map((cat) => (
-            <button
-              key={cat.key}
-              onClick={() => toggle(cat.key)}
-              className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border-2 transition-all ${
-                selected.has(cat.key)
-                  ? "border-blue-500 bg-blue-50 scale-105"
-                  : "border-surface-border bg-surface-card hover:border-text-muted"
-              }`}
-            >
-              <span className="text-xl">{cat.emoji}</span>
-              <span className="text-xs font-medium">{cat.label}</span>
-            </button>
-          ))}
-        </div>
-
-        <Button
-          onClick={() => onComplete([...selected])}
-          size="lg"
-          className="w-full rounded-xl"
-        >
-          {selected.size === 0 ? "Show me everything" : `Start with ${selected.size} topic${selected.size > 1 ? "s" : ""}`}
-        </Button>
-      </div>
-    </div>
-  );
-}
