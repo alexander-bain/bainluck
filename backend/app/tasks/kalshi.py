@@ -1053,16 +1053,49 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                         )
                                         stats["opening_set"] += 1
 
+                        # --- Phase 3: Winner resolution from API result field ---
+                        # The settled events API returns result ("yes"/"no") on
+                        # each nested market. Use it to set is_winner authoritatively
+                        # — no extra API calls, piggybacks on the same pagination.
+                        winners_set = 0
+                        for event_data in events:
+                            for mkt in (event_data.get("markets") or []):
+                                ticker = mkt.get("ticker", "")
+                                result = mkt.get("result")
+                                if not ticker or result is None:
+                                    continue
+                                is_winner = result == "yes"
+                                r = await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET is_winner = :won,
+                                            resolution_source = 'api_settlement'
+                                        WHERE external_id = :ticker
+                                          AND COALESCE(resolution_source, '') != 'api_settlement'
+                                          AND market_id IN (
+                                              SELECT id FROM futures_markets
+                                              WHERE source = 'kalshi'
+                                          )
+                                    """),
+                                    {"won": is_winner, "ticker": ticker},
+                                )
+                                winners_set += r.rowcount
+
+                        if winners_set > 0:
+                            stats.setdefault("winners_resolved", 0)
+                            stats["winners_resolved"] += winners_set
+
                         await session.commit()
 
                         if not cursor:
                             break
                         await asyncio.sleep(0.1)
 
-                    if series_resolved > 0 or series_snapshots > 0:
+                    if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
-                            "Settled events: series=%s resolved=%d snapshots=%d",
+                            "Settled events: series=%s resolved=%d snapshots=%d winners=%d",
                             series, series_resolved, series_snapshots,
+                            stats.get("winners_resolved", 0),
                         )
 
         finally:
