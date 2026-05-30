@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   Database,
   FlaskConical,
+  LineChart,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -33,6 +34,11 @@ const PILLARS: NavPillar[] = [
     label: "System Health",
     icon: <Activity className="w-4 h-4" />,
     items: [{ label: "Operations Dashboard", href: "/admin" }],
+  },
+  {
+    label: "Product Analytics",
+    icon: <LineChart className="w-4 h-4" />,
+    items: [{ label: "Analytics Dashboard", href: "/admin/analytics" }],
   },
   {
     label: "Data Quality",

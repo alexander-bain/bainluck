@@ -260,3 +260,291 @@ async def analytics_retention(
 
     await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
     return result
+
+
+@router.get("/analytics/funnel")
+async def analytics_funnel(
+    secret: str = Query(..., description="Admin secret"),
+    period: str = Query("7d", description="Period: 7d or 30d"),
+):
+    """Discover conversion funnel: visit -> swipe/interact -> guess -> sign-up."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    cache_key = f"funnel:{period}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        return cached
+
+    from app.services.ga4_api import run_report
+
+    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+
+    try:
+        # Get event counts for funnel stages
+        events_data = run_report(
+            dimensions=["eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=200,
+            order_by_metric="eventCount",
+        )
+
+        # Get daily breakdown for funnel trend
+        daily_events = run_report(
+            dimensions=["date", "eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=1000,
+        )
+
+        # Get device category breakdown
+        device_events = run_report(
+            dimensions=["deviceCategory", "eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=200,
+        )
+    except Exception as exc:
+        logger.error("GA4 funnel query failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
+
+    # Map event names to funnel stages
+    visit_events = {"session_start", "first_visit", "page_view"}
+    interact_events = {
+        "discover_swipe", "discover_card_click", "feed_card_click",
+        "feed_card_view", "discover_scroll_depth",
+    }
+    guess_events = {"higher_lower_play", "higher_lower_result"}
+    signup_events = {"sign_up", "login"}
+
+    def _classify_stage(event_name: str) -> str | None:
+        if event_name in visit_events:
+            return "visit"
+        if event_name in interact_events or event_name.startswith("discover_"):
+            return "interact"
+        if event_name in guess_events or event_name.startswith("higher_lower_"):
+            return "guess"
+        if event_name in signup_events:
+            return "signup"
+        return None
+
+    # Build funnel totals
+    stage_totals: dict[str, dict[str, int]] = {
+        "visit": {"events": 0, "users": 0},
+        "interact": {"events": 0, "users": 0},
+        "guess": {"events": 0, "users": 0},
+        "signup": {"events": 0, "users": 0},
+    }
+    event_breakdown: list[dict[str, Any]] = []
+
+    for row in events_data:
+        event_name = row.get("eventName", "")
+        count = int(row.get("eventCount", 0))
+        users = int(row.get("totalUsers", 0))
+        stage = _classify_stage(event_name)
+        if stage:
+            stage_totals[stage]["events"] += count
+            stage_totals[stage]["users"] = max(stage_totals[stage]["users"], users)
+            event_breakdown.append({
+                "eventName": event_name,
+                "stage": stage,
+                "eventCount": count,
+                "totalUsers": users,
+            })
+
+    # Build funnel steps with conversion rates
+    stages_ordered = ["visit", "interact", "guess", "signup"]
+    funnel_steps: list[dict[str, Any]] = []
+    for i, stage in enumerate(stages_ordered):
+        step: dict[str, Any] = {
+            "stage": stage,
+            "events": stage_totals[stage]["events"],
+            "users": stage_totals[stage]["users"],
+        }
+        if i > 0:
+            prev_users = stage_totals[stages_ordered[i - 1]]["users"]
+            step["conversionRate"] = (
+                round(stage_totals[stage]["users"] / prev_users * 100, 1)
+                if prev_users > 0 else 0
+            )
+        else:
+            step["conversionRate"] = 100.0
+        funnel_steps.append(step)
+
+    # Daily funnel trend
+    daily_funnel: dict[str, dict[str, int]] = {}
+    for row in daily_events:
+        date = row.get("date", "")
+        event_name = row.get("eventName", "")
+        users = int(row.get("totalUsers", 0))
+        stage = _classify_stage(event_name)
+        if not stage:
+            continue
+        if date not in daily_funnel:
+            daily_funnel[date] = {"date": date, "visit": 0, "interact": 0, "guess": 0, "signup": 0}
+        daily_funnel[date][stage] = max(daily_funnel[date].get(stage, 0), users)
+
+    sorted_daily = sorted(daily_funnel.values(), key=lambda d: d["date"])
+
+    # Device breakdown
+    device_funnel: dict[str, dict[str, int]] = {}
+    for row in device_events:
+        device = row.get("deviceCategory", "unknown")
+        event_name = row.get("eventName", "")
+        users = int(row.get("totalUsers", 0))
+        stage = _classify_stage(event_name)
+        if not stage:
+            continue
+        if device not in device_funnel:
+            device_funnel[device] = {"device": device, "visit": 0, "interact": 0, "guess": 0, "signup": 0}
+        device_funnel[device][stage] = max(device_funnel[device].get(stage, 0), users)
+
+    result = {
+        "period": period,
+        "funnel": funnel_steps,
+        "eventBreakdown": sorted(event_breakdown, key=lambda e: -e["eventCount"]),
+        "dailyTrend": sorted_daily,
+        "byDevice": list(device_funnel.values()),
+    }
+
+    await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
+    return result
+
+
+@router.get("/analytics/pages")
+async def analytics_pages(
+    secret: str = Query(..., description="Admin secret"),
+    period: str = Query("7d", description="Period: 7d or 30d"),
+):
+    """Page-level engagement: views, users, duration, grouped by section."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    cache_key = f"pages:{period}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        return cached
+
+    from app.services.ga4_api import run_report
+
+    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+
+    try:
+        pages_data = run_report(
+            dimensions=["pagePath"],
+            metrics=[
+                "screenPageViews", "activeUsers",
+                "averageSessionDuration", "bounceRate",
+                "engagedSessions",
+            ],
+            start_date=start_date,
+            end_date="today",
+            limit=100,
+            order_by_metric="screenPageViews",
+        )
+
+        # Daily page views trend
+        daily_pages = run_report(
+            dimensions=["date", "pagePath"],
+            metrics=["screenPageViews", "activeUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=500,
+            order_by_metric="screenPageViews",
+        )
+    except Exception as exc:
+        logger.error("GA4 pages query failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
+
+    # Classify pages into sections
+    def _classify_section(path: str) -> str:
+        if path in ("/", "/discover") or path.startswith("/discover"):
+            return "discover"
+        if path.startswith("/sports") or path.startswith("/event/"):
+            return "sports"
+        if path.startswith("/weather"):
+            return "weather"
+        if path.startswith("/politics"):
+            return "politics"
+        if path.startswith("/entertainment"):
+            return "entertainment"
+        if path.startswith("/economics"):
+            return "economics"
+        if path.startswith("/calibration"):
+            return "calibration"
+        if path.startswith("/admin"):
+            return "admin"
+        if path.startswith("/futures") or path.startswith("/market/"):
+            return "futures"
+        if path.startswith("/team"):
+            return "teams"
+        return "other"
+
+    # Build page rows
+    page_rows: list[dict[str, Any]] = []
+    section_totals: dict[str, dict[str, float]] = {}
+
+    for row in pages_data:
+        path = row.get("pagePath", "")
+        views = int(row.get("screenPageViews", 0))
+        users = int(row.get("activeUsers", 0))
+        duration = float(row.get("averageSessionDuration", 0))
+        bounce = float(row.get("bounceRate", 0))
+        engaged = int(row.get("engagedSessions", 0))
+        section = _classify_section(path)
+
+        page_rows.append({
+            "path": path,
+            "section": section,
+            "views": views,
+            "users": users,
+            "avgDuration": round(duration, 1),
+            "bounceRate": round(bounce * 100, 1),
+            "engagedSessions": engaged,
+        })
+
+        if section not in section_totals:
+            section_totals[section] = {"views": 0, "users": 0, "engaged": 0}
+        section_totals[section]["views"] += views
+        section_totals[section]["users"] += users
+        section_totals[section]["engaged"] += engaged
+
+    # Build section summaries
+    sections = []
+    for section, totals in sorted(
+        section_totals.items(), key=lambda x: -x[1]["views"]
+    ):
+        sections.append({
+            "section": section,
+            "views": int(totals["views"]),
+            "users": int(totals["users"]),
+            "engagedSessions": int(totals["engaged"]),
+            "pageCount": sum(1 for p in page_rows if p["section"] == section),
+        })
+
+    # Daily trend by section
+    daily_by_section: dict[str, dict[str, int]] = {}
+    for row in daily_pages:
+        date = row.get("date", "")
+        path = row.get("pagePath", "")
+        views = int(row.get("screenPageViews", 0))
+        section = _classify_section(path)
+        if date not in daily_by_section:
+            daily_by_section[date] = {"date": date}
+        daily_by_section[date][section] = (
+            daily_by_section[date].get(section, 0) + views
+        )
+
+    result = {
+        "period": period,
+        "pages": page_rows,
+        "sections": sections,
+        "dailyBySection": sorted(daily_by_section.values(), key=lambda d: d["date"]),
+    }
+
+    await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
+    return result

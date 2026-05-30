@@ -953,15 +953,16 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
     return stats
 
 
-async def _backfill_espn_ids(limit: int = 200, days_back: int = 90):
+async def _backfill_espn_ids(limit: int = 1000):
     """Backfill ESPN IDs on completed events that don't have one.
 
     Queries ESPN's scoreboard API for past dates, matches completed events
     by team name, and sets espn_id. This enables box score fetching for
     games that weren't live during our ESPN sync window.
 
-    Processes one date per sport per run, working backwards from today.
-    Respectful: 0.5s sleep between API calls.
+    Processes ALL historical events (no time-window limit). Works backwards
+    from the most recent unmatched event. Respectful: 0.5s sleep between
+    API calls.
     """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport
@@ -1007,7 +1008,7 @@ async def _backfill_espn_ids(limit: int = 200, days_back: int = 90):
 
             espn = ESPNAPIService()
             try:
-                for (sport_key, date_str), date_events in list(by_sport_date.items())[:50]:
+                for (sport_key, date_str), date_events in list(by_sport_date.items())[:200]:
                     stats["dates_checked"] += 1
 
                     try:
@@ -1166,7 +1167,7 @@ async def _transition_event_statuses_impl() -> dict:
     return stats
 
 
-async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
+async def _backfill_espn_win_probability(limit: int = 200):
     """Backfill ESPN win probability for completed events with sparse snapshots.
 
     The live sync captures probability every 60s, but if it misses a game
@@ -1174,7 +1175,8 @@ async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
     ESPN's /summary endpoint has the full play-by-play probability curve
     retroactively — this task fetches it for recently completed games.
 
-    Only processes events with espn_id (confirmed match) and fewer than 10
+    Processes ALL historical events (no time-window limit). Only processes
+    events with espn_id (confirmed match) and fewer than 10
     win_prob_snapshots from the espn source.
     """
     import asyncio as _asyncio
@@ -1191,8 +1193,6 @@ async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
 
     try:
         async with get_task_session() as session:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-
             result = await session.execute(
                 text("""
                     SELECT e.id, e.espn_id, e.commence_time,
@@ -1206,12 +1206,11 @@ async def _backfill_espn_win_probability(limit: int = 50, days_back: int = 14):
                     ) snap_cnt ON true
                     WHERE e.status IN ('completed', 'closed')
                       AND e.espn_id IS NOT NULL
-                      AND e.commence_time > :cutoff
                       AND snap_cnt.cnt < 10
                     ORDER BY e.commence_time DESC
                     LIMIT :limit
                 """),
-                {"cutoff": cutoff, "limit": limit},
+                {"limit": limit},
             )
             events = result.fetchall()
 

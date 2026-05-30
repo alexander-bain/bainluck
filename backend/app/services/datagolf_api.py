@@ -311,6 +311,74 @@ class DataGolfAPIService(BaseAPIClient):
 
         return players
 
+    # -- Historical results -------------------------------------------------
+
+    async def get_historical_results(
+        self,
+        tour: str = "pga",
+        event_id: str = "",
+        year: Optional[int] = None,
+    ) -> list[dict]:
+        """Fetch historical round-level results for a completed tournament.
+
+        Returns a list of player dicts with final position, score, dg_id, etc.
+        Uses the historical-raw-data/rounds endpoint which provides per-round
+        scoring data for any completed event.
+
+        Returns an empty list if the event is not found or the endpoint errors.
+        """
+        params: dict = {"tour": tour}
+        if event_id:
+            params["event_id"] = event_id
+        if year:
+            params["year"] = str(year)
+
+        try:
+            data = await self._get("historical-raw-data/rounds", params)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (404, 403):
+                logger.info(
+                    "DataGolf historical results unavailable: tour=%s event=%s year=%s status=%d",
+                    tour, event_id, year, e.response.status_code,
+                )
+                return []
+            raise
+        except httpx.ReadTimeout:
+            logger.warning("DataGolf historical results timeout: tour=%s event=%s", tour, event_id)
+            return []
+
+        # The endpoint returns a list of player-round rows.  Aggregate to get
+        # each player's final position — take the row with the highest round
+        # number for each dg_id.
+        raw_rows = data if isinstance(data, list) else data.get("data", data.get("rounds", []))
+        if not raw_rows or not isinstance(raw_rows, list):
+            return []
+
+        # Group by dg_id, keep the latest round
+        by_player: dict[int, dict] = {}
+        for row in raw_rows:
+            dg_id = row.get("dg_id")
+            if dg_id is None:
+                continue
+            round_num = row.get("round_num", row.get("round", 0)) or 0
+            existing = by_player.get(dg_id)
+            if existing is None or round_num > existing.get("_round_num", 0):
+                by_player[dg_id] = {
+                    "dg_id": dg_id,
+                    "name": normalize_player_name(row.get("player_name", "")),
+                    "position": row.get("fin_text", row.get("current_pos", row.get("position"))),
+                    "total_score": row.get("total_to_par", row.get("total_score")),
+                    "_round_num": round_num,
+                }
+
+        # Strip internal field and return
+        results = []
+        for p in by_player.values():
+            p.pop("_round_num", None)
+            results.append(p)
+
+        return results
+
     # -- Internal parser ---------------------------------------------------
 
     def _parse_players(self, data: dict, in_play: bool = False) -> list[DataGolfPlayer]:

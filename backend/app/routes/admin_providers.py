@@ -1173,15 +1173,16 @@ async def clear_espn_unavailable(
 @router.post("/espn/backfill-ids")
 async def backfill_espn_ids(
     secret: str = Query(...),
-    days: int = Query(7, description="How many days back to scan"),
+    days: int = Query(0, description="How many days back to scan (0 = all time)"),
     sport: Optional[str] = Query(None, description="Sport key filter (e.g., basketball_nba)"),
     dry_run: bool = Query(True, description="If true, report matches without updating"),
+    limit: int = Query(500, description="Max events to process per call"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Retroactively match events to ESPN schedules and set espn_id.
 
-    Scans events from the last N days that have no espn_id, fetches ESPN's
-    schedule for each date, and matches by team names.
+    Scans events that have no espn_id, fetches ESPN's schedule for each
+    date, and matches by team names. Set days=0 to scan all time.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -1190,19 +1191,20 @@ async def backfill_espn_ids(
     from app.utils.sport_keys import ESPN_SPORT_MAPPING
     from app.utils.name_normalization import names_match
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days)
-
     # Find events without ESPN ID
     query = (
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.espn_id.is_(None),
-            Event.commence_time >= cutoff,
         )
         .order_by(Event.commence_time.desc())
+        .limit(limit)
     )
+    if days > 0:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=days)
+        query = query.where(Event.commence_time >= cutoff)
     if sport:
         query = query.where(Event.sport.has(key=sport))
 
@@ -1306,7 +1308,8 @@ async def backfill_espn_ids(
 
     return {
         "dry_run": dry_run,
-        "days_scanned": days,
+        "days_scanned": days if days > 0 else "all",
+        "limit": limit,
         "events_without_espn_id": len(events),
         "events_scanned": scanned,
         "events_matched": matched,

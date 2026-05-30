@@ -499,17 +499,17 @@ def backfill_box_scores(self, limit: int = 100, priority_calibration: bool = Fal
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_espn_ids")
-def backfill_espn_ids(self, limit: int = 200):
+def backfill_espn_ids(self, limit: int = 1000):
     """Match completed events to ESPN IDs for box score backfilling."""
     from app.tasks.espn_sync import _backfill_espn_ids
     return run_async(_backfill_espn_ids(limit=limit))
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_espn_win_prob")
-def backfill_espn_win_prob(self, limit: int = 50, days_back: int = 14):
+def backfill_espn_win_prob(self, limit: int = 200):
     """Backfill ESPN win probability history for completed events with sparse snapshots."""
     from app.tasks.espn_sync import _backfill_espn_win_probability
-    return _tracked_run("espn_win_prob_backfill", _backfill_espn_win_probability(limit, days_back))
+    return _tracked_run("espn_win_prob_backfill", _backfill_espn_win_probability(limit))
 
 
 # --- Team Linking (Futures → Teams) ---
@@ -1567,13 +1567,13 @@ celery_app.conf.beat_schedule = {
     "backfill-espn-ids": {
         "task": "app.tasks.backfill_espn_ids",
         "schedule": crontab(minute=45, hour="5,11,17,23"),  # Every 6h, 30min after box scores
-        "kwargs": {"limit": 200},
+        "kwargs": {"limit": 1000},
         "options": {"queue": "background"},
     },
     "backfill-espn-win-prob": {
         "task": "app.tasks.backfill_espn_win_prob",
         "schedule": crontab(minute=0, hour="6,12,18,0"),  # Every 6h, offset from ESPN IDs
-        "kwargs": {"limit": 50, "days_back": 90},
+        "kwargs": {"limit": 200},
         "options": {"queue": "background"},
     },
     "backfill-canonical-keys-daily": {

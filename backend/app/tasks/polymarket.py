@@ -1221,8 +1221,8 @@ async def _sync_polymarket_resolved_status():
             stats["events_fetched"] += len(events_data)
 
             condition_ids = []
-            # Map condition_id -> settlement price (first outcome = Yes side)
-            settlement_prices: dict[str, float] = {}
+            # Map condition_id -> (yes_price, no_price)
+            settlement_prices: dict[str, tuple[float, float | None]] = {}
             for event_data in events_data:
                 for market in event_data.get("markets") or []:
                     cid = market.get("conditionId")
@@ -1238,31 +1238,48 @@ async def _sync_polymarket_resolved_status():
                             else:
                                 prices = []
                             if prices:
-                                settlement_prices[cid] = float(prices[0])
+                                yes_price = float(prices[0])
+                                no_price = float(prices[1]) if len(prices) > 1 else None
+                                settlement_prices[cid] = (yes_price, no_price)
                         except (json_module.JSONDecodeError, ValueError, IndexError):
                             pass
 
             if condition_ids:
+                # Also include _yes/_no suffixed external_ids for sub-market
+                # outcome matching and condition_ids as market external_ids
+                # for sub-market FuturesMarket status resolution.
+                extended_cids = list(condition_ids)
+                for cid in condition_ids:
+                    extended_cids.append(f"{cid}_yes")
+                    extended_cids.append(f"{cid}_no")
+
                 async with get_task_session() as session:
+                    # Resolve parent markets via outcome external_id match
                     result = await session.execute(
                         text("""
                             UPDATE futures_markets
                             SET status = 'resolved'
                             WHERE source = 'polymarket'
                               AND status != 'resolved'
-                              AND id IN (
-                                  SELECT fo.market_id
-                                  FROM futures_outcomes fo
-                                  WHERE fo.external_id = ANY(:cids)
+                              AND (
+                                  id IN (
+                                      SELECT fo.market_id
+                                      FROM futures_outcomes fo
+                                      WHERE fo.external_id = ANY(:cids)
+                                  )
+                                  OR external_id = ANY(:raw_cids)
                               )
                         """),
-                        {"cids": condition_ids},
+                        {"cids": extended_cids, "raw_cids": condition_ids},
                     )
                     page_resolved = result.rowcount
 
-                    # Update settlement prices on outcomes (Core SQL, not ORM)
+                    # Update settlement prices on outcomes (Core SQL, not ORM).
+                    # Match bare condition_id (NegRisk + single-market outcomes)
+                    # AND _yes/_no suffix (sub-market game prop outcomes).
                     page_outcomes_updated = 0
-                    for cid, price in settlement_prices.items():
+                    for cid, (yes_price, no_price) in settlement_prices.items():
+                        # Bare condition_id match (NegRisk + single-market)
                         price_result = await session.execute(
                             text("""
                                 UPDATE futures_outcomes
@@ -1271,9 +1288,36 @@ async def _sync_polymarket_resolved_status():
                                   AND (current_probability IS NULL
                                        OR ABS(current_probability - :price) > 0.001)
                             """),
-                            {"cid": cid, "price": price},
+                            {"cid": cid, "price": yes_price},
                         )
                         page_outcomes_updated += price_result.rowcount
+
+                        # _yes suffix match (sub-market game prop Yes outcomes)
+                        yes_result = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes
+                                SET current_probability = :price
+                                WHERE external_id = :cid_yes
+                                  AND (current_probability IS NULL
+                                       OR ABS(current_probability - :price) > 0.001)
+                            """),
+                            {"cid_yes": f"{cid}_yes", "price": yes_price},
+                        )
+                        page_outcomes_updated += yes_result.rowcount
+
+                        # _no suffix match (sub-market game prop No outcomes)
+                        if no_price is not None:
+                            no_result = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET current_probability = :price
+                                    WHERE external_id = :cid_no
+                                      AND (current_probability IS NULL
+                                           OR ABS(current_probability - :price) > 0.001)
+                                """),
+                                {"cid_no": f"{cid}_no", "price": no_price},
+                            )
+                            page_outcomes_updated += no_result.rowcount
 
                     if page_resolved > 0 or page_outcomes_updated > 0:
                         await session.commit()

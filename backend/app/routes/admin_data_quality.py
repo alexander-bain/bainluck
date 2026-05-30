@@ -2235,6 +2235,24 @@ async def trigger_golf_cross_ref(
     return stats
 
 
+@router.post("/backfill-winners/datagolf-leaderboards")
+async def trigger_datagolf_leaderboard_backfill(
+    secret: str = Query(...),
+):
+    """Re-fetch full leaderboards for resolved DataGolf markets with truncated data.
+
+    Fixes the regression from the leaderboard[:50] truncation: markets that
+    were resolved before the full-leaderboard fix still have only 50 players,
+    causing incorrect make_cut and placement resolution.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.backfill_winners import _backfill_datagolf_leaderboards
+    stats = await _backfill_datagolf_leaderboards()
+    return stats
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
@@ -3278,17 +3296,20 @@ async def trigger_sync_polymarket_resolved(
 @router.post("/backfill-espn-win-prob")
 async def trigger_backfill_espn_win_prob(
     secret: str = Query(...),
-    limit: int = Query(50),
-    days_back: int = Query(14),
+    limit: int = Query(200),
 ):
-    """Backfill ESPN win probability history for completed events with sparse snapshots."""
+    """Backfill ESPN win probability history for completed events with sparse snapshots.
+
+    Processes ALL historical events with espn_id that have fewer than 10 ESPN
+    win probability snapshots. No time-window limit -- targets 100% coverage.
+    """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
     from app.tasks import celery_app
     result = celery_app.send_task(
-        "app.tasks.backfill_espn_win_prob", args=[limit, days_back]
+        "app.tasks.backfill_espn_win_prob", args=[limit]
     )
-    return {"status": "queued", "task_id": str(result.id), "limit": limit, "days_back": days_back}
+    return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
 @router.get("/coverage-trends")
