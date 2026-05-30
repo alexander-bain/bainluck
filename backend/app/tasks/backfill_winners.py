@@ -47,14 +47,15 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 FROM futures_markets fm
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
-                  AND fm.updated_at >= NOW() - INTERVAL '60 days'
+                  AND COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at)
+                      >= NOW() - INTERVAL '60 days'
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
                         AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                   )
                 GROUP BY fm.external_id
-                ORDER BY MAX(fm.updated_at) DESC
+                ORDER BY MAX(COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at)) DESC
                 LIMIT :limit
             """),
             {"limit": limit},
@@ -936,6 +937,172 @@ async def _resolve_kalshi_period_props():
     return stats
 
 
+async def _backfill_datagolf_leaderboards():
+    """Re-fetch full leaderboards for resolved DataGolf markets with truncated data.
+
+    Prior to commit 137344d5, _poll_datagolf_live() truncated leaderboards to
+    50 players (leaderboard[:50]). The cut line is typically ~65-70, so 20+
+    players who made the cut and 50+ who missed it were never stored. This
+    causes _backfill_datagolf_winners() to incorrectly infer absent players
+    as losers for make_cut markets.
+
+    This function:
+    1. Finds resolved DataGolf "win" markets with leaderboards of exactly 50
+       entries (the truncation signature)
+    2. Re-fetches the full field from DataGolf's historical-raw-data/rounds
+    3. Updates market_metadata.leaderboard on ALL market types for that event
+
+    Only needs to run until all truncated leaderboards are fixed; after that
+    it short-circuits (no API calls).
+    """
+    import asyncio
+    import json as _json
+    from app.services.datagolf_api import DataGolfAPIService
+
+    stats = {"markets_checked": 0, "events_refetched": 0, "markets_updated": 0,
+             "already_full": 0, "api_miss": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            # Find "win" markets with exactly 50-entry leaderboards (truncation signature).
+            # We check win markets because all market types for the same event share
+            # the same leaderboard, and win markets always have the full field.
+            result = await session.execute(
+                text("""
+                    SELECT fm.id, fm.external_id, fm.market_metadata
+                    FROM futures_markets fm
+                    WHERE fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fm.market_metadata IS NOT NULL
+                      AND fm.external_id LIKE '%:win'
+                      AND jsonb_array_length(
+                          COALESCE(fm.market_metadata->'leaderboard', '[]'::jsonb)
+                      ) = 50
+                """)
+            )
+            truncated_markets = result.all()
+
+        if not truncated_markets:
+            logger.info("DataGolf leaderboard backfill: no truncated leaderboards found")
+            return stats
+
+        logger.info(
+            "DataGolf leaderboard backfill: %d win markets with truncated leaderboards",
+            len(truncated_markets),
+        )
+
+        service = DataGolfAPIService()
+        try:
+            for row in truncated_markets:
+                stats["markets_checked"] += 1
+                ext_id = row.external_id  # "datagolf:pga:123:win"
+
+                # Extract tour and event_id from external_id
+                parts = ext_id.split(":")
+                if len(parts) < 4:
+                    stats["errors"].append(f"Bad external_id: {ext_id}")
+                    continue
+
+                tour = parts[1]
+                event_id = parts[2]
+
+                # Try to determine the year from commence_time or metadata
+                # DataGolf events use calendar year
+                year = None
+                async with get_task_session() as session:
+                    ct_result = await session.execute(
+                        text("""
+                            SELECT EXTRACT(YEAR FROM commence_time)::int
+                            FROM futures_markets
+                            WHERE id = :mid AND commence_time IS NOT NULL
+                        """),
+                        {"mid": row.id},
+                    )
+                    ct_row = ct_result.first()
+                    if ct_row and ct_row[0]:
+                        year = ct_row[0]
+
+                # Fetch full historical results from DataGolf API
+                historical = await service.get_historical_results(
+                    tour=tour, event_id=event_id, year=year,
+                )
+
+                if not historical or len(historical) <= 50:
+                    stats["api_miss"] += 1
+                    logger.info(
+                        "DataGolf leaderboard backfill: no/insufficient historical data for %s (got %d)",
+                        ext_id, len(historical) if historical else 0,
+                    )
+                    await asyncio.sleep(0.5)
+                    continue
+
+                stats["events_refetched"] += 1
+
+                # Build the updated leaderboard in the same format as _poll_datagolf_live
+                full_leaderboard = []
+                for player in historical:
+                    entry = {
+                        "dg_id": player.get("dg_id"),
+                        "name": player.get("name", ""),
+                        "position": player.get("position"),
+                        "total_score": player.get("total_score"),
+                    }
+                    full_leaderboard.append(entry)
+
+                # Update ALL market types for this event (win, top_5, top_10, top_20, make_cut)
+                event_prefix = f"datagolf:{tour}:{event_id}:"
+                async with get_task_session() as session:
+                    sibling_result = await session.execute(
+                        text("""
+                            SELECT id, external_id, market_metadata
+                            FROM futures_markets
+                            WHERE source = 'datagolf'
+                              AND external_id LIKE :prefix
+                              AND market_metadata IS NOT NULL
+                        """),
+                        {"prefix": f"{event_prefix}%"},
+                    )
+                    siblings = sibling_result.all()
+
+                    for sib in siblings:
+                        sib_meta = dict(sib.market_metadata or {})
+                        sib_meta["leaderboard"] = full_leaderboard
+                        await session.execute(
+                            text("""
+                                UPDATE futures_markets
+                                SET market_metadata = :meta::jsonb
+                                WHERE id = :mid
+                            """),
+                            {"meta": _json.dumps(sib_meta), "mid": sib.id},
+                        )
+                        stats["markets_updated"] += 1
+
+                    await session.commit()
+
+                logger.info(
+                    "DataGolf leaderboard backfill: updated %s with %d players (was 50)",
+                    ext_id, len(full_leaderboard),
+                )
+
+                await asyncio.sleep(0.5)  # Respect DataGolf rate limits
+
+        finally:
+            await service.close()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("DataGolf leaderboard backfill error: %s", e)
+
+    logger.info(
+        "DataGolf leaderboard backfill: %d checked, %d events refetched, "
+        "%d markets updated, %d already_full, %d api_miss, %d errors",
+        stats["markets_checked"], stats["events_refetched"],
+        stats["markets_updated"], stats["already_full"],
+        stats["api_miss"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_datagolf_winners():
     """Resolve DataGolf placement markets from actual leaderboard results.
 
@@ -1013,7 +1180,7 @@ async def _backfill_datagolf_winners():
 
                     await session.execute(
                         text("""
-                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays'
+                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'leaderboard'
                             WHERE id = :oid
                         """),
                         {"won": won, "oid": out_row.id},
@@ -1609,8 +1776,15 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     """Phase 3: Fetch settlement prices from Polymarket Gamma API.
 
     For stuck Polymarket markets where current_probability didn't reach
-    settlement extremes (0/1), fetches the event from the Gamma API and
-    uses outcome_prices for resolution. Sets is_winner directly.
+    settlement extremes (0/1) OR where all outcomes are near-zero (the
+    winning outcome's settlement price was never synced), fetches the
+    event from the Gamma API and uses outcomePrices for resolution.
+
+    Handles three market shapes:
+    - NegRisk parent markets (external_id = event_id): iterate all API
+      sub-markets, match each by condition_id against DB outcomes
+    - Decomposed sub-markets (external_id = condition_id): direct lookup
+    - Sub-market game props (outcome external_id = condition_id + _yes/_no)
 
     Uses GET /events/{event_id} (which returns settlement prices) and
     matches conditions by condition_id. The /markets/{id} endpoint does
@@ -1622,13 +1796,16 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
     stats = {
         "markets_checked": 0, "winners_set": 0, "losers_set": 0,
+        "prices_synced": 0,
         "api_miss": 0, "not_settled": 0, "no_match": 0, "errors": [],
     }
 
     async with get_task_session() as session:
+        # Find stuck markets: either midrange prices (0.05-0.95) OR all-losers
+        # (max <= 0.10, meaning the winning outcome's price was never synced).
         stuck = await session.execute(
             text("""
-                SELECT fm.id, fm.external_id,
+                SELECT fm.id, fm.external_id, fm.group_type,
                        fm.market_metadata->>'polymarket_event_id' AS poly_event_id
                 FROM futures_markets fm
                 JOIN futures_outcomes fo ON fo.market_id = fm.id
@@ -1637,7 +1814,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                   AND fo.current_probability IS NOT NULL
                 GROUP BY fm.id
                 HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                   AND MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
+                   AND (
+                       MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
+                       OR MAX(fo.current_probability) <= 0.10
+                   )
                 LIMIT :limit
             """),
             {"limit": limit},
@@ -1686,6 +1866,71 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                     for row in by_event[event_id]:
                         stats["markets_checked"] += 1
                         condition_id = row.external_id
+                        is_negrisk = row.group_type == "negrisk"
+
+                        # NegRisk parent markets: external_id = event_id.
+                        # Must iterate ALL API sub-markets and match each
+                        # condition_id against DB outcomes on this market.
+                        if is_negrisk or (condition_id == event_id and len(api_markets) > 1):
+                            market_resolved = False
+                            for m in api_markets:
+                                m_cid = str(m.get("conditionId") or m.get("condition_id") or "")
+                                if not m_cid:
+                                    continue
+
+                                m_prices_raw = m.get("outcomePrices") or m.get("outcome_prices") or []
+                                if isinstance(m_prices_raw, str):
+                                    try:
+                                        m_prices_raw = _json.loads(m_prices_raw)
+                                    except (ValueError, TypeError):
+                                        m_prices_raw = []
+                                try:
+                                    m_prices = [float(p) for p in m_prices_raw]
+                                except (ValueError, TypeError):
+                                    m_prices = []
+
+                                if not m_prices:
+                                    continue
+
+                                settlement_price = m_prices[0]
+                                is_winner = settlement_price >= 0.90
+
+                                # Sync settlement price to current_probability
+                                price_r = await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET current_probability = :price
+                                        WHERE market_id = :mid
+                                          AND external_id = :cid
+                                          AND (current_probability IS NULL
+                                               OR ABS(current_probability - :price) > 0.001)
+                                    """),
+                                    {"price": settlement_price, "mid": row.id, "cid": m_cid},
+                                )
+                                stats["prices_synced"] += price_r.rowcount
+
+                                # Set is_winner
+                                r = await session.execute(
+                                    update(FuturesOutcome)
+                                    .where(
+                                        FuturesOutcome.market_id == row.id,
+                                        FuturesOutcome.external_id == m_cid,
+                                    )
+                                    .values(
+                                        is_winner=is_winner,
+                                        resolution_source="api_settlement",
+                                    )
+                                )
+                                if r.rowcount > 0:
+                                    market_resolved = True
+                                    if is_winner:
+                                        stats["winners_set"] += r.rowcount
+                                    else:
+                                        stats["losers_set"] += r.rowcount
+
+                            if not market_resolved:
+                                stats["no_match"] += 1
+                            continue
 
                         # For decomposed sub-markets: external_id = condition_id
                         market_data = by_cond.get(condition_id)
@@ -1722,6 +1967,19 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         yes_won = prices[0] >= 0.90
                         cid = market_data.get("conditionId") or market_data.get("condition_id") or condition_id
 
+                        # Sync settlement price to current_probability
+                        await session.execute(
+                            text("""
+                                UPDATE futures_outcomes
+                                SET current_probability = :price
+                                WHERE market_id = :mid
+                                  AND external_id = :cid
+                                  AND (current_probability IS NULL
+                                       OR ABS(current_probability - :price) > 0.001)
+                            """),
+                            {"price": prices[0], "mid": row.id, "cid": cid},
+                        )
+
                         # Try bare condition_id first (NegRisk + single-market),
                         # then _yes/_no suffix (sub-market game props)
                         r_bare = await session.execute(
@@ -1733,7 +1991,13 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                             .values(is_winner=yes_won, resolution_source="api_settlement")
                         )
 
-                        if r_bare.rowcount == 0:
+                        if r_bare.rowcount > 0:
+                            if yes_won:
+                                stats["winners_set"] += r_bare.rowcount
+                            else:
+                                stats["losers_set"] += r_bare.rowcount
+                        else:
+                            # Sub-market game props: outcomes have _yes/_no suffix
                             r1 = await session.execute(
                                 update(FuturesOutcome)
                                 .where(
@@ -1750,23 +2014,22 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 )
                                 .values(is_winner=(not yes_won), resolution_source="api_settlement")
                             )
-                            updated = r1.rowcount + r2.rowcount
-                        else:
-                            updated = r_bare.rowcount
-                        if updated > 0:
-                            if yes_won:
-                                stats["winners_set"] += r1.rowcount
-                                stats["losers_set"] += r2.rowcount
-                            else:
-                                stats["losers_set"] += r1.rowcount
-                                stats["winners_set"] += r2.rowcount
+                            if r1.rowcount + r2.rowcount > 0:
+                                if yes_won:
+                                    stats["winners_set"] += r1.rowcount
+                                    stats["losers_set"] += r2.rowcount
+                                else:
+                                    stats["losers_set"] += r1.rowcount
+                                    stats["winners_set"] += r2.rowcount
 
                 await session.commit()
 
             logger.info(
-                "Polymarket API backfill: %d/%d events, %d winners, %d losers, %d miss",
+                "Polymarket API backfill: %d/%d events, %d winners, %d losers, "
+                "%d prices_synced, %d miss",
                 min(batch_start + batch_size, len(event_ids)), len(event_ids),
-                stats["winners_set"], stats["losers_set"], stats["api_miss"],
+                stats["winners_set"], stats["losers_set"],
+                stats["prices_synced"], stats["api_miss"],
             )
             await asyncio.sleep(0.3)
 
@@ -1778,8 +2041,9 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
     logger.info(
         "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
-        "%d api_miss, %d no_match, %d not_settled, %d errors",
+        "%d prices_synced, %d api_miss, %d no_match, %d not_settled, %d errors",
         stats["markets_checked"], stats["winners_set"], stats["losers_set"],
+        stats["prices_synced"],
         stats["api_miss"], stats["no_match"], stats["not_settled"],
         len(stats["errors"]),
     )
@@ -1930,6 +2194,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
+    # Phase 0g-pre: Re-fetch full leaderboards for resolved DataGolf markets
+    # that still have truncated (50-player) leaderboards from the old code.
+    # Must run BEFORE _backfill_datagolf_winners() so the resolution logic
+    # has the full field to work with.
+    dg_leaderboard_stats = await _backfill_datagolf_leaderboards()
+
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
@@ -1975,7 +2245,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=2000)
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=5000)
 
     # Phase 2: Set is_winner from current_probability (all sources, fast)
     # Only handles markets not already resolved by API settlement above.
@@ -1992,6 +2262,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "closing_lines": closing_stats,
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
+        "datagolf_leaderboard_backfill": dg_leaderboard_stats,
         "datagolf": datagolf_stats,
         "golf_cross_reference": golf_cross_stats,
         "golf_settlement_sync": golf_sync_stats,
