@@ -51,9 +51,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
-                        AND (fo.is_winner IS NULL
-                             OR fo.resolution_source IS NULL
-                             OR fo.resolution_source != 'api_settlement')
+                        AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                   )
                 GROUP BY fm.external_id
                 ORDER BY MAX(fm.updated_at) ASC
