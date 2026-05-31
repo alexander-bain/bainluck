@@ -2346,9 +2346,53 @@ async def stuck_diagnosis(
                     "all_losers": r[3], "needs_backfill": r[4], "untradeable": r[5]}
                    for r in status_breakdown.all()]
 
+    # Sample untradeables
+    untrade_sample = await db.execute(text("""
+        SELECT fm.source, fm.id, fm.name, fm.external_id,
+               fm.llm_sport_category, fm.category,
+               COUNT(*) AS outcomes,
+               fm.commence_time::text AS commence
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fo.calibration_probability IS NULL
+          AND fo.opening_probability IS NULL
+        GROUP BY fm.id
+        HAVING BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL)
+        ORDER BY RANDOM()
+        LIMIT 20
+    """))
+    untrade_samples = [{"source": r[0], "id": r[1], "name": r[2][:80],
+                        "external_id": r[3][:50], "category": r[4] or r[5],
+                        "outcomes": r[6], "commence": r[7][:10] if r[7] else None}
+                       for r in untrade_sample.all()]
+
+    # Category breakdown of untradeables
+    untrade_cats = await db.execute(text("""
+        SELECT fm.source,
+               COALESCE(fm.llm_sport_category, fm.category, 'unknown') AS cat,
+               COUNT(DISTINCT fm.id) AS markets
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+        GROUP BY fm.id, fm.source, COALESCE(fm.llm_sport_category, fm.category, 'unknown')
+        HAVING BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL)
+    """))
+    cat_counts: dict[str, dict[str, int]] = {}
+    for r in untrade_cats.all():
+        src = r[0]
+        cat = r[1]
+        cat_counts.setdefault(src, {}).setdefault(cat, 0)
+        cat_counts[src][cat] += r[2]
+    untrade_by_cat = [{"source": src, "category": cat, "markets": count}
+                      for src, cats in cat_counts.items()
+                      for cat, count in sorted(cats.items(), key=lambda x: -x[1])]
+
     return {"buckets": rows, "sample_stuck": samples,
             "orphan_outcomes": orphans, "orphan_samples": orphan_samples,
-            "status_breakdown": status_rows}
+            "status_breakdown": status_rows,
+            "untradeable_samples": untrade_samples,
+            "untradeable_by_category": untrade_by_cat}
 
 
 @router.post("/backfill-winners/datagolf-leaderboards")
