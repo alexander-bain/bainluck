@@ -811,10 +811,8 @@ async def get_climate_cached(db: AsyncSession = Depends(get_db)):
 async def get_climate(db: AsyncSession):
     """Build climate response from database."""
     now = datetime.now(timezone.utc)
-    six_months_out = now.replace(
-        year=now.year if now.month <= 6 else now.year + 1,
-        month=(now.month + 6 - 1) % 12 + 1,
-    )
+    from dateutil.relativedelta import relativedelta
+    six_months_out = now + relativedelta(months=6)
 
     query = _open_weather_query().where(
         or_(
