@@ -1875,6 +1875,62 @@ async def trigger_probability_backfill(
         stats["all_losers"] = r4.rowcount
         await db.commit()
 
+        # Pass 6: Binary markets (2 outcomes) — higher probability wins
+        r6 = await db.execute(text("""
+            WITH binary_unresolved AS (
+                SELECT fm.id AS market_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND COUNT(*) = 2
+                   AND MAX(fo.current_probability) > 0.10
+                   AND MAX(fo.current_probability) != MIN(fo.current_probability)
+                LIMIT 50000
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = (fo.current_probability > 0.50),
+                resolution_source = 'binary_higher_wins'
+            FROM binary_unresolved bu
+            WHERE fo.market_id = bu.market_id
+              AND fo.current_probability IS NOT NULL
+            RETURNING fo.is_winner
+        """))
+        rows6 = r6.all()
+        stats["binary_w"] = sum(1 for r in rows6 if r[0])
+        stats["binary_l"] = sum(1 for r in rows6 if not r[0])
+        await db.commit()
+
+        # Pass 7: Multi-outcome (3+) — highest probability wins
+        r7 = await db.execute(text("""
+            WITH multi_unresolved AS (
+                SELECT fm.id AS market_id,
+                       MAX(fo.current_probability) AS max_prob
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND COUNT(*) >= 3
+                   AND MAX(fo.current_probability) > 0.10
+                LIMIT 50000
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = (fo.current_probability = mu.max_prob),
+                resolution_source = 'multi_max_prob'
+            FROM multi_unresolved mu
+            WHERE fo.market_id = mu.market_id
+              AND fo.current_probability IS NOT NULL
+            RETURNING fo.is_winner
+        """))
+        rows7 = r7.all()
+        stats["multi_w"] = sum(1 for r in rows7 if r[0])
+        stats["multi_l"] = sum(1 for r in rows7 if not r[0])
+        await db.commit()
+
     except Exception as e:
         stats["errors"].append(str(e))
 
