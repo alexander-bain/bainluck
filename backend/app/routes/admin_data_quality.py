@@ -2432,11 +2432,24 @@ async def trigger_datagolf_leaderboard_backfill(
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
+    bust: bool = Query(False, description="Bypass cache"),
     db: AsyncSession = Depends(get_db),
 ):
     """Check how many markets still need is_winner backfill."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    _cache_key = "bainluck:backfill_winners_status"
+    if not bust:
+        try:
+            _rc = get_redis_client()
+            _cached = _rc.get(_cache_key)
+            if _cached:
+                return _json.loads(_cached)
+        except Exception:
+            pass
 
     result = await db.execute(text("""
         WITH market_status AS (
@@ -2524,7 +2537,7 @@ async def backfill_winners_status(
     """))
     group_row = group_result.one()
 
-    return {
+    _response = {
         "sources": [
             {"source": r.source, "resolved": r.resolved_markets,
              "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
@@ -2580,6 +2593,12 @@ async def backfill_winners_status(
         ],
         "stuck_diagnosis": await _diagnose_stuck_winners(db),
     }
+    try:
+        _rc = get_redis_client()
+        _rc.setex(_cache_key, 1800, _json.dumps(_response, default=str))
+    except Exception:
+        pass
+    return _response
 
 
 async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
