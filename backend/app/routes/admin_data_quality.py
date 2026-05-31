@@ -2395,13 +2395,15 @@ async def stuck_diagnosis(
                AND (MAX(fo.current_probability) IS NULL OR MAX(fo.current_probability) > 0.10)
         )
         SELECT source, cat, COUNT(*) AS markets,
-               (array_agg(name ORDER BY id DESC))[1:3] AS sample_names
+               (array_agg(name ORDER BY id DESC))[1:3] AS sample_names,
+               (array_agg(external_id ORDER BY id DESC))[1:3] AS sample_ext_ids
         FROM needs
         GROUP BY source, cat
         ORDER BY markets DESC
     """))
     needs_by_cat = [{"source": r[0], "category": r[1], "markets": r[2],
-                     "samples": [n[:60] for n in (r[3] or [])]}
+                     "samples": [n[:60] for n in (r[3] or [])],
+                     "ext_ids": [e[:50] for e in (r[4] or [])]}
                     for r in needs_cats.all()]
 
     return {"buckets": rows, "sample_stuck": samples,
