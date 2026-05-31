@@ -2450,7 +2450,8 @@ async def backfill_winners_status(
         SELECT source,
             COUNT(*) AS resolved_markets,
             COUNT(*) FILTER (
-                WHERE has_winner OR (max_prob IS NOT NULL AND max_prob <= 0.10)
+                WHERE (has_winner OR (max_prob IS NOT NULL AND max_prob <= 0.10))
+                  AND NOT (all_cal_null AND source != 'datagolf')
             ) AS has_winner,
             COUNT(*) FILTER (
                 WHERE NOT has_winner
