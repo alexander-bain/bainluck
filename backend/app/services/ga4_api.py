@@ -155,7 +155,7 @@ def get_realtime() -> dict[str, Any]:
     # Active users by page
     page_req = RunRealtimeReportRequest(
         property=_property(),
-        dimensions=[Dimension(name="unifiedPagePathScreen")],
+        dimensions=[Dimension(name="unifiedScreenName")],
         metrics=[Metric(name="activeUsers")],
         limit=20,
     )
