@@ -2346,25 +2346,38 @@ async def stuck_diagnosis(
                     "all_losers": r[3], "needs_backfill": r[4], "untradeable": r[5]}
                    for r in status_breakdown.all()]
 
-    # Sample untradeables
+    # Sample untradeables — 5 per major category for diversity
     untrade_sample = await db.execute(text("""
-        SELECT fm.source, fm.id, fm.name, fm.external_id,
-               fm.llm_sport_category, fm.category,
-               COUNT(*) AS outcomes,
-               fm.commence_time::text AS commence
-        FROM futures_markets fm
-        JOIN futures_outcomes fo ON fo.market_id = fm.id
-        WHERE fm.status = 'resolved'
-          AND fo.calibration_probability IS NULL
-          AND fo.opening_probability IS NULL
-        GROUP BY fm.id
-        HAVING BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL)
-        ORDER BY RANDOM()
-        LIMIT 20
+        WITH ranked AS (
+            SELECT fm.source, fm.id, fm.name, fm.external_id,
+                   COALESCE(fm.llm_sport_category, fm.category) AS cat,
+                   COUNT(*) AS outcomes,
+                   fm.commence_time::text AS commence,
+                   fm.volume, fm.volume_24h, fm.open_interest,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                    JOIN futures_outcomes fo2 ON fo2.id = fos.outcome_id
+                    WHERE fo2.market_id = fm.id) AS total_snapshots,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fm.source, COALESCE(fm.llm_sport_category, fm.category)
+                       ORDER BY RANDOM()
+                   ) AS rn
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id
+            HAVING BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL)
+        )
+        SELECT source, id, name, external_id, cat, outcomes, commence,
+               volume, volume_24h, open_interest, total_snapshots
+        FROM ranked
+        WHERE rn <= 3
+        ORDER BY source, cat
     """))
-    untrade_samples = [{"source": r[0], "id": r[1], "name": r[2][:80],
-                        "external_id": r[3][:50], "category": r[4] or r[5],
-                        "outcomes": r[6], "commence": r[7][:10] if r[7] else None}
+    untrade_samples = [{"source": r[0], "id": r[1], "name": r[2],
+                        "external_id": r[3], "category": r[4],
+                        "outcomes": r[5], "commence": r[6][:10] if r[6] else None,
+                        "volume": r[7], "volume_24h": r[8],
+                        "open_interest": r[9], "total_snapshots": r[10]}
                        for r in untrade_sample.all()]
 
     # Category breakdown of untradeables
