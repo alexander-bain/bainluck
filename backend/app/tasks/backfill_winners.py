@@ -1420,13 +1420,81 @@ async def _backfill_from_current_probability():
             stats["single_losers"] = sum(1 for r in rows5 if not r[0])
             await session.commit()
 
+            # Pass 6: Binary markets (2 outcomes) where current_probability
+            # didn't reach clean extremes but one side is clearly higher.
+            # Settled Kalshi binary markets (overtime, BTTS, home runs)
+            # often have prices like 0.45/0.55 — not clean enough for Pass 1
+            # but the higher-probability outcome won. Use > 0.50 threshold.
+            result6 = await session.execute(
+                text("""
+                    WITH binary_unresolved AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND COUNT(*) = 2
+                           AND MAX(fo.current_probability) BETWEEN 0.10 AND 0.95
+                           AND MAX(fo.current_probability) != MIN(fo.current_probability)
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability > 0.50),
+                        resolution_source = 'binary_higher_wins'
+                    FROM binary_unresolved bu
+                    WHERE fo.market_id = bu.market_id
+                      AND fo.current_probability IS NOT NULL
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows6 = result6.all()
+            stats["binary_winners"] = sum(1 for r in rows6 if r[0])
+            stats["binary_losers"] = sum(1 for r in rows6 if not r[0])
+            await session.commit()
+
+            # Pass 7: Multi-outcome markets (3+ outcomes) where the highest-
+            # probability outcome is the winner. For resolved markets with
+            # midrange prices, pick the outcome with max current_probability.
+            result7 = await session.execute(
+                text("""
+                    WITH multi_unresolved AS (
+                        SELECT fm.id AS market_id,
+                               MAX(fo.current_probability) AS max_prob
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND COUNT(*) >= 3
+                           AND MAX(fo.current_probability) > 0.10
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability = mu.max_prob),
+                        resolution_source = 'multi_max_prob'
+                    FROM multi_unresolved mu
+                    WHERE fo.market_id = mu.market_id
+                      AND fo.current_probability IS NOT NULL
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows7 = result7.all()
+            stats["multi_winners"] = sum(1 for r in rows7 if r[0])
+            stats["multi_losers"] = sum(1 for r in rows7 if not r[0])
+            await session.commit()
+
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Current-probability winner backfill error: %s", e)
 
-    total_w = stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"] + stats["single_winners"]
+    total_w = (stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"]
+               + stats["single_winners"] + stats.get("binary_winners", 0) + stats.get("multi_winners", 0))
     total_l = (stats["clean_losers"] + stats["mutex_losers"] + stats["threshold_losers"]
-               + stats["all_losers_set"] + stats["single_losers"])
+               + stats["all_losers_set"] + stats["single_losers"]
+               + stats.get("binary_losers", 0) + stats.get("multi_losers", 0))
     logger.info(
         "Current-probability winner backfill: %d winners (clean=%d, mutex=%d, threshold=%d, single=%d), "
         "%d losers (clean=%d, mutex=%d, threshold=%d, all_losers=%d, single=%d), %d errors",
