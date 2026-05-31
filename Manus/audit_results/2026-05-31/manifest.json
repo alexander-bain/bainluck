@@ -1,0 +1,65 @@
+{
+  "date": "2026-05-31",
+  "tasks": {
+    "event_detail": {
+      "task_id": "GnpWHZE5sLwKZUtDbVuura",
+      "status": "complete",
+      "task_url": "https://manus.im/app/GnpWHZE5sLwKZUtDbVuura",
+      "credits": 0
+    },
+    "feed": {
+      "task_id": "gTscEVMFbz2C4dnTou8JJ4",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/gTscEVMFbz2C4dnTou8JJ4",
+      "credits": 0
+    },
+    "event_matching": {
+      "task_id": "PLZyUTgukGZvePs5TnLw8F",
+      "status": "complete",
+      "task_url": "https://manus.im/app/PLZyUTgukGZvePs5TnLw8F",
+      "credits": 0
+    },
+    "market_accuracy": {
+      "task_id": "ehxCs7TmRNk4vxBXhFbfPr",
+      "status": "complete",
+      "task_url": "https://manus.im/app/ehxCs7TmRNk4vxBXhFbfPr",
+      "credits": 0
+    },
+    "category_page": {
+      "task_id": "3pDGD8h26Cj8x3s9rwNsPc",
+      "status": "complete",
+      "task_url": "https://manus.im/app/3pDGD8h26Cj8x3s9rwNsPc",
+      "credits": 0
+    },
+    "league_page": {
+      "task_id": "MHDQCGrN5MZfEwYsUb3iXb",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/MHDQCGrN5MZfEwYsUb3iXb",
+      "credits": 0
+    },
+    "market_completeness": {
+      "task_id": "4e5JbchZFWge3QAPReCSqY",
+      "status": "complete",
+      "task_url": "https://manus.im/app/4e5JbchZFWge3QAPReCSqY",
+      "credits": 0
+    },
+    "chart_timing": {
+      "task_id": "RhCTGyFxumN9a5ikLDLHJz",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/RhCTGyFxumN9a5ikLDLHJz",
+      "credits": 0
+    },
+    "grid": {
+      "task_id": "SoTqcmHgXqHVreRsHRxY7m",
+      "status": "complete",
+      "task_url": "https://manus.im/app/SoTqcmHgXqHVreRsHRxY7m",
+      "credits": 0
+    },
+    "visual_review": {
+      "task_id": "X6xsTCdzehQ78kwfskCQ7v",
+      "status": "complete",
+      "task_url": "https://manus.im/app/X6xsTCdzehQ78kwfskCQ7v",
+      "credits": 0
+    }
+  }
+}
