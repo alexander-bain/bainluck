@@ -2239,6 +2239,58 @@ async def trigger_golf_cross_ref(
     return stats
 
 
+@router.get("/backfill-winners/stuck-diagnosis")
+async def stuck_diagnosis(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lightweight diagnosis of stuck outcomes by source and bucket."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    result = await db.execute(text("""
+        SELECT source, bucket, COUNT(*) AS markets, SUM(outcomes) AS outcomes FROM (
+            SELECT fm.source,
+                   CASE
+                       WHEN MAX(fo.current_probability) > 0.95 THEN 'clean_but_unmarked'
+                       WHEN MAX(fo.current_probability) BETWEEN 0.05 AND 0.95 THEN 'midrange'
+                       WHEN MAX(fo.current_probability) <= 0.05 THEN 'all_near_zero'
+                       ELSE 'null_prob'
+                   END AS bucket,
+                   COUNT(*) AS outcomes
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id, fm.source
+            HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+        ) sub
+        GROUP BY source, bucket
+        ORDER BY source, markets DESC
+    """))
+    rows = [{"source": r[0], "bucket": r[1], "markets": r[2], "outcomes": r[3]} for r in result.all()]
+
+    sample = await db.execute(text("""
+        SELECT fm.source, fm.id, fm.name, fm.external_id,
+               MAX(fo.current_probability) AS max_prob,
+               COUNT(*) AS outcomes,
+               fm.market_metadata->>'polymarket_event_id' AS poly_eid
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fm.source IN ('polymarket', 'kalshi')
+        GROUP BY fm.id
+        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+        ORDER BY COUNT(*) DESC
+        LIMIT 10
+    """))
+    samples = [{"source": r[0], "id": r[1], "name": r[2][:80], "external_id": r[3][:50],
+                "max_prob": float(r[4]) if r[4] else None, "outcomes": r[5],
+                "poly_event_id": r[6]} for r in sample.all()]
+
+    return {"buckets": rows, "sample_stuck": samples}
+
+
 @router.post("/backfill-winners/datagolf-leaderboards")
 async def trigger_datagolf_leaderboard_backfill(
     secret: str = Query(...),
