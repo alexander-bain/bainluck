@@ -2380,10 +2380,35 @@ async def stuck_diagnosis(
                         "open_interest": r[9], "total_snapshots": r[10]}
                        for r in untrade_sample.all()]
 
+    # Needs_backfill breakdown by category (lightweight)
+    needs_cats = await db.execute(text("""
+        WITH needs AS (
+            SELECT fm.id, fm.source,
+                   COALESCE(fm.llm_sport_category, fm.category, 'unknown') AS cat,
+                   fm.name
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id, fm.source, COALESCE(fm.llm_sport_category, fm.category, 'unknown'), fm.name
+            HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+               AND NOT BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL AND fm.source != 'datagolf')
+               AND (MAX(fo.current_probability) IS NULL OR MAX(fo.current_probability) > 0.10)
+        )
+        SELECT source, cat, COUNT(*) AS markets,
+               (array_agg(name ORDER BY id DESC))[1:3] AS sample_names
+        FROM needs
+        GROUP BY source, cat
+        ORDER BY markets DESC
+    """))
+    needs_by_cat = [{"source": r[0], "category": r[1], "markets": r[2],
+                     "samples": [n[:60] for n in (r[3] or [])]}
+                    for r in needs_cats.all()]
+
     return {"buckets": rows, "sample_stuck": samples,
             "orphan_outcomes": orphans, "orphan_samples": orphan_samples,
             "status_breakdown": status_rows,
-            "untradeable_samples": untrade_samples}
+            "untradeable_samples": untrade_samples,
+            "needs_backfill_by_category": needs_by_cat}
 
 
 @router.post("/backfill-winners/datagolf-leaderboards")
