@@ -2454,10 +2454,12 @@ async def backfill_winners_status(
             ) AS has_winner,
             COUNT(*) FILTER (
                 WHERE NOT has_winner
-                  AND NOT all_cal_null
+                  AND NOT (all_cal_null AND source != 'datagolf')
                   AND (max_prob IS NULL OR max_prob > 0.10)
             ) AS needs_backfill,
-            COUNT(*) FILTER (WHERE all_cal_null) AS untradeable_excluded
+            COUNT(*) FILTER (
+                WHERE all_cal_null AND source != 'datagolf'
+            ) AS untradeable_excluded
         FROM market_status
         GROUP BY source
     """))

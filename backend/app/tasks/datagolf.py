@@ -220,6 +220,7 @@ async def _poll_datagolf_markets() -> dict:
                                     external_id=outcome_ext_id,
                                     name=player.player_name,
                                     current_probability=prob,
+                                    opening_probability=prob,
                                 )
                                 session.add(outcome)
                                 await session.flush()
@@ -537,6 +538,7 @@ async def _poll_datagolf_live() -> dict:
                                     external_id=outcome_ext_id,
                                     name=player.player_name,
                                     current_probability=prob,
+                                    opening_probability=prob,
                                 )
                                 session.add(outcome)
                                 await session.flush()
