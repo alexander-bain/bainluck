@@ -2380,32 +2380,10 @@ async def stuck_diagnosis(
                         "open_interest": r[9], "total_snapshots": r[10]}
                        for r in untrade_sample.all()]
 
-    # Category breakdown of untradeables
-    untrade_cats = await db.execute(text("""
-        SELECT fm.source,
-               COALESCE(fm.llm_sport_category, fm.category, 'unknown') AS cat,
-               COUNT(DISTINCT fm.id) AS markets
-        FROM futures_markets fm
-        JOIN futures_outcomes fo ON fo.market_id = fm.id
-        WHERE fm.status = 'resolved'
-        GROUP BY fm.id, fm.source, COALESCE(fm.llm_sport_category, fm.category, 'unknown')
-        HAVING BOOL_AND(fo.calibration_probability IS NULL AND fo.opening_probability IS NULL)
-    """))
-    cat_counts: dict[str, dict[str, int]] = {}
-    for r in untrade_cats.all():
-        src = r[0]
-        cat = r[1]
-        cat_counts.setdefault(src, {}).setdefault(cat, 0)
-        cat_counts[src][cat] += r[2]
-    untrade_by_cat = [{"source": src, "category": cat, "markets": count}
-                      for src, cats in cat_counts.items()
-                      for cat, count in sorted(cats.items(), key=lambda x: -x[1])]
-
     return {"buckets": rows, "sample_stuck": samples,
             "orphan_outcomes": orphans, "orphan_samples": orphan_samples,
             "status_breakdown": status_rows,
-            "untradeable_samples": untrade_samples,
-            "untradeable_by_category": untrade_by_cat}
+            "untradeable_samples": untrade_samples}
 
 
 @router.post("/backfill-winners/datagolf-leaderboards")
