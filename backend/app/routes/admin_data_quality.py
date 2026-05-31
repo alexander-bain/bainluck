@@ -2319,8 +2319,36 @@ async def stuck_diagnosis(
                        "outcome": r[4][:50] if r[4] else None,
                        "prob": float(r[5]) if r[5] else None} for r in orphan_sample.all()]
 
+    # Reproduce the exact status endpoint logic to see the breakdown
+    status_breakdown = await db.execute(text("""
+        WITH market_status AS (
+            SELECT fm.id, fm.source,
+                BOOL_OR(fo.is_winner) AS has_winner,
+                MAX(fo.current_probability) AS max_prob,
+                BOOL_AND(fo.calibration_probability IS NULL
+                         AND fo.opening_probability IS NULL) AS all_cal_null
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id, fm.source
+        )
+        SELECT source,
+            COUNT(*) AS resolved,
+            COUNT(*) FILTER (WHERE has_winner) AS real_winner,
+            COUNT(*) FILTER (WHERE NOT has_winner AND max_prob <= 0.10) AS all_losers,
+            COUNT(*) FILTER (WHERE NOT has_winner AND NOT all_cal_null AND max_prob > 0.10) AS needs_backfill,
+            COUNT(*) FILTER (WHERE all_cal_null) AS untradeable
+        FROM market_status
+        GROUP BY source
+        ORDER BY resolved DESC
+    """))
+    status_rows = [{"source": r[0], "resolved": r[1], "real_winner": r[2],
+                    "all_losers": r[3], "needs_backfill": r[4], "untradeable": r[5]}
+                   for r in status_breakdown.all()]
+
     return {"buckets": rows, "sample_stuck": samples,
-            "orphan_outcomes": orphans, "orphan_samples": orphan_samples}
+            "orphan_outcomes": orphans, "orphan_samples": orphan_samples,
+            "status_breakdown": status_rows}
 
 
 @router.post("/backfill-winners/datagolf-leaderboards")
