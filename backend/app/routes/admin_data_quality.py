@@ -2288,7 +2288,39 @@ async def stuck_diagnosis(
                 "max_prob": float(r[4]) if r[4] else None, "outcomes": r[5],
                 "poly_event_id": r[6]} for r in sample.all()]
 
-    return {"buckets": rows, "sample_stuck": samples}
+    # Also check orphan outcomes: individual outcomes with is_winner=NULL
+    # on markets that DO have other resolved outcomes
+    orphan = await db.execute(text("""
+        SELECT fm.source,
+               COUNT(*) AS orphan_outcomes,
+               COUNT(DISTINCT fm.id) AS affected_markets
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.is_winner IS NULL
+        GROUP BY fm.source
+        ORDER BY orphan_outcomes DESC
+    """))
+    orphans = [{"source": r[0], "orphan_outcomes": r[1], "affected_markets": r[2]} for r in orphan.all()]
+
+    # Sample orphan outcomes
+    orphan_sample = await db.execute(text("""
+        SELECT fm.source, fm.id, fm.name, fo.external_id AS outcome_ext,
+               fo.name AS outcome_name, fo.current_probability
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.is_winner IS NULL
+        ORDER BY fm.id DESC
+        LIMIT 10
+    """))
+    orphan_samples = [{"source": r[0], "market_id": r[1], "market": r[2][:60],
+                       "outcome_ext": r[3][:50] if r[3] else None,
+                       "outcome": r[4][:50] if r[4] else None,
+                       "prob": float(r[5]) if r[5] else None} for r in orphan_sample.all()]
+
+    return {"buckets": rows, "sample_stuck": samples,
+            "orphan_outcomes": orphans, "orphan_samples": orphan_samples}
 
 
 @router.post("/backfill-winners/datagolf-leaderboards")
