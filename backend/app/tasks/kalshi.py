@@ -905,14 +905,21 @@ async def _backfill_from_settled_events(limit: int = 5000):
         "api_pages": 0, "api_empty": 0, "errors": [],
     }
 
-    SERIES_PREFIXES = [
-        "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
-        "KXNBAREB", "KXNBAAST", "KXNBA2HWINNER",
-        "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL", "KXNCAABBGAME",
-        "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
-        "KXMLBSTGAME", "KXMLSGAME",
-        "KXNASDAQ", "KXINXU", "KXEURUSD", "KXBITCOIN",
-    ]
+    # Dynamically discover all Kalshi series with unresolved markets
+    # instead of a hardcoded list that misses esports, baseball HR, soccer BTTS, etc.
+    async with get_task_session() as session:
+        series_result = await session.execute(
+            text("""
+                SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
+                FROM futures_markets
+                WHERE source = 'kalshi'
+                  AND status IN ('open', 'resolved')
+                  AND external_id ~ '^KX'
+                ORDER BY 1
+            """)
+        )
+        SERIES_PREFIXES = [r[0] for r in series_result.all()]
+    logger.info("Settled events: discovered %d series prefixes", len(SERIES_PREFIXES))
 
     try:
         from app.services.kalshi_api import KalshiAPIService
