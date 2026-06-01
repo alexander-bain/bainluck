@@ -114,17 +114,25 @@ class KalshiAPIService(BaseAPIClient):
         if cursor:
             params["cursor"] = cursor
 
-        response = await self.client.get(
-            f"{self.BASE_URL}/events",
-            params=params,
-        )
+        import asyncio as _asyncio
+        for _attempt in range(4):
+            response = await self.client.get(
+                f"{self.BASE_URL}/events",
+                params=params,
+            )
+            if response.status_code == 429:
+                await _asyncio.sleep(5 * (_attempt + 1))
+                continue
+            response.raise_for_status()
+            data = response.json()
+
+            events = data.get("events") or []
+            next_cursor = data.get("cursor")
+
+            return events, next_cursor
+
         response.raise_for_status()
-        data = response.json()
-
-        events = data.get("events") or []
-        next_cursor = data.get("cursor")
-
-        return events, next_cursor
+        return [], None
 
     async def get_event(
         self,
