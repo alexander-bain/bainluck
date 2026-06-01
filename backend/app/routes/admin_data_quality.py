@@ -3659,3 +3659,43 @@ async def debug_winner_backfill(
         for r in result.fetchall()
     ]
     return {"tickers": len(rows), "sample": rows}
+
+
+@router.get("/debug-phase3")
+async def debug_phase3(
+    secret: str = Query(...),
+    ticker: str = Query("KXNBASPREAD-26MAY28OKCSAS-SAS26"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug Phase 3: check if a ticker would be updated."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Check what exists in DB for this ticker
+    result = await db.execute(
+        text("""
+            SELECT fo.id, fo.external_id, fo.is_winner, fo.resolution_source,
+                   fm.source, fm.external_id AS market_ext
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fo.market_id = fm.id
+            WHERE fo.external_id = :ticker
+        """),
+        {"ticker": ticker},
+    )
+    rows = [{"id": r.id, "ext": r.external_id, "winner": r.is_winner,
+             "res_src": r.resolution_source, "fm_src": r.source, "mkt_ext": r.market_ext}
+            for r in result.fetchall()]
+
+    # Check what Phase 3's UPDATE would match
+    match_result = await db.execute(
+        text("""
+            SELECT COUNT(*) FROM futures_outcomes
+            WHERE external_id = :ticker
+              AND COALESCE(resolution_source, '') != 'api_settlement'
+              AND market_id IN (SELECT id FROM futures_markets WHERE source = 'kalshi')
+        """),
+        {"ticker": ticker},
+    )
+    would_update = match_result.scalar()
+
+    return {"ticker": ticker, "db_rows": rows, "would_update": would_update}
