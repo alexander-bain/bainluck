@@ -936,7 +936,7 @@ async def _backfill_polymarket_price_history(
                         SELECT fo.id, fo.external_id,
                                COALESCE(
                                    fm.market_metadata->>'polymarket_event_id',
-                                   fm.group_id,
+                                   REPLACE(fm.group_id, 'polymarket:', ''),
                                    fm.external_id
                                ) AS market_external_id
                         FROM futures_outcomes fo
