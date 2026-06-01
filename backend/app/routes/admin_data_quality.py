@@ -3729,7 +3729,7 @@ async def get_task_metrics(
 
     try:
         rc = get_redis_client()
-        key = f"task_metrics:{task_name}"
+        key = f"bainluck:task_metrics:{task_name}"
         data = rc.hgetall(key)
         result = {}
         for k, v in data.items():
