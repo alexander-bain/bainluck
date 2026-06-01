@@ -934,7 +934,11 @@ async def _backfill_polymarket_price_history(
                 result = await session.execute(
                     text("""
                         SELECT fo.id, fo.external_id,
-                               fm.external_id AS market_external_id
+                               COALESCE(
+                                   fm.market_metadata->>'polymarket_event_id',
+                                   fm.group_id,
+                                   fm.external_id
+                               ) AS market_external_id
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
@@ -986,7 +990,11 @@ async def _backfill_polymarket_price_history(
                             token_map[cid] = clob_ids[0]
 
                     for outcome in outcomes:
-                        token_id = token_map.get(outcome["condition_id"])
+                        cid = outcome["condition_id"]
+                        token_id = (
+                            token_map.get(cid)
+                            or token_map.get(cid.rstrip("_yes").rstrip("_no"))
+                        )
                         if not token_id:
                             stats["outcomes_skipped"] += 1
                             continue
