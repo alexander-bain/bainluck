@@ -1111,9 +1111,14 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             )
                             winners_set += r_no.rowcount
 
-                        if winners_set > 0:
-                            stats.setdefault("winners_resolved", 0)
-                            stats["winners_resolved"] += winners_set
+                        stats.setdefault("winners_resolved", 0)
+                        stats["winners_resolved"] += winners_set
+                        if yes_tickers or no_tickers:
+                            logger.info(
+                                "Phase 3: series=%s page=%d yes=%d no=%d updated=%d",
+                                series, page_num, len(yes_tickers),
+                                len(no_tickers), winners_set,
+                            )
 
                         await session.commit()
 
