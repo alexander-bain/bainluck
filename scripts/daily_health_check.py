@@ -392,6 +392,10 @@ def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str |
     existing = search_result.get("items", []) if search_result else []
     if existing:
         issue_number = existing[0]["number"]
+        existing_title = existing[0].get("title", "")
+        if existing_title == title:
+            print(f"Health check unchanged ({report.summary_line()}), skipping update")
+            return f"https://github.com/{repo}/issues/{issue_number}"
         _github_request(
             "PATCH",
             f"/repos/{repo}/issues/{issue_number}",

@@ -196,8 +196,14 @@ def sentry_alerts() -> list[AlertIssue]:
         },
     )
 
+    min_events = int(_env("SENTRY_MIN_EVENTS", "50") or "50")
+
     alerts: list[AlertIssue] = []
     for issue in issues[:limit]:
+        event_count = int(issue.get("count") or "0")
+        if event_count < min_events:
+            continue
+
         short_id = issue.get("shortId") or issue.get("short_id") or str(issue.get("id"))
         title = (
             issue.get("title")
@@ -261,6 +267,14 @@ def github_workflow_run_alert() -> list[AlertIssue]:
     if conclusion not in {"failure", "cancelled", "timed_out", "action_required"}:
         return []
 
+    # Only alert on push-triggered failures on master.
+    # Skip: issue_comment (agent work), workflow_run (cascade), schedule (cron).
+    trigger_event = run.get("event", "")
+    head_branch = run.get("head_branch") or ""
+    if trigger_event != "push" or head_branch not in ("master", "main"):
+        print(f"Skipping non-push CI failure: event={trigger_event} branch={head_branch}")
+        return []
+
     repo = event.get("repository", {}).get("full_name") or _env("GITHUB_REPOSITORY", "")
     workflow = run.get("name") or "GitHub Actions"
     title = (
@@ -301,8 +315,8 @@ def github_workflow_run_alert() -> list[AlertIssue]:
         """)
     return [
         AlertIssue(
-            key=f"github-actions:{run_id}",
-            title=f"[Alert] {workflow} failed: {title}",
+            key=f"github-actions:{workflow}:{head_branch}",
+            title=f"[Alert] CI failed: {title}",
             body=body,
             labels=GITHUB_ACTIONS_LABELS,
         )
