@@ -575,9 +575,15 @@ def _discover_event_has_major_league_context(item: dict) -> bool:
 def _is_discover_event_demotion_exception(item: dict) -> bool:
     """Return whether a Discover-mode event should keep its original score.
 
-    Tier 3/4 events (minor soccer, AHL, etc.) need a much higher bar to qualify
-    as exceptional — a routine "upset" in Ligue 2 is not interesting to a
-    Discover audience, even if EI is moderately high.
+    A live sports event earns a Discover slot only if:
+    1. The game is genuinely wild (EI ≥ 85)
+    2. It's a major league AND the game is exciting (EI ≥ 80)
+    3. It's a playoff/championship/elimination game in a major league
+    4. The headline signals something extraordinary (walk-off, buzzer beater)
+
+    Routine live games — even in major leagues — belong on Sports, not Discover.
+    A generic NBA regular season game at EI 70 should not outrank "Who will be
+    the next James Bond?" for a general audience.
     """
     if item.get("type") != "event":
         return False
@@ -587,17 +593,23 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
 
     if ei_score >= 85:
         return True
-    if ei_score >= 70 and has_major_league_context:
+    if ei_score >= 80 and has_major_league_context:
         return True
 
     headline = (item.get("headline") or "").lower()
-    has_exception_keyword = any(
-        kw in headline for kw in _DISCOVER_EVENT_EXCEPTION_KEYWORDS
+    has_high_drama_keyword = any(
+        kw in headline for kw in ("elimination", "buzzer", "walk-off", "historic")
     )
-    if has_exception_keyword and has_major_league_context:
+    if has_high_drama_keyword and has_major_league_context:
         return True
 
-    return item.get("score", 0) >= 90 and ei_score >= 50 and has_major_league_context
+    has_postseason_keyword = any(
+        kw in headline for kw in ("playoff", "championship", "finals")
+    )
+    if has_postseason_keyword and has_major_league_context and ei_score >= 60:
+        return True
+
+    return False
 
 
 def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:

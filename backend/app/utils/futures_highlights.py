@@ -198,8 +198,49 @@ _COMPELLING_PATTERNS = [
 BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
 FOREIGN_LOCAL_ELECTION_PENALTY = -30
-COMPELLING_BOOST = 8  # per matching pattern, max 3
+COMPELLING_BOOST = 12  # per matching pattern, max 3
 SPORTS_POSTSEASON_STORY_BOOST = 55
+
+# Cultural gravity — high-interest culture/entertainment markets get a tier
+# boost similar to how sports get league tier bonuses. These are markets a
+# smart curator would want on page 1 of Discover.
+_CULTURAL_GRAVITY_T1 = re.compile(
+    r"("
+    r"oscar|academy award|emmy|grammy|golden globe|tony award|"
+    r"super bowl.*(headline|halftime|headlin)|"
+    r"next (james )?bond|"
+    r"taylor swift.*(wedding|married|baby|pregnant)|"
+    r"time.?s? person of the year|"
+    r"sexiest man alive|"
+    r"world cup.*(halftime|headline|perform)|"
+    r"game awards? 20\d{2}|"
+    r"ps[56] (announce|release|launch)|"
+    r"highest grossing movie|"
+    r"biggest opening weekend"
+    r")",
+    re.IGNORECASE,
+)
+_CULTURAL_GRAVITY_T2 = re.compile(
+    r"("
+    r"#1 (song|album|artist|show|movie|app)|"
+    r"number.?1.*(song|album|artist|show|movie)|"
+    r"billboard.*(hot 100|200)|"
+    r"top (artist|song).*(spotify|billboard)|"
+    r"(elon musk|jeff bezos|kim kardashian|kanye|rogan)(?!.*(stock|net worth on))|"
+    r"james beard|"
+    r"(married|wedding|engaged|divorce).*(celebrity|swift|kardashian|obama|clinton)|"
+    r"will .+ (buy|acquire) |"
+    r"(alien|ufo|extraterrestrial).*(confirm|exist|declas)|"
+    r"madden.*(cover)|nba 2k.*(cover)|"
+    r"richest person|"
+    r"costco.*(hotdog|hot dog)|"
+    r"moon landing|"
+    r"pluto.*reclassif"
+    r")",
+    re.IGNORECASE,
+)
+CULTURAL_GRAVITY_T1_BOOST = 25
+CULTURAL_GRAVITY_T2_BOOST = 15
 
 _ELECTION_MARKET_RE = re.compile(
     r"\b(election|electoral|nominee|primary|presidential|president|parliamentary|congressional)\b",
@@ -379,6 +420,15 @@ def compute_futures_highlight(
     ):
         result.score += FOREIGN_LOCAL_ELECTION_PENALTY
         result.reasons.append("non_major_election")
+
+    # === Cultural gravity boost (high-interest culture/entertainment) ===
+    if "boring_pattern" not in result.reasons and _market_name:
+        if _CULTURAL_GRAVITY_T1.search(_market_name):
+            result.score += CULTURAL_GRAVITY_T1_BOOST
+            result.reasons.append("cultural_gravity_t1")
+        elif _CULTURAL_GRAVITY_T2.search(_market_name):
+            result.score += CULTURAL_GRAVITY_T2_BOOST
+            result.reasons.append("cultural_gravity_t2")
 
     # === Compelling market boost (skip if boring) ===
     if "boring_pattern" not in result.reasons and _market_name:
