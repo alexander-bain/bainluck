@@ -1061,32 +1061,55 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                         stats["opening_set"] += 1
 
                         # --- Phase 3: Winner resolution from API result field ---
-                        # The settled events API returns result ("yes"/"no") on
-                        # each nested market. Use it to set is_winner authoritatively
-                        # — no extra API calls, piggybacks on the same pagination.
+                        # Bulk UPDATE: collect all ticker→result pairs from the page,
+                        # then resolve winners and losers in two batch UPDATEs.
                         winners_set = 0
+                        yes_tickers = []
+                        no_tickers = []
                         for event_data in events:
                             for mkt in (event_data.get("markets") or []):
                                 ticker = mkt.get("ticker", "")
                                 result = mkt.get("result")
                                 if not ticker or result is None:
                                     continue
-                                is_winner = result == "yes"
-                                r = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET is_winner = :won,
-                                            resolution_source = 'api_settlement'
-                                        WHERE external_id = :ticker
-                                          AND COALESCE(resolution_source, '') != 'api_settlement'
-                                          AND market_id IN (
-                                              SELECT id FROM futures_markets
-                                              WHERE source = 'kalshi'
-                                          )
-                                    """),
-                                    {"won": is_winner, "ticker": ticker},
-                                )
-                                winners_set += r.rowcount
+                                if result == "yes":
+                                    yes_tickers.append(ticker)
+                                else:
+                                    no_tickers.append(ticker)
+
+                        if yes_tickers:
+                            r_yes = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET is_winner = true,
+                                        resolution_source = 'api_settlement'
+                                    WHERE external_id = ANY(:tickers)
+                                      AND COALESCE(resolution_source, '') != 'api_settlement'
+                                      AND market_id IN (
+                                          SELECT id FROM futures_markets
+                                          WHERE source = 'kalshi'
+                                      )
+                                """),
+                                {"tickers": yes_tickers},
+                            )
+                            winners_set += r_yes.rowcount
+
+                        if no_tickers:
+                            r_no = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET is_winner = false,
+                                        resolution_source = 'api_settlement'
+                                    WHERE external_id = ANY(:tickers)
+                                      AND COALESCE(resolution_source, '') != 'api_settlement'
+                                      AND market_id IN (
+                                          SELECT id FROM futures_markets
+                                          WHERE source = 'kalshi'
+                                      )
+                                """),
+                                {"tickers": no_tickers},
+                            )
+                            winners_set += r_no.rowcount
 
                         if winners_set > 0:
                             stats.setdefault("winners_resolved", 0)
