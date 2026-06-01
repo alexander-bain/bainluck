@@ -3699,3 +3699,33 @@ async def debug_phase3(
     would_update = match_result.scalar()
 
     return {"ticker": ticker, "db_rows": rows, "would_update": would_update}
+
+
+@router.get("/task-metrics")
+async def get_task_metrics(
+    secret: str = Query(...),
+    task_name: str = Query("kalshi_settled"),
+):
+    """Read task execution metrics from Redis."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    try:
+        rc = get_redis_client()
+        key = f"task_metrics:{task_name}"
+        data = rc.hgetall(key)
+        result = {}
+        for k, v in data.items():
+            if k == "last_result_summary":
+                try:
+                    result[k] = _json.loads(v)
+                except Exception:
+                    result[k] = v
+            else:
+                result[k] = v
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
