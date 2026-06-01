@@ -939,7 +939,6 @@ async def _backfill_polymarket_price_history(
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
                           AND fm.status = 'resolved'
-                          AND fo.opening_probability IS NOT NULL
                           AND NOT EXISTS (
                               SELECT 1 FROM futures_odds_snapshots fos
                               WHERE fos.outcome_id = fo.id
@@ -1023,6 +1022,19 @@ async def _backfill_polymarket_price_history(
                                 stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
                                 await session.execute(stmt.on_conflict_do_nothing())
                             stats["snapshots_created"] += len(batch_values)
+
+                            first_price = batch_values[0]["probability"]
+                            if 0 < first_price < 1:
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET opening_probability = :price,
+                                            opening_source = 'clob_history'
+                                        WHERE id = :oid
+                                          AND opening_probability IS NULL
+                                    """),
+                                    {"price": first_price, "oid": outcome["outcome_id"]},
+                                )
 
                         stats["outcomes_processed"] += 1
                         await asyncio.sleep(0.1)
