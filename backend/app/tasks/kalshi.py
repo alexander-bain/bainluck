@@ -935,7 +935,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     series_resolved = 0
                     series_snapshots = 0
 
-                    for page_num in range(50):
+                    for page_num in range(15):
                         for _retry in range(3):
                             try:
                                 events, cursor = await service.get_events(
@@ -1132,7 +1132,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         if not cursor:
                             break
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(2.0)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
