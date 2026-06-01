@@ -1,0 +1,243 @@
+# Manus Health Audit — 2026-06-01
+
+**Modules run:** 10
+**Completed:** 8
+**Failed/Timeout:** 2
+- feed: timeout
+- league_page: timeout
+
+---
+
+## Event Detail Deep Audit
+
+Starting the Event Detail Deep Audit for bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive audit of each event detail page.
+
+The site appears to have intermittent loading issues on some pages. I'll proceed with the events I can access and try alternative approaches to find the remaining event IDs. Let me continue auditing the events I have and try to access the upcoming events through direct URL patterns.
+
+I have completed the audit of the event detail pages on bainluck.com based on your checklist.
+
+**Important Note**: During the audit, the site's backend API (`api.bainluck.com`) experienced a critical outage, returning HTTP 503 (Service Unavailable) errors. This prevented me from auditing the final two upcoming events and completing the mobile viewport testing. However, I was able to fully audit 4 events (2 LIVE, 2 FINAL) across 3 sports before the outage occurred.
+
+I have compiled a comprehensive report detailing the findings, including the critical issue with the hero section showing pre-game odds for completed games. The health score has been significantly impacted by the API outage and the resulting critical failures.
+
+Please review the attached Markdown report and the accompanying screenshots, which include documentation of the API outage.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJGMVpHbDBYM0psY0c5eWRBLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=QZ8FDq6jNRTD2oVHyWHKO3C6rc-TwCQbUgjVlIhxcJ3rBFYtB0ZSE4ql8CEVr-Ygm82MPBis5T~~-wUDBVfbspwHgenIZ3rOGmhgdkCWg4SCWvxMdk-uRRW8t-uDtYKnkLy5X3lxgyeXOiBYWbNlHqe7x~Gmxj0esaX6ngQQGIEPipkSoqDpRfrBvS2lJmFcLtCAzpeVPFdl1HIAXZIa8ZO~cusTVw4Si2AAu8UMVx7EZEykzfSJiL63PWBiOdi7qfIcvpziCBXJ3uk5Jwv15uK1HAdA6kLBicaxQ3MHaOFenHSIjSoZcCpSUQu8MDzTnt59vScu845RM-1d5qtKIg__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2FwaV9vdXRhZ2VfZXJyb3I.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJGd2FWOXZkWFJoWjJWZlpYSnliM0kud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=RjJEvR7wNzDTRe8VM6tx82bHvXoquESY1gky1TyVtkxOxBqPcvo2qyINYydCasy5VJXxJ11rqKqCP~xGmRROM38GzCsKKR96ksXZRKjZlDX0XRkBAr2sOmPEBDSHaJyJvJEbcHXIq~ORnXHlrlNs1dU94vCfY6-Tcp2tvqQhFxhGTlLNvR3vW9NHH0CKb297089q5t0pSxV5GvgmeJKMRbt0MEX~SpcQOJ-5rAoDealdRLUepp-6c-Pxj2O3qYTSDXbsqq6tB13HvkbBXbPZszlzpjVSDriZiJz5tIIl70d3J11k8-T0fsLhpISYix~Rg9XEOvGASc7GeWUT75KTDw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2FwaV9vdXRhZ2VfdGltZW91dA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJGd2FWOXZkWFJoWjJWZmRHbHRaVzkxZEEud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Jtuxn9-dtFB77IRaFJqli4uaQEfnyxL2YMlAqTFLoTVzD5MTOcgfE7QCC7I4t1Lc7YwLUsDCu2~~LcBV~5LNc1BhptkRZxK8MH8-VoGiKEOo81Kaet9LvQ73ZInDTH1J4zeimOF8Huqw4dCx3S0Idb1JSe9zqXSO0w~F1JrKCf6g1JF6A4tDZ8BvGhsgXqVK0zZ7Jvpk09ZhIGnK-4YcVZ3E1Ae7Ls73QAPsWHcmyys7gnDzncD6KUwi27tS9zJ7j6Dgvhf9LN7MtuDorZUS94ztbKC04HOy2n~gceM312WNf~ouAf7hQNrm5lZPPGeYwICfbwjpfYdcsV5a--dIWA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50MV9hcnNlbmFsX2J1cm5sZXlfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNVjloY25ObGJtRnNYMkoxY201c1pYbGZaR1Z6YTNSdmNBLndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Kr5kYa5fqtHNOawFXz8DPDwgja0CosuLbVHoT-8NiSmG3QFW7wbyTM5NmjtT1aeG4wc6mykvx8Udul53q53pRPwLPbRMmi4lTCJX31dE1d87V0pFN6ugfeiNy6KUX7ZCMxx0ebP9E4D3PNlLFg9t2j6oblfyrGfCpoR6jo1i5-ATFy70ddnTDQu4pGt5xAkdCFNHtU8v5ghEkHYovp9~T81IG0iKjdAjZhjmpyW8lQs4kZ2xUUiVgvYW93KYjh4lVp~vfFoQVxsG4KoQ9~ZsyEFNdU5C1Evk9Hwc-8NDVdXVGJWohzaRqsJ0gFTqfSqVpsMbyMJzp2gWxSZyTWzhrA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50Ml9mc3Vfc3Rqb2huc19kZXNrdG9w.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNbDltYzNWZmMzUnFiMmh1YzE5a1pYTnJkRzl3LndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Xl9XoFu24S53AMbXCFhQB3fvyhjYjMw~gbn0FP~cl2RaIVSL5B3mWFFlTCtKTj9PqjLCrie2PYn5gKNK6E4o7NzJvZChdGuSJuKReZX2UBQ2WgaKC0TbtCQjmxy7B~XA4Lx1CYR709px4vtQXnXgQN-j8AxyOtZ99j3tU1Jh5giCGFICir7rHxfnpXQ9ssqIOfn2AdlJ0hpo8UQJIUwbFLERYV-NDUBYap~WFUuHMYYJvoOP06pjXbwZrLNy7RuutMlzhFdu-CS9OKPgS3oMaYKxR-fcfD5YNExStoItAT3S8G~VLyey-sG3ocXecTUrcHsysVGSYQcWW4cOw~tTAw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50Ml9mc3Vfc3Rqb2huc19zY3JvbGw.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNbDltYzNWZmMzUnFiMmh1YzE5elkzSnZiR3cud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=ppIZ5UKEmYBYr2iSyuOE43f2J2oDT886z3Zu3rSR-yAnsXzsuUuAqftEHkFI0OXAmtGnw04DkE-jcIx-WTQEo59KDKyeYeuG82GHydKWeouPpTbrbDqXOOeAnYmETlYqSDLkmQdLP24Y7Cmd3mh3JT0g66tAXN07Zaba5rnJegUQ9GycRRYaqocJsN15NzWfnvKMKm92qbE2qZazYhkts5vH~hxhPUv0~7TiePVxqOlEhj1eHEdLOtJdBRmRGP5Y3~E0CpRSpCgRklx3YXpNst1OWHitImhwb7QleZrviAXixS5austNBYbBW-jHb7Ublxrg7mvcBOKTQVSUTVE4KA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50M19rYWxpbnNrYXlhX3BvdGFwb3ZhX2Rlc2t0b3A.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNMTlyWVd4cGJuTnJZWGxoWDNCdmRHRndiM1poWDJSbGMydDBiM0Eud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=irxTEt6ylfDVuQWZvtzmzMiNBsaKj553RXNY4nIYdGDWex1EGhg~MKNKpVGTksM1OueItIBcczf~uwgHGJAgo9VJIITN0oWNNP1rdEXl06-Ha5dpS1jrqdCqPATPQsv~8PL0jEpUvtESz9IleWFT-Z7sUj4W2zqWtDD7FzSb~5Jjo6vCnMqYlyXbvJVDv4kDYSF9EF-oJ6mM5xgweLkVkYL1tsRObjdFHJDjt2d8UfNjq242XF-KjLfP4OV4GdHo99QJCzx3rYnoh~s0PuitiKpd7ubGp-VkMRWxD6CdMPW2yRglyzBVNxI5laRGH5jULPlPSpx23p-FiFEQ5OcxGQ__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50NF91Y2xhX3N0bWFyeXNfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBORjkxWTJ4aFgzTjBiV0Z5ZVhOZlpHVnphM1J2Y0Eud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=K1wgn8CvB5hseBmu-m43MvvT~IDLfOZolVdEPwok~pyNTSkU90lJH1Kx-wvUuFipBeJFQgZaEmjB1FOdJgVKHK0UcwA8uFldi62CyeEVDg57DiYziyLc6Vok6UStf8xSe6heZz6WdKLOvB4IxfzeWSuJPbGnLZWnlKFvE6ZmxIpmN~6nAA5wmUkwmao1JqIPV-giQroUueJp7lrbiYyjblFOgN2Y~Y7NGjv~IYs8CY~ExtSgT7YPl9CBrESYseRdzrdVQoq2EvRUJT9oaDtOucJobPpa3p8ENzHjDxL1mw-ExUAWbxIARMux6BgVLGE-jv4OF3jUFQdBe8-HlNoUcw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ShKAFjj93CD6sjdc9fHick/sandbox/DQgIg7BgOCSNy1oe7J1OMX_1780342447158_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL3Nwb3J0c19mZWVkX2Z1bGw.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvU2hLQUZqajkzQ0Q2c2pkYzlmSGljay9zYW5kYm94L0RRZ0lnN0JnT0NTTnkxb2U3SjFPTVhfMTc4MDM0MjQ0NzE1OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDNOd2IzSjBjMTltWldWa1gyWjFiR3cud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=DekrEJBkd2bTQBqctzSzLodZDNbdeDOIN0XrQPNjtAGaTmuWvaxvazO9XbsYqYds1ACy5QG2MpX0AKl0vMl~NJ91KeITV2VLHLkzFPq0ATCF4ECbBW41057cQc9cuc495JZFKzJ~fUJs4wpyrBbxp6v9jYlBBHTRR5nJMR-5F2opXCdXOX3daxg7IVbAqHhBWWoz~UXO8BZh0tPFw~4yvxLHQ0e9cEvsV-W3FwBa2koOoxt2z1fn254EQP1bNMvTkB335q2KcvTnYVopQNulcE6Hy0RGEDhzbcuHXltuyjJEXgL1AG0zgIC1ANJBIHOA1S-oAin6PVZQXOu7C4Sf~A__
+
+---
+
+## Event Matching Ground Truth Sweep
+
+Starting the Event Matching Ground Truth Sweep. I'll systematically capture today's sports events from Kalshi, Polymarket, and bainluck.com. Beginning with Kalshi's sports section now.
+
+I've identified 9 MLB games on Kalshi for today (Jun 1). Now checking Hockey and Basketball sections. The NBA Finals (Game 1: New York at San Antonio) is also listed. Let me continue gathering data.
+
+Layer 1 sweep complete. Today (June 1) has 9 MLB games on both Kalshi and Polymarket, but NO NBA or NHL games today (NBA Finals Game 1 is June 3, Stanley Cup Finals Game 1 is June 2/3). 
+
+Since there are no NBA or NHL games today, I'll select 3 MLB games for the deep audit:
+1. Detroit Tigers vs Tampa Bay Rays (highest volume)
+2. Kansas City Royals vs Cincinnati Reds (highest volume)
+3. Texas Rangers vs St. Louis Cardinals
+
+Now proceeding with the deep audit on Kalshi for these 3 games.
+
+Here is the completed Event Matching Ground Truth Sweep for June 1, 2026. 
+
+**Summary of findings:**
+
+**Layer 1 (Games Today):**
+- **9 MLB games** found on both Kalshi and Polymarket (perfectly matched)
+- **0 NBA games** today — NBA Finals Game 1 (Knicks vs Spurs) starts June 3
+- **0 NHL games** today — Stanley Cup Finals Game 1 (Golden Knights vs Hurricanes) starts June 2/3
+
+**Layer 4 (Deep Audit - 3 Games):**
+- Detroit Tigers @ Tampa Bay Rays (6:40 PM ET)
+- Kansas City Royals @ Cincinnati Reds (7:10 PM ET)  
+- Texas Rangers @ St. Louis Cardinals (7:45 PM ET)
+
+Each Kalshi game shows **43 total markets** with sections: Moneyline, Spread, Total, Team Totals, Game Lines (Spread/Point Total/YRFI-NRFI/First 5 Innings), Player Props, and Events.
+
+Each Polymarket game shows **16 binary markets** covering: Moneyline, Spreads (7 lines), Totals (7 lines), and First Inning Run.
+
+**Layer 3 (bainluck.com):**
+- **Site was DOWN** during the entire capture window — all API requests returned "Failed to fetch" errors. The bainluck.com Layer 3 audit could not be completed. The JSON documents this with null values.
+
+The JSON output is valid and attached below.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/oR5LJvkMXEiSfmU7Nrg7qh/sandbox/dIQFIK0eMqctW3VVn14C9W_1780342332137_na1fn_L2hvbWUvdWJ1bnR1L2dyb3VuZF90cnV0aF9zd2VlcA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvb1I1TEp2a01YRWlTZm1VN05yZzdxaC9zYW5kYm94L2RJUUZJSzBlTXFjdFczVlZuMTRDOVdfMTc4MDM0MjMzMjEzN19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJkeWIzVnVaRjkwY25WMGFGOXpkMlZsY0EuanNvbiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=i9vHKMPi1MhONIEk~YqRy4Crh0m6tW8H-nyRQxnC3DUNgDq5qpfbWZW1sTpndOcArrj2okbEz238Zx9JIVPMSZPd46xpjWvegeEZNYwwSb06QVh~Ixg6QYWJIUCPvH2VXXafI3JSbWOKGHTZ-V0w5WV8lLIq8P1wSEZODpSLhdnShjcI5wnnSqltf6CMpVBMYjTJesFt8ZCmuWaBmKgXGsdI2wT5z84ynY9tVhyAd2lvz3WSxRC8KP5-dU28fbXdUO5TbAgTqwTxHRDrQQvwDSOc7ALb2i8mFkkJIehF0Ahlvwsjfe5kTmPEpTw7aqAV8W6dFhl9PVCuWTpusgOuWg__
+
+---
+
+## Market Accuracy & Monotonicity Audit
+
+Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to select 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
+
+I can see that this NHL event page (Carolina Hurricanes vs Montreal Canadiens) only shows Win Probability and Score Differential sections — it doesn't appear to have "Projected Scoring", "Spread", or "Period Markets" sections. Let me search for NBA Finals game events which are more likely to have these detailed market sections, since those are the ones that would have Kalshi-sourced data.
+
+I've found the NBA Finals Game 1 event page with full market data. The page structure is different from what the audit instructions describe — it doesn't have separate "Projected Scoring", "Spread", and "Period Markets" sections. Instead, it has an "Additional Markets" section with all outcomes mixed together in a flat list sorted by probability. I can see clear monotonicity violations in the O/U totals. Now let me find the other events and check Kalshi for cross-referencing.
+
+I've completed the audit. Note that the bainluck.com backend API (`api.bainluck.com`) experienced a complete outage (Heroku Application Error) during the process, which prevented me from loading additional events. However, I successfully captured and analyzed full data for the **NBA Finals Game 1 (Knicks vs Spurs)** before the outage.
+
+Here are the key findings from the audit:
+
+1. **Monotonicity Violations**: Found **5 severe monotonicity violations** in the Full Game O/U totals (e.g., probability jumping from 52% at 201.5 to 86% at 202.5). There is also a violation in the 1H totals (111.5 at 45% vs 112.5 at 49%).
+2. **Structural Issues**: The event page did not have separate "Projected Scoring", "Spread", or "Period Markets" sections. Instead, all outcomes (totals, spreads, player props, 1H markets) were mixed together in a single "Additional Markets" list.
+3. **Cross-Game Contamination**: No contamination found. Kalshi correctly maintains separate event tickers for Games 1 through 4 of the series.
+4. **Kalshi Cross-Reference**: Bainluck's thresholds do not match Kalshi's. Kalshi uses 3-point increments (e.g., 202.5, 205.5) with 11 thresholds, while bainluck uses 1-point increments with 25 thresholds, indicating bainluck is sourcing from sportsbooks rather than just Kalshi.
+
+The detailed JSON report is attached.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/Y63r4Fbi4qXHgiZdBdYFQo/sandbox/WcQueNoAqI4m8vMy8oNkyW_1780342601290_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2F1ZGl0X3JlcG9ydA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvWTYzcjRGYmk0cVhIZ2laZEJkWUZRby9zYW5kYm94L1djUXVlTm9BcUk0bTh2TXk4b05reVdfMTc4MDM0MjYwMTI5MF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJGMVpHbDBYM0psY0c5eWRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=pmZyc2XbvggWxRyBby6OI3w70NDesD1zyM7Fnof0jfXqeaQo9sGS2JRHcur8jHd-65BfVAw7yXkysTwnVTuRE-ea5fUAJ-Cjb00rvFEBW2GdDib3RRDa2sZ9fas4GWSEJbX37SvB7Qaner5TAok8ErkiHtLL8ihxLwZtY8VXKXKXBxZGYNdc4O4hMcVmJHr4LEXS8IE8otI3BEHWSmqH8K8YCNKzWlA4hon4vk1z1tTwVZhK3om3RjEQYcabJ22ziu13q1yL5ZQ10rMWhitjQImc5~U~tMPBOtTTv29HRD5kE1gB10gWpDBX7hfUaoZ~BgmG~NVq-M4nBy-Du7srZQ__
+
+---
+
+## Category Page Audit (Politics, Entertainment, Economics, Weather)
+
+Starting the comprehensive Category Page Audit for bainluck.com. I'll systematically evaluate all four category pages (Politics, Entertainment, Economics, Weather) across all dimensions: data freshness, cross-source matching, classification accuracy, data quality, visual design, and upstream coverage. This will involve visiting multiple sites and taking screenshots.
+
+Completed initial audit of the Politics page. Now moving to the Entertainment page. I've documented key findings including stale markets, classification issues, and cross-source matching data.
+
+I have completed the comprehensive audit of the bainluck.com category pages (Politics, Entertainment, Economics, and Weather). I've evaluated data freshness, cross-source matching, classification accuracy, data quality, visual design, and upstream coverage. 
+
+The full findings, including health scores and actionable improvements, are detailed in the attached markdown report. I also ran mobile responsive checks and discovered a critical crash on the Weather page at mobile widths, as well as an intermittent rendering issue across all pages. Please review the attached report for the complete analysis.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/aUUqKyJyfZ5Zjoucn8sbiS/sandbox/O0xv6DROkK0u0AEJSgvUdb_1780342187866_na1fn_L2hvbWUvdWJ1bnR1L2NhdGVnb3J5X3BhZ2VfYXVkaXRfcmVwb3J0.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvYVVVcUt5SnlmWjVaam91Y244c2JpUy9zYW5kYm94L08weHY2RFJPa0swdTBBRUpTZ3ZVZGJfMTc4MDM0MjE4Nzg2Nl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJOaGRHVm5iM0o1WDNCaFoyVmZZWFZrYVhSZmNtVndiM0owLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=TP4I9I0Q6oiczPu44sc3pdXIl4Q6D1YQMmijZl8VXp7CO7q7BLMcA3VhlDmRJbkSr1cYiiWnqRICFFGKa7cBlA-geN9PeoIlci8u~5J0j6VuHMFwYswUh4QmOFPf-xoQpweNMm8U3GmHsOreEeZOGQuceNmOZiqNMksnrmcFkEg3gewoMpsW5GK3gaPoGTZptVX3wjLOGuiQD8AVtxHLgxP1uJeDNNWBEjHmebSoMYBsH78gXE2NpbFIALldQqXqkxMJg2hxkx-B-YI7WaALmMfBLjtUUlXy6DltRPHvEnB7BrdeK8CYnQBP7AVQWyke6rSgttqgJCk-jCW2oKpK-Q__
+
+---
+
+## Market Completeness Audit
+
+Starting the Market Completeness Audit. I'll inventory sports markets on Kalshi and Polymarket, cross-reference against bainluck.com, and produce a comprehensive gap analysis report.
+
+Completed inventory of Kalshi and Polymarket sports markets. Now moving to Phase 3: Cross-referencing against bainluck.com to identify what's being displayed vs. what's missing.
+
+I have completed the Market Completeness Audit. 
+
+I've inventoried the available sports markets on Kalshi and Polymarket, cross-referenced them against the intended structure of bainluck.com, and identified several critical gaps in coverage. 
+
+*Note: During the audit, the Bain Luck API was experiencing a service outage (503 errors), preventing live data from loading on the frontend. The coverage analysis was performed based on the site's navigation structure, code architecture, and historical cached versions to determine what the site intends to display.*
+
+The detailed audit report has been attached for your review. It outlines the total markets available, coverage on Bain Luck, critical gaps (such as missing UFC, Tennis, and World Cup markets), and new opportunities for market types we don't currently support.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/E7HdwLUiZ8ibMnkLGVXPsb/sandbox/DtrEg3ZoBCqubIpfzpAT3o_1780342456067_na1fn_L2hvbWUvdWJ1bnR1L01hcmtldF9Db21wbGV0ZW5lc3NfQXVkaXRfUmVwb3J0.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRTdIZHdMVWlaOGliTW5rTEdWWFBzYi9zYW5kYm94L0R0ckVnM1pvQkNxdWJJcGZ6cEFUM29fMTc4MDM0MjQ1NjA2N19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDAxaGNtdGxkRjlEYjIxd2JHVjBaVzVsYzNOZlFYVmthWFJmVW1Wd2IzSjAubWQiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=NR2k3g6s4q2sDhTUe3A7gvYrcIdbywYOsOZhN7rI159AOiqJq5xrqQxzHo6e2I-K1BUnugQ5M5Jzka4-at0L0gWxZ~oa5O68vBUkvdblYrcI6VuXFMYCa6Qjp2my4iadgbGqCKx~1cQSpLet3~JN9IxseKSzt2vmruSRL40DVuKlLVz498gLs~ggy~rDo6EJYLM3JDafMQgoKE93vvxb0MUE1~1ZFYrcTIFsANoW2xqo0ChFDEBeM20viFEUVG8btA9nGgkeQ9GrvA6eSBXbWmTeAGDxsE6vRE2VQh0jnNiOf22hWT8TjlycDlqNQ6Ev1Js6muxtlfoHMWb6svpxDA__
+
+---
+
+## Chart Timing & Boundary Audit
+
+Starting the Chart Timing & Boundary Audit for bainluck.com. I'll browse the site to select 8 completed events across multiple sports, research real game times, audit each event's charts, take screenshots, and produce a comprehensive report.
+
+I can see the sports page has many completed events. I notice there are no NBA or NHL completed games visible in the recent results (NBA Finals and NHL Stanley Cup are likely in progress). I'll work with what's available: MLB, NCAA Baseball, Soccer, Tennis, and other sports. Let me now click on specific completed events to get their event IDs and start auditing them.
+
+I'm experiencing intermittent loading issues with some event pages on bainluck.com. Some events load successfully while others time out. I've successfully loaded 5 events so far. Let me try a few more with retries to get to 8 total.
+
+I have completed the Chart Timing & Boundary Audit for bainluck.com. Due to intermittent loading issues on the site, I was able to fully audit 5 completed events across multiple sports (Tennis, Soccer, NCAA Baseball, and 2 MLB games). 
+
+I have compiled the findings into a comprehensive report, which is attached along with the screenshots for each audited event. The report details the timing health score, per-event results, cross-sport comparisons, key findings, and prioritized suggested fixes.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/processed/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2NoYXJ0X3RpbWluZ19hdWRpdF9yZXBvcnQ.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3Byb2Nlc3NlZC9xbFpYaHl3Qjh0dUNWRDNONGFnWnVyXzE3ODAzNDIzNTU0MzhfbmExZm5fTDJodmJXVXZkV0oxYm5SMUwyTm9ZWEowWDNScGJXbHVaMTloZFdScGRGOXlaWEJ2Y25RLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Bo-keNJ-yCLyEAnh~zRfguMi5A8q98Hx36ZVxXfCLu~2YStTKM2BMja0nwLSdYagiXOMoGjSrpePHy2h8jsfC2qNLEk5ggqOx1Jgyi9FHLMOK-C9iv7HGtYolCawePqMUsfEp9eiEClUJBbTycIGffXH3AD46XKq~8NogSOG3SU58AJVyTJ1~QsOIEq~P9ybO5o11Ndu7qHB3qlBgsgXJK8LrLxLeynClUUtvXB7u7vdG4n5pWxQK3r9~Tqx-SrMhu3o~FAwgW7KOIuXlWriSIxT9-B0eb5UYitKIzf0BkIz8gHki1m5t8Q6zxYNs1kqQVrKMnGhPhJjSkPJF-MQFw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50MV9rYWxpbnNrYXlhX3BvdGFwb3Zh.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3FsWlhoeXdCOHR1Q1ZEM040YWdadXJfMTc4MDM0MjM1NTQzOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNVjlyWVd4cGJuTnJZWGxoWDNCdmRHRndiM1poLndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=VgXqk~~5zC-lZBbBEEWhxxQcxIn3wfH9rN6oaZNWhb~4MB29~jjG4NoMjHV4XgKIWszQnCI3K5X0jFnQ1TQIRBxAKa8JTRllo-S7vFZkSOcN5VgCk5ZtOtXg4tVeqxyWIeK82A3n2~TqZM-B4xQ3L7ce1Y6Z1v4LZwkg3GFR8S2N-OoLTE~nuAjU303kDkTcIJQz1z9eaHwPPLW~nYfxKFVJw8rbRY~AEN~P7Kvcj-Tspb9-BnCmkGEHl2b5BWTDPFXiV1wIM04i5qjQluqmm7K5~XKthp66Wo1O0dUUeZpCbOxfOm-rm8uQVJbLCTIhVYi0Ta2SIuAaKvBbqSN-aA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50Ml9ldmVydG9uX29oaWdnaW5z.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3FsWlhoeXdCOHR1Q1ZEM040YWdadXJfMTc4MDM0MjM1NTQzOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNbDlsZG1WeWRHOXVYMjlvYVdkbmFXNXoud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=ELhcDcmr6gKAG1jrcFP6hkxhZsYIf-WPJNZhC5cG48jcJV6PbYOZgE2xlmwcM0wmHANmwi8BbL1Ss8Um6G59vfbDE5Yee-e0r9Eqq0xKlIvjvmfHQo5DuIL4qS9cQmF45HOY42m4Ya8qqIR0iHwghCnD9CXfs-qVpyG~IlNJ9uRFfcHYY7kcs7tFyjRvl~dl7NQzLEPkxarI2SYY~r~0LH7ZmQFX~LQfkOB15lMyggOHERADFtl1iFhjRP0cyw3X9qu-eWIMJCDybSMFg~R~h5i-PLTcsQIaoNvYAJ-ej6t2d~1jBaF3IEtKCFqZj2SJBbg1~J~mIwav7sv41qmAIw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50M191Y2xhX3NhaW50bWFyeXM.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3FsWlhoeXdCOHR1Q1ZEM040YWdadXJfMTc4MDM0MjM1NTQzOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBNMTkxWTJ4aFgzTmhhVzUwYldGeWVYTS53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=kR171CbTrb-2d64jbxhalc3lWV25GhV0PizG0MBEOK3zjqI53v~Z1eItrU-kxADAWUjlD~PtHvYH52iLdZ8BHErC7DGV6qlfoKQyVTp-fmasDMIkjFeGMjenZ-mq9CJ4Ngo-9FBVn2v06Z29zmdHecTz3FBjwNp5vri2BSiXmw6DzfL3q8uGC-TeWLhEDeqadcrfRPKHJ-ZPpZPoRZNhbCN~hnawH6wPSgWpsynI5PiIqNAsr1UBwjaZvtX4MEjY-Yaoj~EW5lG9cowz5-rqowgtf7olRtFYIgf46PljBPBuxThky8MPwmHjN37RwubFQeHq8b1PqjvO4ApsBQxIRw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50NF9jdWJzX2NhcmRpbmFscw.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3FsWlhoeXdCOHR1Q1ZEM040YWdadXJfMTc4MDM0MjM1NTQzOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBORjlqZFdKelgyTmhjbVJwYm1Gc2N3LndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=eKmmKtr9mtq4vlzW76MUntKZ~l163zbZ5-idaFTm7zvcSxH0ilX4csUBgy2gXZ3k03Zm35-TqUABCrflIyb-xdUxL3hjhpL9M0rW24ZK35Ul2ZW6ZHOVSTdS75f7KEs8fdmlZw7ZJVw4O8rtROx8HuaBCfm6W4BQBDXqAKT7uqO98Gp6AcvbXQ0jf83lAz4~CIn4Fcy1tUCs16ZDEhKEfkgrEZBPg~ZbUakWtjGYimoDa7ZeD6VyOdNcd2ewhmwsSlni4aYiS8tPDC~gNDZySQrGm169B8tc~SnRf8Vl1JXksS1LwvPQ0lMo~tsXfkLGE2MKyrAYup-NmNlnWGvWYg__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne4yHRRaQot3bN63WoMjgZ/sandbox/qlZXhywB8tuCVD3N4agZur_1780342355438_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2V2ZW50NV95YW5rZWVzX2F0aGxldGljcw.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmU0eUhSUmFRb3QzYk42M1dvTWpnWi9zYW5kYm94L3FsWlhoeXdCOHR1Q1ZEM040YWdadXJfMTc4MDM0MjM1NTQzOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWMlpXNTBOVjk1WVc1clpXVnpYMkYwYUd4bGRHbGpjdy53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=FW0J9jDwUBcJuUbMH8IifxdEo0wg1A1TMUV3b2LMn2SRyAs4Im1NwjQAHfbjB8fmQXGzcSkRUI8sfTV3OZFDdi7zSmhQcEPPw5SNzCn7wjBAJDazBTm1ppUhTAGMmsBcwYywiaHSgXxRe2zlekINAcYs2rpDHbqWuULvlv7sxp~72ZQlFZuOSJg6NFWCVpSXUmfGppTX10Q-g2G~oWwbSODkCub1cs2hF6lZPq2xZxo0vpOFUN2Plplz3ZtBL3qEuvVKgvrfwnlaJLv-Xn~yU8AJj3-A4RTnGYG7hXXwFxPfexJ8MC-62ZY8claYOxVn3b1H30585NqDU6oU~AQwZw__
+
+---
+
+## Championship Grid Deep Audit
+
+Starting the Championship Grid Deep Audit for bainluck.com. I'll systematically audit each playoff grid (NBA, NHL, MLB, Golf) checking structure, team identity, probability quality, source verification, interactivity, and mobile rendering.
+
+I have completed the deep audit of the championship grids on bainluck.com. The audit covers the NBA, NHL, MLB, and Golf grids, verifying structure, probabilities, data sources, interactivity, and mobile responsiveness.
+
+Key findings:
+- The **MLB grid** is highly accurate and functions perfectly, matching Polymarket/Kalshi data within 1-2%.
+- The **NHL grid** also accurately reflects current Stanley Cup odds.
+- The **NBA grid** has a critical data discrepancy, showing outdated overall championship odds (Spurs 91%) instead of current Finals matchup odds (Spurs ~65%).
+- The **Golf grid** is currently broken and fails to load data.
+- **Mobile responsiveness** is well-implemented with horizontal scrolling, but team rows are not clickable across any of the grids.
+
+Please review the attached comprehensive report for full details, column sum analysis, monotonicity checks, and suggested improvements.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/4zN4vUh5nSBqAQUiYJCN75/sandbox/VlGIqPGGQDZ0FxFGypagU0_1780342079488_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvNHpONHZVaDVuU0JxQVFVaVlKQ043NS9zYW5kYm94L1ZsR0lxUEdHUURaMEZ4Rkd5cGFnVTBfMTc4MDM0MjA3OTQ4OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM0psY0c5eWRBLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=YjoNFvzBHMawS~aDiKtR1fF35bt6rpzfSG11dhyAATbRD1xfF2Oh2yUwrW4YUU9g5ue2E1Cn1uTAVcf0N2NcuaUA2GUDK3TC7yoqOvVpU952mvmyDlu7ByngJgqYtQUWBcBdUC00tgGm8G21qmaI8TPlqw1e8mNuNwXtEEaQB6ks-tJ99XhxPsxPQD4P2RyW18CJ8whD-EW5Z~sqZzzIKz~bPUTJclD1HD8j7Z-I1~1AUTv35ZCmZv5Khw2yecxh0KzL0wAwa9xF4l1I98cmYFujlJHZlo6d07cJIr18pP5zzL5C4whZjk-i2SDPE8yq91KS5xfQrfyc3QYnfgEYmQ__
+
+---
+
+## Visual Design Review
+
+Starting the visual design review of bainluck.com. I'll capture screenshots of all key pages at both desktop (1440px) and mobile (375px) viewports, evaluate each page across multiple design dimensions, compare against competitors, and compile a comprehensive report.
+
+Progress update: I've captured desktop screenshots of the Home feed, Championship Grid (/playoffs/nba), Weather page, and Economics page (skeleton loading state). I noted that several pages have loading/API issues (event detail pages, golf, economics stuck on skeleton screens). I have good screenshots of the pages that loaded successfully. Now capturing mobile viewport screenshots.
+
+I have completed the visual design review of bainluck.com. 
+
+I've evaluated the key pages across typography, color, layout, charts, information density, and overall polish. I've also compared the design against competitors like DataGolf. 
+
+The comprehensive report is attached as a Markdown file, along with the key screenshots captured during the review. Note that during the review, several pages (Economics, Golf, and some Event details) experienced loading or API issues, which I've documented as critical findings in the report.
+
+Please let me know if you need any further analysis!
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvVmlzdWFsX0Rlc2lnbl9SZXZpZXdfUmVwb3J0.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZWbWx6ZFdGc1gwUmxjMmxuYmw5U1pYWnBaWGRmVW1Wd2IzSjAubWQiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=m-tTQaF6sMafDS59PkPQ2oXq~3yI7IuH02EuRsfyuSnAgLgjnyGO~MNBkKVXz9sGHRgQNKgj78v3oqLUpxKm8D3JcsgdC7oTZPYHabUv~GiPhRAVqYoVJIJ42ODeT1bFwE7c0MnBKHiBh4fs7jxmPVct9HfZ7XmLbX9eOhJ9DTDttLxsnSZ~O8spbBLHvilNUAGiQkaOMAwpSsDqqPmybPrXGaHvwqw7KifBVSVXb2bj03REqCwb5zEacqcQdM-TQ~EJI4cld3s-IcQO8-hjH3egtkvEkmtYGYncwEYTLWMcpRceQzoF71lsVfAIElP4YefEApwYlwMFIVg~6y14zw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDFfaG9tZV9kZXNrdG9w.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURGZmFHOXRaVjlrWlhOcmRHOXcud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=DcNM74IGW0SKNHlrLMinTXmluXC7AoPX6xy3Y4Ukg6Yn-RQY6oYW4nC94tG~Am89sxKhD1Ff1GeIBMK7mg8Od-seZeWvCYIhzY-3IiQvj0nkbNb4fUtN0jonBQiDt8PUT3llslhrztd-ZvK~HrEE4jBeO-cbfbrdu~bKHk9Swou8TX-7YxkYoD9gr6jTQRHPEA6t5uQuL4c5m1Hu7NJurbMsGTW2T1-~q-QHIjIq4in3HnC0YxZAHkXaKTxlDLSXV5rhSO5zf~0v9XjLlrK9OUYUOrQfpD5H-6L0ncE5CoMVnnMSxzjabHHjl40jJI~2dSRinqH~5SJjD8GlBID34w__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDRfY2hhbXBpb25zaGlwX2dyaWRfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURSZlkyaGhiWEJwYjI1emFHbHdYMmR5YVdSZlpHVnphM1J2Y0Eud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=b1GbFHV-u5UspJRgrGeMUmx6yy4erLna2~hNaTqeOWlXFUnQn9JZk6NgU2jtHreClrdCBdJZ8mqm3y879ixeC7RRktVKhz0E-mfunl0S0XFzXsVTbOiGe3fwD1mRvea6Z3F1rvz-lmTj46urpGNCMgeVhMpnule9E1taWzfFwqUG7BA299mk4JydDTeedqE9CvzumPDWsRkiq2Kbs6I8GnUgMkgPUnlyLhZxLjB9b-KeN~Y9bJOmEW1KrodDVlHT2XUXe55inn3bN5uKCbowLTCr5nqwmSYfsOTEQ0vVtj1EcPLSBhCnS4mUIY3WOYwQcNtMxKxtiigLuIAAvT-eBw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDZfd2VhdGhlcl9kZXNrdG9w.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURaZmQyVmhkR2hsY2w5a1pYTnJkRzl3LndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=XnomgEacFubnHDfPtuwiJcVvkUBLeAPxpvGPWB6-G2nT1IHE7ArfvNQi0~b4u9SsdjLIG95rLZuW-KXZfDUT09NfNH7dBI-ErlqY8I4JaoUZEsu1HM2TTaYu0exmDsa~~-9jwW49iDkovcDyLlnR0l4AGPAHRAO5gZmHCqDHZhpSLuUZc4xosNP-bLw-Cl5vJ9EQhWOEVwK3OZTA2nxx3jNP1ZgNBPiZO3U~xdkmJe3c2oo4El6n56iio~cHQsBamue~G~5lynWEi76T-qE6T8TO26~P1HKE-qETSO-RAXl~yCM-4VtPA~2UL9VS0VtJACm~GbqpZ09r2nyerROBlg__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDJfZXZlbnRfdXBjb21pbmdfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURKZlpYWmxiblJmZFhCamIyMXBibWRmWkdWemEzUnZjQS53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=HLbYAviWZXJG5M0KpbhvJ7qLTmOgdBB~x-kGTp8Oq70tPnDxZyLbIVYHbFJmwlWrMzIKcnWC74zvEFDAIW1SFXKOUQXsw3M7hUhshKnyynGWHpLAcxTfSfYaNXkxXF7Qhj7R0d~uA~2f~acRao28YxszOQdJAOMM2NQRwxY9TdmcPbtmIARc~ynAVed~klev1XoVv4snS2Bow7jAOjKKEhRNchxxCnHe1A-qdgqtvRs-x4ClTMEO1d5MhTjeLqvKGuCtanMlgWQpkFIO7mI7v--3uoEeSMGc3~m~Z5SoVM4-KNLjGJ0docsJ5fWQOwuFh7QlzrYKqqX~OKVPsf0y~w__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDFfaG9tZV9tb2JpbGU.png?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURGZmFHOXRaVjl0YjJKcGJHVS5wbmciLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=qwd2rxcRpzgVuyT7zOKYSTAiz-Uu5aHLjoGlA~hWvenP5cA0cIid7QshmEAjP0vF3HD8wVFhFZ8wOl5gKaxC9kHaOD2tmOpyzBa~xkigBeCT2kRzfbavMqQ8C0183631krH5d0XqcQ2RDUpbXcOofUlhJhX7ziuqMPxxgHKE3c8uJKwAVWyWYpGC~9mbd4PyLk3kgWQIduGDf9zMVihKZyQdSr5sP25hCsP9zavXFwetw4GdMGD1K~k4sqjYMuOQ5INPSYwwp5tlh2CxaLLJLFn2yRuYmxLzCEZsDMhBMAFQlUBi6oJSSUkW0QF12eSReYlLPdJpFN9IdVjsT0w-Jw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvMDRfY2hhbXBpb25zaGlwX2dyaWRfbW9iaWxl.png?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12TURSZlkyaGhiWEJwYjI1emFHbHdYMmR5YVdSZmJXOWlhV3hsLnBuZyIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=c-7qV7HSDgJ92HO0dO58EgGuzQh4Ua2PRTtC3p-KEvQw7TqtdnT~nOhkZNQK36RiiK~gwQJU1lwOBlyz3JjpLjIo-wQ8uL8T4OTmCGB2zSfdwxVcy0-BS0roEt7PgBWEP8pFsLhYWdl-~SeyGJj9h4OKvimXdWLeHMKtSR5eck36I3hY8aDI5YYhY6mSpCPetFnTdCuyUhY1W-~I7loOassahd63PizX6h-1FErVa5WtMSuklCGrai1BP1VoTkosKsE8fv9XD7NswO1sbgQzZHmw872lTpV23f-hSmWWZNJogJdYY94gFnps3og4mZhqr-YXfI9TayK3og5R6PipNA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/U2YiN8E3APfbFU8GnVg2Da/sandbox/B8t2a8Zi40gkceuzvjszaG_1780342565819_na1fn_L2hvbWUvdWJ1bnR1L2Rlc2lnbl9yZXZpZXcvc2NyZWVuc2hvdHMvY29tcGV0aXRvcl9kYXRhZ29sZl9wcmVkaWN0aW9ucw.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVTJZaU44RTNBUGZiRlU4R25WZzJEYS9zYW5kYm94L0I4dDJhOFppNDBna2NldXp2anN6YUdfMTc4MDM0MjU2NTgxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJSbGMybG5ibDl5WlhacFpYY3ZjMk55WldWdWMyaHZkSE12WTI5dGNHVjBhWFJ2Y2w5a1lYUmhaMjlzWmw5d2NtVmthV04wYVc5dWN3LndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=MAMNDaRjhXdbhx-aXR38nIMPcaBHVz2GQe~d5pQ~ZIGImTQevm3baDMjWSHQHJLMfL-4usfYdgTGvEI~2HonF74ZdCMTUaVOe~Kh2UjJOxP1ySRj~K3ehxvTAm0IN5OK~YBi67nTL4ogermFTHU1-kKz8yWEU21g76LEqTcINTKi~lPJm~nIUUaoKGflxkn7C5wJ5sg-i4wA2fBUfI1eKkykcMDe0-dS6m6Q3ChgNffPVvokOu3X4ur2vT5nkzykpBVPPmL-yfAY5IYYdi4~xQSxtm4C0OdOcjvPKJhTKxoHaoSa1g7YoCvEioXlLQPGqzoepKBE3~iZMfBBA8zvNQ__
