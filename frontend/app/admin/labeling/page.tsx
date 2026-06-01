@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   usePageTracking,
   useScrollDepth,
@@ -11,147 +11,50 @@ import { getIdToken } from "@/lib/firebase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// --- Types ---
-
 interface LabelingOutcome {
-  id: number;
   name: string | null;
   probability: number | null;
-  movement: number | null;
-  rank: number | null;
 }
 
 interface LabelingCandidate {
   rank: number;
-  type: string;
-  item_type: string;
   id: number;
   market_id: number;
   stable_id: string;
   name: string;
   category: string;
-  archetype: string;
   source: string;
-  stratum: string;
-  selection_reason: string;
-  candidate_source: string;
   score: number;
+  item_type: string;
+  archetype: string;
+  quality_class: string;
   headline: string | null;
   reason: string | null;
   context: string | null;
   hook_description: string | null;
   image_url: string | null;
   group_id: string | null;
-  quality_class: string;
-  family_key: string | null;
   story_key: string | null;
-  ladder: boolean;
+  family_key: string | null;
   reasons: string[];
   top_outcomes: LabelingOutcome[];
   rendered_probability: number | null;
-  resolution_date: string | null;
-  created_at: string | null;
-  updated_at: string | null;
 }
 
-interface CandidatesResponse {
-  items: LabelingCandidate[];
-  total_available: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-  candidate_source: string;
-  strata: string[];
-  stratum_sample_counts: Record<string, number>;
-  reviewed_filter: {
-    enabled: boolean;
-    reviewer: string;
-    surface: string;
-    reviewed_key_count: number;
-    filtered_count: number;
-  };
+interface HistoryEntry {
+  name: string;
+  label: "good" | "bad" | "skip";
+  reason?: string;
 }
 
-interface SubmittedJudgment {
-  candidate: LabelingCandidate;
-  label: string;
-  reasonTags: string[];
-  notes: string;
-}
+const BAD_REASONS = ["boring", "duplicate", "stale", "bad image", "confusing", "niche"] as const;
 
-// --- Constants ---
-
-const VERDICTS = [
-  { key: "love",  label: "Love",  shortcut: "1", color: "bg-emerald-600 hover:bg-emerald-700 text-white" },
-  { key: "fine",  label: "Fine",  shortcut: "2", color: "bg-sky-600 hover:bg-sky-700 text-white" },
-  { key: "bad",   label: "Bad",   shortcut: "3", color: "bg-amber-600 hover:bg-amber-700 text-white" },
-  { key: "kill",  label: "Kill",  shortcut: "4", color: "bg-red-600 hover:bg-red-700 text-white" },
-  { key: "skip",  label: "Skip",  shortcut: "5", color: "bg-surface-elevated hover:bg-surface-border text-text-secondary" },
-] as const;
-
-const SECONDARY_TAGS = [
-  { key: "public_story",    label: "Public story" },
-  { key: "too_niche",       label: "Niche" },
-  { key: "boring",          label: "Boring" },
-  { key: "stale",           label: "Stale" },
-  { key: "duplicate",       label: "Duplicate" },
-  { key: "ladder",          label: "Ladder" },
-  { key: "bad_image",       label: "Bad image" },
-  { key: "generic_hook",    label: "Bad explanation" },
-  { key: "fun_or_weird",    label: "Fun/weird" },
-  { key: "surprising_probability", label: "Surprising" },
-  { key: "timely",          label: "Timely" },
-  { key: "high_stakes",     label: "High stakes" },
-];
-
-const STRATUM_LABELS: Record<string, string> = {
-  top_feed_like: "Top Feed",
-  fresh_public_story: "Fresh Story",
-  stale_fixable: "Stale/Fixable",
-  weather: "Weather",
-  finance_ladder: "Finance Ladder",
-  low_confidence: "Boundary",
-  duplicate_group: "Duplicate Group",
-  explanation_image_gap: "Missing Explanation/Image",
-  movement_boundary: "Movement",
-  low_volume_editorial: "Low Volume",
-};
-
-// --- Helpers ---
-
-function probabilityText(val: number | null | undefined): string {
+function pct(val: number | null | undefined): string {
   if (val == null) return "--";
   return `${Math.round(val * 100)}%`;
 }
 
-function stratumBadgeColor(stratum: string): string {
-  switch (stratum) {
-    case "top_feed_like": return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-    case "fresh_public_story": return "bg-sky-500/15 text-sky-400 border-sky-500/30";
-    case "stale_fixable": return "bg-amber-500/15 text-amber-400 border-amber-500/30";
-    case "finance_ladder": return "bg-red-500/15 text-red-400 border-red-500/30";
-    case "weather": return "bg-cyan-500/15 text-cyan-400 border-cyan-500/30";
-    case "low_confidence": return "bg-purple-500/15 text-purple-400 border-purple-500/30";
-    case "duplicate_group": return "bg-orange-500/15 text-orange-400 border-orange-500/30";
-    case "explanation_image_gap": return "bg-rose-500/15 text-rose-400 border-rose-500/30";
-    case "movement_boundary": return "bg-indigo-500/15 text-indigo-400 border-indigo-500/30";
-    default: return "bg-surface-elevated text-text-muted border-surface-border";
-  }
-}
-
-function verdictBadgeClass(label: string): string {
-  switch (label) {
-    case "love": return "bg-emerald-500/15 text-emerald-400";
-    case "fine": return "bg-sky-500/15 text-sky-400";
-    case "bad": return "bg-amber-500/15 text-amber-400";
-    case "kill": return "bg-red-500/15 text-red-400";
-    default: return "bg-surface-elevated text-text-muted";
-  }
-}
-
-// --- Main Page ---
-
-export default function LabelingWorkbench() {
+export default function LabelingPage() {
   usePageTracking({ pageType: "admin_labeling", pageTitle: "Discover Labeling" });
   useScrollDepth({ pageType: "admin_labeling" });
   useEngagementTime({ pageType: "admin_labeling" });
@@ -159,23 +62,15 @@ export default function LabelingWorkbench() {
   const { secret } = useAdminAuth();
 
   const [candidates, setCandidates] = useState<LabelingCandidate[]>([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
+  const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [notes, setNotes] = useState("");
-  const [history, setHistory] = useState<SubmittedJudgment[]>([]);
-  const [sessionLabels, setSessionLabels] = useState<Record<string, number>>({});
-  const [batchSize] = useState(40);
-  const [strataInfo, setStrataInfo] = useState<Record<string, number>>({});
-  const [reviewedInfo, setReviewedInfo] = useState<{ count: number; filtered: number } | null>(null);
-  const notesRef = useRef<HTMLTextAreaElement>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [awaitingReason, setAwaitingReason] = useState(false);
 
-  const current = currentIdx < candidates.length ? candidates[currentIdx] : null;
-  const reviewed = currentIdx;
-  const total = candidates.length;
-  const sessionTotal = Object.values(sessionLabels).reduce((s, n) => s + n, 0);
+  const current = idx < candidates.length ? candidates[idx] : null;
+  const labeled = history.length;
 
   // Load candidates
   const loadCandidates = useCallback(async () => {
@@ -185,7 +80,7 @@ export default function LabelingWorkbench() {
       const token = await getIdToken();
       const params = new URLSearchParams({
         secret,
-        limit: String(batchSize),
+        limit: "50",
         reviewer: "native",
         reviewed_surface: "web_discover",
       });
@@ -193,29 +88,18 @@ export default function LabelingWorkbench() {
       if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/api/admin/ranking-judgments/candidates?${params}`, { headers });
       if (!res.ok) {
-        if (res.status === 403) {
-          setError("Admin access required. Check your secret or sign in.");
-        } else {
-          setError(`API error: ${res.status}`);
-        }
+        setError(res.status === 403 ? "Admin access required." : `API error: ${res.status}`);
         setLoading(false);
         return;
       }
-      const data: CandidatesResponse = await res.json();
+      const data = await res.json();
       setCandidates(data.items);
-      setCurrentIdx(0);
-      setStrataInfo(data.stratum_sample_counts);
-      if (data.reviewed_filter) {
-        setReviewedInfo({
-          count: data.reviewed_filter.reviewed_key_count,
-          filtered: data.reviewed_filter.filtered_count,
-        });
-      }
+      setIdx(0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load candidates");
+      setError(err instanceof Error ? err.message : "Failed to load");
     }
     setLoading(false);
-  }, [secret, batchSize]);
+  }, [secret]);
 
   useEffect(() => {
     if (secret) loadCandidates();
@@ -223,248 +107,164 @@ export default function LabelingWorkbench() {
 
   // Auto-load next batch when exhausted
   useEffect(() => {
-    if (candidates.length > 0 && currentIdx >= candidates.length && !loading) {
+    if (candidates.length > 0 && idx >= candidates.length && !loading) {
       loadCandidates();
     }
-  }, [currentIdx, candidates.length, loading, loadCandidates]);
+  }, [idx, candidates.length, loading, loadCandidates]);
 
-  // Submit judgment
-  const submitVerdict = useCallback(async (verdictKey: string) => {
+  // Submit judgment to API
+  const submitToAPI = useCallback(async (
+    candidate: LabelingCandidate,
+    label: string,
+    reasonTags: string[],
+  ) => {
+    const token = await getIdToken();
+    const body = {
+      secret,
+      surface: "web_discover",
+      rank_seen: candidate.rank,
+      item_type: candidate.item_type || "futures",
+      market_id: candidate.market_id,
+      market_name: candidate.name,
+      label,
+      reason_tags: reasonTags,
+      notes: null,
+      score_at_review: candidate.score,
+      category_at_review: candidate.category,
+      archetype_at_review: candidate.archetype,
+      quality_class_at_review: candidate.quality_class,
+      headline_at_review: candidate.headline,
+      card_snapshot: {
+        schema_version: "discover-card-v1",
+        name: candidate.name,
+        source: candidate.source,
+        category: candidate.category,
+        hook_description: candidate.hook_description,
+        image_url: candidate.image_url,
+        score: candidate.score,
+        rendered_probability: candidate.rendered_probability,
+        top_outcomes: candidate.top_outcomes?.slice(0, 5) || [],
+      },
+      reviewer: "web",
+    };
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_URL}/api/admin/ranking-judgments`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Submit failed: ${res.status}`);
+  }, [secret]);
+
+  // Advance to next card
+  const advance = useCallback((label: "good" | "bad" | "skip", reason?: string) => {
+    if (!current) return;
+    setHistory(prev => [...prev, { name: current.name, label, reason }]);
+    setIdx(i => i + 1);
+    setAwaitingReason(false);
+  }, [current]);
+
+  // Handle verdict
+  const handleVerdict = useCallback(async (verdict: "good" | "bad" | "skip") => {
     if (!current || submitting) return;
 
-    if (verdictKey === "skip") {
-      setHistory((prev) => [...prev, { candidate: current, label: "skip", reasonTags: [], notes: "" }]);
-      setSessionLabels((prev) => ({ ...prev, skip: (prev.skip || 0) + 1 }));
-      setCurrentIdx((i) => i + 1);
-      setSelectedTags(new Set());
-      setNotes("");
+    if (verdict === "bad") {
+      setAwaitingReason(true);
       return;
     }
 
+    if (verdict === "skip") {
+      advance("skip");
+      return;
+    }
+
+    // Good — submit and advance
     setSubmitting(true);
     try {
-      const token = await getIdToken();
-      const snapshot = {
-        schema_version: "discover-card-v1",
-        batch_id: `web-labeling-${Date.now()}`,
-        rank: current.rank,
-        item_type: current.item_type || "futures",
-        item_id: current.id,
-        market_id: current.market_id,
-        name: current.name,
-        source: current.source,
-        category: current.category,
-        archetype: current.archetype,
-        quality_class: current.quality_class,
-        headline: current.headline,
-        reason: current.reason,
-        context: current.context || current.reason,
-        hook_description: current.hook_description,
-        image_url: current.image_url,
-        story_key: current.story_key,
-        family_key: current.family_key,
-        group_id: current.group_id,
-        score: current.score,
-        rendered_probability: current.rendered_probability,
-        top_outcomes: current.top_outcomes?.slice(0, 5) || [],
-        reasons: current.reasons?.slice(0, 12) || [],
-        has_hook: !!current.hook_description,
-        has_image: !!current.image_url,
-      };
-
-      const body = {
-        secret,
-        surface: "web_discover",
-        rank_seen: current.rank,
-        item_type: current.item_type || "futures",
-        market_id: current.market_id,
-        market_name: current.name,
-        label: verdictKey,
-        reason_tags: Array.from(selectedTags),
-        notes: notes.trim() || null,
-        score_at_review: current.score,
-        category_at_review: current.category,
-        archetype_at_review: current.archetype,
-        quality_class_at_review: current.quality_class,
-        headline_at_review: current.headline,
-        card_snapshot: snapshot,
-        reviewer: "web",
-      };
-
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_URL}/api/admin/ranking-judgments`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        setError(`Submit failed: ${res.status}`);
-        setSubmitting(false);
-        return;
-      }
-
-      setHistory((prev) => [...prev, {
-        candidate: current,
-        label: verdictKey,
-        reasonTags: Array.from(selectedTags),
-        notes: notes.trim(),
-      }]);
-      setSessionLabels((prev) => ({ ...prev, [verdictKey]: (prev[verdictKey] || 0) + 1 }));
-      setCurrentIdx((i) => i + 1);
-      setSelectedTags(new Set());
-      setNotes("");
+      await submitToAPI(current, "love", []);
+      advance("good");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Submit failed");
     }
     setSubmitting(false);
-  }, [current, submitting, secret, selectedTags, notes]);
+  }, [current, submitting, submitToAPI, advance]);
 
-  // Undo last judgment
-  const undo = useCallback(() => {
-    if (history.length === 0 || currentIdx === 0) return;
-    const last = history[history.length - 1];
-    setHistory((prev) => prev.slice(0, -1));
-    setSessionLabels((prev) => {
-      const next = { ...prev };
-      if (next[last.label]) {
-        next[last.label]--;
-        if (next[last.label] <= 0) delete next[last.label];
-      }
-      return next;
-    });
-    setCurrentIdx((i) => i - 1);
-    setSelectedTags(new Set(last.reasonTags));
-    setNotes(last.notes);
-  }, [history, currentIdx]);
+  // Handle bad reason selection
+  const handleBadReason = useCallback(async (reason?: string) => {
+    if (!current || submitting) return;
+    setSubmitting(true);
+    try {
+      const tags = reason ? [reason.replace(" ", "_")] : [];
+      await submitToAPI(current, "bad", tags);
+      advance("bad", reason);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Submit failed");
+    }
+    setSubmitting(false);
+  }, [current, submitting, submitToAPI, advance]);
 
   // Keyboard shortcuts
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+      if (submitting) return;
+
+      if (awaitingReason) {
+        // Escape or down arrow = skip reason and advance
+        if (e.key === "Escape" || e.key === "ArrowDown") {
+          e.preventDefault();
+          handleBadReason();
+        }
+        return;
+      }
 
       switch (e.key) {
-        case "1": e.preventDefault(); submitVerdict("love"); break;
-        case "2": e.preventDefault(); submitVerdict("fine"); break;
-        case "3": e.preventDefault(); submitVerdict("bad"); break;
-        case "4": e.preventDefault(); submitVerdict("kill"); break;
-        case "5": e.preventDefault(); submitVerdict("skip"); break;
-        case "u": case "z":
-          if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); undo(); }
-          break;
-        case "n":
-          e.preventDefault();
-          if (notesRef.current) notesRef.current.focus();
-          break;
+        case "1": case "ArrowRight":
+          e.preventDefault(); handleVerdict("good"); break;
+        case "2": case "ArrowLeft":
+          e.preventDefault(); handleVerdict("bad"); break;
+        case "3": case "ArrowDown":
+          e.preventDefault(); handleVerdict("skip"); break;
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [submitVerdict, undo]);
+  }, [handleVerdict, handleBadReason, awaitingReason, submitting]);
 
-  const toggleTag = (tag: string) => {
-    setSelectedTags((prev) => {
-      const next = new Set(prev);
-      if (next.has(tag)) next.delete(tag);
-      else next.add(tag);
-      return next;
-    });
-  };
+  // --- Render ---
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-text-primary">Discover Labeling</h1>
-          <p className="text-xs text-text-muted mt-0.5">
-            Rate cards from the labeling queue. Keyboard: 1-5 verdicts, u=undo, n=notes.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {sessionTotal > 0 && (
-            <span className="text-xs font-semibold text-accent-brand bg-accent-brand/10 px-2.5 py-1 rounded-full">
-              {sessionTotal} labeled
-            </span>
-          )}
-          <span
-            onClick={loading ? undefined : loadCandidates}
-            className={`text-xs px-3 py-1.5 rounded-lg bg-surface-elevated border border-surface-border text-text-secondary hover:text-text-primary cursor-pointer transition-colors ${loading ? "opacity-50 pointer-events-none" : ""}`}
-          >
-            {loading ? "Loading..." : "Reload"}
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-bold text-text-primary">Discover Labeling</h1>
+        {labeled > 0 && (
+          <span className="text-sm font-semibold text-accent-brand bg-accent-brand/10 px-3 py-1 rounded-full">
+            {labeled} labeled
           </span>
-        </div>
+        )}
       </div>
-
-      {/* Progress bar */}
-      {total > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>{reviewed}/{total} reviewed</span>
-            <span>{total - reviewed} remaining</span>
-          </div>
-          <div className="h-2 bg-surface-border rounded-full overflow-hidden">
-            <div
-              className="h-full bg-accent-brand rounded-full transition-all duration-300"
-              style={{ width: `${total > 0 ? (reviewed / total) * 100 : 0}%` }}
-            />
-          </div>
-          {Object.keys(sessionLabels).length > 0 && (
-            <div className="flex gap-1.5 flex-wrap">
-              {Object.entries(sessionLabels).sort(([a], [b]) => a.localeCompare(b)).map(([label, count]) => (
-                <span
-                  key={label}
-                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted"
-                >
-                  {count} {label}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Strata info */}
-      {Object.keys(strataInfo).length > 0 && (
-        <details className="text-xs">
-          <summary className="text-text-muted cursor-pointer hover:text-text-secondary">
-            Strata: {Object.entries(strataInfo).filter(([, v]) => v > 0).length} active
-            {reviewedInfo && ` | ${reviewedInfo.count} previously reviewed, ${reviewedInfo.filtered} filtered`}
-          </summary>
-          <div className="flex gap-1.5 flex-wrap mt-1.5">
-            {Object.entries(strataInfo).map(([stratum, count]) => (
-              <span
-                key={stratum}
-                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${stratumBadgeColor(stratum)}`}
-              >
-                {STRATUM_LABELS[stratum] || stratum}: {count}
-              </span>
-            ))}
-          </div>
-        </details>
-      )}
 
       {/* Error */}
       {error && (
-        <div className="flex items-center justify-between p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+        <div className="flex items-center justify-between p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
           <span>{error}</span>
-          <span onClick={() => setError(null)} className="text-red-400/60 hover:text-red-400 ml-2 cursor-pointer">dismiss</span>
+          <span onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-2 cursor-pointer text-xs">dismiss</span>
         </div>
       )}
 
       {/* Loading */}
       {loading && candidates.length === 0 ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex items-center justify-center py-24">
           <div className="text-sm text-text-muted animate-pulse">Loading candidates...</div>
         </div>
       ) : current ? (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {/* Card preview */}
-          <div className="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
+          <div className="bg-surface-card rounded-2xl border border-surface-border overflow-hidden shadow-sm">
             {current.image_url && (
-              <div className="relative h-40 bg-surface-elevated">
+              <div className="relative h-48 bg-surface-elevated">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={current.image_url}
@@ -474,202 +274,130 @@ export default function LabelingWorkbench() {
                 />
               </div>
             )}
-
-            <div className="p-4 space-y-3">
+            <div className="p-5 space-y-3">
               <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-semibold text-text-primary leading-snug">
-                    {current.name}
-                  </h2>
-                  {current.hook_description && (
-                    <p className="text-sm text-text-secondary mt-1 leading-relaxed">
-                      {current.hook_description}
-                    </p>
-                  )}
-                </div>
+                <h2 className="text-base font-semibold text-text-primary leading-snug flex-1">
+                  {current.name}
+                </h2>
                 {current.rendered_probability != null && (
                   <span className="text-2xl font-bold text-accent-brand shrink-0">
-                    {probabilityText(current.rendered_probability)}
+                    {pct(current.rendered_probability)}
                   </span>
                 )}
               </div>
-
-              <div className="flex gap-1.5 flex-wrap">
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${stratumBadgeColor(current.stratum)}`}>
-                  {STRATUM_LABELS[current.stratum] || current.stratum}
-                </span>
-                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">
-                  {current.category}
-                </span>
-                {current.archetype && current.archetype !== "unknown" && (
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">
-                    {current.archetype}
-                  </span>
-                )}
-                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">
-                  {current.source}
-                </span>
-                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">
-                  {current.quality_class}
-                </span>
-                {current.ladder && (
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
-                    ladder
-                  </span>
-                )}
-                {current.story_key && (
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">
-                    {current.story_key}
-                  </span>
-                )}
-              </div>
-
-              <div className="text-[10px] text-text-muted">
-                Selection: {current.selection_reason}
-              </div>
-
-              {current.top_outcomes && current.top_outcomes.length > 0 && (
-                <div className="space-y-1">
-                  {current.top_outcomes.slice(0, 4).map((outcome, i) => (
+              {current.hook_description && (
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  {current.hook_description}
+                </p>
+              )}
+              {current.top_outcomes && current.top_outcomes.length > 1 && (
+                <div className="space-y-1 pt-1">
+                  {current.top_outcomes.slice(0, 4).map((o, i) => (
                     <div key={i} className="flex items-center justify-between text-sm">
-                      <span className="text-text-secondary truncate flex-1 mr-2">
-                        {outcome.name || "Outcome"}
-                      </span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-mono text-text-primary">
-                          {probabilityText(outcome.probability)}
-                        </span>
-                        {outcome.movement != null && outcome.movement !== 0 && (
-                          <span className={`text-xs font-mono ${outcome.movement > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {outcome.movement > 0 ? "+" : ""}{(outcome.movement * 100).toFixed(1)}
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-text-secondary truncate flex-1 mr-2">{o.name || "Outcome"}</span>
+                      <span className="font-mono text-text-primary">{pct(o.probability)}</span>
                     </div>
                   ))}
                 </div>
               )}
-
-              {(current.context || current.reason) && (
-                <div className="text-xs text-text-muted p-2.5 rounded-lg bg-surface-elevated leading-relaxed">
-                  {current.context || current.reason}
-                </div>
-              )}
-
-              {current.resolution_date && (
-                <div className="text-[10px] text-text-muted">
-                  Resolves: {new Date(current.resolution_date).toLocaleDateString()}
-                </div>
-              )}
+              <div className="flex gap-1.5 flex-wrap pt-1">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">{current.category}</span>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-surface-elevated text-text-muted">{current.source}</span>
+              </div>
             </div>
           </div>
 
-          {/* Verdict buttons */}
-          <div className="flex gap-2">
-            {VERDICTS.map((v) => (
-              <span
-                key={v.key}
-                onClick={submitting ? undefined : () => submitVerdict(v.key)}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold text-center cursor-pointer select-none transition-all ${submitting ? "opacity-50 pointer-events-none" : ""} ${v.color}`}
+          {/* Verdict buttons or bad reason chips */}
+          {awaitingReason ? (
+            <div className="space-y-3">
+              <p className="text-sm text-text-secondary text-center">Why is it bad?</p>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {BAD_REASONS.map(reason => (
+                  <button
+                    key={reason}
+                    onClick={() => handleBadReason(reason)}
+                    disabled={submitting}
+                    className="px-4 py-2 rounded-xl text-sm font-medium bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => handleBadReason()}
+                disabled={submitting}
+                className="w-full py-2 rounded-xl text-sm text-text-muted hover:text-text-secondary transition-colors cursor-pointer"
               >
-                <span className="block">{v.label}</span>
-                <span className="text-[10px] opacity-60 font-normal">{v.shortcut}</span>
-              </span>
-            ))}
-          </div>
-
-          {/* Secondary tags */}
-          <div className="flex gap-1.5 flex-wrap">
-            {SECONDARY_TAGS.map((tag) => (
-              <span
-                key={tag.key}
-                onClick={() => toggleTag(tag.key)}
-                className={`text-xs px-2.5 py-1 rounded-lg border cursor-pointer select-none transition-colors ${
-                  selectedTags.has(tag.key)
-                    ? "bg-accent-brand/15 text-accent-brand border-accent-brand/40 font-medium"
-                    : "bg-surface-elevated text-text-muted border-surface-border hover:text-text-secondary hover:border-text-muted/30"
-                }`}
+                skip reason (Esc)
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleVerdict("good")}
+                disabled={submitting}
+                className="flex-1 py-4 rounded-2xl text-base font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {tag.label}
-              </span>
-            ))}
-          </div>
-
-          {/* Notes */}
-          <textarea
-            ref={notesRef}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes (optional, press n to focus)"
-            rows={2}
-            className="w-full text-sm px-3 py-2 rounded-xl border border-surface-border bg-surface-elevated text-text-primary placeholder:text-text-muted/60 focus:outline-none focus:ring-2 focus:ring-accent-brand/30 resize-none"
-          />
-
-          {/* Undo */}
-          {history.length > 0 && (
-            <div className="flex items-center justify-between">
-              <span
-                onClick={undo}
-                className="text-xs text-text-muted hover:text-text-secondary cursor-pointer transition-colors"
+                Good
+                <span className="block text-xs font-normal opacity-70 mt-0.5">1 or &rarr;</span>
+              </button>
+              <button
+                onClick={() => handleVerdict("bad")}
+                disabled={submitting}
+                className="flex-1 py-4 rounded-2xl text-base font-bold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                Undo last ({history[history.length - 1].label}) &middot; u
-              </span>
-              <span className="text-[10px] text-text-muted">
-                Card {currentIdx + 1} of {candidates.length}
-              </span>
+                Bad
+                <span className="block text-xs font-normal opacity-70 mt-0.5">2 or &larr;</span>
+              </button>
+              <button
+                onClick={() => handleVerdict("skip")}
+                disabled={submitting}
+                className="flex-1 py-4 rounded-2xl text-base font-bold bg-surface-elevated text-text-secondary border border-surface-border hover:bg-surface-border transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Skip
+                <span className="block text-xs font-normal opacity-70 mt-0.5">3 or &darr;</span>
+              </button>
             </div>
           )}
         </div>
       ) : !loading && candidates.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 space-y-3">
+        <div className="flex flex-col items-center justify-center py-24 space-y-3">
           <div className="text-sm font-semibold text-text-primary">No candidates available</div>
-          <p className="text-xs text-text-muted text-center max-w-xs">
-            All items have been reviewed or no open markets match the labeling criteria.
-          </p>
-          <span
-            onClick={loadCandidates}
-            className="text-xs px-4 py-2 rounded-lg bg-surface-elevated border border-surface-border text-text-secondary hover:text-text-primary cursor-pointer"
-          >
-            Reload candidates
-          </span>
+          <button onClick={loadCandidates} className="text-sm px-4 py-2 rounded-xl bg-surface-elevated border border-surface-border text-text-secondary hover:text-text-primary cursor-pointer">
+            Reload
+          </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-20 space-y-3">
+        <div className="flex flex-col items-center justify-center py-24 space-y-3">
           <div className="text-sm font-semibold text-text-primary">Batch complete!</div>
-          <p className="text-xs text-text-muted text-center">
-            Reviewed {total} cards this batch. {sessionTotal} total this session.
-          </p>
-          <span
+          <p className="text-xs text-text-muted">{labeled} labeled this session.</p>
+          <button
             onClick={loading ? undefined : loadCandidates}
-            className={`text-xs px-4 py-2 rounded-lg bg-accent-brand text-white font-medium hover:opacity-90 cursor-pointer ${loading ? "opacity-50 pointer-events-none" : ""}`}
+            disabled={loading}
+            className="text-sm px-5 py-2.5 rounded-xl bg-accent-brand text-white font-medium hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >
             {loading ? "Loading..." : "Load next batch"}
-          </span>
+          </button>
         </div>
       )}
 
-      {/* Recent history */}
+      {/* Session history strip */}
       {history.length > 0 && (
-        <details className="text-xs">
-          <summary className="text-text-muted cursor-pointer hover:text-text-secondary">
-            Session history ({history.length} judgments)
-          </summary>
-          <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
-            {[...history].reverse().slice(0, 20).map((h, i) => (
-              <div key={i} className="flex items-center gap-2 py-1 border-b border-surface-border/50">
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${verdictBadgeClass(h.label)}`}>
-                  {h.label}
-                </span>
-                <span className="text-text-secondary truncate flex-1">{h.candidate.name}</span>
-                {h.reasonTags.length > 0 && (
-                  <span className="text-text-muted truncate max-w-[120px]">
-                    {h.reasonTags.join(", ")}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </details>
+        <div className="flex gap-2 overflow-x-auto py-2 border-t border-surface-border mt-4">
+          {history.slice(-5).map((h, i) => (
+            <div
+              key={i}
+              className={`shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border ${
+                h.label === "good" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : h.label === "bad" ? "bg-red-50 border-red-200 text-red-700"
+                : "bg-surface-elevated border-surface-border text-text-muted"
+              }`}
+            >
+              <span className="font-semibold">{h.label === "good" ? "G" : h.label === "bad" ? "B" : "S"}</span>
+              <span className="truncate max-w-[100px]">{h.name}</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
