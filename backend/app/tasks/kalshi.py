@@ -936,13 +936,21 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     series_snapshots = 0
 
                     for page_num in range(50):
-                        events, cursor = await service.get_events(
-                            status="settled",
-                            series_ticker=series,
-                            with_nested_markets=True,
-                            limit=200,
-                            cursor=cursor,
-                        )
+                        for _retry in range(3):
+                            try:
+                                events, cursor = await service.get_events(
+                                    status="settled",
+                                    series_ticker=series,
+                                    with_nested_markets=True,
+                                    limit=200,
+                                    cursor=cursor,
+                                )
+                                break
+                            except Exception as api_err:
+                                if "429" in str(api_err):
+                                    await asyncio.sleep(5 * (_retry + 1))
+                                    continue
+                                raise
                         stats["api_pages"] += 1
 
                         if not events:
@@ -1124,7 +1132,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         if not cursor:
                             break
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.5)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
