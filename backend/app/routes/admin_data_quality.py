@@ -1950,6 +1950,20 @@ async def trigger_backfill_polymarket_history(
     return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
+@router.post("/backfill-polymarket-history/sync")
+async def trigger_backfill_polymarket_history_sync(
+    secret: str = Query(...),
+    limit: int = Query(20, description="Max outcomes to process"),
+    mode: str = Query("resolved_zero"),
+):
+    """Run Polymarket price history backfill synchronously (returns stats)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.polymarket import _backfill_polymarket_price_history
+    stats = await _backfill_polymarket_price_history(limit=limit, mode=mode)
+    return stats
+
+
 @router.post("/backfill-kalshi-history")
 async def trigger_backfill_kalshi_history(
     secret: str = Query(...),
