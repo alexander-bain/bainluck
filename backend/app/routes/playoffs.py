@@ -757,38 +757,26 @@ async def _compute_movers(
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    # Get earliest snapshot after cutoff for each outcome
-    stmt = (
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            sqlfunc.min(FuturesOddsSnapshot.captured_at).label("earliest_time"),
-        )
-        .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
-            FuturesOddsSnapshot.captured_at >= cutoff,
-        )
-        .group_by(FuturesOddsSnapshot.outcome_id)
+    # Use raw SQL with LATERAL for efficient index seeks on
+    # idx_fos_outcome_captured(outcome_id, captured_at).
+    # The ORM GROUP BY version times out on 130+ outcome IDs.
+    from sqlalchemy import text
+    result = await session.execute(
+        text("""
+            SELECT oid AS outcome_id, snap.probability AS old_prob
+            FROM unnest(:ids) AS oid
+            CROSS JOIN LATERAL (
+                SELECT fos.probability
+                FROM futures_odds_snapshots fos
+                WHERE fos.outcome_id = oid
+                  AND fos.captured_at >= :cutoff
+                ORDER BY fos.captured_at ASC
+                LIMIT 1
+            ) snap
+        """),
+        {"ids": outcome_ids, "cutoff": cutoff},
     )
-    result = await session.execute(stmt)
-    earliest_times = {row.outcome_id: row.earliest_time for row in result}
-
-    if not earliest_times:
-        return {}
-
-    # Get probabilities at those earliest times in a single query
-    time_pairs = list(earliest_times.items())
-    from sqlalchemy import tuple_
-    snap_stmt = (
-        select(FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.probability)
-        .where(
-            tuple_(FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.captured_at).in_(time_pairs),
-        )
-    )
-    snap_result = await session.execute(snap_stmt)
-    old_probs: dict[int, float] = {}
-    for row in snap_result:
-        if row.probability is not None:
-            old_probs[row.outcome_id] = float(row.probability)
+    old_probs = {row.outcome_id: float(row.old_prob) for row in result}
 
     return old_probs
 
