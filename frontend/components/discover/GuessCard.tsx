@@ -103,8 +103,8 @@ export function GuessCard({
     }
   };
 
-  if (!isEvent && !leader) return null;
-  if (isEvent && eventData!.current_odds?.home_probability == null) return null;
+  if (!isEvent && (!leader || leader.probability == null || leader.probability === 0)) return null;
+  if (isEvent && (eventData!.current_odds?.home_probability == null || eventData!.current_odds?.home_probability === 0)) return null;
 
   return (
     <div data-guess-card data-market-id={itemId} className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">

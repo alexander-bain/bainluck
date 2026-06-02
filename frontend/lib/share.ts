@@ -37,7 +37,7 @@ export function buildDiscoverShareUrl(
 }
 
 export function formatShareProbability(probability: number | null | undefined): string | null {
-  if (probability === null || probability === undefined || Number.isNaN(probability)) {
+  if (probability === null || probability === undefined || Number.isNaN(probability) || probability === 0) {
     return null;
   }
   return `${Math.round(probability * 100)}%`;

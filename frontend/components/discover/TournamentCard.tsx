@@ -27,7 +27,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
         <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
         {leader && (
           <>
-            <AnimatedProbability value={Math.round(leader.probability * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
+            <AnimatedProbability value={Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
             <div className="text-white/70 text-sm mt-1">{leader.name}</div>
             <MovementBadge m={leader.movement_24h} />
           </>

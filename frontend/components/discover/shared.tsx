@@ -8,7 +8,7 @@ import type { ActionBarProps } from "./types";
 
 // ── Animated Counter ──
 
-export function AnimatedProbability({ value, className }: { value: number; className?: string }) {
+export function AnimatedProbability({ value, className, resolved }: { value: number; className?: string; resolved?: boolean }) {
   const [displayed, setDisplayed] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
   const animated = useRef(false);
@@ -33,6 +33,11 @@ export function AnimatedProbability({ value, className }: { value: number; class
     if (ref.current) observer.observe(ref.current);
     return () => observer.disconnect();
   }, [value]);
+
+  // If value is 0 on a non-resolved market, the probability is missing/unknown
+  if (value === 0 && !resolved) {
+    return <span ref={ref} className={className}>&mdash;</span>;
+  }
 
   return <span ref={ref} className={className}>{displayed}<span className="text-3xl">%</span></span>;
 }

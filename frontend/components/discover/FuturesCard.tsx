@@ -23,14 +23,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const catStyle = getCat(data.llm_sport_category);
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const leader = data.top_outcomes?.[0];
-  const prob = leader?.probability ?? 0;
+  const prob = leader?.probability ?? null;
   const contextSnippet = feedContextSnippet(item);
   const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
   const shareUrl = buildDiscoverShareUrl(`/futures/${data.id}`, "futures", data.id);
-  const leaderProbability = formatShareProbability(prob);
+  const leaderProbability = prob != null ? formatShareProbability(prob) : null;
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
@@ -49,7 +49,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         {!hasImage && <span className="absolute inset-0 flex items-center justify-center text-[80px] opacity-[0.08] select-none pointer-events-none">{catStyle.emoji}</span>}
         {leader && (
           <>
-            <AnimatedProbability value={Math.round(prob * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
+            <AnimatedProbability value={Math.round((prob ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
             <div className="text-white/70 text-sm mt-1 font-medium max-w-[85%] text-center line-clamp-2">{leader.name}</div>
             <div className="mt-2 flex items-center gap-2">
               <MovementBadge m={leader.movement} />
@@ -84,7 +84,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                   <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((o.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${o.name} probability`}>
                     <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
                   </div>
-                  <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{Math.round((o.probability ?? 0) * 100)}%</span>
+                  <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{o.probability != null && o.probability > 0 ? `${Math.round(o.probability * 100)}%` : "—"}</span>
                   {i === 0 && <MovementBadge m={o.movement} />}
                 </div>
               ))}
@@ -126,7 +126,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
           <MovementBadge m={leader.movement} />
-          <span className="font-mono tabular-nums text-sm font-bold">{Math.round((leader.probability ?? 0) * 100)}%</span>
+          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? `${Math.round(leader.probability * 100)}%` : "—"}</span>
         </div>
       )}
     </Link>
