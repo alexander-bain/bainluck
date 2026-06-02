@@ -41,6 +41,7 @@ export default function FeedReviewPage() {
   const [verdicts, setVerdicts] = useState<Record<number, Verdict>>({});
   const [submitting, setSubmitting] = useState<Set<number>>(new Set());
   const [submitted, setSubmitted] = useState(0);
+  const [notes, setNotes] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (!adminSecret) return;
@@ -79,7 +80,7 @@ export default function FeedReviewPage() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, signal, source_device: "web_review" }),
+            body: JSON.stringify({ url, signal, notes: notes[id] || null, source_device: "web_review" }),
           }
         );
         setVerdicts((prev) => ({ ...prev, [id]: signal }));
@@ -132,6 +133,7 @@ export default function FeedReviewPage() {
               <th className="py-2">Market</th>
               <th className="py-2 w-24">Category</th>
               <th className="py-2 w-20">Source</th>
+              <th className="py-2 w-44">Notes</th>
               <th className="py-2 w-36 text-center">Verdict</th>
             </tr>
           </thead>
@@ -176,6 +178,18 @@ export default function FeedReviewPage() {
                   </td>
                   <td className="py-2 text-text-secondary">{cat}</td>
                   <td className="py-2 text-text-muted">{source}</td>
+                  <td className="py-2">
+                    <input
+                      type="text"
+                      placeholder="optional notes..."
+                      value={notes[id] || ""}
+                      onChange={(e) =>
+                        setNotes((prev) => ({ ...prev, [id]: e.target.value }))
+                      }
+                      disabled={!!verdict}
+                      className="w-full text-xs px-2 py-1 rounded border border-surface-border bg-white text-text-primary placeholder:text-text-muted disabled:opacity-40"
+                    />
+                  </td>
                   <td className="py-2 text-center">
                     {verdict ? (
                       <span
