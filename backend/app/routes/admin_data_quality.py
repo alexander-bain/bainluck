@@ -3743,3 +3743,62 @@ async def get_task_metrics(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug-settled-precheck")
+async def debug_settled_precheck(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run the settled events needs_work pre-check and return which series need work."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Discover series
+    series_result = await db.execute(
+        text("""
+            SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
+            FROM futures_markets
+            WHERE source = 'kalshi'
+              AND status IN ('open', 'resolved')
+              AND external_id ~ '^KX'
+            ORDER BY 1
+        """)
+    )
+    all_series = [r[0] for r in series_result.all()]
+
+    # Check each
+    needing_work = []
+    not_needing = []
+    for candidate in all_series[:50]:
+        needs = await db.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM futures_markets fm
+                    WHERE fm.source = 'kalshi'
+                      AND fm.external_id LIKE :prefix || '%'
+                      AND (
+                          fm.status != 'resolved'
+                          OR EXISTS (
+                              SELECT 1 FROM futures_outcomes fo
+                              WHERE fo.market_id = fm.id
+                                AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                          )
+                      )
+                    LIMIT 1
+                )
+            """),
+            {"prefix": candidate},
+        )
+        if needs.scalar():
+            needing_work.append(candidate)
+        else:
+            not_needing.append(candidate)
+
+    return {
+        "total_series": len(all_series),
+        "needing_work": len(needing_work),
+        "not_needing": len(not_needing),
+        "series_needing_work": needing_work[:20],
+        "series_not_needing": not_needing[:10],
+    }
