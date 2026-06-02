@@ -147,7 +147,7 @@ async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]
             SELECT DISTINCT fm.event_id, fm.source AS pm_source
             FROM futures_markets fm
             WHERE fm.event_id IS NOT NULL
-              AND fm.market_type = 'game'
+              AND fm.source IN ('kalshi', 'polymarket')
         ),
         wp_sources AS (
             SELECT DISTINCT wp.event_id, wp.source AS wp_source
@@ -237,20 +237,40 @@ async def _query_coverage_trend(
     )
     coverage_trend_raw = trend_q.all()
 
-    # Win-prob source coverage per day for past events
+    # Win-prob source coverage per day for past events.
+    # Include prediction market links (event_id IS NOT NULL) alongside
+    # win_prob_snapshots so Kalshi/Polymarket coverage reflects game-market
+    # linking, not just live win-probability polling.
     wp_trend_q = await db.execute(
         text("""
+            WITH wp AS (
+                SELECT DISTINCT wp.event_id, wp.source
+                FROM win_prob_snapshots wp
+            ),
+            pm AS (
+                SELECT DISTINCT fm.event_id, fm.source
+                FROM futures_markets fm
+                WHERE fm.event_id IS NOT NULL
+                  AND fm.source IN ('kalshi', 'polymarket')
+            )
             SELECT
                 DATE(e.commence_time) AS event_date,
                 s.key AS sport_key,
                 COUNT(DISTINCT e.id) AS total,
                 COUNT(DISTINCT CASE WHEN wp.source = 'espn' THEN e.id END) AS espn_wp,
                 COUNT(DISTINCT CASE WHEN wp.source = 'stat_model' THEN e.id END) AS model,
-                COUNT(DISTINCT CASE WHEN wp.source = 'kalshi' THEN e.id END) AS kalshi,
-                COUNT(DISTINCT CASE WHEN wp.source = 'polymarket' THEN e.id END) AS polymarket
+                GREATEST(
+                    COUNT(DISTINCT CASE WHEN wp.source = 'kalshi' THEN e.id END),
+                    COUNT(DISTINCT CASE WHEN pm.source = 'kalshi' THEN e.id END)
+                ) AS kalshi,
+                GREATEST(
+                    COUNT(DISTINCT CASE WHEN wp.source = 'polymarket' THEN e.id END),
+                    COUNT(DISTINCT CASE WHEN pm.source = 'polymarket' THEN e.id END)
+                ) AS polymarket
             FROM events e
             JOIN sports s ON e.sport_id = s.id
-            LEFT JOIN win_prob_snapshots wp ON wp.event_id = e.id
+            LEFT JOIN wp ON wp.event_id = e.id
+            LEFT JOIN pm ON pm.event_id = e.id
             WHERE s.key = ANY(:sports)
               AND e.commence_time >= NOW() - INTERVAL '14 days'
               AND e.commence_time <= NOW()
