@@ -1465,14 +1465,16 @@ async def create_curation_signal(
     source_platform = None
     market_ticker = None
 
+    # Strip query params and fragments before parsing
+    clean_url = url.split("?")[0].split("#")[0]
+
     if "kalshi.com" in url:
         source_platform = "kalshi"
-        parts = url.rstrip("/").split("/")
+        parts = clean_url.rstrip("/").split("/")
         market_ticker = parts[-1].upper() if parts else None
     elif "polymarket.com" in url:
         source_platform = "polymarket"
-        # Polymarket URLs: /event/slug-name or /event/slug-name?...
-        m = re.search(r"/event/([^?#]+)", url)
+        m = re.search(r"/event/([^?#/]+)", clean_url)
         if m:
             market_ticker = m.group(1)
 
