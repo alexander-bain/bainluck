@@ -8,6 +8,7 @@ from app.routes.events import (
     _classify_game_market, _extract_threshold, _estimate_game_pace,
     _PLAYER_OUTCOME_RE, _extract_period_from_ticker, _extract_period_from_name,
     _game_markets_cache, get_game_markets,
+    _SPORT_TOTAL_RANGE, _SPORT_TEAM_TOTAL_RANGE,
 )
 
 
@@ -600,3 +601,174 @@ class TestGetGameMarketsFormatting:
                 "period": "2H",
             }
         ]
+
+
+class TestSportTotalRangeGuard:
+    """Cross-game contamination: wrong-sport thresholds must be filtered."""
+
+    def test_range_dicts_cover_major_sports(self):
+        for sport in ("basketball", "americanfootball", "baseball", "icehockey", "soccer"):
+            assert sport in _SPORT_TOTAL_RANGE
+            assert sport in _SPORT_TEAM_TOTAL_RANGE
+
+    @pytest.mark.asyncio
+    async def test_nhl_thresholds_filtered_from_nba_event(self):
+        """NHL-range thresholds (5.5, 10.5, 11.5) must not appear in an NBA total map."""
+        event = _make_event(sport_key="basketball_nba")
+        # One correct NBA market + two wrong-sport (hockey-range) markets,
+        # all linked via event_id (simulating a mis-link bug).
+        nba_market = _make_market(
+            id=301, name="Thunder at Lakers: Total Points",
+            external_id="KXNBATOTAL-26MAY25OKCLADL",
+        )
+        nhl_market_1 = _make_market(
+            id=302, name="Oilers at Kings: Total Goals",
+            external_id="KXNHLTOTAL-26MAY25EDMLADL",
+        )
+        nhl_market_2 = _make_market(
+            id=303, name="Oilers at Kings: Total Goals",
+            external_id="KXNHLTOTAL-26MAY25EDMLADL2",
+        )
+        outcomes = [
+            _make_outcome(id=401, market_id=301, name="Over 220.5", probability=0.55, opening_probability=0.50),
+            _make_outcome(id=402, market_id=301, name="Over 224.5", probability=0.42, opening_probability=0.45),
+            _make_outcome(id=403, market_id=302, name="Over 5.5", probability=0.62, opening_probability=0.58),
+            _make_outcome(id=404, market_id=302, name="Over 1", probability=0.98, opening_probability=0.97),
+            _make_outcome(id=405, market_id=303, name="Over 10.5", probability=0.12, opening_probability=0.15),
+            _make_outcome(id=406, market_id=303, name="Over 11.5", probability=0.05, opening_probability=0.08),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[nba_market, nhl_market_1, nhl_market_2]),
+            _make_result(all_rows=[]),   # poly parent groups
+            _make_result(rows=[]),        # unlinked fallback
+            _make_result(rows=outcomes),  # outcomes
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        thresholds = [t["threshold"] for t in response["totals"]]
+        # Only NBA-range thresholds should survive
+        assert 220.5 in thresholds
+        assert 224.5 in thresholds
+        # Hockey-range thresholds must be filtered out
+        assert 1 not in thresholds
+        assert 5.5 not in thresholds
+        assert 10.5 not in thresholds
+        assert 11.5 not in thresholds
+
+    @pytest.mark.asyncio
+    async def test_nba_thresholds_filtered_from_nhl_event(self):
+        """NBA-range thresholds (220.5) must not appear on an NHL total map."""
+        event = _make_event(
+            sport_key="icehockey_nhl",
+            home_team_name="Edmonton Oilers",
+            away_team_name="Los Angeles Kings",
+        )
+        nhl_market = _make_market(
+            id=310, name="Oilers at Kings: Total Goals",
+            external_id="KXNHLTOTAL-26MAY25EDMLADL",
+        )
+        nba_market = _make_market(
+            id=311, name="Thunder at Lakers: Total Points",
+            external_id="KXNBATOTAL-26MAY25OKCLADL",
+        )
+        outcomes = [
+            _make_outcome(id=410, market_id=310, name="Over 5.5", probability=0.55, opening_probability=0.50),
+            _make_outcome(id=411, market_id=311, name="Over 220.5", probability=0.50, opening_probability=0.48),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[nhl_market, nba_market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        thresholds = [t["threshold"] for t in response["totals"]]
+        assert 5.5 in thresholds
+        assert 220.5 not in thresholds
+
+    @pytest.mark.asyncio
+    async def test_team_totals_also_filtered_by_sport_range(self):
+        """Team totals with wrong-sport thresholds must also be filtered."""
+        event = _make_event(sport_key="basketball_nba")
+        # A team_total market with a hockey-range threshold mis-linked to NBA
+        market = _make_market(
+            id=320, name="Boston Celtics: Total Goals",
+            external_id="KXNHLTEAM-26MAY25BOSNYQ",
+        )
+        outcomes = [
+            _make_outcome(id=420, market_id=320, name="Over 3.5", probability=0.45, opening_probability=0.50),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        # 3.5 is below the basketball team_total range (60-180); should be filtered
+        assert len(response["team_totals"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_correct_sport_thresholds_preserved(self):
+        """Valid thresholds within the sport's range must not be filtered."""
+        event = _make_event(sport_key="baseball_mlb",
+                            home_team_name="New York Yankees",
+                            away_team_name="Boston Red Sox")
+        market = _make_market(
+            id=330, name="Yankees at Red Sox: Total Runs",
+            external_id="KXMLBTOTAL-26MAY25NYYBOS",
+        )
+        outcomes = [
+            _make_outcome(id=430, market_id=330, name="Over 7.5", probability=0.60, opening_probability=0.55),
+            _make_outcome(id=431, market_id=330, name="Over 8.5", probability=0.42, opening_probability=0.40),
+            _make_outcome(id=432, market_id=330, name="Over 9.5", probability=0.25, opening_probability=0.28),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        thresholds = [t["threshold"] for t in response["totals"]]
+        assert thresholds == [7.5, 8.5, 9.5]
+
+    @pytest.mark.asyncio
+    async def test_unknown_sport_skips_range_filter(self):
+        """When sport has no range mapping, all thresholds pass through."""
+        event = _make_event(sport_key="curling_world")
+        market = _make_market(
+            id=340, name="Curling Total",
+            external_id="KXCURLTOTAL-26MAY25TEAMA",
+        )
+        outcomes = [
+            _make_outcome(id=440, market_id=340, name="Over 8.5", probability=0.50, opening_probability=0.50),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=outcomes),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert len(response["totals"]) == 1
+        assert response["totals"][0]["threshold"] == 8.5

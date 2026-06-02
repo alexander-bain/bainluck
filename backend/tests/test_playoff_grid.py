@@ -699,14 +699,14 @@ class TestGenderExclusionFilter:
 
 
 class TestProbabilityConsistency:
-    """Test that the grid data can detect consistency violations.
+    """Test that monotonicity is enforced across sequential columns.
 
     For sequential columns: P(later stage) <= P(earlier stage).
-    The endpoint doesn't enforce this, but the frontend should flag it.
+    enforce_monotonicity() caps later stages at the min of earlier stages.
     """
 
     def test_consistent_nba_probabilities(self):
-        """Valid: championship < conference < make_playoffs."""
+        """Valid: championship < conference < make_playoffs — no changes needed."""
         cells = {
             "make_playoffs": {"merged_probability": 0.95},
             "conference": {"merged_probability": 0.45},
@@ -723,23 +723,85 @@ class TestProbabilityConsistency:
             if probs[i] > 0 and probs[i - 1] > 0:
                 assert probs[i] <= probs[i - 1]
 
-    def test_inconsistent_flags_possible(self):
-        """The grid doesn't silently fix — inconsistencies are visible."""
-        cells = {
-            "make_playoffs": {"merged_probability": 0.50},
-            "division": {"merged_probability": 0.55},
-            "conference": {"merged_probability": 0.60},  # HIGHER than make_playoffs!
-            "championship": {"merged_probability": 0.22},
+    def test_monotonicity_enforced_conference_gt_division(self):
+        """Conference > Division is capped at Division (NHL issue #728)."""
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        team = {
+            "name": "Test Team",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.80, "sources": [{"probability": 0.80, "source": "odds_api"}]},
+                "division": {"merged_probability": 0.25, "sources": [{"probability": 0.25, "source": "odds_api"}]},
+                "conference": {"merged_probability": 0.40, "sources": [{"probability": 0.40, "source": "kalshi"}]},
+                "championship": {"merged_probability": 0.10, "sources": [{"probability": 0.10, "source": "odds_api"}]},
+            },
         }
-        columns = [c for c in NBA_CONFIG.columns if c.sequential]
-        probs = [cells.get(c.key, {}).get("merged_probability", 0) for c in columns]
-        # Detect violation
-        has_violation = any(
-            probs[i] > probs[i - 1]
-            for i in range(1, len(probs))
-            if probs[i] > 0 and probs[i - 1] > 0
-        )
-        assert has_violation  # The grid exposes violations, doesn't hide them
+        fixes = enforce_monotonicity([team], NHL_CONFIG.columns)
+        assert fixes >= 1
+        cells = team["cells"]
+        # Conference must be capped at Division
+        assert cells["conference"]["merged_probability"] <= cells["division"]["merged_probability"]
+        # Championship must be <= Conference
+        assert cells["championship"]["merged_probability"] <= cells["conference"]["merged_probability"]
+        # Make Playoffs >= Division
+        assert cells["make_playoffs"]["merged_probability"] >= cells["division"]["merged_probability"]
+
+    def test_monotonicity_enforced_cascading(self):
+        """Monotonicity cascades: if Division > Make Playoffs, cap Division, then cap Conference at Division."""
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        team = {
+            "name": "Cascade Team",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.50, "sources": [{"probability": 0.50, "source": "odds_api"}]},
+                "division": {"merged_probability": 0.55, "sources": [{"probability": 0.55, "source": "kalshi"}]},
+                "conference": {"merged_probability": 0.60, "sources": [{"probability": 0.60, "source": "kalshi"}]},
+                "championship": {"merged_probability": 0.22, "sources": [{"probability": 0.22, "source": "odds_api"}]},
+            },
+        }
+        fixes = enforce_monotonicity([team], NHL_CONFIG.columns)
+        assert fixes >= 2  # division and conference both need fixing
+        cells = team["cells"]
+        # Everything should cascade down from make_playoffs = 0.50
+        assert cells["division"]["merged_probability"] == 0.50
+        assert cells["conference"]["merged_probability"] == 0.50
+        assert cells["championship"]["merged_probability"] == 0.22
+
+    def test_monotonicity_no_fix_needed(self):
+        """Already-monotonic team returns 0 fixes."""
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        team = {
+            "name": "Good Team",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.90, "sources": []},
+                "division": {"merged_probability": 0.40, "sources": []},
+                "conference": {"merged_probability": 0.30, "sources": []},
+                "championship": {"merged_probability": 0.15, "sources": []},
+            },
+        }
+        fixes = enforce_monotonicity([team], NHL_CONFIG.columns)
+        assert fixes == 0
+
+    def test_monotonicity_source_probs_also_capped(self):
+        """Source probabilities within the cell are also capped."""
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        team = {
+            "name": "Source Test",
+            "cells": {
+                "division": {"merged_probability": 0.20, "sources": [{"probability": 0.20, "source": "odds_api"}]},
+                "conference": {"merged_probability": 0.35, "sources": [
+                    {"probability": 0.35, "source": "kalshi"},
+                    {"probability": 0.30, "source": "polymarket"},
+                ]},
+                "championship": {"merged_probability": 0.05, "sources": [{"probability": 0.05, "source": "odds_api"}]},
+            },
+        }
+        enforce_monotonicity([team], NHL_CONFIG.columns)
+        # Conference sources should all be capped at Division probability (0.20)
+        for src in team["cells"]["conference"]["sources"]:
+            assert src["probability"] <= 0.20
 
 
 # ============================================================================

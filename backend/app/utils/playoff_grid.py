@@ -16,6 +16,54 @@ EXPECTED_COLUMN_SUMS = {
 }
 
 
+def enforce_monotonicity(teams: list[dict], columns: list) -> int:
+    """Enforce monotonicity across sequential grid columns for every team.
+
+    For sequential columns ordered earliest-to-latest (e.g., Make Playoffs ->
+    Division -> Conference -> Championship), later stages must have probability
+    <= earlier stages.  If Conference > Division, cap Conference at Division.
+
+    This function is idempotent and should be called:
+      1. During initial cell building (per-team, before normalization)
+      2. After normalize_column_sums (which can inflate columns and break
+         monotonicity that was previously enforced)
+
+    Returns the number of violations corrected.
+    """
+    seq_cols = [c for c in columns if (c.sequential if hasattr(c, "sequential") else True)]
+    seq_keys = [c.key if hasattr(c, "key") else c for c in sorted(
+        seq_cols, key=lambda c: c.order if hasattr(c, "order") else 0
+    )]
+
+    if len(seq_keys) < 2:
+        return 0
+
+    violations_fixed = 0
+    for team in teams:
+        cells = team.get("cells", {})
+        for i in range(1, len(seq_keys)):
+            prev_key = seq_keys[i - 1]
+            curr_key = seq_keys[i]
+            prev_cell = cells.get(prev_key)
+            curr_cell = cells.get(curr_key)
+            if prev_cell and curr_cell:
+                prev_p = prev_cell["merged_probability"]
+                curr_p = curr_cell["merged_probability"]
+                if curr_p > prev_p:
+                    curr_cell["merged_probability"] = prev_p
+                    # Also cap individual source probabilities
+                    for src in curr_cell.get("sources", []):
+                        if src["probability"] > prev_p:
+                            src["probability"] = round(prev_p, 4)
+                    violations_fixed += 1
+                    logger.debug(
+                        "Monotonicity fix: %s %s %.4f > %s %.4f -> capped to %.4f",
+                        team.get("name", "?"), curr_key, curr_p,
+                        prev_key, prev_p, prev_p,
+                    )
+    return violations_fixed
+
+
 def normalize_column_sums(
     teams: list[dict],
     columns: list,

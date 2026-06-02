@@ -898,6 +898,87 @@ class TestScoreCandidatesSportGuardrails:
         assert result is not None
         assert result["event_id"] == 2
 
+    def test_baseball_market_never_matches_cricket_event(self):
+        """Baseball market (e.g., World Series odds) must not link to a cricket event.
+
+        Regression test for GitHub issue #727: World Series odds appearing on a
+        cricket match detail page due to a team name overlap (e.g., "Royals").
+        """
+        matchup = MatchupInfo("Royals", "Indians", yes_team="Royals", format_type="bare_matchup")
+        # Market with baseball sport category
+        market = SimpleNamespace(
+            source="polymarket",
+            name="Royals vs Indians",
+            external_id=None,
+            llm_sport_category="baseball",
+        )
+        candidates = [
+            self._event(1, "cricket_ipl", "Rajasthan Royals", "Mumbai Indians"),
+        ]
+
+        result = _score_candidates(
+            candidates,
+            matchup,
+            market,
+            datetime(2026, 6, 1, 18, tzinfo=timezone.utc),
+        )
+
+        # Baseball market must NOT match a cricket event
+        assert result is None
+
+    def test_no_sport_prefix_rejects_cross_sport_match(self):
+        """Markets with no sport identification should not match across sports.
+
+        Without a ticker sport prefix or llm_sport_category, a market like
+        "Royals vs Indians" could match either baseball or cricket events.
+        The elevated confidence threshold should reject these ambiguous matches.
+        """
+        matchup = MatchupInfo("Royals", "Indians", yes_team="Royals", format_type="bare_matchup")
+        market = SimpleNamespace(
+            source="polymarket",
+            name="Royals vs Indians",
+            external_id=None,
+            llm_sport_category=None,  # No sport identification
+        )
+        candidates = [
+            self._event(1, "cricket_ipl", "Rajasthan Royals", "Mumbai Indians"),
+        ]
+
+        result = _score_candidates(
+            candidates,
+            matchup,
+            market,
+            datetime(2026, 6, 1, 18, tzinfo=timezone.utc),
+        )
+
+        # Without sport identification, should be rejected as low-confidence
+        assert result is None
+
+    def test_correct_sport_match_succeeds(self):
+        """Markets with matching sport prefix should link correctly."""
+        matchup = MatchupInfo("Royals", "Indians", yes_team="Royals", format_type="bare_matchup")
+        # Kalshi ticker identifies this as a baseball market
+        market = SimpleNamespace(
+            source="kalshi",
+            name="Royals vs Indians",
+            external_id="KXMLBGAME-26JUN01KCCLE",
+            llm_sport_category="baseball",
+        )
+        candidates = [
+            self._event(1, "cricket_ipl", "Rajasthan Royals", "Mumbai Indians"),
+            self._event(2, "baseball_mlb", "Kansas City Royals", "Cleveland Indians"),
+        ]
+
+        result = _score_candidates(
+            candidates,
+            matchup,
+            market,
+            datetime(2026, 6, 1, 18, tzinfo=timezone.utc),
+        )
+
+        assert result is not None
+        assert result["event_id"] == 2
+
 
 # =============================================================================
 # is_kalshi_game_ticker — Utility function (in prediction_market_matching.py)

@@ -2883,8 +2883,18 @@ async def get_playoff_grid(
     # log a warning. For championship column specifically, reject teams
     # with > 50% single-source probability as likely misclassified.
 
-    from app.utils.playoff_grid import normalize_column_sums
+    from app.utils.playoff_grid import normalize_column_sums, enforce_monotonicity
     normalize_column_sums(teams, config.columns, config.slug)
+
+    # Re-enforce monotonicity after normalization — normalize_column_sums can
+    # scale conference probabilities upward (to sum to 200%), breaking the
+    # per-team monotonicity that was enforced during cell building.
+    mono_fixes = enforce_monotonicity(teams, config.columns)
+    if mono_fixes:
+        logger.info(
+            "Playoff grid %s: fixed %d monotonicity violations after normalization",
+            league_slug, mono_fixes,
+        )
 
     # -----------------------------------------------------------------------
     # 4c. Apply admin exclude overrides

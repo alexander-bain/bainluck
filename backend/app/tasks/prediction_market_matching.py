@@ -598,11 +598,35 @@ async def _phase15_revalidate(
                 and str(linked_event.external_id).startswith("pm_")
             )
 
-            if teams_match and not is_finished and not is_auto_created:
+            # Cross-sport mislinkage detection: if the market's sport (from
+            # ticker or llm_sport_category) doesn't match the event's sport,
+            # treat it as a mislink even if team names match. This catches
+            # cases like baseball "Royals" linked to cricket "Rajasthan Royals".
+            sport_mismatch = False
+            market_sport = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+            if not market_sport and market.llm_sport_category:
+                market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+            if market_sport and linked_event.sport_id:
+                from app.models.models import Sport as _Sport
+                event_sport_result = await session.execute(
+                    select(_Sport.key).where(_Sport.id == linked_event.sport_id)
+                )
+                event_sport_key = event_sport_result.scalar_one_or_none()
+                if event_sport_key and not event_sport_key.startswith(market_sport):
+                    sport_mismatch = True
+                    logger.info(
+                        "Cross-sport mislinkage detected: %s market '%s' (sport=%s) "
+                        "linked to %s event %d",
+                        market.source, market.name, market_sport,
+                        event_sport_key, linked_event.id,
+                    )
+
+            if teams_match and not is_finished and not is_auto_created and not sport_mismatch:
                 continue
 
             reason = (
                 "auto_created" if is_auto_created
+                else "cross_sport" if sport_mismatch
                 else "mislinked" if not teams_match
                 else "completed"
             )
@@ -622,7 +646,7 @@ async def _phase15_revalidate(
                     market.source, market.name, reason,
                     linked_event.id, better_match["event_id"],
                 )
-                if is_auto_created or not teams_match:
+                if is_auto_created or not teams_match or sport_mismatch:
                     del_result = await session.execute(
                         delete(WinProbSnapshot).where(
                             WinProbSnapshot.event_id == linked_event.id,
@@ -644,16 +668,16 @@ async def _phase15_revalidate(
                 if is_auto_created:
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
-                elif not teams_match:
+                elif not teams_match or sport_mismatch:
                     stats["funnel"]["mislink_fixed"] += 1
                 else:
                     stats["funnel"]["stale_relinked"] += 1
             elif is_auto_created:
                 pass
-            elif not teams_match:
+            elif not teams_match or sport_mismatch:
                 logger.info(
-                    "Unlinking %s '%s' from mismatched event %d — no better match",
-                    market.source, market.name, linked_event.id,
+                    "Unlinking %s '%s' from mismatched event %d — no better match (reason=%s)",
+                    market.source, market.name, linked_event.id, reason,
                 )
                 del_result = await session.execute(
                     delete(WinProbSnapshot).where(
@@ -1171,6 +1195,14 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
     if not candidates:
         return None
 
+    # Compute sport prefix once (depends only on market, not on candidates).
+    # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
+    # llm_sport_category (Polymarket and Kalshi without parseable ticker).
+    ticker_sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+    sport_prefix = ticker_sport_prefix
+    if not sport_prefix and market.llm_sport_category:
+        sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+
     best_match = None
     best_score = -1
 
@@ -1237,14 +1269,9 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
             score += 8
 
         # Sport validation: hard-reject events from the wrong sport.
-        # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
-        # llm_sport_category (Polymarket and Kalshi without parseable ticker).
-        # Both are hard rejects — city-name collisions (Boston/New York)
+        # Both ticker and llm_sport_category are hard rejects — city-name
+        # collisions (Boston/New York) and generic team names (Royals/Indians)
         # cause cross-sport mismatches if we only use soft scoring.
-        ticker_sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
-        sport_prefix = ticker_sport_prefix
-        if not sport_prefix and market.llm_sport_category:
-            sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
         if sport_prefix and event.sport and event.sport.key:
             if not event.sport.key.startswith(sport_prefix):
                 continue  # Wrong sport — skip this candidate
@@ -1263,7 +1290,12 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
                 "sport_id": event.sport_id,
             }
 
-    if best_match and not sport_prefix and best_match.get("score", 0) < 10:
+    # When we have no sport prefix (no ticker sport, no llm_sport_category),
+    # require a higher confidence threshold to prevent cross-sport mismatches.
+    # A score of 21 requires: both teams match (+10) + close time (+~10) +
+    # scheduled (+3), preventing generic team names like "Royals" or "Indians"
+    # from matching across cricket/baseball.
+    if best_match and not sport_prefix and best_match.get("score", 0) < 21:
         logger.info(
             "Rejecting low-confidence match (score=%d, no sport prefix) for %s",
             best_match["score"], market.external_id,

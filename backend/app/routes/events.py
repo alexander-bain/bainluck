@@ -408,6 +408,39 @@ _game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (ti
 _GAME_MARKETS_LIVE_TTL = 30
 _GAME_MARKETS_MAX_SIZE = 200
 
+# Sport-specific expected game-total threshold ranges.
+# Thresholds outside these bounds are from a different sport (cross-game
+# contamination via mis-linked event_id or overly broad fallback queries).
+# Format: sport_key_prefix → (min_threshold, max_threshold)
+_SPORT_TOTAL_RANGE: dict[str, tuple[float, float]] = {
+    "basketball": (120, 320),    # NBA/NCAAB/WNBA game totals ~170-260
+    "americanfootball": (15, 120),  # NFL/NCAAF game totals ~30-65
+    "baseball": (0.5, 30),       # MLB game totals ~5-14
+    "icehockey": (0.5, 15),      # NHL game totals ~4-8
+    "soccer": (0.5, 10),         # Soccer game totals ~1.5-5
+    "mma": (0.5, 10),            # MMA round totals ~1.5-5
+    "tennis": (0.5, 60),         # Tennis game/set totals
+    "rugby": (10, 120),          # Rugby totals ~30-60
+    "lacrosse": (5, 50),         # Lacrosse totals ~15-30
+    "aussierules": (80, 280),    # AFL totals ~140-200
+    "cricket": (50, 800),        # Cricket totals vary widely
+}
+
+# Team-total ranges are roughly half the game-total range (each team's share).
+_SPORT_TEAM_TOTAL_RANGE: dict[str, tuple[float, float]] = {
+    "basketball": (60, 180),
+    "americanfootball": (5, 65),
+    "baseball": (0.5, 18),
+    "icehockey": (0.5, 10),
+    "soccer": (0.5, 7),
+    "mma": (0.5, 7),
+    "tennis": (0.5, 35),
+    "rugby": (5, 70),
+    "lacrosse": (2, 30),
+    "aussierules": (30, 160),
+    "cricket": (20, 500),
+}
+
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
@@ -3033,17 +3066,28 @@ async def get_game_markets(
         expected_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix)
 
     # 2. Find game-level markets linked to this event
-    # Trust linked markets completely — if the matching task set event_id,
-    # don't second-guess it with status or category filters.  The matching
-    # task already validated sport/event membership.  Filtering by status
-    # drops resolved markets on completed games (showing empty sections),
-    # and filtering by llm_sport_category drops markets with stale/wrong
-    # categories (gotcha #10).  Status/category filters only belong on the
-    # FALLBACK query below (unlinked markets matched by team name).
+    # Trust linked markets for status — if the matching task set event_id,
+    # don't filter by status (resolved markets on completed games should show).
+    # BUT do enforce sport compatibility as a safety net against cross-sport
+    # mislinkage (e.g., baseball World Series market linked to a cricket event).
+    # Sport filtering uses sport_id OR llm_sport_category — either must match.
     event_is_finished = event.status in ("completed", "closed")
-    linked_query = select(FuturesMarket).where(
-        FuturesMarket.event_id == event_id,
-    )
+    linked_filters = [FuturesMarket.event_id == event_id]
+    if event.sport_id and expected_category:
+        # Safety net: only show markets whose sport matches the event's sport.
+        # Uses OR(sport_id match, llm_sport_category match, both NULL) to avoid
+        # dropping markets with incomplete metadata while still blocking cross-sport.
+        linked_filters.append(
+            or_(
+                FuturesMarket.sport_id == event.sport_id,
+                FuturesMarket.llm_sport_category == expected_category,
+                and_(
+                    FuturesMarket.sport_id.is_(None),
+                    FuturesMarket.llm_sport_category.is_(None),
+                ),
+            )
+        )
+    linked_query = select(FuturesMarket).where(*linked_filters)
     market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
 
@@ -3422,6 +3466,22 @@ async def get_game_markets(
             period_markets.append(t)
     game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
 
+    # 7a. Sport-range guard — drop game/team totals with thresholds wildly
+    # outside the expected range for this sport.  This catches cross-game
+    # contamination from mis-linked markets (e.g., an NHL "Over 5.5" showing
+    # on an NBA page, or an NBA "Over 220.5" on an NHL page).
+    sport_prefix = sport_key.split("_")[0] if sport_key else None
+    game_range = _SPORT_TOTAL_RANGE.get(sport_prefix) if sport_prefix else None
+    team_range = _SPORT_TEAM_TOTAL_RANGE.get(sport_prefix) if sport_prefix else None
+
+    if game_range:
+        lo, hi = game_range
+        game_totals = [t for t in game_totals if lo <= t["threshold"] <= hi]
+
+    if team_range:
+        lo, hi = team_range
+        team_total_items = [t for t in team_total_items if lo <= t["threshold"] <= hi]
+
     # 7b. Enforce monotonicity on totals — P(Over X) must decrease as X increases.
     # Thinly traded Kalshi half-period markets often have non-monotonic prices
     # (e.g., Over 98.5 at 68% but Over 101.5 at 75%). Cap violating points
@@ -3445,6 +3505,18 @@ async def get_game_markets(
         return result
 
     game_totals = _enforce_monotonicity(game_totals)
+
+    # Also apply sport-range guard to period totals (use team_total range
+    # as a generous proxy — half/quarter totals are never larger than a
+    # team's full-game total).
+    if team_range:
+        lo, hi = team_range
+        period_markets = [
+            pm for pm in period_markets
+            if pm.get("market_type") not in ("half_total", "quarter_total")
+            or pm.get("threshold") is None
+            or lo <= pm["threshold"] <= hi
+        ]
 
     # Also enforce on period totals within each market group
     period_total_groups: dict[str, list[dict]] = {}
