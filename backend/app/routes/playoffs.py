@@ -757,22 +757,23 @@ async def _compute_movers(
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    # Use raw SQL with LATERAL for efficient index seeks on
+    # Use LATERAL for efficient index seeks on
     # idx_fos_outcome_captured(outcome_id, captured_at).
     # The ORM GROUP BY version times out on 130+ outcome IDs.
     from sqlalchemy import text
     result = await session.execute(
         text("""
-            SELECT oid AS outcome_id, snap.probability AS old_prob
-            FROM unnest(:ids::integer[]) AS oid
+            SELECT fo.id AS outcome_id, snap.probability AS old_prob
+            FROM futures_outcomes fo
             CROSS JOIN LATERAL (
                 SELECT fos.probability
                 FROM futures_odds_snapshots fos
-                WHERE fos.outcome_id = oid
+                WHERE fos.outcome_id = fo.id
                   AND fos.captured_at >= :cutoff
                 ORDER BY fos.captured_at ASC
                 LIMIT 1
             ) snap
+            WHERE fo.id = ANY(:ids)
         """),
         {"ids": outcome_ids, "cutoff": cutoff},
     )
