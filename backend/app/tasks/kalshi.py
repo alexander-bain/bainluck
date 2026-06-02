@@ -942,12 +942,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     needs_work = await session.execute(
                         text("""
                             SELECT EXISTS (
-                                SELECT 1 FROM futures_outcomes fo
-                                JOIN futures_markets fm ON fo.market_id = fm.id
+                                SELECT 1 FROM futures_markets fm
                                 WHERE fm.source = 'kalshi'
                                   AND fm.external_id LIKE :prefix || '%'
-                                  AND fm.status = 'resolved'
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND (
+                                      fm.status != 'resolved'
+                                      OR EXISTS (
+                                          SELECT 1 FROM futures_outcomes fo
+                                          WHERE fo.market_id = fm.id
+                                            AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                      )
+                                  )
                                 LIMIT 1
                             )
                         """),
