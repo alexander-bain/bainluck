@@ -961,9 +961,26 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     if needs_work.scalar():
                         series_needing_work.append(candidate)
 
+                # Sort: Tier 1 game series first (most guesses to fix)
+                _PRIORITY = [
+                    "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
+                    "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
+                    "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
+                    "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
+                    "KXNCAAMBGAME", "KXNCAAMBSPREAD",
+                ]
+                def _sort_key(s):
+                    try:
+                        return _PRIORITY.index(s)
+                    except ValueError:
+                        return len(_PRIORITY)
+
+                series_needing_work.sort(key=_sort_key)
+
                 logger.info(
-                    "Settled events: %d/%d series need work",
+                    "Settled events: %d/%d series need work: %s",
                     len(series_needing_work), len(SERIES_PREFIXES),
+                    series_needing_work[:5],
                 )
 
                 if not series_needing_work:
