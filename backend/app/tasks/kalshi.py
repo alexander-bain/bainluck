@@ -982,6 +982,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 if not series_needing_work:
                     return stats
 
+                from app.tasks.redis_state import get_redis_client
+                _rc = get_redis_client()
+
                 for series in series_needing_work:
                     if (_time.monotonic() - _start_time) > _MAX_SECONDS:
                         logger.info("Settled events: time budget exhausted after %d series",
