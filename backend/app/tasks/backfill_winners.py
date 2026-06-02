@@ -2507,7 +2507,12 @@ async def _compute_calibration_prices():
     - Part A: Event-linked markets → last snapshot before the EVENT's commence_time
       (real pre-game/tournament closing line from the events table, not the
       market's commence_time which is often the listing or resolution date)
-    - Part B: Non-event markets → first snapshot ≥1h after opening (settled price)
+    - Part A2: Non-event markets with commence_time (golf) → last snapshot before
+      the MARKET's commence_time (pre-tournament closing line). Without this,
+      golf markets fall through to Part B which uses opening_captured_at and
+      grabs a stale price from when the market first opened (weeks before R1).
+    - Part B: Non-event markets without commence_time → first snapshot ≥1h after
+      opening (settled price)
     - Part C: Event-linked outcomes still at opening_probability → last non-extreme
       snapshot before event start (rescue for sparse-snapshot event-linked markets)
     - Fallback: opening_probability
@@ -2572,7 +2577,83 @@ async def _compute_calibration_prices():
                 logger.info("Calibration Part A: batch processed %d (total %d)", result_a.rowcount, part_a_total)
             stats["with_commence"] = part_a_total
 
-            # Part B: Non-event markets — settled price or opening fallback.
+            # Part A2: Non-event markets with commence_time on the market itself.
+            # Kalshi/DataGolf golf markets have event_id IS NULL but DO have
+            # commence_time (adjusted by _fix_golf_commence_times). Part A
+            # skips them because it JOINs events. Part B uses opening_captured_at
+            # which grabs the first-ever price rather than the closing line.
+            #
+            # This part uses fm.commence_time to get the real pre-tournament
+            # closing line — the last snapshot before the tournament starts.
+            # Without this, calibration uses a stale price from when the market
+            # first opened (potentially weeks before the tournament).
+            #
+            # One-time reset: null calibration_probability on outcomes that
+            # were previously set by Part B (stale opening-day price) so
+            # Part A2 can recompute with the proper closing line.
+            reset_a2 = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fm.event_id IS NULL
+                      AND fm.commence_time IS NOT NULL
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.calibration_probability = fo.opening_probability
+                      AND fo.opening_probability IS NOT NULL
+                """)
+            )
+            await session.commit()
+            stats["reset_a2"] = reset_a2.rowcount
+            if reset_a2.rowcount > 0:
+                logger.info("Calibration Part A2 reset: %d outcomes", reset_a2.rowcount)
+
+            part_a2_total = 0
+            for _ in range(20):
+                result_a2 = await session.execute(
+                    text("""
+                        WITH needs_cal AS (
+                            SELECT fo.id AS outcome_id, fm.commence_time,
+                                   fo.opening_probability
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.calibration_probability IS NULL
+                              AND fm.commence_time IS NOT NULL
+                              AND (fm.event_id IS NULL)
+                            ORDER BY fm.commence_time DESC
+                            LIMIT 100000
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = COALESCE(
+                            closing.probability, nc.opening_probability
+                        )
+                        FROM needs_cal nc
+                        LEFT JOIN LATERAL (
+                            SELECT fos.probability
+                            FROM futures_odds_snapshots fos
+                            WHERE fos.outcome_id = nc.outcome_id
+                              AND fos.captured_at < nc.commence_time
+                              AND fos.probability > 0 AND fos.probability < 1
+                            ORDER BY fos.captured_at DESC
+                            LIMIT 1
+                        ) closing ON true
+                        WHERE fo.id = nc.outcome_id
+                          AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
+                    """)
+                )
+                await session.commit()
+                part_a2_total += result_a2.rowcount
+                if result_a2.rowcount == 0:
+                    break
+                logger.info("Calibration Part A2: batch processed %d (total %d)", result_a2.rowcount, part_a2_total)
+            stats["with_market_commence"] = part_a2_total
+
+            # Part B: Non-event markets WITHOUT commence_time — settled price
+            # or opening fallback. These are non-golf futures (elections,
+            # economics, etc.) that have no tournament start date.
             # Batched at 100K. LATERAL subquery for efficient index seeks.
             part_b_total = 0
             for _ in range(20):
