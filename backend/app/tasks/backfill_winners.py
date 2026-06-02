@@ -2282,6 +2282,36 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # has the full field to work with.
     dg_leaderboard_stats = await _backfill_datagolf_leaderboards()
 
+    # Phase 0g-fix: Null out is_winner on make_cut outcomes that were
+    # incorrectly resolved from truncated leaderboards. Players ranked 51-70
+    # who actually made the cut were marked as losers. Re-nulling lets
+    # Phase 0g re-resolve them correctly with the full leaderboard.
+    dg_makecut_fix_stats = {"nulled": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = NULL, resolution_source = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fm.external_id LIKE '%:make_cut'
+                      AND fo.is_winner = false
+                      AND fo.resolution_source = 'leaderboard'
+                      AND jsonb_array_length(
+                          COALESCE(fm.market_metadata->'leaderboard', '[]'::jsonb)
+                      ) < 100
+                """)
+            )
+            dg_makecut_fix_stats["nulled"] = r.rowcount
+            await session.commit()
+            if r.rowcount > 0:
+                logger.info("Golf make_cut fix: nulled %d wrongly-resolved outcomes", r.rowcount)
+    except Exception as e:
+        dg_makecut_fix_stats["errors"].append(str(e))
+
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
