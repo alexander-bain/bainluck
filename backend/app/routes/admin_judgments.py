@@ -1476,18 +1476,55 @@ async def create_curation_signal(
         if m:
             market_ticker = m.group(1)
 
-    # Try to find the market in our DB
+    # Try to find the market in our DB and get rich context
     market_id = None
-    if market_ticker and source_platform == "kalshi":
-        result = await db.execute(
-            select(FuturesMarket.id).where(
-                FuturesMarket.source == "kalshi",
-                FuturesMarket.external_id == market_ticker,
-            ).limit(1)
-        )
-        row = result.scalar_one_or_none()
-        if row:
-            market_id = row
+    market_name = None
+    market_score = None
+    market_category = None
+    outcome_count = 0
+    db_status = "not_found"
+
+    if market_ticker:
+        from app.models.models import FuturesOutcome
+        from app.utils.futures_highlights import compute_futures_highlight
+
+        if source_platform == "kalshi":
+            result = await db.execute(
+                select(FuturesMarket).where(
+                    FuturesMarket.source == "kalshi",
+                    FuturesMarket.external_id == market_ticker,
+                ).limit(1)
+            )
+            market = result.scalar_one_or_none()
+        elif source_platform == "polymarket":
+            # Polymarket slugs match via name ILIKE or group_id
+            result = await db.execute(
+                select(FuturesMarket).where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.external_id.ilike(f"%{market_ticker}%"),
+                ).limit(1)
+            )
+            market = result.scalar_one_or_none()
+        else:
+            market = None
+
+        if market:
+            market_id = market.id
+            market_name = market.name
+            market_category = market.llm_sport_category or market.category
+            db_status = market.status or "open"
+
+            oc_result = await db.execute(
+                select(func.count()).where(FuturesOutcome.market_id == market.id)
+            )
+            outcome_count = oc_result.scalar() or 0
+
+            highlight = compute_futures_highlight(
+                market_name=market.name,
+                sport_category=market.llm_sport_category,
+                market_tier=market.market_tier,
+            )
+            market_score = round(highlight.score)
 
     cs = CurationSignal(
         url=url,
@@ -1501,12 +1538,26 @@ async def create_curation_signal(
     db.add(cs)
     await db.commit()
 
+    # Build a human-readable summary for the shortcut notification
+    icon = "👍" if signal == "boost" else "👎"
+    if market_name:
+        short_name = market_name[:50] + ("..." if len(market_name) > 50 else "")
+        summary = f"{icon} {short_name} — score {market_score}, {outcome_count} outcomes, {db_status}"
+    else:
+        summary = f"{icon} Recorded — market not in DB yet (will be ingested on next poll)"
+
     return {
         "status": "recorded",
         "signal": signal,
+        "summary": summary,
         "platform": source_platform,
         "ticker": market_ticker,
-        "matched_market_id": market_id,
+        "market_id": market_id,
+        "market_name": market_name,
+        "market_score": market_score,
+        "market_category": market_category,
+        "outcome_count": outcome_count,
+        "db_status": db_status,
     }
 
 
