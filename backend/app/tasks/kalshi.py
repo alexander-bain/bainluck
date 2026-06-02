@@ -930,20 +930,15 @@ async def _backfill_from_settled_events(limit: int = 5000):
             async with get_task_session() as session:
                 total_snapshots = 0
 
-                # Pick ONE series per run using a rotating cursor stored in Redis.
-                # This keeps each run short (~5 min for one series) instead of
-                # trying to sweep all 21 in one 15-min window.
-                from app.tasks.redis_state import get_redis_client
-                _rc = get_redis_client()
-                _cursor_key = "bainluck:settled_series_cursor"
-                _last_idx = int(_rc.get(_cursor_key) or 0)
+                # Process series that need work, with a time budget.
+                # Check all series (fast EXISTS query), then process
+                # each one until we've used ~10 min of the 15-min limit.
+                import time as _time
+                _start_time = _time.monotonic()
+                _MAX_SECONDS = 600  # 10 min budget, leaving 5 min headroom
 
-                # Find the next series that needs work
-                series_to_process = None
-                for offset in range(len(SERIES_PREFIXES)):
-                    idx = (_last_idx + offset) % len(SERIES_PREFIXES)
-                    candidate = SERIES_PREFIXES[idx]
-
+                series_needing_work = []
+                for candidate in SERIES_PREFIXES:
                     needs_work = await session.execute(
                         text("""
                             SELECT EXISTS (
@@ -959,15 +954,21 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         {"prefix": candidate},
                     )
                     if needs_work.scalar():
-                        series_to_process = candidate
-                        _rc.set(_cursor_key, str((idx + 1) % len(SERIES_PREFIXES)))
-                        break
+                        series_needing_work.append(candidate)
 
-                if not series_to_process:
-                    logger.info("Settled events: all series fully resolved")
+                logger.info(
+                    "Settled events: %d/%d series need work",
+                    len(series_needing_work), len(SERIES_PREFIXES),
+                )
+
+                if not series_needing_work:
                     return stats
 
-                for series in [series_to_process]:
+                for series in series_needing_work:
+                    if (_time.monotonic() - _start_time) > _MAX_SECONDS:
+                        logger.info("Settled events: time budget exhausted after %d series",
+                                    series_needing_work.index(series))
+                        break
                     cursor = None
                     series_resolved = 0
                     series_snapshots = 0
