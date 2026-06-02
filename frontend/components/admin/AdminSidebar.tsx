@@ -57,7 +57,10 @@ const PILLARS: NavPillar[] = [
   {
     label: "Labeling",
     icon: <Tags className="w-4 h-4" />,
-    items: [{ label: "Labeling Workbench", href: "/admin/labeling" }],
+    items: [
+      { label: "Feed Review", href: "/admin/feed-review" },
+      { label: "Labeling Workbench", href: "/admin/labeling" },
+    ],
   },
   {
     label: "Human Eval",

@@ -185,10 +185,11 @@ For each section, present:
 - is_winner coverage per source (target: 100% — any gap is a bug)
 - Flag any source below 100% as 🔴
 
-**G. Source Coverage**
-- Average sources per live event
-- Any source that went dark (0 recent snapshots)
-- Kalshi/Polymarket ingestion recency — when was the last successful poll?
+**G. Source Coverage (Tier 1 leagues — target 100%)**
+- For each Tier 1 sport (basketball_nba, icehockey_nhl, baseball_mlb, americanfootball_nfl): check the % of events with data from each source (Odds API, ESPN, Kalshi, Polymarket, StatPal)
+- Flag any Tier 1 source below 100% as 🔴 — every gap is a bug
+- Dashboard source_coverage is a list of per-sport dicts with fields: sport, total, live, odds_api, espn, kalshi, polymarket, etc. Calculate percentages as `source_count / total * 100`
+- Also check: average sources per live event, any source with 0 recent snapshots
 
 **H. Feed Quality**
 - boring-rate@20 (target: 0)
