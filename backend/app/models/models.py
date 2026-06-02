@@ -706,6 +706,9 @@ class FuturesMarket(Base):
         Boolean, server_default="false"
     )
 
+    # Curator score adjustment — accumulated from boost/demote signals
+    curation_score_adj: Mapped[Optional[int]] = mapped_column(Integer, server_default="0")
+
     # Volume/liquidity from prediction markets (internal signal, never user-facing)
     volume: Mapped[Optional[int]] = mapped_column(
         Integer

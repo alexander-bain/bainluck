@@ -397,6 +397,8 @@ def compute_futures_highlight(
     # Volume/liquidity (internal signal)
     volume_24h: Optional[int] = None,
     volume_7d_avg: Optional[float] = None,
+    # Curator adjustment (from curation signals)
+    curation_score_adj: int = 0,
 ) -> FuturesHighlightResult:
     """
     Compute highlight score and flags for a futures market.
@@ -692,6 +694,10 @@ def compute_futures_highlight(
         if reason_code in result.reasons:
             result.primary_reason = display_text
             break
+
+    if curation_score_adj:
+        result.score += curation_score_adj
+        result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
 
     return result
 

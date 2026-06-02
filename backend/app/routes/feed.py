@@ -2153,6 +2153,7 @@ def _score_market_trace(
         now=now,
         market_name=market.name,
         volume_24h=market.volume_24h,
+        curation_score_adj=market.curation_score_adj or 0,
     )
 
     top_mover_name = highlight_result.top_mover_name
@@ -4217,6 +4218,7 @@ async def _score_futures(
             now=now,
             market_name=market.name,
             volume_24h=market.volume_24h,
+            curation_score_adj=market.curation_score_adj or 0,
         )
 
         top_mover_name = highlight_result.top_mover_name

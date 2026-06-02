@@ -1536,8 +1536,25 @@ async def create_curation_signal(
         notes=body.notes,
         source_device=body.source_device or "unknown",
         market_id=market_id,
+        processed=True,
     )
     db.add(cs)
+
+    # Apply score adjustment directly to the market
+    BOOST_ADJ = 15
+    DEMOTE_ADJ = -25
+    adj = BOOST_ADJ if signal == "boost" else DEMOTE_ADJ
+    if market_id:
+        from sqlalchemy import text as sa_text
+        await db.execute(
+            sa_text("""
+                UPDATE futures_markets
+                SET curation_score_adj = COALESCE(curation_score_adj, 0) + :adj
+                WHERE id = :mid
+            """),
+            {"adj": adj, "mid": market_id},
+        )
+
     await db.commit()
 
     # Build a human-readable summary for the shortcut notification
