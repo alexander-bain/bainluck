@@ -60,19 +60,11 @@ export default function FeedReviewPage() {
       const id = item.data.id;
       setSubmitting((prev) => new Set([...prev, id]));
 
-      const source = item.data.source || "";
-      let url = "";
-      if (item.type === "futures") {
-        if (source === "kalshi") {
-          url = `https://kalshi.com/markets/${(item.data.external_id || "").toLowerCase()}`;
-        } else if (source === "polymarket") {
-          url = `https://polymarket.com/event/${item.data.external_id || ""}`;
-        } else {
-          url = `bainluck://market/${item.data.id}`;
-        }
-      } else {
-        url = `bainluck://event/${item.data.id}`;
-      }
+      const name =
+        item.type === "event"
+          ? `${item.data.away_team || "?"} at ${item.data.home_team || "?"}`
+          : item.data.name || "?";
+      const url = `bainluck://${item.type}/${item.data.id}`;
 
       try {
         await fetch(
@@ -80,7 +72,12 @@ export default function FeedReviewPage() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, signal, notes: notes[id] || null, source_device: "web_review" }),
+            body: JSON.stringify({
+              url,
+              signal,
+              notes: notes[id] ? `[${name}] ${notes[id]}` : `[${name}] score=${item.score} cat=${item.data.llm_sport_category || item.data.category || item.data.sport || "?"}`,
+              source_device: "web_review",
+            }),
           }
         );
         setVerdicts((prev) => ({ ...prev, [id]: signal }));
