@@ -129,7 +129,22 @@ _BORING_PATTERNS = re.compile(
     r"|close price on (may|june|april|january|february|march)"
     r"|compute price (up|down)"
     r"|runner-up .+ on spotify"
-    r"|what will .+ say during .+ (newsmax|fox|cnn|msnbc))",
+    r"|what will .+ say during .+ (newsmax|fox|cnn|msnbc)"
+    r"|(lowest|highest) temperature in .+ on (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"|will it rain in .+ on (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"|\b(up or down) on (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"|\b(up or down) (today|this week|on june|on may|on july)"
+    r"|gasoline prices? on (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"|natural gas .* (up or down)"
+    r"|jet fuel prices? for the week"
+    r"|treasury yield at month.end"
+    r"|inflation rate yoy.* for (jan|feb|mar|apr|may|jun)"
+    r"|margin of victory"
+    r"|voter turnout"
+    r"|district .+ (margin|turnout)"
+    r"|how many launches will spacex"
+    r"|allegiance \d+ winner"
+    r"|college baseball.*(tournament|champion))",
     re.IGNORECASE,
 )
 
@@ -139,9 +154,26 @@ _OBSCURE_ELECTION_PATTERNS = re.compile(
     r"|hackney|newham|lewisham|watford|doncaster|croydon|tower hamlets"
     r"|by-election|byelection"
     r"|(wales|scotland).*(parliamentary|assembly).*(election|winner)"
-    r"|(andalusia|bavaria|saxony|thuringia|hesse).*(election|winner))",
+    r"|(andalusia|bavaria|saxony|thuringia|hesse).*(election|winner)"
+    r"|\b\w+ (senate|house|governor) (election|winner|race)"
+    r"|district\b.*(general election|winner|margin)"
+    r"|oregon senate"
+    r"|alaska senate.*(margin|election)"
+    r"|kentucky.*(house|district))",
     re.IGNORECASE,
 )
+
+# Minor motorsport/golf patterns — penalize niche events that flood the feed
+_MINOR_SPORT_EVENT_PATTERNS = re.compile(
+    r"("
+    r"allegiance \d+|coca.cola 600|detroit grand prix|"
+    r"alpine open|unc health championship|"
+    r"korn ferry|web\.com|corn ferry|"
+    r"women.s champions league"
+    r")",
+    re.IGNORECASE,
+)
+MINOR_SPORT_EVENT_PENALTY = -20
 
 _MAJOR_ELECTION_RE = re.compile(
     r"("
@@ -220,7 +252,7 @@ _CULTURAL_GRAVITY_T1 = re.compile(
     r"nobel (peace |)prize|"
     r"(presidential|president).*(election|winner|2028)|"
     r"(republican|democratic).*(primary|nominee|nomination)|"
-    r"senate (control|winner|majority)|"
+    r"(u\.?s\.?|which party).*(senate|house)|senate (control|majority)|"
     r"(impeach|25th amendment|removed from office)|"
     r"stanley cup (winner|champion)|"
     r"world series (winner|champion)|"
@@ -418,6 +450,11 @@ def compute_futures_highlight(
     if _market_name and _OBSCURE_ELECTION_PATTERNS.search(_market_name):
         result.score += OBSCURE_ELECTION_PENALTY
         result.reasons.append("obscure_election")
+
+    # === Minor sport event penalty ===
+    if _market_name and _MINOR_SPORT_EVENT_PATTERNS.search(_market_name):
+        result.score += MINOR_SPORT_EVENT_PENALTY
+        result.reasons.append("minor_sport_event")
 
     if (
         _sport_lower in {"politics", "elections"}
