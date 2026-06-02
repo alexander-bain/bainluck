@@ -9,6 +9,10 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Module-scope secret — set by EvalPage component when auth loads.
+// This avoids passing secret to every module-scope API helper.
+let secret = "";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface GridSource {
@@ -1454,12 +1458,16 @@ export default function EvalPage() {
   useScrollDepth({ pageType: "admin_eval" });
   useEngagementTime({ pageType: "admin_eval" });
 
-  const { secret } = useAdminAuth();
+  const { secret: adminSecret } = useAdminAuth();
   const [tab, setTab] = useState<"grid" | "futures" | "pairwise" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
 
+  // Sync component-scoped auth secret into module-scope variable
+  // so module-scope API helpers (fetchEvalDecisions, createOverride, etc.) work.
+  useEffect(() => { secret = adminSecret || ""; }, [adminSecret]);
+
   useEffect(() => {
-    if (!secret) return;
+    if (!adminSecret) return;
     const update = async () => {
       const d = await fetchEvalDecisions();
       setDecisions(d);
@@ -1467,7 +1475,7 @@ export default function EvalPage() {
     update();
     const interval = setInterval(update, 10000);
     return () => clearInterval(interval);
-  }, [secret]);
+  }, [adminSecret]);
 
     const gridCount = decisions.filter((d) => d.market_name.includes(":") && !d.market_name.startsWith("futures:")).length;
   const futuresCount = decisions.filter((d) => d.market_name.startsWith("futures:")).length;
