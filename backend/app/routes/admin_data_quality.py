@@ -3767,10 +3767,14 @@ async def debug_settled_precheck(
     )
     all_series = [r[0] for r in series_result.all()]
 
-    # Check each
+    # Check priority series + first 50 alphabetical
+    priority = ["KXNBAGAME", "KXNBASPREAD", "KXNBAPTS", "KXNBA3PT",
+                "KXNBAREB", "KXNBAAST", "KXNHLGAME", "KXMLBSTGAME"]
+    check_list = priority + [s for s in all_series if s not in priority][:50]
+
     needing_work = []
     not_needing = []
-    for candidate in all_series[:50]:
+    for candidate in check_list:
         needs = await db.execute(
             text("""
                 SELECT EXISTS (
