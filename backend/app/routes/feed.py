@@ -847,6 +847,14 @@ async def get_feed(
     my_teams_only: bool = Query(
         False, description="Filter to only the user's followed teams"
     ),
+    mode: Optional[str] = Query(
+        None,
+        description=(
+            "Feed mode: 'discover' (default) runs full editorial scoring; "
+            "'sports' skips expensive Discover pools and returns events + "
+            "top sports futures sorted by tier/volume, 10x faster."
+        ),
+    ),
     tags: Optional[str] = Query(
         None,
         description='Filter by taxonomy tags (JSON array, e.g., ["sport:basketball"])',
@@ -948,7 +956,7 @@ async def get_feed(
                 if feed_session_id
                 else "anon"
             )
-            _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}"
+            _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}:{mode or 'discover'}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
             cached = await _async_redis.get(_cache_key)
             if cached:
@@ -1110,22 +1118,37 @@ async def get_feed(
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
 
     # === SCORE FUTURES ===
+    _is_sports_mode = (mode or "").lower() == "sports"
     if include_futures:
         try:
-            futures_items = await _score_futures(
-                db,
-                now,
-                sport,
-                ctx,
-                my_teams_only=my_teams_only,
-                my_team_names=my_team_names,
-                my_team_sport_categories=my_team_sport_categories,
-                tag_filter=dynamic_tag_filter or None,
-                static_tag_filter=static_tag_filter or None,
-                timing_records=_timings,
-                timing_started_at=_started_at,
-                config=discover_config,
-            )
+            if _is_sports_mode:
+                # Sports mode: skip the expensive Discover scoring pipeline
+                # (10 candidate pool queries + editorial recall + interestingness
+                # cache). Instead, run a single fast query for top sports futures.
+                futures_items = await _score_sports_mode_futures(
+                    db,
+                    now,
+                    sport,
+                    ctx,
+                    my_teams_only=my_teams_only,
+                    my_team_names=my_team_names,
+                    my_team_sport_categories=my_team_sport_categories,
+                )
+            else:
+                futures_items = await _score_futures(
+                    db,
+                    now,
+                    sport,
+                    ctx,
+                    my_teams_only=my_teams_only,
+                    my_team_names=my_team_names,
+                    my_team_sport_categories=my_team_sport_categories,
+                    tag_filter=dynamic_tag_filter or None,
+                    static_tag_filter=static_tag_filter or None,
+                    timing_records=_timings,
+                    timing_started_at=_started_at,
+                    config=discover_config,
+                )
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
@@ -3627,6 +3650,472 @@ async def _score_events(
             item["personalization_reasons"] = p_result.reasons
 
         scored_items.append(item)
+
+    return scored_items
+
+
+async def _score_sports_mode_futures(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+    ctx: PersonalizationContext,
+    my_teams_only: bool = False,
+    my_team_names: Optional[list] = None,
+    my_team_sport_categories: Optional[dict[str, set[str]]] = None,
+) -> list[dict]:
+    """Fast sports-mode futures: single query, no editorial pools.
+
+    Returns the same data shape as ``_score_futures`` but skips the 10+
+    candidate-pool queries, external-curator recall, interestingness Redis
+    cache, and quality/editorial pipelines that make Discover scoring take
+    ~5 seconds cold.  Instead runs ONE query for sports futures ordered by
+    tier then volume, scores them with the standard highlight/quality
+    pipeline, and returns.  Typically finishes in <200 ms.
+    """
+    base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        ~FuturesMarket.name.like("% vs %"),
+        ~FuturesMarket.name.like("% vs. %"),
+    ]
+
+    sports_filter = FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES)
+
+    if sport_filter:
+        sports_filter = and_(
+            sports_filter,
+            or_(
+                FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
+                FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
+            ),
+        )
+
+    # Single query: top 120 sports futures by tier then volume
+    id_result = await db.execute(
+        select(FuturesMarket.id)
+        .where(*base_filters, sports_filter)
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        )
+        .limit(120)
+    )
+    market_ids = list(id_result.scalars().all())
+    if not market_ids:
+        return []
+
+    base_options = [
+        load_only(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.source,
+            FuturesMarket.sport_id,
+            FuturesMarket.category,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.market_tier,
+            FuturesMarket.canonical_market_key,
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
+            FuturesMarket.image_url,
+            FuturesMarket.hook_description,
+            FuturesMarket.hook_generated_at,
+            FuturesMarket.hook_leader_at_generation,
+            FuturesMarket.market_metadata,
+            FuturesMarket.volume_24h,
+            FuturesMarket.updated_at,
+            FuturesMarket.commence_time,
+            FuturesMarket.resolution_date,
+            FuturesMarket.status,
+            FuturesMarket.created_at,
+            FuturesMarket.llm_league,
+            FuturesMarket.llm_gender,
+            FuturesMarket.llm_level,
+        ),
+        selectinload(FuturesMarket.outcomes).load_only(
+            FuturesOutcome.id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            FuturesOutcome.current_probability,
+            FuturesOutcome.probability_change_24h,
+            FuturesOutcome.rank,
+            FuturesOutcome.rank_change_24h,
+            FuturesOutcome.opening_probability,
+        ),
+        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
+    ]
+
+    markets_result = await db.execute(
+        select(FuturesMarket)
+        .options(*base_options)
+        .where(FuturesMarket.id.in_(market_ids))
+    )
+    markets_by_id = {
+        market.id: market for market in markets_result.scalars().unique().all()
+    }
+    markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+
+    if not markets:
+        return []
+
+    # Build canonical source counts for the candidate set
+    candidate_canonical_keys = {
+        m.canonical_market_key for m in markets if m.canonical_market_key
+    }
+    canonical_source_counts = await _get_canonical_source_counts(
+        db, keys=candidate_canonical_keys
+    )
+
+    user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
+
+    scored_items: list[dict] = []
+    for market in markets:
+        # --- Staleness/settlement filters (same as _score_futures) ---
+        if market.resolution_date:
+            res_dt = _utc(market.resolution_date)
+            if res_dt and res_dt < now:
+                continue
+
+        sorted_outcomes = sorted(
+            market.outcomes,
+            key=lambda o: float(o.current_probability) if o.current_probability else 0,
+            reverse=True,
+        )
+        outcomes_data = []
+        leader_name = None
+        leader_prob = None
+
+        for o in sorted_outcomes[:10]:
+            prob = float(o.current_probability) if o.current_probability else None
+            change = float(o.probability_change_24h) if o.probability_change_24h else None
+            outcomes_data.append({
+                "name": o.name,
+                "probability": prob,
+                "probability_change_24h": change,
+                "rank": o.rank,
+                "rank_change_24h": o.rank_change_24h,
+                "opening_probability": (
+                    float(o.opening_probability) if o.opening_probability else None
+                ),
+            })
+
+        if sorted_outcomes:
+            leader = sorted_outcomes[0]
+            leader_name = leader.name
+            leader_prob = float(leader.current_probability) if leader.current_probability else None
+
+        probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
+
+        # Filter settled/dead markets
+        all_settled = len(probs_available) >= 2 and all(p < 0.05 or p > 0.95 for p in probs_available)
+        if all_settled:
+            continue
+        if leader_prob is not None and leader_prob >= 0.97:
+            continue
+        if leader_prob is not None and leader_prob <= 0.03 and len(probs_available) <= 2:
+            continue
+        if probs_available and all(p < 0.001 for p in probs_available):
+            continue
+        if not probs_available and market.outcomes:
+            continue
+
+        has_any_movement = any(
+            o["probability_change_24h"] is not None and abs(o["probability_change_24h"]) > 0.001
+            for o in outcomes_data
+        )
+        if market.updated_at:
+            days_stale = (
+                now - market.updated_at.replace(
+                    tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo
+                )
+            ).total_seconds() / 86400
+            if days_stale > 2 and not has_any_movement:
+                continue
+
+        max_recent_movement = max(
+            (abs(o["probability_change_24h"]) for o in outcomes_data if o["probability_change_24h"] is not None),
+            default=0.0,
+        )
+        resolved_threshold, opening_threshold = _effective_resolution_thresholds(market.llm_sport_category)
+        is_effectively_resolved = leader_prob is not None and leader_prob >= resolved_threshold
+        if is_effectively_resolved:
+            leader_opening = None
+            for o in outcomes_data:
+                if o["name"] == leader_name:
+                    leader_opening = o.get("opening_probability")
+                    break
+            sports_effectively_settled = (
+                leader_opening is not None
+                and leader_opening < opening_threshold
+                and any(o["probability_change_24h"] is not None for o in outcomes_data)
+                and max_recent_movement < 0.01
+            )
+            if sports_effectively_settled or (leader_opening is None or leader_opening >= opening_threshold):
+                continue
+
+        # Soft-settled binary
+        if (
+            leader_prob is not None
+            and leader_prob >= 0.60
+            and len(probs_available) == 2
+        ):
+            if max_recent_movement < 0.02:
+                leader_opening_prob = None
+                for o in outcomes_data:
+                    if o["name"] == leader_name:
+                        leader_opening_prob = o.get("opening_probability")
+                        break
+                if leader_opening_prob is None or leader_opening_prob >= 0.50:
+                    continue
+
+        if (market.llm_sport_category or "").lower() == "golf" and market.commence_time:
+            commence_time = _utc(market.commence_time)
+            if commence_time and commence_time < now - timedelta(days=6):
+                continue
+
+        # --- my_teams_only filtering ---
+        if my_teams_only:
+            market_sport_key = market.sport.key if market.sport else None
+            if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
+                continue
+            if not market_sport_key and market.llm_sport_category:
+                if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                    continue
+
+            outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+            matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
+            matched_by_name = False
+            if not matched_by_id and my_team_names:
+                market_cat = market.llm_sport_category
+                if not market_cat and market_sport_key:
+                    market_cat = _personalization_category_from_sport_key(market_sport_key)
+                for o in market.outcomes:
+                    if o.name:
+                        for team_name in my_team_names or []:
+                            if _team_name_matches(team_name, o.name):
+                                if my_team_sport_categories and market_cat:
+                                    team_cats = my_team_sport_categories.get(team_name)
+                                    if team_cats and market_cat not in team_cats:
+                                        continue
+                                matched_by_name = True
+                                break
+                    if matched_by_name:
+                        break
+            if not matched_by_id and not matched_by_name:
+                continue
+
+        # --- Scoring (lightweight — no editorial/quality caps) ---
+        source_count = 1
+        if market.canonical_market_key:
+            source_count = canonical_source_counts.get(market.canonical_market_key, 1)
+
+        highlight_result = compute_futures_highlight(
+            market_tier=market.market_tier,
+            sport_category=market.llm_sport_category,
+            resolution_date=market.resolution_date,
+            outcomes=outcomes_data,
+            source_count=source_count,
+            now=now,
+            market_name=market.name,
+            volume_24h=market.volume_24h,
+            curation_score_adj=int(market.curation_score_adj) if market.curation_score_adj else 0,
+        )
+
+        top_mover_name = highlight_result.top_mover_name
+        top_mover_change = None
+        if top_mover_name:
+            for o in outcomes_data:
+                if o["name"] == top_mover_name and o.get("probability_change_24h"):
+                    top_mover_change = o["probability_change_24h"]
+                    break
+
+        top_surprise_name = None
+        top_surprise_change = None
+        for o in outcomes_data:
+            opening = o.get("opening_probability")
+            current = o.get("probability")
+            if opening is None or current is None:
+                continue
+            surprise_change = current - opening
+            if top_surprise_change is None or abs(surprise_change) > abs(top_surprise_change):
+                top_surprise_name = o.get("name")
+                top_surprise_change = surprise_change
+
+        _h_leader = humanize_binary_outcome_name(leader_name, market.name) if leader_name else leader_name
+        _h_mover = humanize_binary_outcome_name(top_mover_name, market.name) if top_mover_name else top_mover_name
+        _h_surprise = humanize_binary_outcome_name(top_surprise_name, market.name) if top_surprise_name else top_surprise_name
+
+        headline = (
+            generate_futures_headline(
+                highlight_reasons=highlight_result.reasons,
+                top_mover_name=_h_mover,
+                top_mover_change=top_mover_change,
+                top_surprise_name=_h_surprise,
+                top_surprise_change=top_surprise_change,
+                leader_name=_h_leader,
+                leader_probability=leader_prob,
+                source_count=source_count,
+                market_name=market.name,
+            )
+            or highlight_result.primary_reason
+        )
+        context_summary = generate_futures_context_summary(
+            headline=headline,
+            highlight_reasons=highlight_result.reasons,
+            market_name=market.name,
+            leader_name=_h_leader,
+            leader_probability=leader_prob,
+            source_count=source_count,
+        )
+
+        quality = classify_market_quality(
+            market_name=market.name,
+            sport_category=market.llm_sport_category,
+            outcome_names=[o.name for o in market.outcomes if o.name],
+        )
+        if quality.quality_class == "suppress":
+            continue
+
+        effective_hook = market.hook_description
+        if effective_hook and is_hook_stale(
+            hook_description=effective_hook,
+            hook_generated_at=market.hook_generated_at,
+            hook_leader_at_generation=market.hook_leader_at_generation,
+            current_leader_name=leader_name,
+            current_leader_probability=leader_prob,
+            market_metadata=market.market_metadata,
+            now=now,
+        ):
+            effective_hook = None
+
+        base_score = apply_quality_score(highlight_result.score, quality)
+        base_score = apply_explanation_quality_score(
+            base_score,
+            hook_description=effective_hook,
+            headline=headline,
+            quality=quality,
+        )
+
+        # Apply personalization
+        outcome_team_ids_for_p = [o.team_id for o in market.outcomes if o.team_id is not None]
+        outcome_names = [o.name for o in market.outcomes if o.name]
+        p_result = compute_futures_multiplier(
+            ctx=ctx,
+            sport_category=market.llm_sport_category,
+            outcome_team_ids=outcome_team_ids_for_p,
+            futures_market_id=market.id,
+            sport_key=market.sport.key if market.sport else None,
+            outcome_names=outcome_names,
+        )
+        personalized_score = min(100, int(base_score * p_result.multiplier))
+        if not my_teams_only and personalized_score < 15:
+            continue
+
+        reason = generate_futures_reason(
+            market_name=market.name,
+            highlight_reasons=highlight_result.reasons,
+            top_mover_name=_h_mover,
+            top_mover_change=top_mover_change,
+            top_surprise_name=_h_surprise,
+            top_surprise_change=top_surprise_change,
+            leader_name=_h_leader,
+            leader_probability=leader_prob,
+            source_count=source_count,
+        )
+
+        # Build compact feed data (same shape as _score_futures)
+        top_outcomes_data = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "rank": o.rank,
+                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            }
+            for o in sorted_outcomes[:3]
+        ]
+        top_outcomes_data = humanize_outcome_names_for_feed(top_outcomes_data, market.name)
+        top_outcomes_data = _normalize_feed_probabilities(top_outcomes_data, sorted_outcomes)
+
+        futures_data = {
+            "id": market.id,
+            "name": market.name,
+            "sport": market.sport.key if market.sport else None,
+            "sport_name": market.sport.name if market.sport else None,
+            "llm_sport_category": market.llm_sport_category,
+            "source": market.source,
+            "source_count": source_count,
+            "sources": (
+                (_canonical_source_names_cache or {}).get(market.canonical_market_key, [market.source])
+                if market.canonical_market_key
+                else [market.source]
+            ),
+            "market_tier": market.market_tier,
+            "status": market.status,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "top_outcomes": top_outcomes_data,
+            "outcome_count": len(market.outcomes),
+            "canonical_market_key": market.canonical_market_key,
+            "group_id": market.group_id,
+            "group_type": market.group_type,
+            "image_url": market.image_url,
+            "hook_description": effective_hook,
+            "temporal_badge": _compute_temporal_badge(
+                status=market.status,
+                resolution_date=market.resolution_date,
+                created_at=market.created_at,
+                now=now,
+            ),
+        }
+
+        inline_market_tags = compute_market_tags(
+            llm_sport_category=market.llm_sport_category,
+            llm_league=getattr(market, "llm_league", None),
+            llm_gender=getattr(market, "llm_gender", None),
+            llm_level=getattr(market, "llm_level", None),
+            market_tier=market.market_tier,
+            category=market.category,
+            status=market.status,
+            source=market.source,
+        )
+        futures_data["market_tags"] = inline_market_tags
+
+        sort_time = now.timestamp()
+        if market.resolution_date:
+            days_until = (market.resolution_date - now).total_seconds()
+            sort_time = now.timestamp() + max(0, 86400 * 30 - days_until)
+
+        item: dict = {
+            "type": "futures",
+            "score": personalized_score,
+            "reason": reason,
+            "headline": headline,
+            "context_summary": context_summary,
+            "data": futures_data,
+            "_sort_time": sort_time,
+            "_quality_class": quality.quality_class,
+            "_quality_family_key": quality.family_key,
+            "_quality_story_key": quality.story_key,
+        }
+        if p_result.is_personalized:
+            item["personalized"] = True
+            item["base_score"] = base_score
+            item["multiplier"] = round(p_result.multiplier, 2)
+            item["personalization_reasons"] = p_result.reasons
+
+        scored_items.append(item)
+
+    # Apply same dedup + caps as full pipeline
+    scored_items = _dedupe_futures_by_group_id(scored_items)
+    scored_items = cap_low_quality_families(scored_items, cap=1)
+    scored_items = diversify_quality_families(
+        scored_items,
+        exact_family_cap=1,
+        story_family_cap=5,
+    )
 
     return scored_items
 

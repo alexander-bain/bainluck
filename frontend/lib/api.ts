@@ -837,6 +837,7 @@ export async function fetchFeed(params?: {
   include_events?: boolean;
   event_pct?: number;
   tags?: string[];
+  mode?: string;
 }): Promise<FeedResponse> {
   const searchParams = new URLSearchParams();
 
@@ -848,6 +849,7 @@ export async function fetchFeed(params?: {
   if (params?.include_events === false) searchParams.set("include_events", "false");
   if (params?.event_pct != null) searchParams.set("event_pct", params.event_pct.toString());
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
+  if (params?.mode) searchParams.set("mode", params.mode);
 
   const query = searchParams.toString();
   const sessionId = getDiscoverSessionId();

@@ -70,9 +70,9 @@ export default function SportsPage() {
     authLoading
       ? null
       : user
-        ? ["feed", user.uid]
-        : ["feed-anon"],
-    () => fetchFeed({ limit: 200 }),
+        ? ["feed-sports", user.uid]
+        : ["feed-sports-anon"],
+    () => fetchFeed({ limit: 200, mode: "sports" }),
     { refreshInterval: 30000 }
   );
 
