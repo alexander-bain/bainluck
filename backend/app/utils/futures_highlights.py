@@ -172,7 +172,7 @@ _COMPELLING_PATTERNS = [
     re.compile(p, re.IGNORECASE) for p in [
         r"(invade|invasion|war|strike|military action)",
         r"(ceasefire|peace deal|treaty)",
-        r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league).*(champion|winner)",
+        r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league|wimbledon|french open|australian open|us open|grand slam|ufc).*(champion|winner|title)",
         r"(fed decision|interest rate|recession|rate cut)",
         r"\bipo\b|acquire|bankrupt|fail|earnings",
         r"(taylor swift|beyonce|drake|kardashian|bieber)",
@@ -226,6 +226,12 @@ _CULTURAL_GRAVITY_T1 = re.compile(
     r"world series (winner|champion)|"
     r"french open.*(winner|champion)|"
     r"us open.*(winner|champion)|"
+    r"wimbledon.*(winner|champion)|"
+    r"australian open.*(winner|champion)|"
+    r"roland garros.*(winner|champion)|"
+    r"grand slam.*(winner|champion)|"
+    r"ufc \d{3,}.*(winner|main event|title)|"
+    r"ufc.*(champion|title fight|title bout)|"
     r"(nfl|nba) mvp"
     r")",
     re.IGNORECASE,

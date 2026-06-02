@@ -372,6 +372,17 @@ _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS = (
     "%nba finals%",
     "%stanley cup%",
     "%world series%",
+    # Grand Slam tennis
+    "%wimbledon%",
+    "%french open%",
+    "%us open%",
+    "%australian open%",
+    "%roland garros%",
+    "%grand slam%",
+    # UFC/MMA major events
+    "%ufc%",
+    "%title fight%",
+    "%title bout%",
 )
 
 
@@ -3749,7 +3760,10 @@ async def _score_futures(
             )
         )
 
-    # Pool 1: sports futures (capped — tier-ordered so best surface first)
+    # Pool 1: sports futures (capped — tier-ordered so best surface first).
+    # Limit was 50 but that starved Tier 2 sports (MMA, tennis, soccer)
+    # because Tier 1 sports filled the pool first. Raised to 80 to ensure
+    # UFC, Grand Slam tennis, and World Cup markets enter the candidate set.
     sports_query = (
         select(FuturesMarket.id)
         .where(
@@ -3760,7 +3774,7 @@ async def _score_futures(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.resolution_date.asc().nulls_last(),
         )
-        .limit(50)
+        .limit(80)
     )
 
     sports_postseason_query = (

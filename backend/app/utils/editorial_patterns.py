@@ -57,6 +57,14 @@ EDITORIAL_RECALL_PATTERNS: tuple[str, ...] = (
     "%outbreak%",
     "%pandemic%",
     "%hantavirus%",
+    # Grand Slam tennis
+    "%wimbledon%",
+    "%french open%",
+    "%australian open%",
+    "%roland garros%",
+    "%grand slam%",
+    # UFC / MMA major events
+    "%ufc%",
 )
 
 # Pre-stripped lowercase tokens for fast Python `in` checks.

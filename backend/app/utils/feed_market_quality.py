@@ -217,6 +217,8 @@ _COMPELLING_RE = re.compile(
     r"bitcoin|btc|ethereum|eth|crypto|"
     r"taylor swift|beyonce|drake|kardashian|musk|sam altman|pope|nobel|"
     r"super bowl|world cup|champions league|masters|olympics|"
+    r"wimbledon|french open|australian open|us open|grand slam|"
+    r"ufc \d{3,}|ufc.*(title|champion)|"
     r"nba finals?|wnba finals?|stanley cup|world series"
     r")\b",
     re.IGNORECASE,
@@ -475,6 +477,20 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(fifa\s+)?world cup\b", lower):
         return "story:fifa_world_cup"
 
+    if re.search(r"\bufc\s+\d{3,}\b", lower) or re.search(
+        r"\bufc\b.*\b(title|champion|main event)\b", lower
+    ):
+        return "story:ufc_events"
+
+    if re.search(
+        r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b", lower
+    ):
+        return "story:grand_slam_tennis"
+
+    # "US Open" is tennis when the category is tennis (not golf)
+    if category == "tennis" and re.search(r"\bus open\b", lower):
+        return "story:grand_slam_tennis"
+
     if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model|best ai)\b", lower):
         return "story:ai"
 
@@ -713,7 +729,7 @@ def editorial_archetype(
     }:
         return "sports_story"
     if re.search(
-        r"\b(pga|tour|championship|top 20|world cup|champions league|nba|nfl|mlb|nhl|ufc)\b",
+        r"\b(pga|tour|championship|top 20|world cup|champions league|nba|nfl|mlb|nhl|ufc|wimbledon|french open|australian open|us open|grand slam)\b",
         text,
         re.I,
     ):
@@ -1037,6 +1053,15 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
         86,
     ),
     ("fifa_world_cup", re.compile(r"\b(fifa\s+)?world cup\b", re.IGNORECASE), 82),
+    ("ufc_events", re.compile(r"\bufc\b", re.IGNORECASE), 82),
+    (
+        "grand_slam_tennis",
+        re.compile(
+            r"\b(wimbledon|french open|australian open|roland garros|grand slam|us open)\b",
+            re.IGNORECASE,
+        ),
+        82,
+    ),
 )
 
 
@@ -1543,6 +1568,8 @@ def diversify_quality_families(
         "story:golf_truist_championship": 3,
         "story:basketball_finals_path": 4,
         "story:fifa_world_cup": 3,
+        "story:ufc_events": 3,
+        "story:grand_slam_tennis": 3,
         "story:regional_us_elections": 1,
         "story:niche_low_signal_sports": 1,
         "story:minor_soccer_leagues": 1,
