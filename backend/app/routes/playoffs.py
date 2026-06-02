@@ -764,7 +764,7 @@ async def _compute_movers(
     result = await session.execute(
         text("""
             SELECT oid AS outcome_id, snap.probability AS old_prob
-            FROM unnest(:ids) AS oid
+            FROM unnest(:ids::integer[]) AS oid
             CROSS JOIN LATERAL (
                 SELECT fos.probability
                 FROM futures_odds_snapshots fos
