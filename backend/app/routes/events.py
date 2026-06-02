@@ -4532,6 +4532,17 @@ async def get_team_progression(
 
     Used by the GridPlayoffPathPair component on event detail pages.
     """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    _cache_key = f"bainluck:team_progression:{event_id}"
+    try:
+        _rc = get_redis_client()
+        _cached = _rc.get(_cache_key)
+        if _cached:
+            return _json.loads(_cached)
+    except Exception:
+        pass
+
     from app.services.league_context import enrich_event_with_context
     from app.config.league_configs import get_league_for_sport_key, LEAGUE_TO_SPORT
 
@@ -4592,7 +4603,7 @@ async def get_team_progression(
             "stages": stages,
         }
 
-    return {
+    _response = {
         "event_id": event_id,
         "league": config.slug,
         "league_name": config.name,
@@ -4600,6 +4611,12 @@ async def get_team_progression(
         "home_team": _build_team(league_ctx.get("home_team"), event.home_team_name),
         "away_team": _build_team(league_ctx.get("away_team"), event.away_team_name),
     }
+    try:
+        _rc = get_redis_client()
+        _rc.setex(_cache_key, 300, _json.dumps(_response, default=str))
+    except Exception:
+        pass
+    return _response
 
 
 @router.get("/{event_id}/history")
