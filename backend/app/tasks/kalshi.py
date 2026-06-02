@@ -931,6 +931,24 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 total_snapshots = 0
 
                 for series in SERIES_PREFIXES:
+                    # Skip series where all outcomes already have api_settlement
+                    needs_work = await session.execute(
+                        text("""
+                            SELECT EXISTS (
+                                SELECT 1 FROM futures_outcomes fo
+                                JOIN futures_markets fm ON fo.market_id = fm.id
+                                WHERE fm.source = 'kalshi'
+                                  AND fm.external_id LIKE :prefix || '%'
+                                  AND fm.status = 'resolved'
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                LIMIT 1
+                            )
+                        """),
+                        {"prefix": series},
+                    )
+                    if not needs_work.scalar():
+                        continue
+
                     cursor = None
                     series_resolved = 0
                     series_snapshots = 0
@@ -1132,7 +1150,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         if not cursor:
                             break
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(1.0)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
