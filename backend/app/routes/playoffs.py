@@ -751,33 +751,64 @@ async def _compute_movers(
     """Compute probability change over the last N hours for a set of outcomes.
 
     Returns {outcome_id: change_24h}.
+
+    Gracefully handles query timeouts — returns whatever results were gathered
+    before the timeout, or an empty dict if the first batch fails. The grid
+    renders fine without mover data; it just won't show 24h trend arrows.
     """
     if not outcome_ids:
         return {}
 
+    # Deduplicate outcome IDs to reduce query load
+    unique_ids = list(set(outcome_ids))
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Use LATERAL for efficient index seeks on
     # idx_fos_outcome_captured(outcome_id, captured_at).
     # The ORM GROUP BY version times out on 130+ outcome IDs.
+    #
+    # Batch into chunks of 40 to keep each query fast and avoid
+    # overwhelming the planner with 100+ LATERAL lookups at once.
+    _BATCH_SIZE = 40
+    old_probs: dict[int, float] = {}
+
     from sqlalchemy import text
-    result = await session.execute(
-        text("""
-            SELECT fo.id AS outcome_id, snap.probability AS old_prob
-            FROM futures_outcomes fo
-            CROSS JOIN LATERAL (
-                SELECT fos.probability
-                FROM futures_odds_snapshots fos
-                WHERE fos.outcome_id = fo.id
-                  AND fos.captured_at >= :cutoff
-                ORDER BY fos.captured_at ASC
-                LIMIT 1
-            ) snap
-            WHERE fo.id = ANY(:ids)
-        """),
-        {"ids": outcome_ids, "cutoff": cutoff},
-    )
-    old_probs = {row.outcome_id: float(row.old_prob) for row in result}
+
+    try:
+        for i in range(0, len(unique_ids), _BATCH_SIZE):
+            batch = unique_ids[i : i + _BATCH_SIZE]
+            result = await session.execute(
+                text("""
+                    SELECT fo.id AS outcome_id, snap.probability AS old_prob
+                    FROM futures_outcomes fo
+                    CROSS JOIN LATERAL (
+                        SELECT fos.probability
+                        FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = fo.id
+                          AND fos.captured_at >= :cutoff
+                        ORDER BY fos.captured_at ASC
+                        LIMIT 1
+                    ) snap
+                    WHERE fo.id = ANY(:ids)
+                """),
+                {"ids": batch, "cutoff": cutoff},
+            )
+            old_probs.update(
+                {row.outcome_id: float(row.old_prob) for row in result}
+            )
+    except Exception as exc:
+        # Statement timeout or other DB error — log and return partial results.
+        # The grid renders fine without movers; trend_24h will just be None.
+        logger.warning(
+            "_compute_movers: query failed after gathering %d/%d results: %s",
+            len(old_probs), len(unique_ids), exc,
+        )
+        # After a cancelled statement the connection is in an error state;
+        # rollback so subsequent queries on this session still work.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
 
     return old_probs
 
