@@ -31,7 +31,7 @@ interface FeedItem {
 type Verdict = "boost" | "demote" | null;
 
 export default function FeedReviewPage() {
-  const { adminSecret } = useAdminAuth();
+  const { secret } = useAdminAuth();
   usePageTracking({ pageType: "admin", pageTitle: "Feed Review" });
   useScrollDepth({ pageType: "admin" });
   useEngagementTime({ pageType: "admin" });
@@ -44,7 +44,7 @@ export default function FeedReviewPage() {
   const [notes, setNotes] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    if (!adminSecret) return;
+    if (!secret) return;
     setLoading(true);
     fetch(`${API_URL}/api/feed?limit=100&event_pct=0.15`)
       .then((r) => r.json())
@@ -53,7 +53,7 @@ export default function FeedReviewPage() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [adminSecret]);
+  }, [secret]);
 
   const sendSignal = useCallback(
     async (item: FeedItem, signal: "boost" | "demote") => {
@@ -76,7 +76,7 @@ export default function FeedReviewPage() {
 
       try {
         await fetch(
-          `${API_URL}/api/admin/ranking-judgments/curation-signal?secret=${adminSecret}`,
+          `${API_URL}/api/admin/ranking-judgments/curation-signal?secret=${secret}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -93,10 +93,10 @@ export default function FeedReviewPage() {
         });
       }
     },
-    [adminSecret]
+    [secret]
   );
 
-  if (!adminSecret) {
+  if (!secret) {
     return (
       <div className="p-8 text-center text-text-secondary">
         Enter admin secret to access feed review.
