@@ -105,7 +105,7 @@ export default function FeedReviewPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
+    <div className="w-full px-4 py-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Feed Review</h1>
@@ -133,7 +133,7 @@ export default function FeedReviewPage() {
               <th className="py-2">Market</th>
               <th className="py-2 w-24">Category</th>
               <th className="py-2 w-20">Source</th>
-              <th className="py-2 w-44">Notes</th>
+              <th className="py-2 min-w-[200px]">Notes</th>
               <th className="py-2 w-36 text-center">Verdict</th>
             </tr>
           </thead>
@@ -167,11 +167,11 @@ export default function FeedReviewPage() {
                   <td className="py-2 text-text-muted">{idx + 1}</td>
                   <td className="py-2 font-mono font-bold">{item.score}</td>
                   <td className="py-2">
-                    <div className="font-medium text-text-primary truncate max-w-md">
+                    <div className="font-medium text-text-primary">
                       {name}
                     </div>
                     {item.headline && (
-                      <div className="text-xs text-text-muted truncate">
+                      <div className="text-xs text-text-muted">
                         {item.headline} — {item.reason}
                       </div>
                     )}
