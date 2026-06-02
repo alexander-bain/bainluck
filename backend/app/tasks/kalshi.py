@@ -987,7 +987,12 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         logger.info("Settled events: time budget exhausted after %d series",
                                     series_needing_work.index(series))
                         break
-                    cursor = None
+
+                    # Resume pagination from where last run left off
+                    _cursor_key = f"bainluck:settled_cursor:{series}"
+                    cursor = _rc.get(_cursor_key)
+                    if cursor:
+                        cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
                     series_resolved = 0
                     series_snapshots = 0
 
@@ -1187,7 +1192,11 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         await session.commit()
 
                         if not cursor:
+                            # Series fully paginated — clear saved cursor
+                            _rc.delete(_cursor_key)
                             break
+                        # Save cursor so next run resumes here
+                        _rc.setex(_cursor_key, 86400 * 7, cursor)
                         await asyncio.sleep(1.0)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
