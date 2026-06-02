@@ -144,7 +144,12 @@ _BORING_PATTERNS = re.compile(
     r"|district .+ (margin|turnout)"
     r"|how many launches will spacex"
     r"|allegiance \d+ winner"
-    r"|college baseball.*(tournament|champion))",
+    r"|college baseball.*(tournament|champion)"
+    r"|\([A-Z]{1,5}\) (up or down)"
+    r"|women.s champions league"
+    r"|coca.cola \d+ winner"
+    r"|detroit grand prix"
+    r"|opendoor .* up or down)",
     re.IGNORECASE,
 )
 
