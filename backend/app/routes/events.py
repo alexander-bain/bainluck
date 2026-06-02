@@ -1166,6 +1166,17 @@ async def typeahead_search(
     Returns up to 8 suggestions: matching teams, upcoming events, and futures.
     Much faster than the full search endpoint — no aggregation or pagination.
     """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    _cache_key = f"bainluck:typeahead:{q.lower().strip()}"
+    try:
+        _rc = get_redis_client()
+        _cached = _rc.get(_cache_key)
+        if _cached:
+            return _json.loads(_cached)
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc)
     pattern = f"%{q}%"
     suggestions = []
@@ -1661,7 +1672,13 @@ async def search_suggestions(
     except Exception:
         pass
 
-    return {"suggestions": suggestions[:8]}
+    _response = {"suggestions": suggestions[:8]}
+    try:
+        _rc = get_redis_client()
+        _rc.setex(_cache_key, 60, _json.dumps(_response, default=str))
+    except Exception:
+        pass
+    return _response
 
 
 @router.get("/debug/sport-keys")
