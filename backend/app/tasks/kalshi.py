@@ -930,8 +930,20 @@ async def _backfill_from_settled_events(limit: int = 5000):
             async with get_task_session() as session:
                 total_snapshots = 0
 
-                for series in SERIES_PREFIXES:
-                    # Skip series where all outcomes already have api_settlement
+                # Pick ONE series per run using a rotating cursor stored in Redis.
+                # This keeps each run short (~5 min for one series) instead of
+                # trying to sweep all 21 in one 15-min window.
+                from app.tasks.redis_state import get_redis_client
+                _rc = get_redis_client()
+                _cursor_key = "bainluck:settled_series_cursor"
+                _last_idx = int(_rc.get(_cursor_key) or 0)
+
+                # Find the next series that needs work
+                series_to_process = None
+                for offset in range(len(SERIES_PREFIXES)):
+                    idx = (_last_idx + offset) % len(SERIES_PREFIXES)
+                    candidate = SERIES_PREFIXES[idx]
+
                     needs_work = await session.execute(
                         text("""
                             SELECT EXISTS (
@@ -944,16 +956,23 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 LIMIT 1
                             )
                         """),
-                        {"prefix": series},
+                        {"prefix": candidate},
                     )
-                    if not needs_work.scalar():
-                        continue
+                    if needs_work.scalar():
+                        series_to_process = candidate
+                        _rc.set(_cursor_key, str((idx + 1) % len(SERIES_PREFIXES)))
+                        break
 
+                if not series_to_process:
+                    logger.info("Settled events: all series fully resolved")
+                    return stats
+
+                for series in [series_to_process]:
                     cursor = None
                     series_resolved = 0
                     series_snapshots = 0
 
-                    for page_num in range(15):
+                    for page_num in range(50):
                         for _retry in range(3):
                             try:
                                 events, cursor = await service.get_events(
