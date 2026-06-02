@@ -212,11 +212,21 @@ _CULTURAL_GRAVITY_T1 = re.compile(
     r"taylor swift.*(wedding|married|baby|pregnant)|"
     r"time.?s? person of the year|"
     r"sexiest man alive|"
-    r"world cup.*(halftime|headline|perform)|"
+    r"world cup.*(winner|champion|halftime|headline|perform)|"
     r"game awards? 20\d{2}|"
     r"ps[56] (announce|release|launch)|"
     r"highest grossing movie|"
-    r"biggest opening weekend"
+    r"biggest opening weekend|"
+    r"nobel (peace |)prize|"
+    r"(presidential|president).*(election|winner|2028)|"
+    r"(republican|democratic).*(primary|nominee|nomination)|"
+    r"senate (control|winner|majority)|"
+    r"(impeach|25th amendment|removed from office)|"
+    r"stanley cup (winner|champion)|"
+    r"world series (winner|champion)|"
+    r"french open.*(winner|champion)|"
+    r"us open.*(winner|champion)|"
+    r"(nfl|nba) mvp"
     r")",
     re.IGNORECASE,
 )
@@ -250,6 +260,8 @@ _ELECTION_MARKET_RE = re.compile(
 _MAJOR_ELECTION_RE = re.compile(
     r"\b("
     r"u\.?s\.?|united states|american|president|presidential|senate|house|congress|"
+    r"republican|democratic|democrat|gop|dnc|rnc|"
+    r"governor|gubernatorial|midterm|"
     r"uk|united kingdom|britain|british|prime minister|"
     r"france|french|germany|german|canada|canadian|brazil|brazilian|india|indian|"
     r"european parliament|eu parliament|eu election"
