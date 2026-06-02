@@ -930,15 +930,27 @@ async def _backfill_from_settled_events(limit: int = 5000):
             async with get_task_session() as session:
                 total_snapshots = 0
 
-                # Process series that need work, with a time budget.
-                # Check all series (fast EXISTS query), then process
-                # each one until we've used ~10 min of the 15-min limit.
+                # Process priority series first, then others with time budget.
+                # The DB has 3,800+ series prefixes — checking all is too slow.
                 import time as _time
                 _start_time = _time.monotonic()
-                _MAX_SECONDS = 600  # 10 min budget, leaving 5 min headroom
+                _MAX_SECONDS = 600
 
+                _PRIORITY_SERIES = [
+                    "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
+                    "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
+                    "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
+                    "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
+                    "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL",
+                ]
+
+                # Check priority series first, then sample remaining
                 series_needing_work = []
-                for candidate in SERIES_PREFIXES:
+                check_list = _PRIORITY_SERIES + [
+                    s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES
+                ][:50]
+
+                for candidate in check_list:
                     needs_work = await session.execute(
                         text("""
                             SELECT EXISTS (
@@ -961,26 +973,10 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     if needs_work.scalar():
                         series_needing_work.append(candidate)
 
-                # Sort: Tier 1 game series first (most guesses to fix)
-                _PRIORITY = [
-                    "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
-                    "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
-                    "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
-                    "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
-                    "KXNCAAMBGAME", "KXNCAAMBSPREAD",
-                ]
-                def _sort_key(s):
-                    try:
-                        return _PRIORITY.index(s)
-                    except ValueError:
-                        return len(_PRIORITY)
-
-                series_needing_work.sort(key=_sort_key)
-
                 logger.info(
-                    "Settled events: %d/%d series need work: %s",
-                    len(series_needing_work), len(SERIES_PREFIXES),
-                    series_needing_work[:5],
+                    "Settled events: %d series need work (checked %d of %d): %s",
+                    len(series_needing_work), len(check_list),
+                    len(SERIES_PREFIXES), series_needing_work[:5],
                 )
 
                 if not series_needing_work:
