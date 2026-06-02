@@ -1158,9 +1158,22 @@ async def _backfill_datagolf_winners():
                     {"mid": row.id},
                 )
 
-                # Anyone NOT in the full leaderboard was never in the field
-                # and is definitively a loser for any market type.
-                can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20", "make_cut")
+                # Anyone NOT in a COMPLETE leaderboard was never in the field
+                # and is definitively a loser for win/top_N markets.
+                #
+                # For make_cut: only infer absent = missed-cut when the
+                # leaderboard is large enough to contain the full field
+                # (typically 120-160 players). Truncated leaderboards
+                # (e.g., 50 entries from the old polling code) omit
+                # players ranked 51+ who actually MADE the cut, so
+                # can_infer_absent would mark them as losers incorrectly.
+                # The 100-player threshold safely distinguishes full
+                # fields from truncated snapshots.
+                leaderboard_size = len(leaderboard)
+                if market_type == "make_cut":
+                    can_infer_absent = leaderboard_size >= 100
+                else:
+                    can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20")
 
                 for out_row in outcomes.all():
                     ext = out_row.external_id or ""

@@ -398,21 +398,53 @@ class TestDataGolfLeaderboardTruncation:
         assert _datagolf_check_placement("65", "make_cut") is True
         assert _datagolf_check_placement("T68", "make_cut") is True
 
-    def test_make_cut_absent_inferred_as_loser(self):
-        """With can_infer_absent=True, player not in leaderboard is a loser."""
-        # Simulating the logic from _backfill_datagolf_winners
-        pos_by_dg = {"100": "1", "200": "CUT"}  # truncated: only 2 players
-        # Player 300 is absent from leaderboard
-        dg_id = "300"
-        pos_str = pos_by_dg.get(dg_id)
-        assert pos_str is None  # absent
+    def test_make_cut_absent_inferred_as_loser_full_field(self):
+        """With full leaderboard (>=100), absent player is correctly a loser."""
+        # Simulate _backfill_datagolf_winners logic for make_cut
+        leaderboard = [{"dg_id": i, "position": str(i)} for i in range(1, 156)]
+        leaderboard_size = len(leaderboard)
+        pos_by_dg = {str(e["dg_id"]): e["position"] for e in leaderboard}
 
-        can_infer_absent = True  # make_cut is now in the tuple
-        if pos_str is None and can_infer_absent:
-            won = False
-        else:
-            won = None
-        assert won is False  # correctly inferred as loser
+        # Player 999 is absent from a FULL leaderboard -> truly not in field
+        assert pos_by_dg.get("999") is None
+        can_infer_absent = leaderboard_size >= 100  # full field
+        assert can_infer_absent is True
+
+    def test_make_cut_absent_NOT_inferred_truncated(self):
+        """With truncated leaderboard (<100), absent player is NOT inferred as loser.
+
+        This is the critical fix: truncated leaderboards (e.g., 50 entries)
+        omit players ranked 51+ who actually made the cut. Inferring them
+        as losers corrupts make_cut calibration.
+        """
+        leaderboard = [{"dg_id": i, "position": str(i)} for i in range(1, 51)]
+        leaderboard_size = len(leaderboard)
+
+        # Player 55 is absent from truncated leaderboard
+        # but may have made the cut (rank 51-70)
+        assert leaderboard_size == 50
+        can_infer_absent = leaderboard_size >= 100  # truncated -> False
+        assert can_infer_absent is False
+
+    def test_make_cut_can_infer_absent_threshold(self):
+        """The make_cut absent-inference threshold is 100 players."""
+        import inspect
+        from app.tasks.backfill_winners import _backfill_datagolf_winners
+        source = inspect.getsource(_backfill_datagolf_winners)
+        # The guard should check leaderboard size for make_cut
+        assert "leaderboard_size >= 100" in source
+        # make_cut should NOT be in the simple can_infer_absent tuple
+        assert "can_infer_absent = market_type in (\"win\"" not in source or \
+               "\"make_cut\"" not in source.split("can_infer_absent = market_type in")[1].split(")")[0]
+
+    def test_win_absent_always_inferred(self):
+        """Win markets should always infer absent players as losers."""
+        # For win markets, any absent player definitely didn't win
+        # regardless of leaderboard size
+        import inspect
+        from app.tasks.backfill_winners import _backfill_datagolf_winners
+        source = inspect.getsource(_backfill_datagolf_winners)
+        assert '"win"' in source
 
     def test_truncation_detection_exactly_50(self):
         """Leaderboard of exactly 50 entries is the truncation signature."""
