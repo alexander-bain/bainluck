@@ -1426,3 +1426,125 @@ async def export_eval_dataset(
         "category_counts": category_counts,
         "rows": all_rows,
     }
+
+
+# ── Curation Signals (iOS Share Sheet / quick curator input) ──
+
+
+class CurationSignalInput(BaseModel):
+    url: str
+    signal: str = "boost"
+    notes: str | None = None
+    source_device: str | None = None
+
+
+@router.post("/curation-signal")
+async def create_curation_signal(
+    body: CurationSignalInput,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Record a boost/demote signal from the curator.
+
+    Designed for fast input from iOS Share Sheet shortcut.
+    Parses Kalshi/Polymarket URLs to extract market identifiers.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import re
+    from app.models.models import CurationSignal, FuturesMarket
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    url = body.url.strip()
+    signal = body.signal.lower()
+    if signal not in ("boost", "demote"):
+        raise HTTPException(status_code=400, detail="signal must be 'boost' or 'demote'")
+
+    # Parse platform and ticker from URL
+    source_platform = None
+    market_ticker = None
+
+    if "kalshi.com" in url:
+        source_platform = "kalshi"
+        parts = url.rstrip("/").split("/")
+        market_ticker = parts[-1].upper() if parts else None
+    elif "polymarket.com" in url:
+        source_platform = "polymarket"
+        # Polymarket URLs: /event/slug-name or /event/slug-name?...
+        m = re.search(r"/event/([^?#]+)", url)
+        if m:
+            market_ticker = m.group(1)
+
+    # Try to find the market in our DB
+    market_id = None
+    if market_ticker and source_platform == "kalshi":
+        result = await db.execute(
+            select(FuturesMarket.id).where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.external_id == market_ticker,
+            ).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            market_id = row
+
+    cs = CurationSignal(
+        url=url,
+        source_platform=source_platform,
+        market_ticker=market_ticker,
+        signal=signal,
+        notes=body.notes,
+        source_device=body.source_device or "unknown",
+        market_id=market_id,
+    )
+    db.add(cs)
+    await db.commit()
+
+    return {
+        "status": "recorded",
+        "signal": signal,
+        "platform": source_platform,
+        "ticker": market_ticker,
+        "matched_market_id": market_id,
+    }
+
+
+@router.get("/curation-signals")
+async def list_curation_signals(
+    secret: str = Query(...),
+    processed: bool | None = Query(None),
+    limit: int = Query(50),
+    db: AsyncSession = Depends(get_db),
+):
+    """List curation signals, optionally filtered by processed status."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import CurationSignal
+
+    query = select(CurationSignal).order_by(desc(CurationSignal.created_at)).limit(limit)
+    if processed is not None:
+        query = query.where(CurationSignal.processed == processed)
+
+    result = await db.execute(query)
+    signals = result.scalars().all()
+
+    return {
+        "total": len(signals),
+        "signals": [
+            {
+                "id": s.id,
+                "url": s.url,
+                "platform": s.source_platform,
+                "ticker": s.market_ticker,
+                "signal": s.signal,
+                "notes": s.notes,
+                "device": s.source_device,
+                "processed": s.processed,
+                "market_id": s.market_id,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in signals
+        ],
+    }

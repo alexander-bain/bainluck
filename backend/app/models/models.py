@@ -1496,6 +1496,25 @@ class RankingJudgment(Base):
     )
 
 
+class CurationSignal(Base):
+    """Quick boost/demote signal from the curator (iOS Share Sheet or admin)."""
+
+    __tablename__ = "curation_signals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_platform: Mapped[Optional[str]] = mapped_column(String(30))
+    market_ticker: Mapped[Optional[str]] = mapped_column(String(200), index=True)
+    signal: Mapped[str] = mapped_column(String(20), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    source_device: Mapped[Optional[str]] = mapped_column(String(30))
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    market_id: Mapped[Optional[int]] = mapped_column(ForeignKey("futures_markets.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class DiscoverLabelEvalRun(Base):
     """Persisted offline eval runs for human-labeled Discover ranking data."""
 
