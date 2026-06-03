@@ -726,23 +726,58 @@ async def _poll_kalshi_markets():
 
 
 async def _fix_golf_commence_times() -> int:
-    """Fix commence_time on Kalshi golf markets — DB-only, no API calls.
+    """Fix commence_time on Kalshi golf markets using DataGolf DB data.
 
     Kalshi sets commence_time = market close_time (= resolution date, typically
     Sunday evening). For calibration, we need commence_time to be the eve of
     Round 1 so the closing line captures pre-tournament prices.
 
-    Heuristic: set commence_time = close_time - 4.5 days (tournaments are 4 days,
-    minus 12h to land on the eve of Round 1). This is approximate but far better
-    than using the resolution date, which captures in-play prices.
-
-    Falls back to DataGolf schedule when available (more precise).
+    Three-tier lookup (all DB-only, no API calls in the hot path):
+      1. DataGolf DB markets — DataGolf polling stores correct commence_time
+         from the schedule's start_date. Cross-reference via normalized
+         tournament name.
+      2. DataGolf live schedule — covers current-season tournaments (API call
+         but cached in-process for 1 hour by _get_golf_schedule).
+      3. Heuristic fallback — close_time - 4.5 days (approximate).
     """
     from datetime import timedelta
 
-    # Try DataGolf schedule first (precise but requires API)
+    from app.routes.golf import _normalize_tournament
+
+    # ── Tier 1: Build lookup from DataGolf markets already in the DB ────────
+    # DataGolf markets have correct commence_time set from the schedule's
+    # start_date (see datagolf.py lines 135-140). We only need "win" markets
+    # (one per tournament) to avoid duplicates.
+    dg_commence_by_key: dict[str, datetime] = {}
+
+    async with get_task_session() as session:
+        dg_result = await session.execute(
+            text("""
+                SELECT name, commence_time
+                FROM futures_markets
+                WHERE source = 'datagolf'
+                  AND llm_sport_category = 'golf'
+                  AND commence_time IS NOT NULL
+                  AND external_id LIKE '%:win'
+            """)
+        )
+        for row in dg_result.fetchall():
+            key = _normalize_tournament(row.name)
+            if key != "other" and row.commence_time:
+                # Keep the most recent commence_time per key (handles
+                # tournaments that appear in multiple seasons).
+                existing = dg_commence_by_key.get(key)
+                if existing is None or row.commence_time > existing:
+                    dg_commence_by_key[key] = row.commence_time
+
+    logger.info(
+        "Golf commence_time fix: %d DataGolf tournament keys loaded from DB",
+        len(dg_commence_by_key),
+    )
+
+    # ── Tier 2: DataGolf live schedule (current season, cached) ─────────────
     try:
-        from app.routes.golf import _get_golf_schedule, _normalize_tournament
+        from app.routes.golf import _get_golf_schedule
         schedule = await _get_golf_schedule()
     except Exception:
         schedule = None
@@ -753,6 +788,7 @@ async def _fix_golf_commence_times() -> int:
             if s.get("key") and s.get("start_date"):
                 schedule_by_key[s["key"]] = s["start_date"]
 
+    # ── Fix Kalshi golf markets ─────────────────────────────────────────────
     async with get_task_session() as session:
         result = await session.execute(
             text("""
@@ -765,29 +801,46 @@ async def _fix_golf_commence_times() -> int:
             """)
         )
         markets = result.fetchall()
-        logger.info("Golf commence_time fix: %d resolved golf markets found, schedule=%s",
-                     len(markets), "available" if schedule else "UNAVAILABLE")
+        logger.info(
+            "Golf commence_time fix: %d resolved Kalshi golf markets, "
+            "%d DataGolf DB keys, schedule=%s",
+            len(markets), len(dg_commence_by_key),
+            "available" if schedule else "UNAVAILABLE",
+        )
 
         fixed = 0
         fixed_ids = []
+        source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
         for m in markets:
             target_dt = None
 
-            # Try DataGolf schedule (precise)
-            if schedule:
-                from app.routes.golf import _normalize_tournament
-                tourn_key = _normalize_tournament(m.name, schedule)
-                if tourn_key != "other" and tourn_key in schedule_by_key:
-                    try:
-                        target_dt = datetime.fromisoformat(
-                            schedule_by_key[tourn_key]
-                        ) - timedelta(hours=18)
-                    except (ValueError, TypeError):
-                        pass
+            # Normalize this Kalshi market's name to a tournament key
+            tourn_key = _normalize_tournament(m.name, schedule)
 
-            # Fallback: close_time - 4.5 days
+            # Tier 1: DataGolf DB commence_time (most accurate — actual
+            # tournament start date stored during polling).
+            if tourn_key != "other" and tourn_key in dg_commence_by_key:
+                dg_ct = dg_commence_by_key[tourn_key]
+                # DataGolf commence_time is midnight UTC on Round 1.
+                # Back up 18h to the eve of Round 1 (same convention
+                # as the old schedule path).
+                target_dt = dg_ct - timedelta(hours=18)
+                source_counts["datagolf_db"] += 1
+
+            # Tier 2: DataGolf live schedule (current season)
+            if target_dt is None and tourn_key != "other" and tourn_key in schedule_by_key:
+                try:
+                    target_dt = datetime.fromisoformat(
+                        schedule_by_key[tourn_key]
+                    ) - timedelta(hours=18)
+                    source_counts["schedule"] += 1
+                except (ValueError, TypeError):
+                    pass
+
+            # Tier 3: Heuristic fallback — close_time - 4.5 days
             if target_dt is None and m.commence_time:
                 target_dt = m.commence_time - timedelta(days=4, hours=12)
+                source_counts["heuristic"] += 1
 
             if target_dt and m.commence_time and abs(
                 (m.commence_time - target_dt).total_seconds()
@@ -810,7 +863,11 @@ async def _fix_golf_commence_times() -> int:
                 {"ids": fixed_ids},
             )
             await session.commit()
-            logger.info("Fixed commence_time for %d Kalshi golf markets (reset %d market cal_probs)", fixed, len(fixed_ids))
+            logger.info(
+                "Fixed commence_time for %d Kalshi golf markets "
+                "(sources: %s, reset cal_probs on %d markets)",
+                fixed, source_counts, len(fixed_ids),
+            )
 
         return fixed
 
@@ -891,6 +948,146 @@ async def _fix_hockey_commence_times() -> int:
             )
 
         return linked_fixed + ticker_fixed
+
+
+async def _link_sports_props_to_events() -> dict:
+    """Link Kalshi sports prop markets to their parent game events.
+
+    Hockey props (KXNHLPTS, KXNHLAST, KXNHLFIRSTGOAL, etc.) and basketball
+    props (KXNBAPTS, KXNBAREB, KXNBAAST, etc.) share the same date+teams
+    suffix as the corresponding game market (KXNHLGAME, KXNBAGAME). For
+    example:
+        KXNHLPTS-26MAR31CARCBJ  →  KXNHLGAME-26MAR31CARCBJ
+        KXNBAPTS-26FEB19BOSGSW  →  KXNBAGAME-26FEB19BOSGSW
+
+    Linking props to events enables Part A calibration (uses authoritative
+    Event commence_time instead of ticker-derived timestamps) and is the
+    primary fix for hockey's 19.6pp MCE.
+
+    Returns dict with linking stats per sport.
+    """
+    # Map prop ticker prefixes to their game ticker prefix
+    _PROP_TO_GAME = {
+        # Hockey
+        "KXNHLPTS": "KXNHLGAME",
+        "KXNHLAST": "KXNHLGAME",
+        "KXNHLFIRSTGOAL": "KXNHLGAME",
+        "KXNHLGOAL": "KXNHLGAME",
+        "KXNHLANYGOAL": "KXNHLGAME",
+        "KXNHLSAVES": "KXNHLGAME",
+        # Basketball
+        "KXNBAPTS": "KXNBAGAME",
+        "KXNBAREB": "KXNBAGAME",
+        "KXNBAAST": "KXNBAGAME",
+        "KXNBA3PT": "KXNBAGAME",
+        "KXNBABLK": "KXNBAGAME",
+        "KXNBASTL": "KXNBAGAME",
+        "KXNBAPA": "KXNBAGAME",
+        "KXNBAPR": "KXNBAGAME",
+        "KXNBAPRA": "KXNBAGAME",
+        "KXNBARA": "KXNBAGAME",
+    }
+
+    stats: dict = {"total_linked": 0, "cal_prob_reset": 0, "errors": []}
+    sport_stats: dict[str, int] = {}
+
+    try:
+        async with get_task_session() as session:
+            # Find all resolved Kalshi prop markets with no event_id
+            result = await session.execute(
+                text("""
+                    SELECT id, external_id
+                    FROM futures_markets
+                    WHERE source = 'kalshi'
+                      AND event_id IS NULL
+                      AND status = 'resolved'
+                      AND external_id ~ '^KX(NHL|NBA)'
+                """)
+            )
+            unlinked = result.fetchall()
+
+            if not unlinked:
+                logger.info("Link sports props: nothing to do (0 unlinked)")
+                return stats
+
+            linked_ids: list[int] = []
+
+            for row in unlinked:
+                ext_id: str = row.external_id
+                # Extract prefix and suffix: KXNHLPTS-26MAR31CARCBJ
+                dash_idx = ext_id.find("-")
+                if dash_idx < 0:
+                    continue  # Non-standard format, skip
+
+                prefix = ext_id[:dash_idx]
+                suffix = ext_id[dash_idx + 1:]  # e.g., "26MAR31CARCBJ"
+
+                if not suffix:
+                    continue
+
+                # Look up the game ticker prefix for this prop prefix
+                game_prefix = _PROP_TO_GAME.get(prefix)
+                if not game_prefix:
+                    continue
+
+                # Find the game market with the same suffix that HAS event_id
+                game_result = await session.execute(
+                    text("""
+                        SELECT event_id
+                        FROM futures_markets
+                        WHERE source = 'kalshi'
+                          AND external_id LIKE :game_ticker_pattern
+                          AND event_id IS NOT NULL
+                        LIMIT 1
+                    """),
+                    {"game_ticker_pattern": f"{game_prefix}-{suffix}%"},
+                )
+                game_row = game_result.first()
+                if not game_row:
+                    continue
+
+                # Link the prop market to the same event
+                await session.execute(
+                    text("""
+                        UPDATE futures_markets
+                        SET event_id = :eid
+                        WHERE id = :mid AND event_id IS NULL
+                    """),
+                    {"eid": game_row.event_id, "mid": row.id},
+                )
+                linked_ids.append(row.id)
+                stats["total_linked"] += 1
+
+                # Track per-sport stats
+                sport = "hockey" if "NHL" in prefix else "basketball"
+                sport_stats[sport] = sport_stats.get(sport, 0) + 1
+
+            # Reset calibration_probability on affected outcomes so Part A
+            # recomputes with the correct Event commence_time
+            if linked_ids:
+                reset_result = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = NULL
+                        WHERE fo.market_id = ANY(:ids)
+                          AND fo.calibration_probability IS NOT NULL
+                    """),
+                    {"ids": linked_ids},
+                )
+                stats["cal_prob_reset"] = reset_result.rowcount
+                await session.commit()
+
+            stats["by_sport"] = sport_stats
+            logger.info(
+                "Link sports props: %d markets linked (%s), %d cal_probs reset",
+                stats["total_linked"], sport_stats, stats["cal_prob_reset"],
+            )
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Link sports props error: %s", e)
+
+    return stats
 
 
 async def _backfill_from_settled_events(limit: int = 5000):

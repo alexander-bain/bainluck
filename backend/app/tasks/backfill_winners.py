@@ -2891,6 +2891,18 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
+    # Phase 0-link-props: Link sports prop markets to their parent game events.
+    # Must run BEFORE commence_time fixes and calibration price computation so
+    # that newly linked markets get authoritative Event commence_time via Part A.
+    # This is the primary fix for hockey calibration (19.6pp → ~3pp MCE).
+    link_props_stats = {"total_linked": 0, "errors": []}
+    try:
+        from app.tasks.kalshi import _link_sports_props_to_events
+        link_props_stats = await _link_sports_props_to_events()
+    except Exception as e:
+        link_props_stats["errors"].append(str(e))
+        logger.warning("Link sports props failed: %s", e)
+
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
     commence_stats = {"golf": 0, "hockey": 0, "golf_error": None, "hockey_error": None}
@@ -3187,6 +3199,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         guess_upgrade_stats["errors"].append(str(e))
 
     return {
+        "link_sports_props": link_props_stats,
         "ml_misresolution_repair": ml_repair_stats,
         "guess_upgrade": guess_upgrade_stats,
         "retro_tagging": retro_stats,
