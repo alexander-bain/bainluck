@@ -3824,3 +3824,16 @@ async def debug_settled_precheck(
         "series_needing_work": needing_work[:20],
         "series_not_needing": not_needing[:10],
     }
+
+
+@router.post("/backfill-polymarket-winners")
+async def trigger_backfill_polymarket_winners(
+    secret: str = Query(...),
+    limit: int = Query(10000),
+):
+    """Resolve Polymarket winners from Gamma API settlement data."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.backfill_polymarket_winners", args=[limit])
+    return {"status": "queued", "task_id": str(result.id), "limit": limit}
