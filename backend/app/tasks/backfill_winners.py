@@ -81,14 +81,20 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
     service = KalshiAPIService()
     try:
-        batch_size = 50
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch(ticker):
+            async with sem:
+                return ticker, await service.get_event(ticker)
+
+        batch_size = 100
         for batch_start in range(0, len(tickers), batch_size):
             batch = tickers[batch_start:batch_start + batch_size]
+            results = await asyncio.gather(*[_fetch(t) for t in batch])
 
             async with get_task_session() as session:
-                for event_ticker in batch:
+                for event_ticker, event_data in results:
                     stats["tickers_queried"] += 1
-                    event_data = await service.get_event(event_ticker)
 
                     if not event_data:
                         stats["api_miss"] += 1
@@ -139,7 +145,6 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 min(batch_start + batch_size, len(tickers)), len(tickers),
                 stats["events_found"], stats["winners_set"], stats["losers_set"],
             )
-            await asyncio.sleep(0.2)
 
     except Exception as e:
         stats["errors"].append(str(e))

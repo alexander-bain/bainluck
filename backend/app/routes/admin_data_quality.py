@@ -1821,6 +1821,48 @@ async def trigger_score_resolution(
     }
 
 
+@router.get("/box-score-gap")
+async def box_score_gap(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count events missing box_score_data that have Kalshi player props."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT COUNT(DISTINCT e.id) as events_needing,
+               COUNT(DISTINCT fm.id) as markets_needing,
+               COUNT(fo.id) as outcomes_needing
+        FROM events e
+        JOIN futures_markets fm ON fm.event_id = e.id
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE e.status IN ('completed', 'closed')
+          AND e.espn_id IS NOT NULL
+          AND e.box_score_data IS NULL
+          AND fm.source = 'kalshi'
+          AND fm.status = 'resolved'
+          AND fo.resolution_source = 'pass2_guess'
+    """))
+    row = r.first()
+
+    r2 = await db.execute(text("""
+        SELECT COUNT(DISTINCT e.id)
+        FROM events e
+        WHERE e.status IN ('completed', 'closed')
+          AND e.espn_id IS NOT NULL
+          AND e.box_score_data IS NULL
+    """))
+    total_missing = r2.scalar()
+
+    return {
+        "priority_events": row[0],
+        "priority_markets": row[1],
+        "priority_outcomes": row[2],
+        "total_events_missing_box_score": total_missing,
+    }
+
+
 @router.post("/backfill-box-scores")
 async def trigger_backfill_box_scores(
     secret: str = Query(...),
