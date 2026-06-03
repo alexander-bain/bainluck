@@ -159,7 +159,8 @@ async def _backfill_polymarket_winners():
         async with get_task_session() as session:
             # Only process markets where:
             # 1. Market is resolved
-            # 2. No outcome already has is_winner=true (skip already-backfilled)
+            # 2. No outcome already has authoritative is_winner (skip api_settlement etc.)
+            #    Pass2_guess winners are treated as unresolved so clean data can overwrite
             # 3. All outcomes have current_probability near 0 or 1 (clean resolution)
             result = await session.execute(
                 text("""
@@ -170,7 +171,10 @@ async def _backfill_polymarket_winners():
                         WHERE fm.source = 'polymarket'
                           AND fm.status = 'resolved'
                         GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                        HAVING SUM(CASE WHEN fo.is_winner
+                                   AND fo.resolution_source NOT IN
+                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                   THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
                                   OR fo.current_probability <= 0.05
@@ -1980,7 +1984,10 @@ async def _backfill_from_current_probability():
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
                         GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                        HAVING SUM(CASE WHEN fo.is_winner
+                                   AND fo.resolution_source NOT IN
+                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                   THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
                                   OR fo.current_probability <= 0.05

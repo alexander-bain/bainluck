@@ -1792,12 +1792,22 @@ async def trigger_score_resolution(
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
 
+    # Also run clean resolution passes to upgrade pass2_guess → clean_resolution
+    from app.tasks.backfill_winners import (
+        _backfill_polymarket_winners,
+        _backfill_from_current_probability,
+    )
+    poly_clean_stats = await _backfill_polymarket_winners()
+    prob_stats = await _backfill_from_current_probability()
+
     return {
         "ml_repair": repair_stats,
         "score_resolution": score_stats,
         "spread_total_resolution": spread_total_stats,
         "player_props": player_prop_stats,
         "period_props": period_prop_stats,
+        "polymarket_clean": poly_clean_stats,
+        "probability_passes": prob_stats,
     }
 
 
