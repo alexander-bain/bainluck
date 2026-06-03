@@ -1263,6 +1263,34 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             series_resolved += resolve_result.rowcount
                             stats["markets_resolved"] += resolve_result.rowcount
 
+                        # --- Phase 1.5: Resolve is_winner from settlement ---
+                        # Outcomes in partially-resolved markets may have
+                        # is_winner=false/resolution_source=NULL because
+                        # forward capture only set some siblings. The settled
+                        # events API has authoritative result for every market.
+                        for event_data in events:
+                            for mkt in (event_data.get("markets") or []):
+                                ticker = mkt.get("ticker", "")
+                                result_val = mkt.get("result")
+                                if not ticker or result_val is None:
+                                    continue
+                                is_winner = result_val == "yes"
+                                settled = await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET is_winner = :win,
+                                            resolution_source = 'api_settlement'
+                                        WHERE external_id = :ticker
+                                          AND (resolution_source IS NULL
+                                               OR resolution_source IN
+                                                   ('pass2_guess', 'binary_higher_wins',
+                                                    'multi_max_prob'))
+                                    """),
+                                    {"win": is_winner, "ticker": ticker},
+                                )
+                                if settled.rowcount > 0:
+                                    stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + settled.rowcount
+
                         # --- Phase 2: Snapshot backfill (respects limit) ---
                         if total_snapshots < limit:
                             matched = await session.execute(
