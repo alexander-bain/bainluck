@@ -1767,6 +1767,25 @@ async def trigger_score_resolution(
         _resolve_kalshi_player_props_from_boxscore,
         _resolve_kalshi_period_props,
     )
+    from app.tasks.base import get_task_session
+
+    # Re-null misresolved non-moneyline outcomes first (#755)
+    repair_stats = {"nulled": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(text("""
+                UPDATE futures_outcomes fo
+                SET is_winner = NULL, resolution_source = NULL
+                FROM futures_markets fm
+                WHERE fo.market_id = fm.id
+                  AND fm.source = 'kalshi'
+                  AND fo.resolution_source = 'game_score'
+                  AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
+            """))
+            repair_stats["nulled"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        repair_stats["errors"].append(str(e))
 
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
@@ -1774,6 +1793,7 @@ async def trigger_score_resolution(
     period_prop_stats = await _resolve_kalshi_period_props()
 
     return {
+        "ml_repair": repair_stats,
         "score_resolution": score_stats,
         "spread_total_resolution": spread_total_stats,
         "player_props": player_prop_stats,

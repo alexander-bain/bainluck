@@ -3071,6 +3071,33 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         golf_sync_stats["errors"].append(str(e))
 
+    # Phase 1a-repair: Re-null outcomes on non-moneyline markets that were
+    # incorrectly resolved by the moneyline resolver as game-winner markets.
+    # See #755. The moneyline resolver processed team totals, spreads, and
+    # props, setting is_winner based on who won the game instead of the
+    # market-specific logic (margin, team score, player stats). Re-nulling
+    # lets the correct resolvers (spread/total/player props) fix them.
+    ml_repair_stats = {"nulled": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = NULL, resolution_source = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fo.resolution_source = 'game_score'
+                      AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
+                """)
+            )
+            ml_repair_stats["nulled"] = r.rowcount
+            await session.commit()
+            if r.rowcount > 0:
+                logger.info("Moneyline misresolution repair: nulled %d outcomes", r.rowcount)
+    except Exception as e:
+        ml_repair_stats["errors"].append(str(e))
+
     # Phase 1a: Kalshi score-based resolution for game markets linked to
     # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
     # game scores even when the Kalshi API has purged the market data.
@@ -3089,6 +3116,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     prob_stats = await _backfill_from_current_probability()
 
     return {
+        "ml_misresolution_repair": ml_repair_stats,
         "retro_tagging": retro_stats,
         "retro_guess_tagging": retro2_stats,
         "commence_time_fixes": commence_stats,
