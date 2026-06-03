@@ -2640,11 +2640,18 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         len(markets), len(by_event),
     )
 
+    import time as _time
+    _t0 = _time.monotonic()
+    _MAX_RUNTIME = 720  # bail at 12 min (soft limit is 14 min)
+
     service = PolymarketAPIService()
     try:
         event_ids = list(by_event.keys())
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
+            if _time.monotonic() - _t0 > _MAX_RUNTIME:
+                logger.info("Polymarket API backfill: time limit approaching, stopping after %d/%d events", batch_start, len(event_ids))
+                break
             batch = event_ids[batch_start:batch_start + batch_size]
 
             async with get_task_session() as session:
