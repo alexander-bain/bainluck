@@ -1148,7 +1148,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
                     "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
                     "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
+                    "KXNHLAST", "KXNHLSAVES", "KXNHLANYGOAL",
                     "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL",
+                    "KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL",
                 ]
 
                 _series_cursor_key = "bainluck:settled_series_cursor"

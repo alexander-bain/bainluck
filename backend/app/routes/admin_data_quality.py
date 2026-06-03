@@ -4638,8 +4638,23 @@ async def calibration_mce_by_sport(
         sim_row = sim.first()
         if sim_row and sim_row.mce is not None:
             bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
-        else:
-            bucket_breakdown["sim_mce_opening_error"] = "no data"
+        orphan = await db.execute(text("""
+            SELECT COUNT(*) AS cnt
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fm.llm_sport_category = :sport
+              AND fo.is_winner = false
+              AND fo.resolution_source IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo2
+                  WHERE fo2.market_id = fm.id AND fo2.is_winner = true
+                    AND fo2.resolution_source NOT IN
+                        ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+              )
+        """), {"sport": detail_sport})
+        orphan_row = orphan.scalar()
+        bucket_breakdown["unresolved_in_partial_markets"] = orphan_row or 0
 
     return {
         "sports": sports, "detail_sport": detail_sport,

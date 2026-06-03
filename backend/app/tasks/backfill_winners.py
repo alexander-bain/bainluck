@@ -1214,12 +1214,9 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     WHERE fm.status = 'resolved'
                       AND e.box_score_data IS NOT NULL
                       AND fo.is_winner = false
-                      AND NOT EXISTS (
-                          SELECT 1 FROM futures_outcomes fo2
-                          WHERE fo2.market_id = fm.id AND fo2.is_winner = true
-                            AND fo2.resolution_source NOT IN
-                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
-                      )
+                      AND (fo.resolution_source IS NULL
+                           OR fo.resolution_source IN
+                               ('pass2_guess', 'binary_higher_wins', 'multi_max_prob'))
                     LIMIT 10000
                 """)
             )
