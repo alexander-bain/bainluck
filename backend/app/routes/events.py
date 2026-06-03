@@ -1188,7 +1188,7 @@ async def search_events(
     }
 
 
-@router.get("/search-diag")
+@router.get("/search/diag")
 async def search_diagnostic(
     q: str = Query("test", min_length=2),
     db: AsyncSession = Depends(get_db),
