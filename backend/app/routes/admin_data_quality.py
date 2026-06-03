@@ -4463,15 +4463,20 @@ async def calibration_mce_by_sport(
             SELECT fo.id, fo.name AS outcome_name, fm.name AS market_name,
                    fm.external_id, fm.event_id, fm.source,
                    fo.calibration_probability, fo.opening_probability,
-                   fo.is_winner,
+                   fo.is_winner, fo.resolution_source,
                    e.commence_time AS event_commence,
-                   fm.commence_time AS market_commence
+                   fm.commence_time AS market_commence,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps,
+                   (SELECT COUNT(*) FROM futures_outcomes fo2
+                    WHERE fo2.market_id = fm.id AND fo2.is_winner = true
+                      AND fo2.resolution_source NOT IN ('pass2_guess','binary_higher_wins','multi_max_prob')
+                   ) AS sibling_winners
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             LEFT JOIN events e ON e.id = fm.event_id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fo.calibration_probability >= 0.65
+              AND fo.calibration_probability >= 0.75
               AND fo.calibration_probability < 0.85
               AND fo.is_winner IS NOT NULL
               AND NOT fo.is_winner
@@ -4486,8 +4491,10 @@ async def calibration_mce_by_sport(
                 "source": r.source,
                 "cal_prob": round(float(r.calibration_probability), 4),
                 "opening_prob": round(float(r.opening_probability), 4) if r.opening_probability else None,
+                "resolution_source": r.resolution_source,
+                "snaps": r.snaps,
+                "sibling_winners": r.sibling_winners,
                 "event_commence": str(r.event_commence) if r.event_commence else None,
-                "market_commence": str(r.market_commence) if r.market_commence else None,
             }
             for r in sr.fetchall()
         ]
