@@ -4459,19 +4459,51 @@ async def calibration_mce_by_sport(
     snapshot_debug = []
     if detail_sport:
         sd = await db.execute(text("""
-            SELECT fm.source, fm.name AS market_name,
-                   COUNT(fo.id) AS outcome_count
-            FROM futures_markets fm
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            WHERE fm.status = 'resolved'
-              AND fm.llm_sport_category = :sport
-              AND fm.source = 'polymarket'
-            GROUP BY fm.source, fm.name
-            ORDER BY COUNT(fo.id) DESC
-            LIMIT 15
+            WITH cal_data AS (
+                SELECT fo.calibration_probability, fo.is_winner,
+                    fm.source,
+                    CASE
+                        WHEN fm.external_id LIKE 'KXNHLGAME%' THEN 'game'
+                        WHEN fm.external_id LIKE 'KX%' AND fm.source = 'kalshi' THEN 'prop'
+                        WHEN fm.source = 'polymarket' AND fm.event_id IS NOT NULL THEN 'pm_game'
+                        ELSE 'pm_futures'
+                    END AS market_type,
+                    CASE
+                        WHEN fo.calibration_probability < 0.05 THEN 0.025
+                        WHEN fo.calibration_probability < 0.15 THEN 0.10
+                        WHEN fo.calibration_probability < 0.25 THEN 0.20
+                        WHEN fo.calibration_probability < 0.35 THEN 0.30
+                        WHEN fo.calibration_probability < 0.45 THEN 0.40
+                        WHEN fo.calibration_probability < 0.55 THEN 0.50
+                        WHEN fo.calibration_probability < 0.65 THEN 0.60
+                        WHEN fo.calibration_probability < 0.75 THEN 0.70
+                        WHEN fo.calibration_probability < 0.85 THEN 0.80
+                        WHEN fo.calibration_probability < 0.95 THEN 0.90
+                        ELSE 0.975
+                    END AS bucket_mid
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fm.llm_sport_category = :sport
+                  AND fo.calibration_probability IS NOT NULL
+                  AND fo.is_winner IS NOT NULL
+            ),
+            buckets AS (
+                SELECT market_type, bucket_mid,
+                       AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) AS actual,
+                       COUNT(*) AS n
+                FROM cal_data
+                GROUP BY market_type, bucket_mid
+            )
+            SELECT market_type,
+                ROUND((SUM(ABS(actual - bucket_mid) * n) / SUM(n) * 100)::numeric, 2) AS mce,
+                SUM(n) AS total
+            FROM buckets
+            GROUP BY market_type
+            ORDER BY mce DESC
         """), {"sport": detail_sport})
         snapshot_debug = [
-            {"source": r.source, "market": r.market_name, "outcomes": r.outcome_count}
+            {"type": r.market_type, "mce_pp": float(r.mce), "outcomes": int(r.total)}
             for r in sd.fetchall()
         ]
 
