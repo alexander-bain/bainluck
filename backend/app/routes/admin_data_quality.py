@@ -4604,6 +4604,40 @@ async def calibration_mce_by_sport(
                 "high_cal_losers": bb_row.high_cal_losers,
                 "high_cal_total": bb_row.high_cal_total,
             }
+        sim = await db.execute(text("""
+            WITH prop_sim AS (
+                SELECT fo.opening_probability AS p, fo.is_winner,
+                    CASE
+                        WHEN fo.opening_probability < 0.05 THEN 0.025
+                        WHEN fo.opening_probability < 0.15 THEN 0.10
+                        WHEN fo.opening_probability < 0.25 THEN 0.20
+                        WHEN fo.opening_probability < 0.35 THEN 0.30
+                        WHEN fo.opening_probability < 0.45 THEN 0.40
+                        WHEN fo.opening_probability < 0.55 THEN 0.50
+                        WHEN fo.opening_probability < 0.65 THEN 0.60
+                        WHEN fo.opening_probability < 0.75 THEN 0.70
+                        WHEN fo.opening_probability < 0.85 THEN 0.80
+                        WHEN fo.opening_probability < 0.95 THEN 0.90
+                        ELSE 0.975
+                    END AS mid
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fm.llm_sport_category = :sport
+                  AND fm.source = 'kalshi'
+                  AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+                  AND fo.opening_probability IS NOT NULL
+                  AND fo.is_winner IS NOT NULL
+            ),
+            b AS (
+                SELECT mid, AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) AS a, COUNT(*) AS n
+                FROM prop_sim GROUP BY mid
+            )
+            SELECT ROUND((SUM(ABS(a - mid) * n) / SUM(n) * 100)::numeric, 2) AS mce FROM b
+        """), {"sport": detail_sport})
+        sim_row = sim.first()
+        if sim_row and sim_row.mce:
+            bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
 
     return {
         "sports": sports, "detail_sport": detail_sport,
