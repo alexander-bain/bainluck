@@ -4495,9 +4495,48 @@ async def calibration_mce_by_sport(
                 for r in sd.fetchall()
             ]
 
+    bucket_breakdown = {}
+    if detail_sport:
+        bb = await db.execute(text("""
+            WITH high_cal AS (
+                SELECT fo.id, fo.calibration_probability, fo.opening_probability,
+                       fo.is_winner,
+                       (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fm.llm_sport_category = :sport
+                  AND fo.calibration_probability >= 0.95
+                  AND fo.is_winner IS NOT NULL
+            )
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE NOT is_winner) AS losers,
+                COUNT(*) FILTER (WHERE snaps <= 2) AS low_snap,
+                COUNT(*) FILTER (WHERE snaps <= 2 AND NOT is_winner) AS low_snap_losers,
+                COUNT(*) FILTER (WHERE opening_probability >= 0.95) AS high_opening,
+                COUNT(*) FILTER (WHERE opening_probability >= 0.95 AND NOT is_winner) AS high_opening_losers,
+                COUNT(*) FILTER (WHERE snaps <= 2 AND opening_probability >= 0.95) AS low_snap_high_open,
+                COUNT(*) FILTER (WHERE snaps <= 2 AND opening_probability >= 0.95 AND NOT is_winner) AS low_snap_high_open_losers
+            FROM high_cal
+        """), {"sport": detail_sport})
+        bb_row = bb.first()
+        if bb_row:
+            bucket_breakdown = {
+                "total_95_100": bb_row.total,
+                "losers": bb_row.losers,
+                "low_snap_le2": bb_row.low_snap,
+                "low_snap_losers": bb_row.low_snap_losers,
+                "high_opening_ge95": bb_row.high_opening,
+                "high_opening_losers": bb_row.high_opening_losers,
+                "low_snap_AND_high_opening": bb_row.low_snap_high_open,
+                "low_snap_AND_high_opening_losers": bb_row.low_snap_high_open_losers,
+            }
+
     return {
         "sports": sports, "detail_sport": detail_sport,
         "detail_buckets": detail_buckets, "bad_samples": bad_samples,
         "commence_time_debug": ct_debug if detail_sport else {},
         "snapshot_debug": snapshot_debug,
+        "bucket_95_100_breakdown": bucket_breakdown,
     }
