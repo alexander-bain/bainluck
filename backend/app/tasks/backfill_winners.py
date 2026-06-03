@@ -829,7 +829,10 @@ async def _resolve_kalshi_from_scores():
                     GROUP BY fm.id, fm.name, fm.external_id,
                              e.home_team, e.away_team,
                              e.home_score, e.away_score
-                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                    HAVING SUM(CASE WHEN fo.is_winner
+                               AND fo.resolution_source NOT IN
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                               THEN 1 ELSE 0 END) = 0
                     LIMIT 10000
                 """)
             )
@@ -967,7 +970,10 @@ async def _resolve_kalshi_spread_total_from_scores():
                     GROUP BY fm.id, fm.external_id, e.id,
                              e.home_team, e.away_team,
                              e.home_score, e.away_score
-                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                    HAVING SUM(CASE WHEN fo.is_winner
+                               AND fo.resolution_source NOT IN
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                               THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) = 1
                     LIMIT 10000
                 """)
@@ -1045,7 +1051,7 @@ async def _resolve_kalshi_spread_total_from_scores():
 
                     won = total > line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
                     )
                     if is_1h:
@@ -1133,6 +1139,8 @@ async def _resolve_kalshi_player_props_from_boxscore():
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_outcomes fo2
                           WHERE fo2.market_id = fm.id AND fo2.is_winner = true
+                            AND fo2.resolution_source NOT IN
+                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
                       )
                     LIMIT 10000
                 """)
@@ -1232,6 +1240,7 @@ async def _resolve_kalshi_period_props():
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
+                           e.home_team, e.away_team,
                            e.home_score AS final_home, e.away_score AS final_away
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
@@ -1241,8 +1250,12 @@ async def _resolve_kalshi_period_props():
                       AND e.home_score IS NOT NULL
                       AND EXISTS (SELECT 1 FROM scoring_plays sp WHERE sp.event_id = e.id)
                     GROUP BY fm.id, fm.external_id, fm.name,
-                             e.id, e.home_score, e.away_score
-                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                             e.id, e.home_team, e.away_team,
+                             e.home_score, e.away_score
+                    HAVING SUM(CASE WHEN fo.is_winner
+                               AND fo.resolution_source NOT IN
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                               THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) = 1
                     LIMIT 5000
                 """)
@@ -1320,8 +1333,19 @@ async def _resolve_kalshi_period_props():
                 # Try spread pattern
                 sm = _SPREAD_RE.search(outcome.name)
                 if sm:
+                    team_name = sm.group(1).strip()
                     line = float(sm.group(2))
-                    won = (period_home - period_away) > line or (period_away - period_home) > line
+                    home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
+                    away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+                    team_tokens = set(team_name.lower().split())
+                    if team_tokens & home_tokens:
+                        margin = period_home - period_away
+                    elif team_tokens & away_tokens:
+                        margin = period_away - period_home
+                    else:
+                        stats["no_parse"] += 1
+                        continue
+                    won = margin > line
                     await session.execute(
                         text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
@@ -1335,7 +1359,7 @@ async def _resolve_kalshi_period_props():
                     line = float(tm.group(1))
                     won = (period_home + period_away) > line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
                     )
                     stats["resolved"] += 1
