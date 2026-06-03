@@ -3837,3 +3837,151 @@ async def trigger_backfill_polymarket_winners(
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.backfill_polymarket_winners", args=[limit])
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
+
+
+@router.get("/audit-pass2-guess")
+async def audit_pass2_guess(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deep audit of remaining pass2_guess outcomes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT fm.source, COUNT(*) as cnt
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess'
+        GROUP BY fm.source ORDER BY 2 DESC
+    """))
+    by_source = {row[0]: row[1] for row in r.fetchall()}
+
+    r = await db.execute(text("""
+        SELECT
+            regexp_replace(fm.ticker_id, '-[0-9]{2}[A-Z]{3}[0-9]{2,4}.*$', '') as prefix,
+            fm.status, COUNT(*) as cnt
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess' AND fm.source = 'kalshi'
+        GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 40
+    """))
+    kalshi_prefixes = [
+        {"prefix": row[0], "status": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT COALESCE(fm.llm_sport_category, 'null'), fm.status, COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess' AND fm.source = 'polymarket'
+        GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20
+    """))
+    poly_categories = [
+        {"category": row[0], "status": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT fm.source, fm.status, COUNT(DISTINCT fm.id) as markets, COUNT(*) as outcomes
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess'
+        GROUP BY 1, 2 ORDER BY 4 DESC
+    """))
+    status_breakdown = [
+        {"source": row[0], "status": row[1], "markets": row[2], "outcomes": row[3]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT
+            CASE WHEN fm.event_id IS NOT NULL THEN 'linked' ELSE 'no_event' END,
+            COUNT(DISTINCT fm.id), COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess' AND fm.source = 'kalshi'
+        GROUP BY 1
+    """))
+    kalshi_linkage = {row[0]: {"markets": row[1], "outcomes": row[2]} for row in r.fetchall()}
+
+    r = await db.execute(text("""
+        SELECT fm.source, fo.is_winner, COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess'
+        GROUP BY 1, 2 ORDER BY 1, 2
+    """))
+    winner_dist = [
+        {"source": row[0], "is_winner": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT
+            fm.source,
+            CASE
+                WHEN fo.calibration_probability >= 0.90 THEN 'cal>=0.90'
+                WHEN fo.calibration_probability >= 0.50 THEN 'cal>=0.50'
+                WHEN fo.calibration_probability IS NULL THEN 'cal_null'
+                ELSE 'cal<0.50'
+            END as bucket,
+            COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess' AND fo.is_winner = true
+        GROUP BY 1, 2 ORDER BY 1, 3 DESC
+    """))
+    winner_accuracy = [
+        {"source": row[0], "bucket": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT
+            fm.source,
+            CASE
+                WHEN fm.commence_time > NOW() - INTERVAL '30 days' THEN '0-30d'
+                WHEN fm.commence_time > NOW() - INTERVAL '90 days' THEN '30-90d'
+                WHEN fm.commence_time > NOW() - INTERVAL '180 days' THEN '90-180d'
+                WHEN fm.commence_time > NOW() - INTERVAL '365 days' THEN '180-365d'
+                ELSE '365d+'
+            END as age_bucket,
+            COUNT(*) as cnt
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess'
+        GROUP BY 1, 2 ORDER BY 1, MIN(fm.commence_time)
+    """))
+    age_dist = [
+        {"source": row[0], "age": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    r = await db.execute(text("""
+        SELECT
+            CASE WHEN e.home_score IS NOT NULL THEN 'has_scores' ELSE 'no_scores' END,
+            COUNT(DISTINCT fm.id), COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'pass2_guess' AND fm.source = 'kalshi'
+        GROUP BY 1
+    """))
+    game_score_fixable = {
+        row[0]: {"markets": row[1], "outcomes": row[2]} for row in r.fetchall()
+    }
+
+    return {
+        "by_source": by_source,
+        "total": sum(by_source.values()),
+        "kalshi_prefixes": kalshi_prefixes,
+        "poly_categories": poly_categories,
+        "status_breakdown": status_breakdown,
+        "kalshi_linkage": kalshi_linkage,
+        "winner_distribution": winner_dist,
+        "winner_accuracy_check": winner_accuracy,
+        "age_distribution": age_dist,
+        "game_score_fixable": game_score_fixable,
+    }
