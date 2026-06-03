@@ -583,6 +583,51 @@ class TestMarketQualityClassification:
         assert quality.is_ladder_or_bucket is True
         assert "numeric_outcome_ladder" in quality.reasons
 
+    def test_kpi_ticker_prefix_is_low_quality(self):
+        for ticker in ["KXTSLA-26JULPROD", "KXMCD-26AUGCOMP", "KXFDX-26JUNADV"]:
+            quality = classify_market_quality(
+                f"Some KPI market",
+                external_id=ticker,
+            )
+            assert quality.quality_class == "low_quality", f"{ticker} should be low_quality"
+            assert "ticker_suppress" in quality.reasons
+
+    def test_index_range_ticker_is_low_quality(self):
+        quality = classify_market_quality(
+            "S&P 500 yearly range",
+            external_id="KXINXY-26DEC31H1600",
+        )
+        assert quality.quality_class == "low_quality"
+        assert "ticker_suppress" in quality.reasons
+
+    def test_narrative_ticker_is_compelling(self):
+        for ticker in ["KXCOSTCOHOTDOG", "KXAPPLEFOLD", "KXTESLACEOCHANGE"]:
+            quality = classify_market_quality(
+                "Some narrative market",
+                external_id=ticker,
+            )
+            assert quality.quality_class == "compelling", f"{ticker} should be compelling"
+            assert "ticker_boost" in quality.reasons
+
+    def test_ipo_ticker_is_compelling(self):
+        quality = classify_market_quality(
+            "When will Anthropic IPO?",
+            external_id="KXIPOANTHROPIC-DATE",
+        )
+        assert quality.quality_class == "compelling"
+        assert "ticker_boost" in quality.reasons
+
+    def test_ticker_does_not_override_suppress(self):
+        quality = classify_market_quality(
+            "Will Trump post on Truth Social?",
+            external_id="KXCOSTCOHOTDOG",
+        )
+        assert quality.quality_class != "suppress"
+
+    def test_no_ticker_still_works(self):
+        quality = classify_market_quality("NBA Finals winner?")
+        assert quality.quality_class in ("compelling", "normal")
+
     def test_quality_adjustment_demotes_high_volume_narrow_bucket(self):
         oil_highlight = compute_futures_highlight(
             market_tier=5,

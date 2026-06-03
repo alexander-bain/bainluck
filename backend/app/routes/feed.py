@@ -2232,6 +2232,7 @@ def _score_market_trace(
         market_name=market.name,
         sport_category=market.llm_sport_category,
         outcome_names=[outcome.name for outcome in market.outcomes if outcome.name],
+        external_id=market.external_id,
     )
     quality_score = apply_quality_score(highlight_result.score, quality)
     explanation_score = apply_explanation_quality_score(
@@ -3977,6 +3978,7 @@ async def _score_sports_mode_futures(
             market_name=market.name,
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
+            external_id=market.external_id,
         )
         if quality.quality_class == "suppress":
             continue
@@ -4781,6 +4783,7 @@ async def _score_futures(
             market_name=market.name,
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
+            external_id=market.external_id,
         )
         if quality.quality_class == "suppress":
             continue

@@ -173,6 +173,35 @@ _LOW_SIGNAL_SPORT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Ticker-prefix suppression: numeric KPI/index threshold ladders
+_SUPPRESS_TICKER_PREFIXES = (
+    # Stock index ranges/levels
+    "KXINX-", "KXINXY-", "KXNASDAQ100Y-", "KXINXU-", "KXINXMAXY-", "KXINXMINY-",
+    # Company KPI thresholds
+    "KXTSLA-", "KXMTN-", "KXFDX-", "KXF-", "KXMCD-",
+    # Macro indicators
+    "KXISMPMI-", "KXNOTE10-", "KXUSDM-",
+    # Launch/production counts
+    "KXSPACEXCOUNT-",
+)
+
+# Ticker-prefix boost: narrative-driven markets
+_BOOST_TICKER_PREFIXES = (
+    # IPO timing
+    "KXWAYMO", "KXIPOANTHROPIC", "KXIPOSTARLINK", "KXIPO-",
+    # CEO/leadership changes
+    "KXAAPLCEOCHANGE", "KXTESLACEOCHANGE", "KXOPENAICEOCHANGE", "KXNEWROLEX",
+    # M&A / acquisitions
+    "KXTAKEOVERACQ", "KXACQUANNOUNCE", "KXACQANNOUNCE", "KXUSACOMPANYSTAKE",
+    "KXCOMPANYSTAKE",
+    # Product launches
+    "KXIPHONERELEASE", "KXAPPLEFOLD", "KXPS6",
+    # Cultural / fun
+    "KXCOSTCOHOTDOG", "KXBEZELP", "KXNBAFINALSPRICE", "KXNFLXINCREASE",
+    # AI milestones
+    "KXAISTREAMSERIES", "KXOAIANTH", "KXLLM1",
+)
+
 _TOP_TIER_SOCCER_RE = re.compile(
     r"\b("
     r"premier league|epl|la liga|bundesliga|serie a|ligue 1|"
@@ -525,16 +554,25 @@ def classify_market_quality(
     market_name: str | None,
     sport_category: str | None = None,
     outcome_names: list[str] | None = None,
+    external_id: str | None = None,
 ) -> MarketQuality:
     """Classify whether a futures market is good generic Discover material."""
     name = market_name or ""
     category = (sport_category or "").lower()
     outcome_names = outcome_names or []
     reasons: list[str] = []
+    ticker = (external_id or "").upper()
 
     normalized = _normalized_text(name)
     has_salient = _has_named_salient_entity(name)
     is_narrow = _is_narrow_range(name)
+
+    ticker_suppress = any(ticker.startswith(p) for p in _SUPPRESS_TICKER_PREFIXES) if ticker else False
+    ticker_boost = any(ticker.startswith(p) for p in _BOOST_TICKER_PREFIXES) if ticker else False
+    if ticker_suppress:
+        reasons.append("ticker_suppress")
+    if ticker_boost:
+        reasons.append("ticker_boost")
 
     price_bucket = bool(
         _PRICE_BUCKET_RE.search(name)
@@ -603,6 +641,8 @@ def classify_market_quality(
 
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
+    elif ticker_suppress:
+        quality = "low_quality"
     elif (
         obscure
         or daily_equity_direction
@@ -613,7 +653,7 @@ def classify_market_quality(
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
-    elif personnel or outbreak or compelling or absurd_public_interest:
+    elif ticker_boost or personnel or outbreak or compelling or absurd_public_interest:
         quality = "compelling"
     else:
         quality = "normal"
