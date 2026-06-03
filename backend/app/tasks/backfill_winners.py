@@ -3624,16 +3624,14 @@ async def _compute_calibration_prices():
 
             await session.commit()
 
-            # Part D: Null calibration_probability for illiquid tail outcomes.
-            # Threshold prop outcomes (e.g. "Player: 3+") with ≤2 snapshots and
-            # extreme opening prices (≥0.95 or ≤0.05) are untradeable tails
-            # that never had meaningful trading activity. Including them in
-            # calibration at their extreme opening price destroys the 95-100%
-            # and 0-5% buckets (e.g. hockey 95-100% bucket had 2,000+ losers
-            # with 1 snapshot at 0.99).
-            # This is NOT the same as the disabled Phase 0c which nulled
-            # opening_probability. Here we only null calibration_probability
-            # to exclude from calibration while preserving opening_probability.
+            # Part D: Null calibration_probability for untradeable outcomes.
+            # Outcomes with ≤2 snapshots where calibration fell back to
+            # opening_probability had no meaningful trading activity. Including
+            # them calibrates against opening prices that may not reflect real
+            # market consensus (e.g. Kalshi player prop tails like "3+ Assists"
+            # at 0.69 with 1 snapshot). This is NOT the disabled Phase 0c
+            # (which nulled opening_probability) — we only null
+            # calibration_probability to exclude from calibration.
             illiquid_result = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
@@ -3643,7 +3641,6 @@ async def _compute_calibration_prices():
                       AND fm.status = 'resolved'
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.opening_probability IS NOT NULL
-                      AND (fo.opening_probability >= 0.95 OR fo.opening_probability <= 0.05)
                       AND fo.calibration_probability = fo.opening_probability
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
@@ -3656,7 +3653,7 @@ async def _compute_calibration_prices():
             if illiquid_result.rowcount > 0:
                 await session.commit()
                 logger.info(
-                    "Part D: nulled %d illiquid tail outcomes from calibration",
+                    "Part D: nulled %d untradeable outcomes from calibration",
                     illiquid_result.rowcount,
                 )
 
