@@ -2524,15 +2524,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
                 GROUP BY fm.id
-                HAVING (
-                    SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                    AND (
-                        MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
-                        OR MAX(fo.current_probability) <= 0.10
-                    )
-                ) OR (
-                    BOOL_OR(COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution'))
+                HAVING BOOL_OR(
+                    COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution')
                 )
+                ORDER BY MAX(fm.updated_at) DESC
                 LIMIT :limit
             """),
             {"limit": limit},
@@ -2557,7 +2552,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     service = PolymarketAPIService()
     try:
         event_ids = list(by_event.keys())
-        batch_size = 50
+        batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
             batch = event_ids[batch_start:batch_start + batch_size]
 
@@ -3003,7 +2998,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=5000)
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
 
     # Phase 2: Set is_winner from current_probability (all sources, fast)
     # Only handles markets not already resolved by API settlement above.
