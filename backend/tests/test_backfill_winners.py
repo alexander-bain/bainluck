@@ -1335,3 +1335,33 @@ class TestPlayerPropNameNormalization:
     def test_doncic(self):
         from app.tasks.backfill_winners import _normalize_player_name
         assert _normalize_player_name("Luka Dončić") == _normalize_player_name("Luka Doncic")
+
+
+class TestPlayerPropBoxScoreStructure:
+    """Verify player prop resolver reads the correct level of box_score_data."""
+
+    def test_box_score_data_has_players_key(self):
+        """box_score_data is {"source": "espn", "players": {...}}, not flat."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_player_props_from_boxscore
+        src = inspect.getsource(_resolve_kalshi_player_props_from_boxscore)
+        assert '.get("players"' in src or "get('players'" in src, (
+            "Player prop resolver must extract box_score_data['players'] "
+            "not iterate the raw wrapper dict"
+        )
+
+    def test_players_extraction_logic(self):
+        """Simulate the extraction: raw_bs → players dict."""
+        raw_bs = {
+            "source": "espn",
+            "fetched_at": "2026-03-01T00:00:00",
+            "players": {
+                "Luka Doncic": {"points": 30, "rebounds": 8, "assists": 10},
+                "Kyrie Irving": {"points": 22, "rebounds": 4, "assists": 6},
+            },
+            "scoring_plays": [],
+        }
+        box_score = raw_bs.get("players", raw_bs) if isinstance(raw_bs, dict) else {}
+        assert "Luka Doncic" in box_score
+        assert box_score["Luka Doncic"]["points"] == 30
+        assert "source" not in box_score

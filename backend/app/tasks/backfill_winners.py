@@ -1228,7 +1228,8 @@ async def _resolve_kalshi_player_props_from_boxscore():
             updates = []
             for row in rows:
                 ticker_lower = (row.ticker or "").lower()
-                box_score = row.box_score_data or {}
+                raw_bs = row.box_score_data or {}
+                box_score = raw_bs.get("players", raw_bs) if isinstance(raw_bs, dict) else {}
 
                 stat_name = None
                 combo_stats = None
