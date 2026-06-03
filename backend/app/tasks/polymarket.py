@@ -1297,50 +1297,47 @@ async def _sync_polymarket_resolved_status():
                     )
                     page_resolved = result.rowcount
 
-                    # Update settlement prices on outcomes (Core SQL, not ORM).
-                    # Match bare condition_id (NegRisk + single-market outcomes)
-                    # AND _yes/_no suffix (sub-market game prop outcomes).
+                    # Batch update settlement prices + set is_winner + resolution_source.
+                    # All settlement prices with yes_price >= 0.95 are winners;
+                    # all with yes_price <= 0.05 are losers.
                     page_outcomes_updated = 0
+                    winner_cids = []
+                    loser_cids = []
                     for cid, (yes_price, no_price) in settlement_prices.items():
-                        # Bare condition_id match (NegRisk + single-market)
-                        price_result = await session.execute(
+                        if yes_price >= 0.95:
+                            winner_cids.extend([cid, f"{cid}_yes"])
+                            loser_cids.append(f"{cid}_no")
+                        elif yes_price <= 0.05:
+                            loser_cids.extend([cid, f"{cid}_yes"])
+                            winner_cids.append(f"{cid}_no")
+
+                    if winner_cids:
+                        r_w = await session.execute(
                             text("""
                                 UPDATE futures_outcomes
-                                SET current_probability = :price
-                                WHERE external_id = :cid
-                                  AND (current_probability IS NULL
-                                       OR ABS(current_probability - :price) > 0.001)
+                                SET current_probability = 1.0,
+                                    is_winner = true,
+                                    resolution_source = 'api_settlement'
+                                WHERE external_id = ANY(:cids)
+                                  AND COALESCE(resolution_source, '') != 'api_settlement'
                             """),
-                            {"cid": cid, "price": yes_price},
+                            {"cids": winner_cids},
                         )
-                        page_outcomes_updated += price_result.rowcount
+                        page_outcomes_updated += r_w.rowcount
 
-                        # _yes suffix match (sub-market game prop Yes outcomes)
-                        yes_result = await session.execute(
+                    if loser_cids:
+                        r_l = await session.execute(
                             text("""
                                 UPDATE futures_outcomes
-                                SET current_probability = :price
-                                WHERE external_id = :cid_yes
-                                  AND (current_probability IS NULL
-                                       OR ABS(current_probability - :price) > 0.001)
+                                SET current_probability = 0.0,
+                                    is_winner = false,
+                                    resolution_source = 'api_settlement'
+                                WHERE external_id = ANY(:cids)
+                                  AND COALESCE(resolution_source, '') != 'api_settlement'
                             """),
-                            {"cid_yes": f"{cid}_yes", "price": yes_price},
+                            {"cids": loser_cids},
                         )
-                        page_outcomes_updated += yes_result.rowcount
-
-                        # _no suffix match (sub-market game prop No outcomes)
-                        if no_price is not None:
-                            no_result = await session.execute(
-                                text("""
-                                    UPDATE futures_outcomes
-                                    SET current_probability = :price
-                                    WHERE external_id = :cid_no
-                                      AND (current_probability IS NULL
-                                           OR ABS(current_probability - :price) > 0.001)
-                                """),
-                                {"cid_no": f"{cid}_no", "price": no_price},
-                            )
-                            page_outcomes_updated += no_result.rowcount
+                        page_outcomes_updated += r_l.rowcount
 
                     if page_resolved > 0 or page_outcomes_updated > 0:
                         await session.commit()
