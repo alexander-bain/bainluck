@@ -3604,7 +3604,7 @@ async def _compute_calibration_prices():
 
             # Part C: Rescue EVENT-LINKED outcomes where Part A fell back to
             # opening_probability (no pre-event snapshots existed).
-            # Uses the last non-extreme snapshot before event start.
+            # Uses the last non-extreme snapshot BEFORE event start.
             # Restricted to event-linked markets only — for non-event markets,
             # opening_probability is the correct calibration price.
             rescued_total = 0
@@ -3612,11 +3612,14 @@ async def _compute_calibration_prices():
                 result_c = await session.execute(
                     text("""
                         WITH stuck AS (
-                            SELECT fo.id AS outcome_id, fo.opening_probability
+                            SELECT fo.id AS outcome_id, fo.opening_probability,
+                                   e.commence_time
                             FROM futures_outcomes fo
                             JOIN futures_markets fm ON fm.id = fo.market_id
+                            JOIN events e ON e.id = fm.event_id
                             WHERE fm.status = 'resolved'
                               AND fm.event_id IS NOT NULL
+                              AND e.commence_time IS NOT NULL
                               AND fo.calibration_probability IS NOT NULL
                               AND fo.opening_probability IS NOT NULL
                               AND fo.calibration_probability = fo.opening_probability
@@ -3629,6 +3632,7 @@ async def _compute_calibration_prices():
                             SELECT fos.probability
                             FROM futures_odds_snapshots fos
                             WHERE fos.outcome_id = s.outcome_id
+                              AND fos.captured_at < s.commence_time
                               AND fos.probability > 0 AND fos.probability < 1
                             ORDER BY fos.captured_at DESC
                             LIMIT 1
