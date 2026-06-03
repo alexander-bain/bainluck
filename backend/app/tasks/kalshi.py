@@ -1143,6 +1143,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 _start_time = _time.monotonic()
                 _MAX_SECONDS = 720
 
+                from app.tasks.redis_state import get_redis_client
+                _rc = get_redis_client()
+
                 _PRIORITY_SERIES = [
                     "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
                     "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
@@ -1192,9 +1195,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                 if not series_needing_work:
                     return stats
-
-                from app.tasks.redis_state import get_redis_client
-                _rc = get_redis_client()
 
                 for series in series_needing_work:
                     if (_time.monotonic() - _start_time) > _MAX_SECONDS:
