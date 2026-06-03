@@ -854,6 +854,15 @@ async def _resolve_kalshi_from_scores():
                     stats["btts"] += 1
                     continue
 
+                # Skip non-moneyline market types — these are handled by
+                # the spread/total/player prop resolvers
+                _non_ml = ("total", "spread", "pts", "reb", "ast", "3pt",
+                           "blk", "stl", "hrr", "hit", "tb", "ks", "hr",
+                           "rfi", "f5", "1h", "2h", "mention")
+                if any(t in ticker_lower for t in _non_ml):
+                    stats["skipped"] += 1
+                    continue
+
                 # Moneyline: need distinct scores (no ties)
                 if row.home_score == row.away_score:
                     stats["skipped"] += 1
