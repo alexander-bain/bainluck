@@ -377,6 +377,426 @@ async def _resolve_kalshi_golf_from_datagolf():
     return stats
 
 
+# ---------------------------------------------------------------------------
+# Regex for extracting round number from H2H / 3-ball market names
+# e.g., "1st Round Head-to-Head: ..." → round 1
+#        "3rd Round 3-Ball: ..." → round 3
+# ---------------------------------------------------------------------------
+_ROUND_RE = re.compile(
+    r"(?:(\d)(?:st|nd|rd|th)\s+round)",
+    re.I,
+)
+
+
+async def _resolve_golf_matchups_from_datagolf():
+    """Resolve Kalshi H2H and 3-ball golf markets using DataGolf matchup data.
+
+    The DataGolf historical-odds/matchups endpoint returns actual bet outcomes
+    (bet_outcome_numeric: 1=won, 0=lost, -1=push) for head-to-head and 3-ball
+    matchups. Each row contains player_name, opponent(s), and the outcome.
+
+    Pipeline:
+    1. Find unresolved Kalshi golf markets with H2H or 3-ball in the name
+    2. Group them by tournament using _normalize_tournament()
+    3. For each tournament, find the DataGolf event_id from existing DataGolf markets
+    4. One API call per tournament per book to get matchup data
+    5. Match Kalshi outcomes to DataGolf matchup rows using _match_key()
+    6. Resolve is_winner from bet_outcome_numeric
+
+    Efficiency: groups all markets by tournament FIRST, one API call per
+    tournament, batch DB updates per tournament.
+    """
+    import asyncio
+    from app.routes.golf import _normalize_tournament, _match_key
+    from app.services.datagolf_api import DataGolfAPIService, normalize_player_name
+
+    stats = {
+        "markets_found": 0, "tournaments_grouped": 0,
+        "tournaments_with_dg": 0, "api_calls": 0,
+        "outcomes_resolved": 0, "winners_set": 0, "losers_set": 0,
+        "pushes": 0, "no_dg_event": 0, "no_matchup_data": 0,
+        "no_player_match": 0, "errors": [],
+    }
+
+    try:
+        # Step 1: Find unresolved Kalshi golf H2H and 3-ball markets
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fm.id, fm.name, fm.external_id, fm.event_id
+                    FROM futures_markets fm
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fm.llm_sport_category = 'golf'
+                      AND (
+                          LOWER(fm.name) LIKE '%head-to-head%'
+                          OR LOWER(fm.name) LIKE '%head to head%'
+                          OR LOWER(fm.name) LIKE '%h2h%'
+                          OR LOWER(fm.name) LIKE '%3-ball%'
+                          OR LOWER(fm.name) LIKE '%3 ball%'
+                          OR LOWER(fm.name) LIKE '%3ball%'
+                          OR LOWER(fm.name) LIKE '%matchup%vs%'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.resolution_source = 'datagolf_matchup'
+                      )
+                """)
+            )
+            markets = result.all()
+
+        if not markets:
+            logger.info("Golf matchup resolution: nothing to do (0 unresolved H2H/3-ball markets)")
+            return stats
+
+        stats["markets_found"] = len(markets)
+        logger.info("Golf matchup resolution: %d unresolved H2H/3-ball markets", len(markets))
+
+        # Step 2: Group markets by tournament
+        tournament_markets: dict[str, list] = {}
+        for row in markets:
+            tourn_key = _normalize_tournament(row.name or "")
+            tournament_markets.setdefault(tourn_key, []).append(row)
+
+        stats["tournaments_grouped"] = len(tournament_markets)
+        logger.info(
+            "Golf matchup resolution: grouped into %d tournaments",
+            len(tournament_markets),
+        )
+
+        # Step 3: Build tournament_key → DataGolf (tour, event_id) lookup
+        # from existing resolved DataGolf winner markets in our DB
+        async with get_task_session() as session:
+            dg_result = await session.execute(
+                text("""
+                    SELECT fm.name, fm.external_id
+                    FROM futures_markets fm
+                    WHERE fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fm.external_id LIKE :pattern
+                """),
+                {"pattern": "datagolf:%:%:win"},
+            )
+            dg_markets = dg_result.all()
+
+        # Map tournament_key → (tour, event_id)
+        tourn_to_dg: dict[str, tuple[str, str]] = {}
+        for dg_row in dg_markets:
+            dg_tourn_key = _normalize_tournament(dg_row.name or "")
+            if dg_tourn_key == "other":
+                continue
+            # Parse external_id: "datagolf:pga:123:win"
+            parts = dg_row.external_id.split(":")
+            if len(parts) >= 4:
+                tourn_to_dg[dg_tourn_key] = (parts[1], parts[2])  # (tour, event_id)
+
+        # Step 4: For each tournament, fetch matchup data and resolve
+        service = DataGolfAPIService()
+        try:
+            books_to_try = ["pinnacle", "bet365", "fanduel", "betmgm", "datagolf"]
+
+            for tourn_key, tourn_market_rows in tournament_markets.items():
+                dg_info = tourn_to_dg.get(tourn_key)
+                if not dg_info:
+                    stats["no_dg_event"] += len(tourn_market_rows)
+                    continue
+
+                tour, event_id = dg_info
+                stats["tournaments_with_dg"] += 1
+
+                # Fetch matchup data — try multiple books until we get data
+                matchup_rows = None
+                for book in books_to_try:
+                    raw_rows = await service.get_historical_matchups(
+                        tour=tour,
+                        event_id=event_id,
+                        book=book,
+                    )
+                    stats["api_calls"] += 1
+                    await asyncio.sleep(0.2)
+
+                    if raw_rows:
+                        # Filter to rows that have settlement outcomes
+                        settled = [
+                            r for r in raw_rows
+                            if r.get("bet_outcome_numeric") is not None
+                            or r.get("bet_outcome") is not None
+                        ]
+                        if settled:
+                            matchup_rows = settled
+                            break
+
+                if not matchup_rows:
+                    stats["no_matchup_data"] += 1
+                    continue
+
+                # Build a lookup: (player_match_key, opponent_match_key) → outcome
+                # Also track round numbers for round-specific matchups
+                # DataGolf matchup rows typically contain:
+                #   player_name, matchup_opponent (or opponent_name),
+                #   bet_outcome_numeric (1=won, 0=lost, -1=push),
+                #   round_num (for round-specific matchups)
+                matchup_outcomes: dict[tuple, dict] = {}
+                for mrow in matchup_rows:
+                    player_name = normalize_player_name(mrow.get("player_name", ""))
+                    # Try multiple field names for opponent
+                    opponent_name = normalize_player_name(
+                        mrow.get("matchup_opponent", "")
+                        or mrow.get("opponent_name", "")
+                        or mrow.get("opponent", "")
+                    )
+                    if not player_name or not opponent_name:
+                        continue
+
+                    player_key = _match_key(player_name)
+                    opponent_key = _match_key(opponent_name)
+                    if not player_key or not opponent_key:
+                        continue
+
+                    outcome_val = mrow.get("bet_outcome_numeric")
+                    if outcome_val is None:
+                        outcome_val = mrow.get("bet_outcome")
+                    if outcome_val is None:
+                        continue
+
+                    try:
+                        outcome_numeric = float(outcome_val)
+                    except (ValueError, TypeError):
+                        continue
+
+                    round_num = mrow.get("round_num") or mrow.get("round")
+
+                    # Key: (player, opponent, round_or_None)
+                    lookup_key = (player_key, opponent_key, round_num)
+                    matchup_outcomes[lookup_key] = {
+                        "outcome": outcome_numeric,
+                        "player": player_name,
+                        "opponent": opponent_name,
+                    }
+                    # Also store without round for fallback
+                    fallback_key = (player_key, opponent_key, None)
+                    if fallback_key not in matchup_outcomes:
+                        matchup_outcomes[fallback_key] = {
+                            "outcome": outcome_numeric,
+                            "player": player_name,
+                            "opponent": opponent_name,
+                        }
+
+                if not matchup_outcomes:
+                    stats["no_matchup_data"] += 1
+                    continue
+
+                # Resolve each market in this tournament
+                async with get_task_session() as session:
+                    for market_row in tourn_market_rows:
+                        market_name = market_row.name or ""
+                        market_type = _detect_golf_market_type(market_name)
+
+                        # Extract round number from market name if present
+                        round_match = _ROUND_RE.search(market_name)
+                        market_round = int(round_match.group(1)) if round_match else None
+
+                        # Load outcomes for this market
+                        outcomes_result = await session.execute(
+                            text("""
+                                SELECT fo.id, fo.name, fo.is_winner
+                                FROM futures_outcomes fo
+                                WHERE fo.market_id = :mid
+                            """),
+                            {"mid": market_row.id},
+                        )
+                        outcomes = outcomes_result.all()
+
+                        if market_type == "h2h" and len(outcomes) == 2:
+                            # H2H: match two players against each other
+                            o1, o2 = outcomes
+                            k1 = _match_key(o1.name or "")
+                            k2 = _match_key(o2.name or "")
+                            if not k1 or not k2:
+                                stats["no_player_match"] += 2
+                                continue
+
+                            # Look up (player1 vs player2) with round specificity
+                            result_data = (
+                                matchup_outcomes.get((k1, k2, market_round))
+                                or matchup_outcomes.get((k1, k2, None))
+                            )
+                            if result_data:
+                                outcome_num = result_data["outcome"]
+                                if outcome_num == -1:
+                                    # Push — both are losers (tie)
+                                    stats["pushes"] += 1
+                                    continue
+                                o1_won = outcome_num == 1
+                            else:
+                                # Try reverse: player2 vs player1
+                                result_data_rev = (
+                                    matchup_outcomes.get((k2, k1, market_round))
+                                    or matchup_outcomes.get((k2, k1, None))
+                                )
+                                if result_data_rev:
+                                    outcome_num = result_data_rev["outcome"]
+                                    if outcome_num == -1:
+                                        stats["pushes"] += 1
+                                        continue
+                                    o1_won = outcome_num == 0  # Reversed
+                                else:
+                                    stats["no_player_match"] += 2
+                                    continue
+
+                            # Set is_winner on both outcomes
+                            for oid, won in [(o1.id, o1_won), (o2.id, not o1_won)]:
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET is_winner = :won,
+                                            resolution_source = 'datagolf_matchup'
+                                        WHERE id = :oid
+                                    """),
+                                    {"won": won, "oid": oid},
+                                )
+                                stats["outcomes_resolved"] += 1
+                                if won:
+                                    stats["winners_set"] += 1
+                                else:
+                                    stats["losers_set"] += 1
+
+                        elif market_type == "3ball" and len(outcomes) == 3:
+                            # 3-ball: three players, resolve each independently
+                            # Find matchup outcomes for all pairwise combinations
+                            # among the three players
+                            outcome_keys = []
+                            for o in outcomes:
+                                k = _match_key(o.name or "")
+                                outcome_keys.append((o.id, k, o.name))
+
+                            if any(not k for _, k, _ in outcome_keys):
+                                stats["no_player_match"] += 3
+                                continue
+
+                            # For 3-ball, DataGolf may have individual matchup
+                            # rows per pair. The overall winner is the player
+                            # who won the most pairwise matchups (or the one
+                            # who beat both others). Try to find at least one
+                            # pair resolved.
+                            pair_results: dict[str, int] = {}  # player_key → wins
+                            for _, pk, _ in outcome_keys:
+                                pair_results[pk] = 0
+
+                            found_any = False
+                            for i, (_, ki, _) in enumerate(outcome_keys):
+                                for j, (_, kj, _) in enumerate(outcome_keys):
+                                    if i >= j:
+                                        continue
+                                    result_data = (
+                                        matchup_outcomes.get((ki, kj, market_round))
+                                        or matchup_outcomes.get((ki, kj, None))
+                                    )
+                                    if result_data:
+                                        outcome_num = result_data["outcome"]
+                                        if outcome_num == 1:
+                                            pair_results[ki] += 1
+                                        elif outcome_num == 0:
+                                            pair_results[kj] += 1
+                                        found_any = True
+                                    else:
+                                        # Try reverse
+                                        result_data_rev = (
+                                            matchup_outcomes.get((kj, ki, market_round))
+                                            or matchup_outcomes.get((kj, ki, None))
+                                        )
+                                        if result_data_rev:
+                                            outcome_num = result_data_rev["outcome"]
+                                            if outcome_num == 1:
+                                                pair_results[kj] += 1
+                                            elif outcome_num == 0:
+                                                pair_results[ki] += 1
+                                            found_any = True
+
+                            if not found_any:
+                                stats["no_player_match"] += 3
+                                continue
+
+                            # Winner is the player with most pairwise wins
+                            max_wins = max(pair_results.values())
+                            if max_wins == 0:
+                                stats["pushes"] += 1
+                                continue
+
+                            # Exactly one player should have the most wins
+                            winners = [k for k, v in pair_results.items() if v == max_wins]
+
+                            for oid, pk, _ in outcome_keys:
+                                won = pk in winners and len(winners) == 1
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET is_winner = :won,
+                                            resolution_source = 'datagolf_matchup'
+                                        WHERE id = :oid
+                                    """),
+                                    {"won": won, "oid": oid},
+                                )
+                                stats["outcomes_resolved"] += 1
+                                if won:
+                                    stats["winners_set"] += 1
+                                else:
+                                    stats["losers_set"] += 1
+
+                        else:
+                            # Unknown type or unexpected outcome count
+                            continue
+
+                    # Set event_id on matched markets for display on event pages
+                    # Find any golf event associated with this tournament
+                    event_result = await session.execute(
+                        text("""
+                            SELECT DISTINCT fm.event_id
+                            FROM futures_markets fm
+                            WHERE fm.source = 'datagolf'
+                              AND fm.external_id LIKE :prefix
+                              AND fm.event_id IS NOT NULL
+                            LIMIT 1
+                        """),
+                        {"prefix": f"datagolf:{tour}:{event_id}:%"},
+                    )
+                    event_row = event_result.first()
+                    if event_row and event_row.event_id:
+                        for market_row in tourn_market_rows:
+                            if market_row.event_id is None:
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_markets
+                                        SET event_id = :eid
+                                        WHERE id = :mid AND event_id IS NULL
+                                    """),
+                                    {"eid": event_row.event_id, "mid": market_row.id},
+                                )
+
+                    await session.commit()
+
+        finally:
+            await service.close()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Golf matchup resolution error: %s", e)
+
+    logger.info(
+        "Golf matchup resolution: %d markets found, %d tournaments (%d with DG data), "
+        "%d API calls, %d outcomes resolved (%d winners, %d losers, %d pushes), "
+        "%d no_dg_event, %d no_matchup_data, %d no_player_match, %d errors",
+        stats["markets_found"], stats["tournaments_grouped"],
+        stats["tournaments_with_dg"], stats["api_calls"],
+        stats["outcomes_resolved"], stats["winners_set"], stats["losers_set"],
+        stats["pushes"],
+        stats["no_dg_event"], stats["no_matchup_data"],
+        stats["no_player_match"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _resolve_kalshi_from_scores():
     """Resolve Kalshi game markets from actual Event scores.
 
@@ -2540,6 +2960,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Reuses _normalize_tournament() and _match_key() from routes/golf.py.
     golf_cross_stats = await _resolve_kalshi_golf_from_datagolf()
 
+    # Phase 0g-matchups: Resolve Kalshi H2H and 3-ball golf markets using
+    # DataGolf historical matchup data. Uses actual bet outcomes instead of
+    # leaderboard position inference. Must run AFTER Phase 0h so leaderboard-
+    # based resolution handles winner/top_N/make_cut first, and this handles
+    # the 386 remaining H2H/3-ball markets.
+    golf_matchup_stats = await _resolve_golf_matchups_from_datagolf()
+
     # Phase 0i: Sync is_winner from settled current_probability for golf.
     # Golf outcomes with current_prob at extremes have correct settlement
     # values, but is_winner was corrupted by the reset. Trust the settlement.
@@ -2597,6 +3024,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "datagolf_leaderboard_backfill": dg_leaderboard_stats,
         "datagolf": datagolf_stats,
         "golf_cross_reference": golf_cross_stats,
+        "golf_matchup_resolution": golf_matchup_stats,
         "golf_settlement_sync": golf_sync_stats,
         "kalshi_score_resolution": score_stats,
         "kalshi_spread_total_resolution": spread_total_stats,
