@@ -1781,6 +1781,43 @@ async def trigger_score_resolution(
     }
 
 
+@router.get("/backfill-winners/unresolved-samples")
+async def unresolved_linked_samples(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sample unresolved linked game outcomes for debugging no_parse."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT fo.name AS outcome_name, fm.name AS market_name,
+               fm.external_id AS ticker,
+               e.home_team_name, e.away_team_name,
+               e.home_score, e.away_score
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'pass2_guess'
+          AND fm.source = 'kalshi'
+          AND fm.status = 'resolved'
+          AND e.status IN ('completed', 'closed')
+          AND e.home_score IS NOT NULL
+          AND e.away_score IS NOT NULL
+        ORDER BY random()
+        LIMIT 30
+    """))
+    samples = [
+        {
+            "outcome": row[0], "market": row[1], "ticker": row[2],
+            "home": row[3], "away": row[4],
+            "home_score": row[5], "away_score": row[6],
+        }
+        for row in r.fetchall()
+    ]
+    return {"samples": samples}
+
+
 @router.post("/backfill-winners/probability-only")
 async def trigger_probability_backfill(
     secret: str = Query(...),
