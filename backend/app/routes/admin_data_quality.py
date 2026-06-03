@@ -1792,8 +1792,28 @@ async def trigger_score_resolution(
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
 
+    # Phase 2b: upgrade pass2_guess → clean_resolution inline
+    upgrade_stats = {"upgraded": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(text("""
+                UPDATE futures_outcomes fo
+                SET resolution_source = 'clean_resolution'
+                FROM futures_markets fm
+                WHERE fo.market_id = fm.id
+                  AND fm.status = 'resolved'
+                  AND fo.resolution_source = 'pass2_guess'
+                  AND (fo.current_probability >= 0.95
+                       OR fo.current_probability <= 0.05)
+            """))
+            upgrade_stats["upgraded"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        upgrade_stats["errors"].append(str(e))
+
     return {
         "ml_repair": repair_stats,
+        "guess_upgrade": upgrade_stats,
         "score_resolution": score_stats,
         "spread_total_resolution": spread_total_stats,
         "player_props": player_prop_stats,
