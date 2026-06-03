@@ -379,6 +379,101 @@ class DataGolfAPIService(BaseAPIClient):
 
         return results
 
+    # -- Historical odds ---------------------------------------------------
+
+    async def get_historical_outrights(
+        self,
+        tour: str = "pga",
+        event_id: str = "",
+        year: Optional[int] = None,
+        market: str = "win",
+        book: str = "datagolf",
+    ) -> list[dict]:
+        """Fetch historical outright odds with bet outcomes.
+
+        Returns opening/closing lines and actual outcomes for outright
+        markets (win, top_5, top_10, top_20, make_cut, mc).
+
+        The bet_outcome field indicates the actual result (1=won, 0=lost).
+        """
+        params: dict = {"tour": tour, "market": market, "book": book}
+        if event_id:
+            params["event_id"] = event_id
+        if year:
+            params["year"] = str(year)
+
+        try:
+            data = await self._get("historical-odds/outrights", params)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (403, 404):
+                logger.info(
+                    "DataGolf historical outrights unavailable: tour=%s event=%s market=%s status=%d",
+                    tour, event_id, market, e.response.status_code,
+                )
+                return []
+            raise
+        except httpx.ReadTimeout:
+            logger.warning("DataGolf historical outrights timeout: tour=%s event=%s", tour, event_id)
+            return []
+
+        rows = data if isinstance(data, list) else data.get("odds", data.get("data", []))
+        return rows if isinstance(rows, list) else []
+
+    async def get_historical_matchups(
+        self,
+        tour: str = "pga",
+        event_id: str = "",
+        year: Optional[int] = None,
+        book: str = "datagolf",
+    ) -> list[dict]:
+        """Fetch historical matchup odds (H2H and 3-ball) with bet outcomes.
+
+        Returns opening/closing lines for head-to-head and 3-ball matchups
+        with actual outcomes. Used for:
+        1. Resolving Kalshi H2H/3-ball golf markets
+        2. Displaying multi-source aggregated matchup odds on event pages
+        """
+        params: dict = {"tour": tour, "book": book}
+        if event_id:
+            params["event_id"] = event_id
+        if year:
+            params["year"] = str(year)
+
+        try:
+            data = await self._get("historical-odds/matchups", params)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (403, 404):
+                logger.info(
+                    "DataGolf historical matchups unavailable: tour=%s event=%s status=%d",
+                    tour, event_id, e.response.status_code,
+                )
+                return []
+            raise
+        except httpx.ReadTimeout:
+            logger.warning("DataGolf historical matchups timeout: tour=%s event=%s", tour, event_id)
+            return []
+
+        rows = data if isinstance(data, list) else data.get("matchups", data.get("data", []))
+        return rows if isinstance(rows, list) else []
+
+    async def get_event_list(
+        self,
+        tour: str = "pga",
+    ) -> list[dict]:
+        """Fetch the list of events with historical data available.
+
+        Returns event_id, event_name, calendar_year, and flags for
+        archived predictions, outrights, and matchup availability.
+        """
+        try:
+            data = await self._get("historical-odds/event-list", {"tour": tour})
+        except httpx.HTTPStatusError:
+            return []
+        except httpx.ReadTimeout:
+            return []
+
+        return data if isinstance(data, list) else data.get("events", [])
+
     # -- Internal parser ---------------------------------------------------
 
     def _parse_players(self, data: dict, in_play: bool = False) -> list[DataGolfPlayer]:
