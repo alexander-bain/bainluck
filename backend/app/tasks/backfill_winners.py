@@ -975,7 +975,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                                AND fo.resolution_source NOT IN
                                    ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
                                THEN 1 ELSE 0 END) = 0
-                       AND COUNT(*) = 1
+                       AND COUNT(*) <= 2
                     LIMIT 10000
                 """)
             )
@@ -985,44 +985,56 @@ async def _resolve_kalshi_spread_total_from_scores():
                 ticker_lower = (row.ticker or "").lower()
                 is_1h = "1h" in ticker_lower or "1half" in ticker_lower
 
-                # Get the single outcome's name
+                # Get all outcomes for this market
                 out = await session.execute(
-                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid"),
                     {"mid": row.market_id},
                 )
-                outcome = out.first()
-                if not outcome or not outcome.name:
+                outcomes_list = out.all()
+                if not outcomes_list:
                     stats["no_parse"] += 1
                     continue
 
-                name = outcome.name
+                # Team total: "{Team} over N points scored" in any outcome name
+                resolved_team_total = False
+                for oc in outcomes_list:
+                    _tt_re = re.match(
+                        r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
+                        oc.name or "", re.IGNORECASE,
+                    )
+                    if _tt_re:
+                        team_name = _tt_re.group(1).strip()
+                        line = float(_tt_re.group(2))
+                        home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                        away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                        team_tokens = set(team_name.lower().split())
 
-                # Team total: "{Team} over N points scored" in outcome name
-                _tt_re = re.match(
-                    r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
-                    name, re.IGNORECASE,
-                )
-                if _tt_re:
-                    team_name = _tt_re.group(1).strip()
-                    line = float(_tt_re.group(2))
-                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
-                    team_tokens = set(team_name.lower().split())
+                        team_score = None
+                        if team_tokens & home_tokens:
+                            team_score = row.home_score
+                        elif team_tokens & away_tokens:
+                            team_score = row.away_score
 
-                    team_score = None
-                    if team_tokens & home_tokens:
-                        team_score = row.home_score
-                    elif team_tokens & away_tokens:
-                        team_score = row.away_score
+                        if team_score is not None:
+                            over = team_score > line
+                            for oc2 in outcomes_list:
+                                is_over_outcome = bool(re.match(
+                                    r".+\s+over\s+", oc2.name or "", re.IGNORECASE
+                                ))
+                                won = over if is_over_outcome else not over
+                                await session.execute(
+                                    text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                    {"won": won, "oid": oc2.id},
+                                )
+                            stats["total"] += 1
+                            resolved_team_total = True
+                            break
+                if resolved_team_total:
+                    continue
 
-                    if team_score is not None:
-                        won = team_score > line
-                        await session.execute(
-                            text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
-                            {"won": won, "oid": outcome.id},
-                        )
-                        stats["total"] += 1
-                        continue
+                # For spread/total parsing, use first outcome
+                outcome = outcomes_list[0]
+                name = outcome.name or ""
 
                 # Try spread pattern
                 sm = _SPREAD_RE.search(name)
