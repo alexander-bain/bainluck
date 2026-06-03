@@ -1015,3 +1015,221 @@ class TestCalibrationPricePartA2:
         # Verify the buckets are populated
         assert sum(d["n"] for d in stale_buckets.values()) == 20
         assert sum(d["n"] for d in closing_buckets.values()) == 20
+
+
+class TestScoreResolutionOverwritesGuess:
+    """Score-based resolution must re-resolve pass2_guess outcomes.
+
+    The HAVING guard in _resolve_kalshi_from_scores (and related phases)
+    previously used SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0,
+    which blocked re-resolution on any market that Pass 2 had already
+    tagged. The fix treats pass2_guess, binary_higher_wins, and
+    multi_max_prob as "still needs resolution."
+    """
+
+    def test_having_guard_sql_treats_pass2_guess_as_unresolved(self):
+        """The SQL HAVING clause must count pass2_guess winners as zero."""
+        import re
+
+        from app.tasks.backfill_winners import _resolve_kalshi_from_scores
+        import inspect
+        src = inspect.getsource(_resolve_kalshi_from_scores)
+
+        assert "pass2_guess" in src, (
+            "_resolve_kalshi_from_scores SQL must reference pass2_guess "
+            "to allow re-resolution"
+        )
+        assert "binary_higher_wins" in src
+        assert "multi_max_prob" in src
+
+    def test_spread_total_having_guard_updated(self):
+        """_resolve_kalshi_spread_total_from_scores must also allow re-resolution."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_spread_total_from_scores
+        src = inspect.getsource(_resolve_kalshi_spread_total_from_scores)
+
+        assert "pass2_guess" in src, (
+            "_resolve_kalshi_spread_total_from_scores SQL must reference "
+            "pass2_guess to allow re-resolution"
+        )
+
+    def test_player_props_having_guard_updated(self):
+        """_resolve_kalshi_player_props_from_boxscore must also allow re-resolution."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_player_props_from_boxscore
+        src = inspect.getsource(_resolve_kalshi_player_props_from_boxscore)
+
+        assert "pass2_guess" in src
+
+    def test_period_props_having_guard_updated(self):
+        """_resolve_kalshi_period_props must also allow re-resolution."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_period_props
+        src = inspect.getsource(_resolve_kalshi_period_props)
+
+        assert "pass2_guess" in src
+
+    def test_total_resolution_sets_game_score_source(self):
+        """Total resolution must set resolution_source='game_score'."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_spread_total_from_scores
+        src = inspect.getsource(_resolve_kalshi_spread_total_from_scores)
+
+        total_block = src[src.index("Try total pattern"):]
+        assert "resolution_source" in total_block, (
+            "Total pattern UPDATE must set resolution_source='game_score'"
+        )
+
+    def test_period_total_resolution_sets_source(self):
+        """Period prop total resolution must set resolution_source."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_period_props
+        src = inspect.getsource(_resolve_kalshi_period_props)
+
+        # Find all UPDATE statements — every one should set resolution_source
+        updates = [line.strip() for line in src.split("\n")
+                   if "UPDATE futures_outcomes SET" in line]
+        for stmt in updates:
+            assert "resolution_source" in stmt, (
+                f"UPDATE missing resolution_source: {stmt}"
+            )
+
+    def test_period_spread_uses_team_matching(self):
+        """Period prop spread must match the specific team, not either team."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_period_props
+        src = inspect.getsource(_resolve_kalshi_period_props)
+
+        spread_section = src[src.index("Try spread pattern"):src.index("Try total pattern")]
+        assert "home_tokens" in spread_section, (
+            "Period spread must use team token matching"
+        )
+        assert "away_tokens" in spread_section
+
+    def test_moneyline_resolution_logic(self):
+        """Moneyline: home team wins when home_score > away_score."""
+        home_score, away_score = 110, 95
+        home_won = home_score > away_score
+        assert home_won is True
+
+        home_tokens = {"celtics", "boston"}
+        away_tokens = {"lakers", "los", "angeles"}
+
+        # Outcome named "Celtics" should match home
+        name_tokens = {"celtics"}
+        is_home = bool(home_tokens & name_tokens)
+        is_away = bool(away_tokens & name_tokens)
+        assert is_home and not is_away
+        assert home_won  # Celtics win
+
+        # Outcome named "Lakers" should match away
+        name_tokens = {"lakers"}
+        is_home = bool(home_tokens & name_tokens)
+        is_away = bool(away_tokens & name_tokens)
+        assert not is_home and is_away
+        won = not home_won  # Away team outcome: inverse of home_won
+        assert won is False  # Lakers lose
+
+    def test_spread_with_team_matching(self):
+        """Spread: 'Boston wins by over 5.5 points' with margin 15 → yes."""
+        from app.tasks.backfill_winners import _SPREAD_RE
+
+        m = _SPREAD_RE.search("Boston wins by over 5.5 points")
+        assert m is not None
+        team_name = m.group(1).strip()
+        line = float(m.group(2))
+
+        home_team = "Boston Celtics"
+        away_team = "LA Lakers"
+        period_home, period_away = 55, 40
+
+        home_tokens = set(home_team.lower().split())
+        away_tokens = set(away_team.lower().split())
+        team_tokens = set(team_name.lower().split())
+
+        assert team_tokens & home_tokens  # "boston" matches
+        margin = period_home - period_away  # 15
+        assert margin > line  # 15 > 5.5 → won
+
+    def test_spread_away_team(self):
+        """Spread for away team: must use away margin, not home."""
+        from app.tasks.backfill_winners import _SPREAD_RE
+
+        m = _SPREAD_RE.search("Lakers wins by over 3.5 points")
+        team_name = m.group(1).strip()
+        line = float(m.group(2))
+
+        home_team = "Boston Celtics"
+        away_team = "LA Lakers"
+        period_home, period_away = 40, 55
+
+        home_tokens = set(home_team.lower().split())
+        away_tokens = set(away_team.lower().split())
+        team_tokens = set(team_name.lower().split())
+
+        assert team_tokens & away_tokens  # "lakers" matches
+        margin = period_away - period_home  # 15
+        assert margin > line  # 15 > 3.5 → won
+
+    def test_old_spread_bug_either_team_margin(self):
+        """The old bug: (home-away)>line OR (away-home)>line always true.
+
+        Example: 'Boston wins by over 5.5 points' but Lakers won by 10.
+        Old logic: (40-55) > 5.5 OR (55-40) > 5.5 = False OR True = True (WRONG).
+        New logic: Boston matched → margin = 40-55 = -15 → -15 > 5.5 = False (CORRECT).
+        """
+        period_home, period_away = 40, 55
+        line = 5.5
+
+        # Old bug: either team
+        old_result = (period_home - period_away) > line or (period_away - period_home) > line
+        assert old_result is True  # Bug: says "yes" even though Boston lost
+
+        # New logic: Boston is home team
+        margin = period_home - period_away  # -15
+        new_result = margin > line
+        assert new_result is False  # Correct: Boston didn't win by over 5.5
+
+    def test_having_guard_simulated(self):
+        """Simulate the HAVING SUM(...) guard with different resolution sources.
+
+        The SQL is:
+          HAVING SUM(CASE WHEN fo.is_winner
+                     AND fo.resolution_source NOT IN
+                         ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                     THEN 1 ELSE 0 END) = 0
+
+        Markets with only guess-based winners should be picked up.
+        Markets with authoritative winners (api_settlement, game_score, etc.)
+        should be skipped.
+        """
+        GUESS_SOURCES = {"pass2_guess", "binary_higher_wins", "multi_max_prob"}
+
+        def having_guard(outcomes):
+            """Returns True if market should be processed (needs resolution)."""
+            auth_winners = sum(
+                1 for is_winner, source in outcomes
+                if is_winner and source not in GUESS_SOURCES
+            )
+            return auth_winners == 0
+
+        # Case 1: pass2_guess winner → should be re-resolved
+        assert having_guard([(True, "pass2_guess"), (False, "pass2_guess")]) is True
+
+        # Case 2: binary_higher_wins → should be re-resolved
+        assert having_guard([(True, "binary_higher_wins"), (False, "binary_higher_wins")]) is True
+
+        # Case 3: api_settlement winner → already resolved, skip
+        assert having_guard([(True, "api_settlement"), (False, "api_settlement")]) is False
+
+        # Case 4: game_score winner → already resolved, skip
+        assert having_guard([(True, "game_score"), (False, "game_score")]) is False
+
+        # Case 5: no winner at all → should be processed (original behavior)
+        assert having_guard([(False, None), (False, None)]) is True
+
+        # Case 6: mixed — one outcome api_settlement winner, one pass2_guess loser
+        assert having_guard([(True, "api_settlement"), (False, "pass2_guess")]) is False
+
+        # Case 7: multi_max_prob → should be re-resolved
+        assert having_guard([(True, "multi_max_prob"), (False, None)]) is True
