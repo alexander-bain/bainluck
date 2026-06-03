@@ -1893,13 +1893,16 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 JOIN futures_outcomes fo ON fo.market_id = fm.id
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
-                  AND fo.current_probability IS NOT NULL
                 GROUP BY fm.id
-                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                   AND (
-                       MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
-                       OR MAX(fo.current_probability) <= 0.10
-                   )
+                HAVING (
+                    SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                    AND (
+                        MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
+                        OR MAX(fo.current_probability) <= 0.10
+                    )
+                ) OR (
+                    BOOL_OR(COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution'))
+                )
                 LIMIT :limit
             """),
             {"limit": limit},
