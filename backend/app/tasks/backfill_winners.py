@@ -3305,28 +3305,12 @@ async def _compute_calibration_prices():
             # commence_time inaccuracies caused mid-event prices to be used
             # as closing lines. The sanity check (Part A-sanity below) will
             # prevent the same problem from recurring.
-            reset_golf_hockey = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.source IN ('kalshi', 'datagolf')
-                      AND fm.llm_sport_category IN ('golf', 'hockey')
-                      AND fo.calibration_probability IS NOT NULL
-                      AND fo.calibration_probability != fo.opening_probability
-                      AND fo.opening_probability IS NOT NULL
-                      AND ABS(fo.calibration_probability - fo.opening_probability) > 0.40
-                """)
-            )
-            await session.commit()
-            stats["reset_golf_hockey"] = reset_golf_hockey.rowcount
-            if reset_golf_hockey.rowcount > 0:
-                logger.info(
-                    "Calibration remediation: reset %d golf/hockey outcomes with "
-                    "suspicious cal_prob (>40%% divergence from opening)",
-                    reset_golf_hockey.rowcount,
-                )
+            # NOTE: The 40% divergence reset was removed for golf because
+            # legitimate golf price movements easily exceed 40pp (a player
+            # can go from 8% to 85% over a tournament). The real fix is
+            # getting commence_time right so Part A2 grabs the actual
+            # pre-tournament price.
+            stats["reset_golf_hockey"] = 0
 
             # Part A: Event-linked markets — real pre-event closing line
             # Batched at 100K. Pure SQL, no Python memory risk.
@@ -3457,35 +3441,10 @@ async def _compute_calibration_prices():
             #     inaccurate when DataGolf schedule isn't available, grabbing
             #     mid-tournament prices
             #   - Hockey: unlinked markets with ticker-derived commence_time that
-            #     may be after game start
-            # Threshold: |cal_prob - opening_prob| > 0.40 is almost certainly
-            # mid-event price drift, not legitimate pre-event line movement.
-            # Conservative: only applies to golf and hockey categories.
-            CAL_SANITY_THRESHOLD = 0.40
-            sanity_result = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = fo.opening_probability
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.status = 'resolved'
-                      AND fo.calibration_probability IS NOT NULL
-                      AND fo.opening_probability IS NOT NULL
-                      AND fo.calibration_probability != fo.opening_probability
-                      AND ABS(fo.calibration_probability - fo.opening_probability) > :threshold
-                      AND fm.llm_sport_category IN ('golf', 'hockey')
-                """),
-                {"threshold": CAL_SANITY_THRESHOLD},
-            )
-            await session.commit()
-            stats["sanity_reverted"] = sanity_result.rowcount
-            if sanity_result.rowcount > 0:
-                logger.info(
-                    "Calibration sanity check: reverted %d golf/hockey outcomes "
-                    "where cal_prob diverged >%.0f%% from opening",
-                    sanity_result.rowcount,
-                    CAL_SANITY_THRESHOLD * 100,
-                )
+            # No arbitrary sanity check — if calibration is off, we need to
+            # find and fix the specific miscalculation (wrong commence_time,
+            # wrong snapshot selection, etc.), not paper over it with filters.
+            stats["sanity_reverted"] = 0
 
             # Part B: Non-event markets WITHOUT commence_time — settled price
             # or opening fallback. These are non-golf futures (elections,
