@@ -4085,3 +4085,155 @@ async def audit_pass2_guess(
         "age_distribution": age_dist,
         "game_score_fixable": game_score_fixable,
     }
+
+
+@router.get("/calibration/price-audit")
+async def calibration_price_audit(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    category: str = Query("golf", description="Sport category to audit (golf, hockey, etc.)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Audit calibration_probability accuracy for a given sport category.
+
+    Diagnoses inverted calibration curves by showing:
+    - Distribution of cal_prob values in 10% buckets
+    - How many outcomes have cal_prob == opening_probability (Part A2 didn't improve)
+    - Average divergence between cal_prob and opening_probability
+    - Sample outcomes where cal_prob > 0.7 but is_winner = false (inverted bucket)
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Total outcomes with calibration_probability set
+    r = await db.execute(text("""
+        SELECT COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability IS NOT NULL
+    """), {"category": category})
+    total_with_cal = r.scalar() or 0
+
+    # How many have cal_prob == opening_probability
+    r = await db.execute(text("""
+        SELECT COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability IS NOT NULL
+          AND fo.opening_probability IS NOT NULL
+          AND fo.calibration_probability = fo.opening_probability
+    """), {"category": category})
+    cal_equals_opening = r.scalar() or 0
+
+    # Distribution in 10% buckets
+    r = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN fo.calibration_probability < 0.1 THEN '0-10%'
+                WHEN fo.calibration_probability < 0.2 THEN '10-20%'
+                WHEN fo.calibration_probability < 0.3 THEN '20-30%'
+                WHEN fo.calibration_probability < 0.4 THEN '30-40%'
+                WHEN fo.calibration_probability < 0.5 THEN '40-50%'
+                WHEN fo.calibration_probability < 0.6 THEN '50-60%'
+                WHEN fo.calibration_probability < 0.7 THEN '60-70%'
+                WHEN fo.calibration_probability < 0.8 THEN '70-80%'
+                WHEN fo.calibration_probability < 0.9 THEN '80-90%'
+                ELSE '90-100%'
+            END AS bucket,
+            COUNT(*) AS cnt,
+            SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners,
+            ROUND(AVG(CASE WHEN fo.is_winner THEN 1.0 ELSE 0.0 END)::numeric, 3) AS win_rate
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability IS NOT NULL
+        GROUP BY 1
+        ORDER BY MIN(fo.calibration_probability)
+    """), {"category": category})
+    distribution = [
+        {"bucket": row[0], "count": row[1], "winners": row[2], "win_rate": float(row[3]) if row[3] is not None else None}
+        for row in r.fetchall()
+    ]
+
+    # Average abs(cal_prob - opening_probability)
+    r = await db.execute(text("""
+        SELECT
+            ROUND(AVG(ABS(fo.calibration_probability - fo.opening_probability))::numeric, 4) AS avg_shift,
+            ROUND(MAX(ABS(fo.calibration_probability - fo.opening_probability))::numeric, 4) AS max_shift,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                ORDER BY ABS(fo.calibration_probability - fo.opening_probability)
+            )::numeric, 4) AS median_shift
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability IS NOT NULL
+          AND fo.opening_probability IS NOT NULL
+    """), {"category": category})
+    shift_row = r.fetchone()
+    price_shift = {
+        "avg": float(shift_row[0]) if shift_row and shift_row[0] is not None else None,
+        "max": float(shift_row[1]) if shift_row and shift_row[1] is not None else None,
+        "median": float(shift_row[2]) if shift_row and shift_row[2] is not None else None,
+    }
+
+    # Sample outcomes where cal_prob > 0.7 but is_winner = false (inverted bucket)
+    r = await db.execute(text("""
+        SELECT
+            fo.id AS outcome_id,
+            fo.name AS outcome_name,
+            fm.name AS market_name,
+            fm.source,
+            fm.external_id,
+            ROUND(fo.calibration_probability::numeric, 4) AS cal_prob,
+            ROUND(fo.opening_probability::numeric, 4) AS opening_prob,
+            ROUND(fo.current_probability::numeric, 4) AS current_prob,
+            fm.commence_time,
+            fm.llm_sport_category
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability > 0.7
+          AND fo.is_winner = false
+          AND fo.calibration_probability IS NOT NULL
+        ORDER BY fo.calibration_probability DESC
+        LIMIT 20
+    """), {"category": category})
+    inverted_samples = [
+        {
+            "outcome_id": row[0],
+            "outcome_name": row[1],
+            "market_name": row[2],
+            "source": row[3],
+            "external_id": row[4],
+            "cal_prob": float(row[5]) if row[5] is not None else None,
+            "opening_prob": float(row[6]) if row[6] is not None else None,
+            "current_prob": float(row[7]) if row[7] is not None else None,
+            "commence_time": str(row[8]) if row[8] else None,
+            "category": row[9],
+        }
+        for row in r.fetchall()
+    ]
+
+    # Outcomes with large divergence (> 0.40) between cal_prob and opening
+    r = await db.execute(text("""
+        SELECT COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category = :category
+          AND fo.calibration_probability IS NOT NULL
+          AND fo.opening_probability IS NOT NULL
+          AND ABS(fo.calibration_probability - fo.opening_probability) > 0.40
+    """), {"category": category})
+    large_divergence_count = r.scalar() or 0
+
+    return {
+        "category": category,
+        "total_with_calibration_probability": total_with_cal,
+        "cal_equals_opening": cal_equals_opening,
+        "cal_equals_opening_pct": round(cal_equals_opening / total_with_cal * 100, 1) if total_with_cal > 0 else None,
+        "large_divergence_count": large_divergence_count,
+        "price_shift_from_opening": price_shift,
+        "distribution": distribution,
+        "inverted_samples_high_cal_not_winner": inverted_samples,
+    }

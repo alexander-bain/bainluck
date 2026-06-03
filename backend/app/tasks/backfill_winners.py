@@ -3292,6 +3292,35 @@ async def _compute_calibration_prices():
         async with get_task_session() as session:
             stats["reset"] = 0
 
+            # One-time remediation: NULL calibration_probability on golf and
+            # hockey outcomes so Parts A/A2 recompute them. These sports had
+            # inverted calibration curves in the 70-100% range because
+            # commence_time inaccuracies caused mid-event prices to be used
+            # as closing lines. The sanity check (Part A-sanity below) will
+            # prevent the same problem from recurring.
+            reset_golf_hockey = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source IN ('kalshi', 'datagolf')
+                      AND fm.llm_sport_category IN ('golf', 'hockey')
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.calibration_probability != fo.opening_probability
+                      AND fo.opening_probability IS NOT NULL
+                      AND ABS(fo.calibration_probability - fo.opening_probability) > 0.40
+                """)
+            )
+            await session.commit()
+            stats["reset_golf_hockey"] = reset_golf_hockey.rowcount
+            if reset_golf_hockey.rowcount > 0:
+                logger.info(
+                    "Calibration remediation: reset %d golf/hockey outcomes with "
+                    "suspicious cal_prob (>40%% divergence from opening)",
+                    reset_golf_hockey.rowcount,
+                )
+
             # Part A: Event-linked markets — real pre-event closing line
             # Batched at 100K. Pure SQL, no Python memory risk.
             # LATERAL subquery does one index seek per outcome via
@@ -3413,6 +3442,44 @@ async def _compute_calibration_prices():
                 logger.info("Calibration Part A2: batch processed %d (total %d)", result_a2.rowcount, part_a2_total)
             stats["with_market_commence"] = part_a2_total
 
+            # Part A-sanity: Revert calibration_probability to opening_probability
+            # when the computed value diverges too far from opening, indicating
+            # that commence_time was wrong and the "closing line" was actually an
+            # in-play price. This primarily affects:
+            #   - Golf: commence_time heuristic (close_time - 4.5 days) can be
+            #     inaccurate when DataGolf schedule isn't available, grabbing
+            #     mid-tournament prices
+            #   - Hockey: unlinked markets with ticker-derived commence_time that
+            #     may be after game start
+            # Threshold: |cal_prob - opening_prob| > 0.40 is almost certainly
+            # mid-event price drift, not legitimate pre-event line movement.
+            # Conservative: only applies to golf and hockey categories.
+            CAL_SANITY_THRESHOLD = 0.40
+            sanity_result = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = fo.opening_probability
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.opening_probability IS NOT NULL
+                      AND fo.calibration_probability != fo.opening_probability
+                      AND ABS(fo.calibration_probability - fo.opening_probability) > :threshold
+                      AND fm.llm_sport_category IN ('golf', 'hockey')
+                """),
+                {"threshold": CAL_SANITY_THRESHOLD},
+            )
+            await session.commit()
+            stats["sanity_reverted"] = sanity_result.rowcount
+            if sanity_result.rowcount > 0:
+                logger.info(
+                    "Calibration sanity check: reverted %d golf/hockey outcomes "
+                    "where cal_prob diverged >%.0f%% from opening",
+                    sanity_result.rowcount,
+                    CAL_SANITY_THRESHOLD * 100,
+                )
+
             # Part B: Non-event markets WITHOUT commence_time — settled price
             # or opening fallback. These are non-golf futures (elections,
             # economics, etc.) that have no tournament start date.
@@ -3507,9 +3574,12 @@ async def _compute_calibration_prices():
         logger.error("Compute calibration prices error: %s", e)
 
     logger.info(
-        "Calibration prices: reset=%d, event_linked=%d, non_event=%d, rescued=%d, errors=%d",
-        stats["reset"], stats["with_commence"], stats["without_commence"],
-        stats["rescued"], len(stats["errors"]),
+        "Calibration prices: reset=%d, reset_golf_hockey=%d, event_linked=%d, "
+        "non_event=%d, rescued=%d, sanity_reverted=%d, errors=%d",
+        stats["reset"], stats.get("reset_golf_hockey", 0),
+        stats["with_commence"], stats["without_commence"],
+        stats["rescued"], stats.get("sanity_reverted", 0),
+        len(stats["errors"]),
     )
     return stats
 
