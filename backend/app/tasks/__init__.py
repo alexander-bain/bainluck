@@ -365,6 +365,13 @@ def backfill_kalshi_settled(self, limit: int = 5000):
     return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.backfill_polymarket_winners")
+def backfill_polymarket_winners(self, limit: int = 10000):
+    """Resolve Polymarket winners from Gamma API settlement data."""
+    from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
+    return _tracked_run("polymarket_winners", _backfill_polymarket_winners_from_api(limit))
+
+
 # --- Categorization ---
 
 @celery_app.task(bind=True, name="app.tasks.categorize_futures")
@@ -1556,6 +1563,12 @@ celery_app.conf.beat_schedule = {
     "sync-polymarket-resolved-status": {
         "task": "app.tasks.sync_polymarket_resolved",
         "schedule": crontab(minute=30, hour="5,11,17,23"),  # Every 6h, 30min after Kalshi settled
+        "options": {"queue": "background"},
+    },
+    "backfill-polymarket-winners": {
+        "task": "app.tasks.backfill_polymarket_winners",
+        "schedule": crontab(minute=45, hour="5,11,17,23"),  # Every 6h, 15min after PM sync
+        "kwargs": {"limit": 10000},
         "options": {"queue": "background"},
     },
     "backfill-box-scores": {

@@ -232,6 +232,7 @@ class TestBeatScheduleCompleteness:
         "backfill-kalshi-settled-events",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
+        "backfill-polymarket-winners",
         "snapshot-coverage-metrics-daily",
     }
 
