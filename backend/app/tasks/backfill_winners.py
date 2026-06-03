@@ -3650,14 +3650,10 @@ async def _compute_calibration_prices():
 
             await session.commit()
 
-            # Part D: Null calibration_probability for untradeable outcomes.
-            # Outcomes with ≤2 snapshots where calibration fell back to
-            # opening_probability had no meaningful trading activity. Including
-            # them calibrates against opening prices that may not reflect real
-            # market consensus (e.g. Kalshi player prop tails like "3+ Assists"
-            # at 0.69 with 1 snapshot). This is NOT the disabled Phase 0c
-            # (which nulled opening_probability) — we only null
-            # calibration_probability to exclude from calibration.
+            # Part D: Null calibration_probability for extreme untradeable tails.
+            # Outcomes with ≤2 snapshots at extreme prices (≥0.95 or ≤0.05)
+            # where calibration fell back to opening are illiquid threshold
+            # tails (e.g. "Player: 3+ Goals" at 0.99 with 1 snapshot).
             illiquid_result = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
@@ -3667,6 +3663,7 @@ async def _compute_calibration_prices():
                       AND fm.status = 'resolved'
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.opening_probability IS NOT NULL
+                      AND (fo.opening_probability >= 0.95 OR fo.opening_probability <= 0.05)
                       AND fo.calibration_probability = fo.opening_probability
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
