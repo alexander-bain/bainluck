@@ -4397,4 +4397,34 @@ async def calibration_mce_by_sport(
             for r in br.fetchall()
         ]
 
-    return {"sports": sports, "detail_sport": detail_sport, "detail_buckets": detail_buckets}
+    bad_samples = []
+    if detail_sport:
+        sr = await db.execute(text("""
+            SELECT fo.id, fo.name AS outcome_name, fm.name AS market_name,
+                   fm.external_id, fm.event_id,
+                   fo.calibration_probability, fo.opening_probability,
+                   fo.is_winner
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fm.llm_sport_category = :sport
+              AND fo.calibration_probability >= 0.65
+              AND fo.is_winner = false
+              AND fo.calibration_probability IS NOT NULL
+            ORDER BY fo.calibration_probability DESC
+            LIMIT 20
+        """), {"sport": detail_sport})
+        bad_samples = [
+            {
+                "outcome": r.outcome_name, "market": r.market_name,
+                "external_id": r.external_id, "event_id": r.event_id,
+                "cal_prob": float(r.calibration_probability),
+                "opening_prob": float(r.opening_probability) if r.opening_probability else None,
+            }
+            for r in sr.fetchall()
+        ]
+
+    return {
+        "sports": sports, "detail_sport": detail_sport,
+        "detail_buckets": detail_buckets, "bad_samples": bad_samples,
+    }
