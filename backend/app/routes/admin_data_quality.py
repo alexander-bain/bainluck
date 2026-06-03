@@ -1748,6 +1748,39 @@ async def trigger_backfill_winners(
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
 
 
+@router.post("/backfill-winners/score-resolution")
+async def trigger_score_resolution(
+    secret: str = Query(...),
+):
+    """Run ONLY the score-based resolution phases (Phase 1a).
+
+    Tests the fix for pass2_guess re-resolution. Returns counts of
+    resolved moneyline, spread, total, player prop, and period prop
+    markets.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.backfill_winners import (
+        _resolve_kalshi_from_scores,
+        _resolve_kalshi_spread_total_from_scores,
+        _resolve_kalshi_player_props_from_boxscore,
+        _resolve_kalshi_period_props,
+    )
+
+    score_stats = await _resolve_kalshi_from_scores()
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    period_prop_stats = await _resolve_kalshi_period_props()
+
+    return {
+        "score_resolution": score_stats,
+        "spread_total_resolution": spread_total_stats,
+        "player_props": player_prop_stats,
+        "period_props": period_prop_stats,
+    }
+
+
 @router.post("/backfill-winners/probability-only")
 async def trigger_probability_backfill(
     secret: str = Query(...),
