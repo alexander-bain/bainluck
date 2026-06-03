@@ -406,7 +406,7 @@ def mark_resolved_futures(self):
 def backfill_winners(self, dry_run: bool = False, limit: int = 2000):
     """Backfill is_winner on FuturesOutcome from Kalshi settlement + Polymarket resolution."""
     from app.tasks.backfill_winners import _backfill_all_winners
-    return run_async(_backfill_all_winners(dry_run=dry_run, limit=limit))
+    return _tracked_run("backfill_winners", _backfill_all_winners(dry_run=dry_run, limit=limit))
 
 @celery_app.task(bind=True, name="app.tasks.check_snapshot_sparsity", soft_time_limit=600, time_limit=660)
 def check_snapshot_sparsity(self):
