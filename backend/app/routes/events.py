@@ -1188,6 +1188,134 @@ async def search_events(
     }
 
 
+@router.get("/search-diag")
+async def search_diagnostic(
+    q: str = Query("test", min_length=2),
+    db: AsyncSession = Depends(get_db),
+):
+    """Temporary diagnostic: identify which step of search fails."""
+    import traceback as _tb
+    results = {}
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=7)
+    search_pattern = f"%{q}%"
+
+    # Step 1: Simple event count
+    try:
+        r = await db.execute(
+            select(func.count(Event.id)).join(Sport, Event.sport_id == Sport.id)
+            .where(
+                or_(Event.home_team_name.ilike(search_pattern), Event.away_team_name.ilike(search_pattern)),
+                Event.commence_time >= cutoff,
+            )
+        )
+        results["event_count"] = r.scalar()
+    except Exception as e:
+        results["event_count_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 2: Event query with FTS ranking
+    try:
+        search_rank = _search_rank(_event_search_vector(), q)
+        r = await db.execute(
+            select(Event.id, search_rank.label("rank"))
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(
+                or_(Event.home_team_name.ilike(search_pattern), Event.away_team_name.ilike(search_pattern)),
+                Event.commence_time >= cutoff,
+            )
+            .order_by(search_rank.desc())
+            .limit(1)
+        )
+        row = r.first()
+        results["event_fts"] = "ok" if row else "empty"
+    except Exception as e:
+        results["event_fts_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 3: Tag boost ordering
+    try:
+        from sqlalchemy import literal_column as _lc
+        tag_boost = case(
+            (Event.event_tags.op("@>")(_lc("'[\"importance:championship\"]'::jsonb")), 0),
+            else_=9
+        )
+        r = await db.execute(
+            select(Event.id, tag_boost.label("tb"))
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(Event.commence_time >= cutoff)
+            .order_by(tag_boost)
+            .limit(1)
+        )
+        results["tag_boost"] = "ok"
+    except Exception as e:
+        results["tag_boost_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 4: Futures query with FTS
+    try:
+        futures_search_rank = _search_rank(_futures_search_vector(), q)
+        r = await db.execute(
+            select(FuturesMarket.id, futures_search_rank.label("rank"))
+            .where(FuturesMarket.name.ilike(search_pattern), FuturesMarket.status == "open")
+            .order_by(futures_search_rank.desc())
+            .limit(1)
+        )
+        row = r.first()
+        results["futures_fts"] = "ok" if row else "empty"
+    except Exception as e:
+        results["futures_fts_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 5: Full FuturesMarket select (like search does)
+    try:
+        r = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.sport))
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.name.ilike(search_pattern), FuturesMarket.status == "open")
+            .limit(1)
+        )
+        market = r.scalars().first()
+        results["futures_full_select"] = "ok" if market else "empty"
+    except Exception as e:
+        results["futures_full_select_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 6: Team similarity
+    try:
+        r = await db.execute(
+            select(Team.name, func.similarity(Team.name, q).label("sim"))
+            .where(func.similarity(Team.name, q) > 0.25)
+            .limit(1)
+        )
+        results["trigram"] = "ok"
+    except Exception as e:
+        results["trigram_error"] = f"{type(e).__name__}: {e}"
+
+    # Step 7: Full event query count subquery
+    try:
+        search_rank = _search_rank(_event_search_vector(), q)
+        status_order = case((Event.status == "live", 0), (Event.status == "scheduled", 1), else_=2)
+        from sqlalchemy import literal_column as _lc2
+        tag_boost2 = case(
+            (Event.event_tags.op("@>")(_lc2("'[\"importance:championship\"]'::jsonb")), 0),
+            else_=9
+        )
+        base = (
+            select(Event)
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(
+                or_(Event.home_team_name.ilike(search_pattern), Event.away_team_name.ilike(search_pattern)),
+                Event.commence_time >= cutoff,
+                Event.status.in_(["scheduled", "live", "completed", "closed"]),
+            )
+            .order_by(status_order, tag_boost2, search_rank.desc())
+        )
+        count_q = select(func.count()).select_from(base.subquery())
+        r = await db.execute(count_q)
+        results["count_subquery"] = r.scalar()
+    except Exception as e:
+        results["count_subquery_error"] = f"{type(e).__name__}: {e}"
+
+    return results
+
+
 @router.get("/typeahead")
 async def typeahead_search(
     q: str = Query(..., min_length=2, max_length=50, description="Search query"),
