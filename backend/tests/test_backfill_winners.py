@@ -237,19 +237,16 @@ class TestPolymarketAllLosersAndNegRisk:
     """Tests for all-losers query expansion and NegRisk market handling."""
 
     def test_all_losers_included_in_stuck_query(self):
-        """Markets with MAX(current_probability) <= 0.10 should be targeted.
+        """Markets with non-authoritative resolution should be targeted.
 
-        Previously the query only matched BETWEEN 0.05 AND 0.95, which
-        skipped all-losers markets where the winning outcome's settlement
-        price was never synced.
+        The query should catch ALL markets where any outcome was resolved
+        by guess (pass2_guess) or other non-authoritative method, not just
+        markets with specific probability ranges.
         """
         import inspect
         from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
         source = inspect.getsource(_backfill_polymarket_winners_from_api)
-        # The query should include all-losers markets (max <= 0.10)
-        assert "MAX(fo.current_probability) <= 0.10" in source
-        # The original midrange condition should still be there
-        assert "BETWEEN 0.05 AND 0.95" in source
+        assert "NOT IN ('api_settlement', 'clean_resolution')" in source
 
     def test_negrisk_branch_exists(self):
         """NegRisk parent markets (external_id = event_id) need special
