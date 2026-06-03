@@ -110,6 +110,10 @@ _GENERIC_OUTCOME_PATTERNS = _re.compile(
     r"|Team [A-Z0-9]+"         # "Team 1", "Team A"
     r"|Player [A-Z0-9]+"       # "Player 1"
     r"|Candidate [A-Z0-9]+"   # "Candidate 1"
+    r"|App [A-Z]"              # "App H", "App C"
+    r"|Song [A-Z0-9]+"         # "Song A", "Song 1"
+    r"|Movie [A-Z]"            # "Movie B"
+    r"|Show [A-Z]"             # "Show C"
     r"|[A-Z]$"                # Single letters only (not "Yes"/"No")
     r"|[0-9]+$"               # Pure numbers
     r")$",
