@@ -1821,6 +1821,23 @@ async def trigger_score_resolution(
     }
 
 
+@router.post("/backfill-winners/kalshi-api-only")
+async def trigger_kalshi_api_only(
+    secret: str = Query(...),
+    limit: int = Query(500),
+):
+    """Run ONLY the Kalshi per-event API winner backfill (no other phases).
+
+    Returns detailed stats including api_miss rate, so we can see how
+    much of the backlog is actually reachable via the API.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.backfill_winners import _backfill_kalshi_winners
+    stats = await _backfill_kalshi_winners(limit=limit)
+    return stats
+
+
 @router.get("/box-score-gap")
 async def box_score_gap(
     secret: str = Query(...),

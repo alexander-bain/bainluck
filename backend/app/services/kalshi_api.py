@@ -139,17 +139,28 @@ class KalshiAPIService(BaseAPIClient):
         event_ticker: str,
         with_nested_markets: bool = True,
     ) -> Optional[dict]:
-        """Get a single event by ticker."""
+        """Get a single event by ticker. Returns None only for 404."""
+        import asyncio as _asyncio
         params = {"with_nested_markets": str(with_nested_markets).lower()}
-        try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/events/{event_ticker}",
-                params=params,
-            )
-            response.raise_for_status()
-            return response.json().get("event")
-        except Exception:
-            return None
+        for _attempt in range(3):
+            try:
+                response = await self.client.get(
+                    f"{self.BASE_URL}/events/{event_ticker}",
+                    params=params,
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429:
+                    await _asyncio.sleep(3 * (_attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json().get("event")
+            except Exception:
+                if _attempt < 2:
+                    await _asyncio.sleep(1)
+                    continue
+                return None
+        return None
 
     async def get_series(
         self,
