@@ -4669,8 +4669,8 @@ async def calibration_mce_by_sport(
             {
                 "name": r.name, "cal": round(float(r.calibration_probability), 3),
                 "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
-                "commence": str(r.commence_time)[:19] if r.commence_time else None,
-                "snap_prob": round(float(r.snap_prob), 4), "snap_time": str(r.snap_time)[:19],
+                "commence": str(r.commence_time) if r.commence_time else None,
+                "snap_prob": round(float(r.snap_prob), 4), "snap_time": str(r.snap_time),
             }
             for r in snap_detail.fetchall()
         ]
