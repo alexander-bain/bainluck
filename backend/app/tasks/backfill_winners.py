@@ -2512,9 +2512,13 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         "api_miss": 0, "not_settled": 0, "no_match": 0, "errors": [],
     }
 
+    # Resume from where last run left off
+    from app.tasks.redis_state import get_redis_client
+    _rc = get_redis_client()
+    _offset_key = "bainluck:pm_winner_backfill_offset"
+    _last_max_id = int(_rc.get(_offset_key) or 0)
+
     async with get_task_session() as session:
-        # Find stuck markets: either midrange prices (0.05-0.95) OR all-losers
-        # (max <= 0.10, meaning the winning outcome's price was never synced).
         stuck = await session.execute(
             text("""
                 SELECT fm.id, fm.external_id, fm.group_type,
@@ -2523,20 +2527,27 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 JOIN futures_outcomes fo ON fo.market_id = fm.id
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
+                  AND fm.id > :last_id
                 GROUP BY fm.id
                 HAVING BOOL_OR(
                     COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution')
                 )
-                ORDER BY MAX(fm.updated_at) DESC
+                ORDER BY fm.id ASC
                 LIMIT :limit
             """),
-            {"limit": limit},
+            {"limit": limit, "last_id": _last_max_id},
         )
         markets = stuck.all()
 
     if not markets:
-        logger.info("Polymarket API winner backfill: nothing to do")
+        # Wrapped around — reset cursor for next run
+        _rc.delete(_offset_key)
+        logger.info("Polymarket API winner backfill: nothing to do (reset cursor)")
         return stats
+
+    # Save cursor for next run
+    max_id = max(row.id for row in markets)
+    _rc.setex(_offset_key, 86400 * 7, str(max_id))
 
     # Group by event_id to avoid duplicate API calls for sibling sub-markets
     by_event: dict[str, list] = {}
