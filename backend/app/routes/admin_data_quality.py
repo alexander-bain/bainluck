@@ -4295,3 +4295,57 @@ async def audit_clean_resolution_candidates(
     ]
     return {"clean_resolution_candidates": candidates,
             "total_outcomes": sum(c["outcomes"] for c in candidates)}
+
+
+@router.get("/calibration-mce-by-sport")
+async def calibration_mce_by_sport(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lightweight per-sport MCE computation for calibration monitoring."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(text("""
+        WITH cal_data AS (
+            SELECT
+                fo.calibration_probability,
+                fo.is_winner,
+                CASE
+                    WHEN fo.calibration_probability < 0.05 THEN 0.025
+                    WHEN fo.calibration_probability < 0.15 THEN 0.10
+                    WHEN fo.calibration_probability < 0.25 THEN 0.20
+                    WHEN fo.calibration_probability < 0.35 THEN 0.30
+                    WHEN fo.calibration_probability < 0.45 THEN 0.40
+                    WHEN fo.calibration_probability < 0.55 THEN 0.50
+                    WHEN fo.calibration_probability < 0.65 THEN 0.60
+                    WHEN fo.calibration_probability < 0.75 THEN 0.70
+                    WHEN fo.calibration_probability < 0.85 THEN 0.80
+                    WHEN fo.calibration_probability < 0.95 THEN 0.90
+                    ELSE 0.975
+                END AS bucket_mid,
+                fm.llm_sport_category AS sport
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.calibration_probability IS NOT NULL
+              AND fo.is_winner IS NOT NULL
+        ),
+        buckets AS (
+            SELECT sport, bucket_mid,
+                   AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) AS actual_rate,
+                   COUNT(*) AS n
+            FROM cal_data
+            GROUP BY sport, bucket_mid
+        )
+        SELECT sport,
+            ROUND((SUM(ABS(actual_rate - bucket_mid) * n) / SUM(n) * 100)::numeric, 2) AS mce_pp,
+            SUM(n) AS total_outcomes
+        FROM buckets
+        GROUP BY sport
+        ORDER BY mce_pp DESC
+    """))
+    return [
+        {"sport": row.sport, "mce_pp": float(row.mce_pp), "outcomes": int(row.total_outcomes)}
+        for row in result.fetchall()
+    ]
