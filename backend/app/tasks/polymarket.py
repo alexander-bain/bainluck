@@ -1221,7 +1221,10 @@ async def _sync_polymarket_resolved_status():
 
     service = PolymarketAPIService()
     try:
-        offset = 0
+        from app.tasks.redis_state import get_redis_client
+        _rc = get_redis_client()
+        _offset_key = "bainluck:polymarket_sync_offset"
+        offset = int(_rc.get(_offset_key) or 0)
         max_events = 100000
         zero_update_pages = 0
 
@@ -1347,10 +1350,13 @@ async def _sync_polymarket_resolved_status():
                     else:
                         zero_update_pages += 1
 
-            if zero_update_pages >= 20:
+            if zero_update_pages >= 100:
+                # Reset to start for next run
+                _rc.delete(_offset_key)
                 break
 
             offset += 100
+            _rc.setex(_offset_key, 86400 * 7, str(offset))
             await asyncio.sleep(0.1)
 
             if stats["events_fetched"] % 5000 == 0:
