@@ -1161,30 +1161,28 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
                 _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
 
-                series_needing_work = []
-
-                for candidate in check_list:
-                    needs_work = await session.execute(
-                        text("""
-                            SELECT EXISTS (
-                                SELECT 1 FROM futures_markets fm
-                                WHERE fm.source = 'kalshi'
-                                  AND fm.external_id LIKE :prefix || '%'
-                                  AND (
-                                      fm.status != 'resolved'
-                                      OR EXISTS (
-                                          SELECT 1 FROM futures_outcomes fo
-                                          WHERE fo.market_id = fm.id
-                                            AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                                      )
-                                  )
-                                LIMIT 1
-                            )
-                        """),
-                        {"prefix": candidate},
-                    )
-                    if needs_work.scalar():
-                        series_needing_work.append(candidate)
+                # Single bulk query to find all series needing work instead
+                # of 117 sequential EXISTS queries
+                needs_result = await session.execute(
+                    text("""
+                        SELECT DISTINCT regexp_replace(fm.external_id, '-.*', '')
+                        FROM futures_markets fm
+                        WHERE fm.source = 'kalshi'
+                          AND regexp_replace(fm.external_id, '-.*', '') = ANY(:prefixes)
+                          AND (
+                              fm.status != 'resolved'
+                              OR EXISTS (
+                                  SELECT 1 FROM futures_outcomes fo
+                                  WHERE fo.market_id = fm.id
+                                    AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                              )
+                          )
+                    """),
+                    {"prefixes": check_list},
+                )
+                needs_set = {r[0] for r in needs_result.all()}
+                # Preserve priority ordering
+                series_needing_work = [s for s in check_list if s in needs_set]
 
                 logger.info(
                     "Settled events: %d series need work (checked %d of %d): %s",
@@ -1365,15 +1363,14 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if yes_tickers:
                             r_yes = await session.execute(
                                 text("""
-                                    UPDATE futures_outcomes
+                                    UPDATE futures_outcomes fo
                                     SET is_winner = true,
                                         resolution_source = 'api_settlement'
-                                    WHERE external_id = ANY(:tickers)
-                                      AND COALESCE(resolution_source, '') != 'api_settlement'
-                                      AND market_id IN (
-                                          SELECT id FROM futures_markets
-                                          WHERE source = 'kalshi'
-                                      )
+                                    FROM futures_markets fm
+                                    WHERE fo.market_id = fm.id
+                                      AND fm.source = 'kalshi'
+                                      AND fo.external_id = ANY(:tickers)
+                                      AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                                 """),
                                 {"tickers": yes_tickers},
                             )
@@ -1382,15 +1379,14 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if no_tickers:
                             r_no = await session.execute(
                                 text("""
-                                    UPDATE futures_outcomes
+                                    UPDATE futures_outcomes fo
                                     SET is_winner = false,
                                         resolution_source = 'api_settlement'
-                                    WHERE external_id = ANY(:tickers)
-                                      AND COALESCE(resolution_source, '') != 'api_settlement'
-                                      AND market_id IN (
-                                          SELECT id FROM futures_markets
-                                          WHERE source = 'kalshi'
-                                      )
+                                    FROM futures_markets fm
+                                    WHERE fo.market_id = fm.id
+                                      AND fm.source = 'kalshi'
+                                      AND fo.external_id = ANY(:tickers)
+                                      AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                                 """),
                                 {"tickers": no_tickers},
                             )
@@ -1413,7 +1409,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             break
                         # Save cursor so next run resumes here
                         _rc.setex(_cursor_key, 86400 * 7, cursor)
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.3)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
