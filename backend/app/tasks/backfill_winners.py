@@ -494,7 +494,7 @@ async def _resolve_golf_matchups_from_datagolf():
         # Step 4: For each tournament, fetch matchup data and resolve
         service = DataGolfAPIService()
         try:
-            books_to_try = ["pinnacle", "bet365", "fanduel", "betmgm", "datagolf"]
+            books_to_try = ["pinnacle", "bet365", "fanduel", "betmgm"]
 
             for tourn_key, tourn_market_rows in tournament_markets.items():
                 dg_info = tourn_to_dg.get(tourn_key)
@@ -1402,7 +1402,7 @@ async def _resolve_golf_from_historical_outrights():
         # For make_cut, also try "mc" as an alternate code
         make_cut_codes = ["make_cut", "mc"]
         # Books to try for make_cut (not all books carry all markets)
-        books_to_try = ["datagolf", "pinnacle", "bet365", "fanduel", "betmgm"]
+        books_to_try = ["pinnacle", "bet365", "fanduel", "betmgm"]
         years = [2026, 2025]
 
         for tour in tours:
