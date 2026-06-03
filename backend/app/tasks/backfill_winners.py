@@ -43,7 +43,8 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     from app.tasks.redis_state import get_redis_client
     _rc = get_redis_client()
     _cursor_key = "bainluck:kalshi_winner_backfill_cursor"
-    _last_cursor = _rc.get(_cursor_key) or ""
+    _raw = _rc.get(_cursor_key)
+    _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
 
     async with get_task_session() as session:
         needs_backfill = await session.execute(
