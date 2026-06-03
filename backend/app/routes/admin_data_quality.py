@@ -4510,39 +4510,39 @@ async def calibration_mce_by_sport(
     bucket_breakdown = {}
     if detail_sport:
         bb = await db.execute(text("""
-            WITH high_cal AS (
-                SELECT fo.id, fo.calibration_probability, fo.opening_probability,
+            WITH prop_data AS (
+                SELECT fo.calibration_probability, fo.opening_probability,
                        fo.is_winner,
                        (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
                 FROM futures_outcomes fo
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 WHERE fm.status = 'resolved'
                   AND fm.llm_sport_category = :sport
-                  AND fo.calibration_probability >= 0.95
+                  AND fm.source = 'kalshi'
+                  AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+                  AND fo.calibration_probability IS NOT NULL
                   AND fo.is_winner IS NOT NULL
             )
             SELECT
                 COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE NOT is_winner) AS losers,
-                COUNT(*) FILTER (WHERE snaps <= 2) AS low_snap,
-                COUNT(*) FILTER (WHERE snaps <= 2 AND NOT is_winner) AS low_snap_losers,
-                COUNT(*) FILTER (WHERE opening_probability >= 0.95) AS high_opening,
-                COUNT(*) FILTER (WHERE opening_probability >= 0.95 AND NOT is_winner) AS high_opening_losers,
-                COUNT(*) FILTER (WHERE snaps <= 2 AND opening_probability >= 0.95) AS low_snap_high_open,
-                COUNT(*) FILTER (WHERE snaps <= 2 AND opening_probability >= 0.95 AND NOT is_winner) AS low_snap_high_open_losers
-            FROM high_cal
+                COUNT(*) FILTER (WHERE calibration_probability != opening_probability) AS cal_moved,
+                COUNT(*) FILTER (WHERE calibration_probability != opening_probability AND NOT is_winner AND calibration_probability >= 0.65) AS cal_moved_high_losers,
+                COUNT(*) FILTER (WHERE snaps <= 5) AS low_snap_le5,
+                AVG(snaps)::numeric(10,1) AS avg_snaps,
+                COUNT(*) FILTER (WHERE calibration_probability >= 0.65 AND NOT is_winner) AS high_cal_losers,
+                COUNT(*) FILTER (WHERE calibration_probability >= 0.65) AS high_cal_total
+            FROM prop_data
         """), {"sport": detail_sport})
         bb_row = bb.first()
         if bb_row:
             bucket_breakdown = {
-                "total_95_100": bb_row.total,
-                "losers": bb_row.losers,
-                "low_snap_le2": bb_row.low_snap,
-                "low_snap_losers": bb_row.low_snap_losers,
-                "high_opening_ge95": bb_row.high_opening,
-                "high_opening_losers": bb_row.high_opening_losers,
-                "low_snap_AND_high_opening": bb_row.low_snap_high_open,
-                "low_snap_AND_high_opening_losers": bb_row.low_snap_high_open_losers,
+                "total_props": bb_row.total,
+                "cal_moved_from_opening": bb_row.cal_moved,
+                "cal_moved_high_losers": bb_row.cal_moved_high_losers,
+                "low_snap_le5": bb_row.low_snap_le5,
+                "avg_snaps": float(bb_row.avg_snaps) if bb_row.avg_snaps else 0,
+                "high_cal_losers": bb_row.high_cal_losers,
+                "high_cal_total": bb_row.high_cal_total,
             }
 
     return {
