@@ -3,6 +3,7 @@
 import pytest
 from app.utils.name_normalization import (
     clean_slug,
+    expand_search_terms,
     match_key,
     names_match,
     normalize_name,
@@ -357,3 +358,48 @@ class TestTokenOverlapScore:
         """Single-token names like UCLA score 0.5 against 2-token ESPN names."""
         assert token_overlap_score("UCLA", "UCLA Bruins") == 0.5
         assert token_overlap_score("VCU", "VCU Rams") == 0.5
+
+
+# =============================================================================
+# expand_search_terms tests
+# =============================================================================
+
+
+class TestExpandSearchTerms:
+
+    def test_city_abbreviation(self):
+        result = expand_search_terms(["LA", "mayor"])
+        assert result == [("LA", "los angeles"), ("mayor", None)]
+
+    def test_case_insensitive(self):
+        result = expand_search_terms(["la"])
+        assert result == [("la", "los angeles")]
+
+    def test_general_abbreviation(self):
+        result = expand_search_terms(["SCOTUS"])
+        assert result == [("SCOTUS", "supreme court")]
+
+    def test_no_expansion(self):
+        result = expand_search_terms(["basketball", "playoffs"])
+        assert result == [("basketball", None), ("playoffs", None)]
+
+    def test_multiple_expansions(self):
+        result = expand_search_terms(["NYC", "GDP"])
+        assert result[0] == ("NYC", "new york city")
+        assert result[1] == ("GDP", "gross domestic product")
+
+    def test_empty_input(self):
+        assert expand_search_terms([]) == []
+
+    def test_city_priority_over_general(self):
+        # "nyc" is in both dicts; city dict should be checked first
+        result = expand_search_terms(["nyc"])
+        assert result[0][1] is not None
+
+    def test_fed(self):
+        result = expand_search_terms(["Fed", "rate"])
+        assert result == [("Fed", "federal reserve"), ("rate", None)]
+
+    def test_sf(self):
+        result = expand_search_terms(["SF"])
+        assert result == [("SF", "san francisco")]

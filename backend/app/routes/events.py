@@ -29,6 +29,7 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
+from app.utils.name_normalization import expand_search_terms
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
@@ -204,6 +205,29 @@ def _futures_search_vector():
 
 def _search_rank(search_vector, q: str):
     return func.ts_rank_cd(search_vector, _search_tsquery(q))
+
+
+def _fts_filter(column, q: str):
+    """FTS match filter: to_tsvector(column) @@ websearch_to_tsquery(q)."""
+    return func.to_tsvector(
+        _SEARCH_TS_CONFIG_SQL, func.coalesce(column, "")
+    ).op("@@")(_search_tsquery(q))
+
+
+def _build_expanded_ilike(column, term: str, expansion: str | None):
+    """Build an ILIKE condition for a term, OR'd with its expansion if present."""
+    base = column.ilike(f"%{term}%")
+    if expansion:
+        return or_(base, column.ilike(f"%{expansion}%"))
+    return base
+
+
+def _build_expanded_fts(column, term: str, expansion: str | None):
+    """Build an FTS match for a term, OR'd with its expansion if present."""
+    base = _fts_filter(column, term)
+    if expansion:
+        return or_(base, _fts_filter(column, expansion))
+    return base
 
 
 @router.post("/discover")
@@ -785,42 +809,48 @@ async def search_events(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days_back)
 
-    # search_pattern is the full query for futures name search (always works)
     search_pattern = f"%{q}%"
-
-    sport_alias_keys = _SPORT_SEARCH_ALIASES.get(q.strip().lower())
-
-    # Split multi-word queries: "USA Canada" should match events where
-    # one team is "USA" and the other is "Canada"
     terms = q.strip().split()
+    expanded = expand_search_terms(terms)
+
+    # Collect sport alias keys from any term (not just full query)
+    sport_alias_keys: list[str] | None = None
+    for term, _ in expanded:
+        keys = _SPORT_SEARCH_ALIASES.get(term.lower())
+        if keys:
+            sport_alias_keys = keys if not sport_alias_keys else sport_alias_keys + keys
+
+    # --- Event filter: FTS primary with ILIKE fallback ---
+    # Build FTS filter (handles stemming: "mayor" matches "mayoral")
+    fts_q = " ".join(
+        exp if exp else term for term, exp in expanded
+    )
+    fts_event_filter = or_(
+        _fts_filter(Event.home_team_name, fts_q),
+        _fts_filter(Event.away_team_name, fts_q),
+    )
+    if sport_alias_keys:
+        fts_event_filter = or_(fts_event_filter, Sport.key.in_(sport_alias_keys))
+
+    # Build ILIKE fallback filter (catches substring matches FTS misses)
     if len(terms) > 1:
-        # Multi-word: each term must match EITHER home or away team name.
-        # This finds "USA vs Canada" when searching "USA Canada".
-        term_conditions = []
-        for term in terms:
-            term_pattern = f"%{term}%"
-            term_conditions.append(
-                or_(
-                    Event.home_team_name.ilike(term_pattern),
-                    Event.away_team_name.ilike(term_pattern),
-                )
-            )
-        team_filter = and_(*term_conditions)
+        ilike_conditions = []
+        for term, expansion in expanded:
+            ilike_conditions.append(or_(
+                _build_expanded_ilike(Event.home_team_name, term, expansion),
+                _build_expanded_ilike(Event.away_team_name, term, expansion),
+            ))
+        ilike_event_filter = and_(*ilike_conditions)
     else:
-        # For single-word queries, match team names OR sport key alias.
-        # Sport key matching handles "NBA" → basketball_nba events,
-        # preventing false positives from substring matches like "Gebenbach".
-        name_filter = or_(
-            Event.home_team_name.ilike(search_pattern),
-            Event.away_team_name.ilike(search_pattern),
+        term, expansion = expanded[0]
+        ilike_event_filter = or_(
+            _build_expanded_ilike(Event.home_team_name, term, expansion),
+            _build_expanded_ilike(Event.away_team_name, term, expansion),
         )
         if sport_alias_keys:
-            team_filter = or_(
-                name_filter,
-                Sport.key.in_(sport_alias_keys),
-            )
-        else:
-            team_filter = name_filter
+            ilike_event_filter = or_(ilike_event_filter, Sport.key.in_(sport_alias_keys))
+
+    team_filter = or_(fts_event_filter, ilike_event_filter)
 
     # Build base query - search both home and away team names
     query = (
@@ -1049,28 +1079,33 @@ async def search_events(
     total_count = total_count or 0
     total_pages = (total_count + per_page - 1) // per_page
 
-    # Also search futures markets by name or outcome (label) name.
-    # For multi-word queries, split into individual terms so that
-    # "PGA championship playoff" matches "PGA Championship: Playoff"
-    # even when the exact phrase doesn't appear verbatim in the name.
+    # Also search futures markets by name or outcome name.
+    # FTS on market name (handles stemming) + ILIKE with expansion on name + outcomes.
+    fts_futures_filter = _fts_filter(FuturesMarket.name, fts_q)
+
     if len(terms) > 1:
         futures_name_conditions = [
-            FuturesMarket.name.ilike(f"%{term}%") for term in terms
+            _build_expanded_ilike(FuturesMarket.name, term, exp)
+            for term, exp in expanded
         ]
-        futures_name_match = and_(*futures_name_conditions)
-        # Also try matching outcome names with per-term AND logic
+        futures_name_ilike = and_(*futures_name_conditions)
         futures_outcome_conditions = [
-            FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(f"%{term}%"))
-            for term in terms
+            FuturesMarket.outcomes.any(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp)
+            )
+            for term, exp in expanded
         ]
         futures_outcome_match = and_(*futures_outcome_conditions)
     else:
-        futures_name_match = FuturesMarket.name.ilike(search_pattern)
+        term, exp = expanded[0]
+        futures_name_ilike = _build_expanded_ilike(FuturesMarket.name, term, exp)
         futures_outcome_match = FuturesMarket.outcomes.any(
-            FuturesOutcome.name.ilike(search_pattern)
+            _build_expanded_ilike(FuturesOutcome.name, term, exp)
         )
 
-    futures_search_rank = _search_rank(_futures_search_vector(), q)
+    futures_name_match = or_(fts_futures_filter, futures_name_ilike)
+
+    futures_search_rank = _search_rank(_futures_search_vector(), fts_q)
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
@@ -1121,12 +1156,13 @@ async def search_events(
         for market in futures_markets
     ]
 
-    # Search teams
-    team_search_filter = or_(
-        Team.name.ilike(search_pattern),
-        Team.abbreviation.ilike(search_pattern),
-        cast(Team.alternate_names, String).ilike(search_pattern),
-    )
+    # Search teams (ILIKE with expansion — table is small, no FTS needed)
+    team_ilike_parts = []
+    for term, exp in expanded:
+        team_ilike_parts.append(_build_expanded_ilike(Team.name, term, exp))
+        team_ilike_parts.append(_build_expanded_ilike(Team.abbreviation, term, exp))
+        team_ilike_parts.append(_build_expanded_ilike(cast(Team.alternate_names, String), term, exp))
+    team_search_filter = or_(*team_ilike_parts)
     if fuzzy_corrected:
         fuzzy_team_pattern = f"%{fuzzy_corrected}%"
         team_search_filter = or_(
@@ -1215,49 +1251,69 @@ async def typeahead_search(
     pattern = f"%{q}%"
     suggestions = []
 
-    # Multi-word query support: "USA Canada" finds events where
-    # one team is "USA" and the other is "Canada"
     terms = q.strip().split()
     is_multi_word = len(terms) > 1
+    ta_expanded = expand_search_terms(terms)
+
+    # Collect sport alias keys from any term
+    sport_alias_keys: list[str] | None = None
+    for term, _ in ta_expanded:
+        keys = _SPORT_SEARCH_ALIASES.get(term.lower())
+        if keys:
+            sport_alias_keys = keys if not sport_alias_keys else sport_alias_keys + keys
+
+    # FTS query with expansions
+    ta_fts_q = " ".join(exp if exp else term for term, exp in ta_expanded)
+
     if is_multi_word:
         event_term_conditions = []
         team_term_conditions = []
         futures_term_conditions = []
-        for term in terms:
-            tp = f"%{term}%"
-            event_term_conditions.append(
-                or_(Event.home_team_name.ilike(tp), Event.away_team_name.ilike(tp))
+        for term, exp in ta_expanded:
+            event_term_conditions.append(or_(
+                _build_expanded_ilike(Event.home_team_name, term, exp),
+                _build_expanded_ilike(Event.away_team_name, term, exp),
+            ))
+            team_term_conditions.append(or_(
+                _build_expanded_ilike(Team.name, term, exp),
+                _build_expanded_ilike(Team.abbreviation, term, exp),
+                _build_expanded_ilike(cast(Team.alternate_names, String), term, exp),
+            ))
+            futures_term_conditions.append(
+                _build_expanded_ilike(FuturesMarket.name, term, exp)
             )
-            team_term_conditions.append(
-                or_(Team.name.ilike(tp), Team.abbreviation.ilike(tp),
-                    cast(Team.alternate_names, String).ilike(tp))
-            )
-            futures_term_conditions.append(FuturesMarket.name.ilike(tp))
-        event_team_filter = and_(*event_term_conditions)
+        ilike_event_filter = and_(*event_term_conditions)
         team_filter = and_(*team_term_conditions)
-        futures_name_filter = and_(*futures_term_conditions)
+        ilike_futures_filter = and_(*futures_term_conditions)
     else:
-        # Sport alias matching for short queries like "NBA", "NFL"
-        sport_alias_keys = _SPORT_SEARCH_ALIASES.get(q.strip().lower())
-
-        name_event_filter = or_(
-            Event.home_team_name.ilike(pattern),
-            Event.away_team_name.ilike(pattern),
+        term, exp = ta_expanded[0]
+        ilike_event_filter = or_(
+            _build_expanded_ilike(Event.home_team_name, term, exp),
+            _build_expanded_ilike(Event.away_team_name, term, exp),
         )
         if sport_alias_keys:
-            event_team_filter = or_(
-                name_event_filter,
-                Sport.key.in_(sport_alias_keys),
-            )
-        else:
-            event_team_filter = name_event_filter
+            ilike_event_filter = or_(ilike_event_filter, Sport.key.in_(sport_alias_keys))
 
         team_filter = or_(
-            Team.name.ilike(pattern),
-            Team.abbreviation.ilike(pattern),
-            cast(Team.alternate_names, String).ilike(pattern),
+            _build_expanded_ilike(Team.name, term, exp),
+            _build_expanded_ilike(Team.abbreviation, term, exp),
+            _build_expanded_ilike(cast(Team.alternate_names, String), term, exp),
         )
-        futures_name_filter = FuturesMarket.name.ilike(pattern)
+        ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
+
+    # Combine FTS + ILIKE for events and futures
+    fts_event_f = or_(
+        _fts_filter(Event.home_team_name, ta_fts_q),
+        _fts_filter(Event.away_team_name, ta_fts_q),
+    )
+    if sport_alias_keys:
+        fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
+    event_team_filter = or_(fts_event_f, ilike_event_filter)
+
+    futures_name_filter = or_(
+        _fts_filter(FuturesMarket.name, ta_fts_q),
+        ilike_futures_filter,
+    )
 
     # --- Collect candidates into separate pools (all 3 queries run) ---
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}

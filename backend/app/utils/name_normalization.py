@@ -91,6 +91,42 @@ _CITY_ABBREVIATIONS: dict[str, str] = {
     "buf": "buffalo",
 }
 
+_GENERAL_ABBREVIATIONS: dict[str, str] = {
+    "fed": "federal reserve",
+    "gdp": "gross domestic product",
+    "scotus": "supreme court",
+    "potus": "president",
+    "vpotus": "vice president",
+    "nyc": "new york city",
+    "uk": "united kingdom",
+    "eu": "european union",
+    "ai": "artificial intelligence",
+    "who": "world health organization",
+    "un": "united nations",
+    "imf": "international monetary fund",
+    "epa": "environmental protection agency",
+    "fda": "food and drug administration",
+    "cpi": "consumer price index",
+    "gop": "republican",
+    "dem": "democrat",
+    "doj": "department of justice",
+    "sec": "securities and exchange commission",
+}
+
+
+def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
+    """Expand search terms using city and general abbreviation dictionaries.
+
+    Returns a list of (original_term, expanded_or_None) tuples.
+    Example: ["LA", "mayor"] → [("LA", "los angeles"), ("mayor", None)]
+    """
+    result: list[tuple[str, str | None]] = []
+    for term in terms:
+        lower = term.lower()
+        expansion = _CITY_ABBREVIATIONS.get(lower) or _GENERAL_ABBREVIATIONS.get(lower)
+        result.append((term, expansion))
+    return result
+
 
 # Special letter transliterations not handled by NFD decomposition
 _EXTRA_TRANSLITERATIONS = str.maketrans({
