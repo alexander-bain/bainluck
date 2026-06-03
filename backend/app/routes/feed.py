@@ -1152,7 +1152,9 @@ async def get_feed(
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
-            logger.error("Feed: futures scoring failed, returning partial feed: %s", e)
+            logger.error("Feed: futures scoring failed, returning partial feed: %s", e, exc_info=True)
+            import sentry_sdk
+            sentry_sdk.capture_exception(e)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
 
     await _apply_manual_review_decisions(db, feed_items)
