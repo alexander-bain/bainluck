@@ -1450,7 +1450,7 @@ async def _resolve_golf_from_historical_outrights():
 
                     settlement_data = None
                     for code in codes_to_try:
-                        books = books_to_try if market_type == "make_cut" else ["datagolf"]
+                        books = books_to_try
                         for book in books:
                             rows = await service.get_historical_outrights(
                                 tour=tour,
