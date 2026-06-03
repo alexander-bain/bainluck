@@ -29,20 +29,26 @@ final class RelatedFuturesViewModel: ObservableObject {
     @MainActor
     func load() async {
         guard relatedFutures == nil else {
-            // Already have data (preloaded), just configure refresh
             configureAutoRefresh()
             return
         }
         loading = true
-        do {
-            relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
-            error = nil
-            loading = false
-            configureAutoRefresh()
-        } catch {
-            self.error = error.localizedDescription
-            loading = false
-            logger.error("Failed to load related futures for event \(self.eventId): \(error)")
+        for attempt in 1...2 {
+            do {
+                relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
+                error = nil
+                loading = false
+                configureAutoRefresh()
+                return
+            } catch {
+                logger.error("Related futures attempt \(attempt) for event \(self.eventId): \(error)")
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                } else {
+                    self.error = error.localizedDescription
+                    loading = false
+                }
+            }
         }
     }
 

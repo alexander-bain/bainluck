@@ -236,19 +236,23 @@ struct PlayerPropsCardView: View {
             let defaultGroups = pointsGroups.isEmpty ? Array(card.statGroups.prefix(1)) : pointsGroups
             let groupsToShow = isExpanded ? card.statGroups : defaultGroups
             let hiddenCount = card.statGroups.count - defaultGroups.count
-            let pairs = stride(from: 0, to: groupsToShow.count, by: 2).map { i in
-                (groupsToShow[i], i + 1 < groupsToShow.count ? groupsToShow[i + 1] : nil)
-            }
-            ForEach(pairs.indices, id: \.self) { idx in
-                let pair = pairs[idx]
-                HStack(alignment: .top, spacing: 10) {
-                    statGroupView(pair.0, card: card)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let second = pair.1 {
-                        statGroupView(second, card: card)
+            if groupsToShow.count == 1 {
+                statGroupView(groupsToShow[0], card: card)
+            } else {
+                let pairs = stride(from: 0, to: groupsToShow.count, by: 2).map { i in
+                    (groupsToShow[i], i + 1 < groupsToShow.count ? groupsToShow[i + 1] : nil)
+                }
+                ForEach(pairs.indices, id: \.self) { idx in
+                    let pair = pairs[idx]
+                    HStack(alignment: .top, spacing: 10) {
+                        statGroupView(pair.0, card: card)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Spacer().frame(maxWidth: .infinity)
+                        if let second = pair.1 {
+                            statGroupView(second, card: card)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Spacer().frame(maxWidth: .infinity)
+                        }
                     }
                 }
             }

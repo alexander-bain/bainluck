@@ -1084,18 +1084,27 @@ private struct SegmentBreakdown {
         if lower == "halftime" || lower == "half time" || lower == "ht" { return "" }
         if lower.contains("pre") || lower.contains("final") { return "" }
         let number = firstNumber(in: lower)
-        if lower.contains("ot") || lower.contains("overtime") {
-            return number.map { "OT\($0)" } ?? "OT"
-        }
 
-        if sport.hasPrefix("basketball_") || sport.hasPrefix("americanfootball_") {
+        // Sport-specific branches first — baseball must come before the
+        // generic OT check because "Bottom 3rd" contains "ot" in "Bottom".
+        if sport.hasPrefix("baseball_") {
+            if let number { return "\(number)" }
+        } else if sport.hasPrefix("basketball_") || sport.hasPrefix("americanfootball_") {
+            if lower.contains("ot") || lower.contains("overtime") {
+                return number.map { "OT\($0)" } ?? "OT"
+            }
             if let number { return "Q\(number)" }
         } else if sport.hasPrefix("icehockey_") {
+            if lower.contains("ot") || lower.contains("overtime") {
+                return number.map { "OT\($0)" } ?? "OT"
+            }
             if let number { return "P\(number)" }
         } else if sport.hasPrefix("soccer_") {
             if let number { return number <= 1 ? "1H" : "2H" }
-        } else if sport.hasPrefix("baseball_") {
-            if let number { return "\(number)" }
+        } else {
+            if lower.contains("ot") || lower.contains("overtime") {
+                return number.map { "OT\($0)" } ?? "OT"
+            }
         }
 
         if lower.hasPrefix("q"), let number { return "Q\(number)" }
