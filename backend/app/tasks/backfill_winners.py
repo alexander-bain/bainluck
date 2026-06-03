@@ -2892,6 +2892,25 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
+    # Phase 0-fix-categories: DataGolf markets must always be golf.
+    # LLM enrichment sometimes reclassifies them (e.g. "Volvo China Open"
+    # ended up as hockey, adding 3K+ golf outcomes to hockey calibration).
+    try:
+        async with get_task_session() as session:
+            fix_cat = await session.execute(
+                text("""
+                    UPDATE futures_markets
+                    SET llm_sport_category = 'golf'
+                    WHERE source = 'datagolf'
+                      AND llm_sport_category != 'golf'
+                """)
+            )
+            if fix_cat.rowcount > 0:
+                await session.commit()
+                logger.info("Fixed %d DataGolf markets to golf category", fix_cat.rowcount)
+    except Exception as e:
+        logger.warning("DataGolf category fix failed: %s", e)
+
     # Phase 0-link-props: Link sports prop markets to their parent game events.
     # Must run BEFORE commence_time fixes and calibration price computation so
     # that newly linked markets get authoritative Event commence_time via Part A.
