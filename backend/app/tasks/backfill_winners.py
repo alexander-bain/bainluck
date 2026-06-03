@@ -3376,12 +3376,29 @@ async def _compute_calibration_prices():
             # commence_time inaccuracies caused mid-event prices to be used
             # as closing lines. The sanity check (Part A-sanity below) will
             # prevent the same problem from recurring.
-            # NOTE: The 40% divergence reset was removed for golf because
-            # legitimate golf price movements easily exceed 40pp (a player
-            # can go from 8% to 85% over a tournament). The real fix is
-            # getting commence_time right so Part A2 grabs the actual
-            # pre-tournament price.
-            stats["reset_golf_hockey"] = 0
+            from datetime import date
+            if date.today() <= date(2026, 6, 10):
+                reset_gh = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = NULL
+                        FROM futures_markets fm
+                        WHERE fo.market_id = fm.id
+                          AND fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND fm.llm_sport_category IN ('golf', 'hockey')
+                          AND fo.calibration_probability IS NOT NULL
+                    """)
+                )
+                stats["reset_golf_hockey"] = reset_gh.rowcount
+                if reset_gh.rowcount > 0:
+                    await session.commit()
+                    logger.info(
+                        "Reset %d golf/hockey cal_probs for recomputation",
+                        reset_gh.rowcount,
+                    )
+            else:
+                stats["reset_golf_hockey"] = 0
 
             # Part A: Event-linked markets — real pre-event closing line
             # Batched at 100K. Pure SQL, no Python memory risk.
