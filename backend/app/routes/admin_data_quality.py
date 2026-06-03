@@ -4227,3 +4227,51 @@ async def calibration_price_audit(
         "distribution": distribution,
         "inverted_samples_high_cal_not_winner": inverted_samples,
     }
+
+
+@router.get("/audit-clean-resolution-candidates")
+async def audit_clean_resolution_candidates(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count markets that WOULD be fixed by the widened clean resolution guard.
+
+    These are resolved markets where:
+    - All outcomes have current_probability at extremes (>= 0.95 or <= 0.05)
+    - But pass2_guess already set is_winner, blocking clean resolution
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT fm.source, COUNT(*) as market_count,
+               SUM(outcome_count) as outcome_count
+        FROM (
+            SELECT fm.id, fm.source, COUNT(*) as outcome_count
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id, fm.source
+            HAVING SUM(CASE WHEN fo.is_winner
+                       AND fo.resolution_source IN
+                           ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                       THEN 1 ELSE 0 END) > 0
+               AND SUM(CASE WHEN fo.is_winner
+                       AND fo.resolution_source NOT IN
+                           ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                       THEN 1 ELSE 0 END) = 0
+               AND COUNT(*) FILTER (
+                   WHERE fo.current_probability >= 0.95
+                      OR fo.current_probability <= 0.05
+               ) = COUNT(*)
+        ) sub
+        JOIN futures_markets fm ON fm.id = sub.id
+        GROUP BY fm.source
+        ORDER BY 3 DESC
+    """))
+    candidates = [
+        {"source": row[0], "markets": row[1], "outcomes": row[2]}
+        for row in r.fetchall()
+    ]
+    return {"clean_resolution_candidates": candidates,
+            "total_outcomes": sum(c["outcomes"] for c in candidates)}
