@@ -937,6 +937,216 @@ async def _resolve_kalshi_period_props():
     return stats
 
 
+async def _resolve_golf_from_historical_outrights():
+    """Resolve DataGolf golf outcomes using historical outrights settlement data.
+
+    Uses the DataGolf historical-odds/outrights API which returns actual
+    bet outcomes (bet_outcome_numeric: 1=won, 0=lost) for each player in
+    markets: win, top_5, top_10, top_20, make_cut.
+
+    This is MORE authoritative than leaderboard inference because it uses
+    the sportsbook's own settlement — no position parsing or cut-line guessing.
+
+    Processes all tours (pga, euro, kft, liv, opp, alt) and years 2025-2026.
+    """
+    import asyncio
+    from app.services.datagolf_api import DataGolfAPIService
+
+    stats = {
+        "events_checked": 0, "api_calls": 0,
+        "outcomes_resolved": 0, "winners_set": 0, "losers_set": 0,
+        "no_match": 0, "skipped_no_db_markets": 0,
+        "errors": [],
+    }
+
+    # Short-circuit: check if any unresolved DataGolf outcomes exist
+    async with get_task_session() as session:
+        unresolved_count = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.source = 'datagolf'
+                  AND fm.status = 'resolved'
+                  AND COALESCE(fo.resolution_source, '') NOT IN
+                      ('datagolf_settlement', 'api_settlement')
+            """)
+        )
+        if unresolved_count.scalar() == 0:
+            logger.info("Golf outrights settlement: nothing to do (all resolved)")
+            return stats
+
+    service = DataGolfAPIService()
+    try:
+        tours = ["pga", "euro", "kft", "liv", "opp", "alt"]
+        market_types = ["win", "top_5", "top_10", "top_20", "make_cut"]
+        # For make_cut, also try "mc" as an alternate code
+        make_cut_codes = ["make_cut", "mc"]
+        # Books to try for make_cut (not all books carry all markets)
+        books_to_try = ["datagolf", "pinnacle", "bet365", "fanduel", "betmgm"]
+        years = [2026, 2025]
+
+        for tour in tours:
+            # Get event list for this tour
+            event_list = await service.get_event_list(tour=tour)
+            stats["api_calls"] += 1
+            await asyncio.sleep(0.2)
+
+            if not event_list:
+                continue
+
+            # Filter to relevant years
+            relevant_events = []
+            for ev in event_list:
+                cal_year = ev.get("calendar_year") or ev.get("year")
+                if cal_year and int(cal_year) in years:
+                    relevant_events.append(ev)
+
+            for event_data in relevant_events:
+                event_id = str(event_data.get("event_id", ""))
+                cal_year = event_data.get("calendar_year") or event_data.get("year")
+                if not event_id:
+                    continue
+
+                stats["events_checked"] += 1
+
+                # Check if we have DB markets for this event
+                async with get_task_session() as session:
+                    db_check = await session.execute(
+                        text("""
+                            SELECT COUNT(*) FROM futures_markets
+                            WHERE source = 'datagolf'
+                              AND external_id LIKE :prefix
+                              AND status = 'resolved'
+                        """),
+                        {"prefix": f"datagolf:{tour}:{event_id}:%"},
+                    )
+                    if db_check.scalar() == 0:
+                        stats["skipped_no_db_markets"] += 1
+                        continue
+
+                # Fetch outrights for each market type
+                for market_type in market_types:
+                    codes_to_try = make_cut_codes if market_type == "make_cut" else [market_type]
+
+                    settlement_data = None
+                    for code in codes_to_try:
+                        books = books_to_try if market_type == "make_cut" else ["datagolf"]
+                        for book in books:
+                            rows = await service.get_historical_outrights(
+                                tour=tour,
+                                event_id=event_id,
+                                year=int(cal_year) if cal_year else None,
+                                market=code,
+                                book=book,
+                            )
+                            stats["api_calls"] += 1
+                            await asyncio.sleep(0.2)
+
+                            if rows:
+                                # Filter to rows that have bet_outcome_numeric
+                                settled = [
+                                    r for r in rows
+                                    if r.get("bet_outcome_numeric") is not None
+                                    or r.get("bet_outcome") is not None
+                                ]
+                                if settled:
+                                    settlement_data = settled
+                                    break
+                        if settlement_data:
+                            break
+
+                    if not settlement_data:
+                        continue
+
+                    # Build dg_id → outcome lookup
+                    dg_outcomes: dict[str, bool] = {}
+                    for row in settlement_data:
+                        dg_id = row.get("dg_id")
+                        if dg_id is None:
+                            continue
+                        # bet_outcome_numeric: 1=won, 0=lost
+                        outcome_val = row.get("bet_outcome_numeric")
+                        if outcome_val is None:
+                            outcome_val = row.get("bet_outcome")
+                        if outcome_val is None:
+                            continue
+                        try:
+                            won = int(float(outcome_val)) == 1
+                        except (ValueError, TypeError):
+                            continue
+                        dg_outcomes[str(dg_id)] = won
+
+                    if not dg_outcomes:
+                        continue
+
+                    # Match against DB outcomes
+                    market_ext = f"datagolf:{tour}:{event_id}:{market_type}"
+                    async with get_task_session() as session:
+                        # Load all outcomes for this market at once
+                        outcomes_result = await session.execute(
+                            text("""
+                                SELECT fo.id, fo.external_id
+                                FROM futures_outcomes fo
+                                JOIN futures_markets fm ON fm.id = fo.market_id
+                                WHERE fm.source = 'datagolf'
+                                  AND fm.external_id = :ext
+                                  AND fm.status = 'resolved'
+                                  AND COALESCE(fo.resolution_source, '') NOT IN
+                                      ('datagolf_settlement', 'api_settlement')
+                            """),
+                            {"ext": market_ext},
+                        )
+                        db_outcomes = outcomes_result.all()
+
+                        updated_any = False
+                        for db_out in db_outcomes:
+                            ext_id = db_out.external_id or ""
+                            if not ext_id.startswith("dg_"):
+                                continue
+                            dg_id = ext_id[3:]
+
+                            won = dg_outcomes.get(dg_id)
+                            if won is None:
+                                stats["no_match"] += 1
+                                continue
+
+                            await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET is_winner = :won,
+                                        resolution_source = 'datagolf_settlement'
+                                    WHERE id = :oid
+                                """),
+                                {"won": won, "oid": db_out.id},
+                            )
+                            stats["outcomes_resolved"] += 1
+                            if won:
+                                stats["winners_set"] += 1
+                            else:
+                                stats["losers_set"] += 1
+                            updated_any = True
+
+                        if updated_any:
+                            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Golf outrights settlement error: %s", e)
+    finally:
+        await service.close()
+
+    logger.info(
+        "Golf outrights settlement: %d events checked, %d API calls, "
+        "%d outcomes resolved (%d winners, %d losers), "
+        "%d no_match, %d skipped, %d errors",
+        stats["events_checked"], stats["api_calls"],
+        stats["outcomes_resolved"], stats["winners_set"], stats["losers_set"],
+        stats["no_match"], stats["skipped_no_db_markets"],
+        len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_datagolf_leaderboards():
     """Re-fetch full leaderboards for resolved DataGolf markets with truncated data.
 
@@ -2279,6 +2489,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
+    # Phase 0g-settlement: Resolve DataGolf outcomes from historical outrights
+    # settlement data. Uses bet_outcome_numeric (1=won, 0=lost) which is more
+    # authoritative than leaderboard inference. Must run BEFORE leaderboard
+    # resolution so settlement data takes priority.
+    dg_settlement_stats = await _resolve_golf_from_historical_outrights()
+
     # Phase 0g-pre: Re-fetch full leaderboards for resolved DataGolf markets
     # that still have truncated (50-player) leaderboards from the old code.
     # Must run BEFORE _backfill_datagolf_winners() so the resolution logic
@@ -2377,6 +2593,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "closing_lines": closing_stats,
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
+        "datagolf_settlement": dg_settlement_stats,
         "datagolf_leaderboard_backfill": dg_leaderboard_stats,
         "datagolf": datagolf_stats,
         "golf_cross_reference": golf_cross_stats,

@@ -2309,6 +2309,24 @@ async def trigger_golf_cross_ref(
     return stats
 
 
+@router.post("/backfill-winners/golf-outrights")
+async def trigger_golf_outrights(
+    secret: str = Query(...),
+):
+    """Resolve DataGolf golf outcomes using historical outrights settlement data.
+
+    Uses bet_outcome_numeric (1=won, 0=lost) from the DataGolf historical
+    outrights API. More authoritative than leaderboard inference. Covers
+    win, top_5, top_10, top_20, and make_cut markets across all tours.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.backfill_winners import _resolve_golf_from_historical_outrights
+    stats = await _resolve_golf_from_historical_outrights()
+    return stats
+
+
 @router.get("/backfill-winners/stuck-diagnosis")
 async def stuck_diagnosis(
     secret: str = Query(...),
