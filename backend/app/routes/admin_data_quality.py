@@ -4345,7 +4345,56 @@ async def calibration_mce_by_sport(
         GROUP BY sport
         ORDER BY mce_pp DESC
     """))
-    return [
+    sports = [
         {"sport": row.sport, "mce_pp": float(row.mce_pp), "outcomes": int(row.total_outcomes)}
         for row in result.fetchall()
     ]
+
+    detail_sport = None
+    for q_sport in ("hockey", "golf"):
+        for s in sports:
+            if s["sport"] == q_sport and s["mce_pp"] > 6:
+                detail_sport = q_sport
+                break
+        if detail_sport:
+            break
+
+    detail_buckets = []
+    if detail_sport:
+        br = await db.execute(text("""
+            WITH cal_data AS (
+                SELECT
+                    CASE
+                        WHEN fo.calibration_probability < 0.05 THEN '00-05'
+                        WHEN fo.calibration_probability < 0.15 THEN '05-15'
+                        WHEN fo.calibration_probability < 0.25 THEN '15-25'
+                        WHEN fo.calibration_probability < 0.35 THEN '25-35'
+                        WHEN fo.calibration_probability < 0.45 THEN '35-45'
+                        WHEN fo.calibration_probability < 0.55 THEN '45-55'
+                        WHEN fo.calibration_probability < 0.65 THEN '55-65'
+                        WHEN fo.calibration_probability < 0.75 THEN '65-75'
+                        WHEN fo.calibration_probability < 0.85 THEN '75-85'
+                        WHEN fo.calibration_probability < 0.95 THEN '85-95'
+                        ELSE '95-100'
+                    END AS bucket,
+                    fo.is_winner
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fm.llm_sport_category = :sport
+                  AND fo.calibration_probability IS NOT NULL
+                  AND fo.is_winner IS NOT NULL
+            )
+            SELECT bucket,
+                   ROUND(AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) * 100, 1) AS actual_pct,
+                   COUNT(*) AS n
+            FROM cal_data
+            GROUP BY bucket
+            ORDER BY bucket
+        """), {"sport": detail_sport})
+        detail_buckets = [
+            {"bucket": r.bucket, "actual_pct": float(r.actual_pct), "n": int(r.n)}
+            for r in br.fetchall()
+        ]
+
+    return {"sports": sports, "detail_sport": detail_sport, "detail_buckets": detail_buckets}
