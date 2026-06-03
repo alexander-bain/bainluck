@@ -1190,6 +1190,31 @@ class TestScoreResolutionOverwritesGuess:
         new_result = margin > line
         assert new_result is False  # Correct: Boston didn't win by over 5.5
 
+    def test_sql_uses_correct_event_column_names(self):
+        """SQL must reference e.home_team_name, not e.home_team (doesn't exist)."""
+        import inspect
+        from app.tasks.backfill_winners import (
+            _resolve_kalshi_from_scores,
+            _resolve_kalshi_spread_total_from_scores,
+            _resolve_kalshi_period_props,
+        )
+        for fn in [_resolve_kalshi_from_scores,
+                   _resolve_kalshi_spread_total_from_scores,
+                   _resolve_kalshi_period_props]:
+            src = inspect.getsource(fn)
+            assert "e.home_team_name" in src, (
+                f"{fn.__name__} must use e.home_team_name (not e.home_team)"
+            )
+            assert "e.away_team_name" in src
+            # Must NOT reference the non-existent e.home_team column
+            lines = src.split("\n")
+            for line in lines:
+                if "e.home_team" in line and "e.home_team_name" not in line and "e.home_team_id" not in line:
+                    assert False, (
+                        f"{fn.__name__} has bare 'e.home_team' reference "
+                        f"(should be e.home_team_name): {line.strip()}"
+                    )
+
     def test_having_guard_simulated(self):
         """Simulate the HAVING SUM(...) guard with different resolution sources.
 

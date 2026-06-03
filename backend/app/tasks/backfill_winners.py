@@ -815,7 +815,7 @@ async def _resolve_kalshi_from_scores():
                 text("""
                     SELECT fm.id AS market_id, fm.name AS market_name,
                            fm.external_id AS ticker,
-                           e.home_team, e.away_team,
+                           e.home_team_name, e.away_team_name,
                            e.home_score, e.away_score,
                            COUNT(fo.id) AS n_outcomes
                     FROM futures_markets fm
@@ -827,7 +827,7 @@ async def _resolve_kalshi_from_scores():
                       AND e.away_score IS NOT NULL
                       AND fo.current_probability IS NOT NULL
                     GROUP BY fm.id, fm.name, fm.external_id,
-                             e.home_team, e.away_team,
+                             e.home_team_name, e.away_team_name,
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
@@ -878,8 +878,8 @@ async def _resolve_kalshi_from_scores():
                     stats["skipped"] += 1
                     continue
 
-                home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
-                away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+                home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
 
                 resolved_any = False
                 for out in outs:
@@ -957,7 +957,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                 text("""
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            e.id AS event_id,
-                           e.home_team, e.away_team,
+                           e.home_team_name, e.away_team_name,
                            e.home_score, e.away_score
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
@@ -968,7 +968,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                       AND e.away_score IS NOT NULL
                       AND fo.current_probability IS NOT NULL
                     GROUP BY fm.id, fm.external_id, e.id,
-                             e.home_team, e.away_team,
+                             e.home_team_name, e.away_team_name,
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
@@ -1012,8 +1012,8 @@ async def _resolve_kalshi_spread_total_from_scores():
                         h1_home, h1_away = row.home_score, row.away_score
 
                     # Determine which team the spread is for
-                    home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
-                    away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
                     team_tokens = set(team_name.lower().split())
 
                     if team_tokens & home_tokens:
@@ -1240,7 +1240,7 @@ async def _resolve_kalshi_period_props():
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
-                           e.home_team, e.away_team,
+                           e.home_team_name, e.away_team_name,
                            e.home_score AS final_home, e.away_score AS final_away
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
@@ -1250,7 +1250,7 @@ async def _resolve_kalshi_period_props():
                       AND e.home_score IS NOT NULL
                       AND EXISTS (SELECT 1 FROM scoring_plays sp WHERE sp.event_id = e.id)
                     GROUP BY fm.id, fm.external_id, fm.name,
-                             e.id, e.home_team, e.away_team,
+                             e.id, e.home_team_name, e.away_team_name,
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
@@ -1335,8 +1335,8 @@ async def _resolve_kalshi_period_props():
                 if sm:
                     team_name = sm.group(1).strip()
                     line = float(sm.group(2))
-                    home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
-                    away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
                     team_tokens = set(team_name.lower().split())
                     if team_tokens & home_tokens:
                         margin = period_home - period_away
