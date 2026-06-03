@@ -4412,10 +4412,11 @@ async def calibration_mce_by_sport(
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
               AND fo.calibration_probability >= 0.65
+              AND fo.calibration_probability < 0.85
               AND fo.is_winner IS NOT NULL
               AND NOT fo.is_winner
               AND fo.calibration_probability IS NOT NULL
-            ORDER BY fo.calibration_probability DESC
+            ORDER BY RANDOM()
             LIMIT 20
         """), {"sport": detail_sport})
         bad_samples = [
