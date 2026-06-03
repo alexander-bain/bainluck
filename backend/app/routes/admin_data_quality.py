@@ -4401,7 +4401,7 @@ async def calibration_mce_by_sport(
     if detail_sport:
         sr = await db.execute(text("""
             SELECT fo.id, fo.name AS outcome_name, fm.name AS market_name,
-                   fm.external_id, fm.event_id,
+                   fm.external_id, fm.event_id, fm.source,
                    fo.calibration_probability, fo.opening_probability,
                    fo.is_winner
             FROM futures_outcomes fo
@@ -4409,7 +4409,8 @@ async def calibration_mce_by_sport(
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
               AND fo.calibration_probability >= 0.65
-              AND fo.is_winner = false
+              AND fo.is_winner IS NOT NULL
+              AND NOT fo.is_winner
               AND fo.calibration_probability IS NOT NULL
             ORDER BY fo.calibration_probability DESC
             LIMIT 20
@@ -4418,11 +4419,22 @@ async def calibration_mce_by_sport(
             {
                 "outcome": r.outcome_name, "market": r.market_name,
                 "external_id": r.external_id, "event_id": r.event_id,
-                "cal_prob": float(r.calibration_probability),
-                "opening_prob": float(r.opening_probability) if r.opening_probability else None,
+                "source": r.source,
+                "cal_prob": round(float(r.calibration_probability), 4),
+                "opening_prob": round(float(r.opening_probability), 4) if r.opening_probability else None,
             }
             for r in sr.fetchall()
         ]
+        if not bad_samples:
+            count_r = await db.execute(text("""
+                SELECT COUNT(*) FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.status = 'resolved'
+                  AND fm.llm_sport_category = :sport
+                  AND fo.calibration_probability >= 0.65
+                  AND fo.is_winner IS NOT NULL
+            """), {"sport": detail_sport})
+            bad_samples = [{"debug_count_ge65": count_r.scalar()}]
 
     return {
         "sports": sports, "detail_sport": detail_sport,
