@@ -1821,6 +1821,24 @@ async def trigger_score_resolution(
     }
 
 
+@router.post("/backfill-box-scores")
+async def trigger_backfill_box_scores(
+    secret: str = Query(...),
+    limit: int = Query(500),
+    priority: bool = Query(True, description="Prioritize events with Kalshi player props"),
+):
+    """Trigger ESPN box score backfill for events missing box_score_data."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.backfill_box_scores",
+        kwargs={"limit": limit, "priority_calibration": priority},
+        queue="background",
+    )
+    return {"status": "queued", "task_id": str(result.id), "limit": limit, "priority_calibration": priority}
+
+
 @router.get("/backfill-winners/unresolved-samples")
 async def unresolved_linked_samples(
     secret: str = Query(...),
