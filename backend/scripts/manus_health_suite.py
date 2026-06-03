@@ -239,6 +239,9 @@ def extract_report(messages: dict) -> str:
 
 GROUND_TRUTH_MODULES = {"grid_ground_truth", "event_matching"}
 
+# Keywords that signal critical findings in a report
+CRITICAL_KEYWORDS = ["critical", "broken", "crash", "0/100", "0%", "fail", "error", "bug"]
+
 
 def extract_json_from_report(report_text: str) -> dict | None:
     """Extract a JSON code block from a Manus report.
@@ -254,6 +257,113 @@ def extract_json_from_report(report_text: str) -> dict | None:
         return json.loads(match.group(1))
     except json.JSONDecodeError:
         return None
+
+
+def _count_critical_keywords(report_text: str) -> dict[str, int]:
+    """Count occurrences of each critical keyword in a report (case-insensitive)."""
+    text_lower = report_text.lower()
+    counts: dict[str, int] = {}
+    for kw in CRITICAL_KEYWORDS:
+        n = text_lower.count(kw)
+        if n > 0:
+            counts[kw] = n
+    return counts
+
+
+def _load_previous_manifest() -> dict | None:
+    """Load the manifest from the current 'latest' symlink, if it exists."""
+    latest = RESULTS_DIR / "latest"
+    if not latest.is_symlink() and not latest.exists():
+        return None
+    manifest_path = latest / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def run_regression_detection(manifest: dict, results: dict[str, str]):
+    """Phase 4: Compare current sweep against previous sweep for regressions.
+
+    Modifies manifest in-place to add ``diagnostics`` key with keyword counts.
+    Prints a summary of regressions, improvements, and new critical findings.
+    """
+    prev_manifest = _load_previous_manifest()
+
+    # --- Keyword diagnostics for current sweep ---
+    diagnostics: dict[str, dict[str, int]] = {}
+    for module_name, report_text in results.items():
+        diagnostics[module_name] = _count_critical_keywords(report_text)
+    manifest["diagnostics"] = diagnostics
+
+    if prev_manifest is None:
+        print("  No previous sweep found — skipping regression comparison.")
+        # Still print keyword summary for the current sweep
+        total_kw = sum(sum(c.values()) for c in diagnostics.values())
+        print(f"  Current sweep: {total_kw} critical keyword occurrences across {len(diagnostics)} modules.")
+        return
+
+    prev_date = prev_manifest.get("date", "unknown")
+    prev_tasks = prev_manifest.get("tasks", {})
+    prev_diagnostics = prev_manifest.get("diagnostics", {})
+
+    regressions: list[str] = []
+    improvements: list[str] = []
+
+    # --- Status comparison ---
+    all_modules = set(manifest["tasks"].keys()) | set(prev_tasks.keys())
+    for module in sorted(all_modules):
+        cur_status = manifest["tasks"].get(module, {}).get("status")
+        prev_status = prev_tasks.get(module, {}).get("status")
+
+        if prev_status is None or cur_status is None:
+            continue  # Module only exists in one sweep — not a regression
+
+        if prev_status == "complete" and cur_status in ("timeout", "error", "collection_failed"):
+            regressions.append(f"  - {module}: was complete, now {cur_status}")
+        elif prev_status in ("timeout", "error", "collection_failed") and cur_status == "complete":
+            improvements.append(f"  - {module}: was {prev_status}, now complete")
+
+    # --- Keyword count comparison ---
+    new_critical_findings: list[str] = []
+    for module_name, cur_counts in diagnostics.items():
+        prev_counts = prev_diagnostics.get(module_name, {})
+        cur_total = sum(cur_counts.values())
+        prev_total = sum(prev_counts.values())
+        delta = cur_total - prev_total
+        if delta > 0:
+            new_critical_findings.append(
+                f"  - {module_name}: {cur_total} keywords (was {prev_total}, +{delta})"
+            )
+
+    # --- Summary ---
+    n_regressions = len(regressions)
+    n_improvements = len(improvements)
+    n_new_findings = len(new_critical_findings)
+
+    print(f"\n  Compared against previous sweep ({prev_date}):")
+    print(f"  {n_regressions} regression(s), {n_improvements} improvement(s), "
+          f"{n_new_findings} new critical finding(s)")
+
+    if regressions:
+        print("\n  REGRESSIONS (status downgrade):")
+        for line in regressions:
+            print(line)
+
+    if improvements:
+        print("\n  IMPROVEMENTS (status upgrade):")
+        for line in improvements:
+            print(line)
+
+    if new_critical_findings:
+        print("\n  NEW CRITICAL FINDINGS (keyword count increase):")
+        for line in new_critical_findings:
+            print(line)
+
+    if not regressions and not improvements and not new_critical_findings:
+        print("  No changes detected.")
 
 
 def run_suite(module_names: list[str]):
@@ -390,7 +500,12 @@ def run_suite(module_names: list[str]):
     combined_path = output_dir / "combined_report.md"
     combined_path.write_text("\n".join(combined))
 
-    # Update manifest
+    # Phase 4: Regression detection (runs BEFORE updating latest symlink
+    # so _load_previous_manifest reads the prior sweep)
+    print(f"\n[{_ts()}] Phase 4: Regression detection...")
+    run_regression_detection(manifest, results)
+
+    # Update manifest (now includes diagnostics from Phase 4)
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     # Symlink latest
