@@ -181,6 +181,7 @@ struct NativeChallengeSheet: View {
                 nextButtonLabel: label,
                 onGuessCompleted: onGuessCompleted
             )
+            .id("challenge-\(currentIndex)")
         } else if item.type == "event", let event = item.event {
             NativeGuessCard(
                 event: event,
@@ -188,6 +189,7 @@ struct NativeChallengeSheet: View {
                 nextButtonLabel: label,
                 onGuessCompleted: onGuessCompleted
             )
+            .id("challenge-\(currentIndex)")
         }
     }
 

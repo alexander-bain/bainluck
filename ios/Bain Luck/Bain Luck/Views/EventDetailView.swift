@@ -197,15 +197,8 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    if let lineMovement = vm.lineMovement, lineMovement.hasDisplayContent {
-                        LineMovementExplainerView(
-                            analysis: lineMovement,
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeColor: teamColors(event).home,
-                            awayColor: teamColors(event).away
-                        )
-                    }
+                    // "Why the Line Moved" removed — content was low quality
+                    // (obvious statements, minor injuries). See #745 for revamp plan.
                     // Score Differential Chart
                     if let history = vm.history, (isLive || isFinished) {
                         ScoreDifferentialChartView(
