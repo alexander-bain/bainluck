@@ -4636,8 +4636,10 @@ async def calibration_mce_by_sport(
             SELECT ROUND((SUM(ABS(a - mid) * n) / SUM(n) * 100)::numeric, 2) AS mce FROM b
         """), {"sport": detail_sport})
         sim_row = sim.first()
-        if sim_row and sim_row.mce:
+        if sim_row and sim_row.mce is not None:
             bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
+        else:
+            bucket_breakdown["sim_mce_opening_error"] = "no data"
 
     return {
         "sports": sports, "detail_sport": detail_sport,
