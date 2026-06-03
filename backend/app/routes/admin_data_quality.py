@@ -4459,16 +4459,16 @@ async def calibration_mce_by_sport(
     snapshot_debug = []
     if detail_sport:
         sd = await db.execute(text("""
-            SELECT fm.source, fm.name AS market_name, fm.llm_sport_category,
+            SELECT fm.source, fm.name AS market_name,
                    COUNT(fo.id) AS outcome_count
             FROM futures_markets fm
             JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fm.source IN ('polymarket', 'datagolf')
-            GROUP BY fm.source, fm.name, fm.llm_sport_category
+              AND fm.source = 'polymarket'
+            GROUP BY fm.source, fm.name
             ORDER BY COUNT(fo.id) DESC
-            LIMIT 10
+            LIMIT 15
         """), {"sport": detail_sport})
         snapshot_debug = [
             {"source": r.source, "market": r.market_name, "outcomes": r.outcome_count}
