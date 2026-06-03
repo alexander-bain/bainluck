@@ -4436,12 +4436,14 @@ async def calibration_mce_by_sport(
                 COUNT(*) FILTER (WHERE e.commence_time IS NULL AND fm.event_id IS NOT NULL) AS linked_no_ct,
                 COUNT(*) FILTER (WHERE fm.event_id IS NULL) AS unlinked,
                 COUNT(*) FILTER (WHERE e.commence_time IS NOT NULL AND fm.event_id IS NOT NULL) AS linked_with_ct,
-                COUNT(*) AS total
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE fm.source = 'kalshi') AS kalshi,
+                COUNT(*) FILTER (WHERE fm.source = 'polymarket') AS polymarket,
+                COUNT(*) FILTER (WHERE fm.source = 'datagolf') AS datagolf
             FROM futures_markets fm
             LEFT JOIN events e ON e.id = fm.event_id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fm.source = 'kalshi'
         """), {"sport": detail_sport})
         ct_row = null_ct.first()
         ct_debug = {
@@ -4449,6 +4451,9 @@ async def calibration_mce_by_sport(
             "unlinked": ct_row.unlinked,
             "linked_with_commence_time": ct_row.linked_with_ct,
             "total": ct_row.total,
+            "kalshi": ct_row.kalshi,
+            "polymarket": ct_row.polymarket,
+            "datagolf": ct_row.datagolf,
         } if ct_row else {}
 
     snapshot_debug = []
