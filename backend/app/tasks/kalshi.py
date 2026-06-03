@@ -177,6 +177,7 @@ def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str], 
     Determine llm_sport_category for a Kalshi market using pattern matching.
 
     Classification cascade (first match wins):
+    0. IPO check on market name (overrides ticker — "Kraken IPO" is economics, not hockey)
     1. Ticker prefix → sport key (authoritative — KXNHL is always hockey)
     2. Rules engine on market name
     3. League detection → sport inference
@@ -185,6 +186,11 @@ def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str], 
     Always returns a category (never None) — defaults to "other".
     """
     from app.utils.futures_categorization import categorize_by_rules, detect_league, infer_sport_from_league
+
+    # 0. IPO check — must come BEFORE ticker prefix so "Kraken IPO" is
+    # classified as economics, not hockey (Kraken = NHL team AND crypto exchange)
+    if market_name and _re.search(r'\bIPO\b', market_name, _re.IGNORECASE):
+        return "economics"
 
     # 1. Ticker prefix → sport category (AUTHORITATIVE — ticker never lies.
     # Must come first because ambiguous names like "Eastern Conference" match
@@ -934,11 +940,11 @@ async def _backfill_from_settled_events(limit: int = 5000):
             async with get_task_session() as session:
                 total_snapshots = 0
 
-                # Process priority series first, then others with time budget.
-                # The DB has 3,800+ series prefixes — checking all is too slow.
+                # Process priority series first, then rotate through all others
+                # using a Redis-persisted cursor (full coverage every ~38 runs).
                 import time as _time
                 _start_time = _time.monotonic()
-                _MAX_SECONDS = 600
+                _MAX_SECONDS = 720
 
                 _PRIORITY_SERIES = [
                     "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
@@ -948,11 +954,15 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL",
                 ]
 
-                # Check priority series first, then sample remaining
+                _series_cursor_key = "bainluck:settled_series_cursor"
+                _cursor_pos = int(_rc.get(_series_cursor_key) or 0)
+                non_priority = [s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES]
+                rotated = non_priority[_cursor_pos:] + non_priority[:_cursor_pos]
+                check_list = _PRIORITY_SERIES + rotated[:100]
+                _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
+                _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
+
                 series_needing_work = []
-                check_list = _PRIORITY_SERIES + [
-                    s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES
-                ][:50]
 
                 for candidate in check_list:
                     needs_work = await session.execute(

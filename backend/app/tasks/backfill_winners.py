@@ -40,6 +40,11 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
         "errors": [],
     }
 
+    from app.tasks.redis_state import get_redis_client
+    _rc = get_redis_client()
+    _cursor_key = "bainluck:kalshi_winner_backfill_cursor"
+    _last_cursor = _rc.get(_cursor_key) or ""
+
     async with get_task_session() as session:
         needs_backfill = await session.execute(
             text("""
@@ -47,20 +52,25 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 FROM futures_markets fm
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
-                  AND (fm.resolution_date >= NOW() - INTERVAL '60 days'
-                       OR fm.commence_time >= NOW() - INTERVAL '60 days')
+                  AND fm.external_id > :cursor
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
                         AND COALESCE(fo.resolution_source, '') != 'api_settlement'
                   )
                 GROUP BY fm.external_id
-                ORDER BY MAX(COALESCE(fm.resolution_date, fm.commence_time)) DESC NULLS LAST
+                ORDER BY fm.external_id ASC
                 LIMIT :limit
             """),
-            {"limit": limit},
+            {"limit": limit, "cursor": _last_cursor},
         )
         tickers = [r[0] for r in needs_backfill.all()]
+
+    if tickers:
+        _rc.setex(_cursor_key, 86400 * 14, tickers[-1])
+    elif _last_cursor:
+        _rc.delete(_cursor_key)
+        logger.info("Kalshi winner backfill: cursor wrapped, will restart next run")
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
@@ -939,7 +949,7 @@ _SPREAD_RE = re.compile(
     re.IGNORECASE,
 )
 _TOTAL_RE = re.compile(
-    r"^Over (\d+\.?\d*)\s+(?:1H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals)(?:\s+scored)?$",
+    r"^(?P<dir>Over|Under)\s+(\d+\.?\d*)\s+(?:1H\s+)?(?:2H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals|maps|rounds|kills)(?:\s+scored)?$",
     re.IGNORECASE,
 )
 
@@ -1091,7 +1101,8 @@ async def _resolve_kalshi_spread_total_from_scores():
                 # Try total pattern
                 tm = _TOTAL_RE.search(name)
                 if tm:
-                    line = float(tm.group(1))
+                    direction = tm.group("dir").lower()
+                    line = float(tm.group(2))
 
                     if is_1h:
                         h1_scores = await _get_halftime_score(session, row.event_id)
@@ -1102,7 +1113,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                     else:
                         total = row.home_score + row.away_score
 
-                    won = total > line
+                    won = total > line if direction == "over" else total < line
                     await session.execute(
                         text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
@@ -1160,6 +1171,14 @@ _PROP_TICKER_TO_STAT = {
 }
 
 _PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
+
+
+def _normalize_player_name(name: str) -> str:
+    from app.utils.name_normalization import strip_diacritics
+    n = strip_diacritics(name).lower().strip()
+    n = re.sub(r"\s+(jr\.?|sr\.?|ii|iii|iv)\s*$", "", n, flags=re.IGNORECASE)
+    n = n.replace(".", "").replace("'", "").replace("'", "")
+    return " ".join(n.split())
 
 _COMBO_STATS = {
     "kxnbapa": ["points", "assists"],
@@ -1227,11 +1246,21 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 player_name = m.group(1).strip()
                 threshold = int(m.group(2))
 
+                player_norm = _normalize_player_name(player_name)
                 player_stats = None
                 for bs_name, bs_stats in box_score.items():
-                    if bs_name.lower() == player_name.lower():
+                    if _normalize_player_name(bs_name) == player_norm:
                         player_stats = bs_stats
                         break
+
+                if player_stats is None and "," in player_name:
+                    parts = player_name.split(",", 1)
+                    flipped = f"{parts[1].strip()} {parts[0].strip()}"
+                    flipped_norm = _normalize_player_name(flipped)
+                    for bs_name, bs_stats in box_score.items():
+                        if _normalize_player_name(bs_name) == flipped_norm:
+                            player_stats = bs_stats
+                            break
 
                 if player_stats is None:
                     stats["no_player"] += 1
@@ -1409,8 +1438,10 @@ async def _resolve_kalshi_period_props():
                 # Try total pattern
                 tm = _TOTAL_RE.search(outcome.name)
                 if tm:
-                    line = float(tm.group(1))
-                    won = (period_home + period_away) > line
+                    direction = tm.group("dir").lower()
+                    line = float(tm.group(2))
+                    total = period_home + period_away
+                    won = total > line if direction == "over" else total < line
                     await session.execute(
                         text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
@@ -3129,8 +3160,35 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Only handles markets not already resolved by API settlement above.
     prob_stats = await _backfill_from_current_probability()
 
+    # Phase 2b: Upgrade pass2_guess → clean_resolution where settlement data
+    # has since arrived (polling updated current_probability to 0/1 after
+    # the guess was tagged). Doesn't change is_winner — just upgrades the
+    # resolution_source so these outcomes count in calibration.
+    guess_upgrade_stats = {"upgraded": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'clean_resolution'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fo.resolution_source = 'pass2_guess'
+                      AND (fo.current_probability >= 0.95
+                           OR fo.current_probability <= 0.05)
+                """)
+            )
+            guess_upgrade_stats["upgraded"] = r.rowcount
+            await session.commit()
+            if r.rowcount > 0:
+                logger.info("pass2_guess upgrade: %d outcomes → clean_resolution", r.rowcount)
+    except Exception as e:
+        guess_upgrade_stats["errors"].append(str(e))
+
     return {
         "ml_misresolution_repair": ml_repair_stats,
+        "guess_upgrade": guess_upgrade_stats,
         "retro_tagging": retro_stats,
         "retro_guess_tagging": retro2_stats,
         "commence_time_fixes": commence_stats,

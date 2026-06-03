@@ -208,31 +208,31 @@ class TestSpreadTotalParsing:
         from app.tasks.backfill_winners import _TOTAL_RE
         m = _TOTAL_RE.search("Over 210.5 points scored")
         assert m is not None
-        assert float(m.group(1)) == 210.5
+        assert float(m.group(2)) == 210.5
 
     def test_total_1h(self):
         from app.tasks.backfill_winners import _TOTAL_RE
         m = _TOTAL_RE.search("Over 93.5 1H points scored")
         assert m is not None
-        assert float(m.group(1)) == 93.5
+        assert float(m.group(2)) == 93.5
 
     def test_total_team_points(self):
         from app.tasks.backfill_winners import _TOTAL_RE
         m = _TOTAL_RE.search("Over 106.5 team points scored")
         assert m is not None
-        assert float(m.group(1)) == 106.5
+        assert float(m.group(2)) == 106.5
 
     def test_total_without_scored(self):
         from app.tasks.backfill_winners import _TOTAL_RE
         m = _TOTAL_RE.search("Over 4.5 runs")
         assert m is not None
-        assert float(m.group(1)) == 4.5
+        assert float(m.group(2)) == 4.5
 
     def test_total_total_points(self):
         from app.tasks.backfill_winners import _TOTAL_RE
         m = _TOTAL_RE.search("Over 106.5 total points")
         assert m is not None
-        assert float(m.group(1)) == 106.5
+        assert float(m.group(2)) == 106.5
 
     def test_total_does_not_match_spread_text(self):
         from app.tasks.backfill_winners import _TOTAL_RE
@@ -245,6 +245,24 @@ class TestSpreadTotalParsing:
         assert m is not None
         assert m.group(1) == "Miami"
         assert float(m.group(2)) == 109.5
+
+    def test_total_under_pattern(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        m = _TOTAL_RE.search("Under 210.5 points scored")
+        assert m is not None
+        assert m.group("dir") == "Under"
+        assert float(m.group(2)) == 210.5
+
+    def test_total_esports_maps(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        m = _TOTAL_RE.search("Over 2.5 maps")
+        assert m is not None
+        assert float(m.group(2)) == 2.5
+
+    def test_total_esports_rounds(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        m = _TOTAL_RE.search("Over 24.5 rounds")
+        assert m is not None
 
     def test_no_match_random_text(self):
         from app.tasks.backfill_winners import _SPREAD_RE, _TOTAL_RE
@@ -1288,3 +1306,32 @@ class TestScoreResolutionOverwritesGuess:
 
         # Case 7: multi_max_prob → should be re-resolved
         assert having_guard([(True, "multi_max_prob"), (False, None)]) is True
+
+
+class TestPlayerPropNameNormalization:
+    """Tests for accent/suffix normalization in player prop matching."""
+
+    def test_accent_normalization(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("Nikola Vučević") == _normalize_player_name("Nikola Vucevic")
+
+    def test_suffix_stripping(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("LeBron James Jr.") == _normalize_player_name("LeBron James")
+        assert _normalize_player_name("LeBron James Jr") == _normalize_player_name("LeBron James")
+
+    def test_period_removal(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("P.J. Washington") == _normalize_player_name("PJ Washington")
+
+    def test_no_false_positive(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("Jalen Green") != _normalize_player_name("Jalen Williams")
+
+    def test_case_insensitive(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("LEBRON JAMES") == _normalize_player_name("LeBron James")
+
+    def test_doncic(self):
+        from app.tasks.backfill_winners import _normalize_player_name
+        assert _normalize_player_name("Luka Dončić") == _normalize_player_name("Luka Doncic")
