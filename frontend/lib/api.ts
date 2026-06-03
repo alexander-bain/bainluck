@@ -730,6 +730,15 @@ export interface GameMarketsResponse {
     movement?: number | null;
     period?: string | null;
   }[];
+  matchups: {
+    market_name: string;
+    type: "h2h" | "3ball";
+    source: string;
+    outcomes: {
+      name: string;
+      probability: number;
+    }[];
+  }[];
   other: {
     market_name: string;
     outcome_name: string;

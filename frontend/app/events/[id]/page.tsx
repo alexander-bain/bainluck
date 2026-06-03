@@ -931,8 +931,8 @@ export default function EventPage({ params }: EventPageProps) {
         />
       )}
 
-      {/* Game Markets — Player Props + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
+      {/* Game Markets — Player Props + Matchups + Special Markets */}
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
         <div className="space-y-3">
 
           {gameMarkets.player_props.length > 0 && (
@@ -945,6 +945,53 @@ export default function EventPage({ params }: EventPageProps) {
               awayColor={event.away_team_data?.primary_color || undefined}
               boxScore={event.box_score_data}
             />
+          )}
+
+          {/* Matchups — H2H and 3-ball markets (golf) */}
+          {(gameMarkets.matchups?.length ?? 0) > 0 && (
+            <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
+              <div className="px-4 sm:px-5 py-3 border-b border-surface-border/30">
+                <h3 className="text-[13px] font-semibold text-text-primary">Matchups</h3>
+              </div>
+              <div className="divide-y divide-surface-border/30">
+                {gameMarkets.matchups!.map((matchup, idx) => (
+                  <div key={idx} className="px-4 sm:px-5 py-3">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-xs font-medium text-text-secondary">{matchup.market_name}</span>
+                      <span className="text-[10px] font-medium text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
+                        {matchup.source === "kalshi" ? "Kalshi" : matchup.source === "polymarket" ? "Polymarket" : matchup.source}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {matchup.outcomes.map((outcome, oidx) => {
+                        const pct = Math.round(outcome.probability * 100);
+                        const isLeader = outcome.probability === Math.max(...matchup.outcomes.map(o => o.probability));
+                        return (
+                          <div key={oidx} className="flex items-center gap-3">
+                            <span className={`text-xs font-medium w-[140px] sm:w-[180px] truncate ${isLeader ? "text-text-primary" : "text-text-secondary"}`}>
+                              {outcome.name}
+                            </span>
+                            <div className="flex-1 h-5 bg-surface-elevated rounded-full overflow-hidden relative">
+                              <div
+                                className="h-full rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.max(pct, 2)}%`,
+                                  backgroundColor: isLeader ? "#10B981" : "#94A3B8",
+                                  opacity: isLeader ? 1 : 0.5,
+                                }}
+                              />
+                            </div>
+                            <span className={`text-xs font-bold tabular-nums w-10 text-right ${isLeader ? "text-text-primary" : "text-text-muted"}`}>
+                              {pct}%
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Special Event Markets (auto-categorized other markets) */}

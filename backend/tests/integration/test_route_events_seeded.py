@@ -415,11 +415,12 @@ class TestGameMarketsShape:
         resp = await event_detail_client.get("/api/events/1/game-markets")
         if resp.status_code == 200:
             body = resp.json()
-            for section in ["totals", "player_props", "spreads", "other"]:
+            for section in ["totals", "player_props", "spreads", "matchups", "other"]:
                 assert section in body, f"Missing section: {section}"
             assert isinstance(body["totals"], list)
             assert isinstance(body["player_props"], list)
             assert isinstance(body["spreads"], list)
+            assert isinstance(body["matchups"], list)
             assert isinstance(body["other"], list)
 
     async def test_has_event_context(self, event_detail_client):

@@ -2778,6 +2778,16 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     _QUARTER_PATTERNS = ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter",
                          "1q", "2q", "3q", "4q")
 
+    # Head-to-head and 3-ball matchups (golf)
+    if any(x in lower for x in ("head-to-head", "h2h", "head to head")):
+        return "h2h"
+    # "matchup" alone is too generic (used in team vs team contexts),
+    # only classify as h2h when combined with golf-specific signals
+    if "matchup" in lower and any(x in lower for x in ("golf", "vs.", "vs ")):
+        return "h2h"
+    if any(x in lower for x in ("3-ball", "3ball", "three-ball", "three ball", "3 ball")):
+        return "3ball"
+
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
         if "team" in lower:
@@ -3199,7 +3209,7 @@ async def get_game_markets(
                     markets.append(m)
 
     if not markets:
-        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "other": [], "pace": None}
+        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None}
 
     # 4. Load outcomes for all markets
     market_ids = [m.id for m in markets]
@@ -3227,6 +3237,7 @@ async def get_game_markets(
     player_props: list[dict] = []
     spreads: list[dict] = []
     period_markets: list[dict] = []
+    matchups: list[dict] = []
     other_markets: list[dict] = []
 
     # Group outcomes by market
@@ -3362,6 +3373,24 @@ async def get_game_markets(
                     "source": market.source,
                     "market_type": market_type,
                     "period": market_period,
+                })
+
+        elif market_type in ("h2h", "3ball"):
+            # Head-to-head or 3-ball matchup — group outcomes under one entry
+            outcomes_list = []
+            for o in market_outcomes:
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                if prob is not None:
+                    outcomes_list.append({
+                        "name": o.name,
+                        "probability": round(prob, 4),
+                    })
+            if outcomes_list:
+                matchups.append({
+                    "market_name": market.name,
+                    "type": market_type,
+                    "source": market.source,
+                    "outcomes": outcomes_list,
                 })
 
         else:
@@ -3692,6 +3721,7 @@ async def get_game_markets(
         "team_totals": team_total_items,
         "spreads": spreads,
         "period_markets": period_markets,
+        "matchups": matchups,
         "other": other_markets,
         "pace": pace,
     }

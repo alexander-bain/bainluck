@@ -192,6 +192,37 @@ class TestClassifyGameMarket:
             "1st Half Total", external_id="KXNBA2HTOTAL-26MAY14BOSGSW"
         ) == "half_total"
 
+    # ── H2H / 3-ball matchup classification ────────────────────────────
+
+    def test_h2h_head_to_head(self):
+        assert _classify_game_market("Head-to-Head: Scheffler vs McIlroy") == "h2h"
+
+    def test_h2h_h2h_keyword(self):
+        assert _classify_game_market("H2H Scheffler vs Rahm") == "h2h"
+
+    def test_h2h_head_to_head_no_hyphen(self):
+        assert _classify_game_market("Head to Head: Morikawa vs Hovland") == "h2h"
+
+    def test_h2h_matchup_with_vs(self):
+        """'matchup' + 'vs.' is golf-specific enough to classify as h2h."""
+        assert _classify_game_market("Matchup: Scheffler vs. McIlroy") == "h2h"
+
+    def test_matchup_alone_stays_other(self):
+        """Bare 'matchup' without golf signals stays generic (not h2h)."""
+        assert _classify_game_market("Celtics at Warriors") == "other"
+
+    def test_3ball(self):
+        assert _classify_game_market("3-Ball: Scheffler, McIlroy, Thomas") == "3ball"
+
+    def test_3ball_no_hyphen(self):
+        assert _classify_game_market("3Ball Matchup") == "3ball"
+
+    def test_three_ball(self):
+        assert _classify_game_market("Three-Ball: Group A") == "3ball"
+
+    def test_three_ball_no_hyphen(self):
+        assert _classify_game_market("Three Ball Group B") == "3ball"
+
     def test_no_ticker_returns_other(self):
         """A bare matchup name with no ticker stays 'other'."""
         assert _classify_game_market("Celtics at Warriors") == "other"
