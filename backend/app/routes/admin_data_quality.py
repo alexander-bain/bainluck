@@ -4645,6 +4645,36 @@ async def calibration_mce_by_sport(
         sim_row = sim.first()
         if sim_row and sim_row.mce is not None:
             bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
+        snap_detail = await db.execute(text("""
+            SELECT fo.name, fo.calibration_probability, fo.opening_probability,
+                   e.commence_time,
+                   fos.probability AS snap_prob, fos.captured_at AS snap_time
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            LEFT JOIN events e ON e.id = fm.event_id
+            CROSS JOIN LATERAL (
+                SELECT fos2.probability, fos2.captured_at
+                FROM futures_odds_snapshots fos2
+                WHERE fos2.outcome_id = fo.id
+                ORDER BY fos2.captured_at
+            ) fos
+            WHERE fm.status = 'resolved'
+              AND fm.llm_sport_category = :sport
+              AND fo.calibration_probability BETWEEN 0.80 AND 0.82
+              AND NOT fo.is_winner
+              AND fm.external_id LIKE 'KXNHLGOAL%%'
+            LIMIT 20
+        """), {"sport": detail_sport})
+        bucket_breakdown["snap_timeline"] = [
+            {
+                "name": r.name, "cal": round(float(r.calibration_probability), 3),
+                "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
+                "commence": str(r.commence_time)[:19] if r.commence_time else None,
+                "snap_prob": round(float(r.snap_prob), 4), "snap_time": str(r.snap_time)[:19],
+            }
+            for r in snap_detail.fetchall()
+        ]
+
         orphan = await db.execute(text("""
             SELECT COUNT(*) AS cnt
             FROM futures_outcomes fo
