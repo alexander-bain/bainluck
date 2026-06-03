@@ -3859,7 +3859,7 @@ async def audit_pass2_guess(
 
     r = await db.execute(text("""
         SELECT
-            regexp_replace(fm.ticker_id, '-[0-9]{2}[A-Z]{3}[0-9]{2,4}.*$', '') as prefix,
+            regexp_replace(fm.external_id, E'-[0-9]{2}[A-Z]{3}[0-9]{2,4}.*', '') as prefix,
             fm.status, COUNT(*) as cnt
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
