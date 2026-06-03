@@ -1157,10 +1157,33 @@ async def _transition_event_statuses_impl() -> dict:
                     stats.setdefault("pm_resolved", 0)
                     stats["pm_resolved"] += 1
 
-        if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0:
+        # --- Repair: completed with 0-0 → scheduled/live ---
+        # The Odds API occasionally returns completed=true for games that
+        # haven't started. Reset these to the correct status.
+        stats["repaired_bogus_completed"] = 0
+        bogus_result = await session.execute(
+            select(Event).where(
+                Event.status == "completed",
+                Event.home_score == 0,
+                Event.away_score == 0,
+                Event.completed_at.is_(None),
+                Event.commence_time >= now - timedelta(hours=12),
+            )
+        )
+        for event in bogus_result.scalars().all():
+            if event.commence_time > now:
+                event.status = "scheduled"
+            else:
+                event.status = "live"
+            event.home_score = None
+            event.away_score = None
+            stats["repaired_bogus_completed"] += 1
+
+        if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0 or stats["repaired_bogus_completed"] > 0:
             logger.info(
-                "Status transitions: %d scheduled→live, %d live→closed (pm_resolved=%d)",
+                "Status transitions: %d scheduled→live, %d live→closed, %d repaired (pm_resolved=%d)",
                 stats["scheduled_to_live"], stats["live_to_closed"],
+                stats["repaired_bogus_completed"],
                 stats.get("pm_resolved", 0),
             )
 

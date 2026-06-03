@@ -921,23 +921,24 @@ async def _poll_all_odds():
                             else:
                                 score_commence = None
 
-                            if is_completed:
+                            if is_completed and (not score_commence or score_commence <= now):
                                 event_status = "completed"
-                                if event_obj and not event_obj.completed_at:
-                                    update_values["completed_at"] = now
+                            elif is_completed and score_commence and score_commence > now:
+                                event_status = None
                             elif score_commence and score_commence <= now:
                                 event_status = "live"
                             elif home_score is not None and away_score is not None:
-                                # Has scores but no commence_time — trust that it's live
                                 event_status = "live"
                             else:
-                                # Event hasn't started — skip status update entirely
-                                # Still update scores if present (shouldn't be, but safe)
                                 event_status = None
 
                             update_values = {}
                             if event_status is not None:
                                 update_values["status"] = event_status
+                            if event_status == "completed":
+                                event_obj_pre = _score_events_by_ext.get(external_id)
+                                if event_obj_pre and not event_obj_pre.completed_at:
+                                    update_values["completed_at"] = now
 
                             if home_score is not None:
                                 update_values["home_score"] = home_score
