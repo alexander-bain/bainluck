@@ -4403,9 +4403,12 @@ async def calibration_mce_by_sport(
             SELECT fo.id, fo.name AS outcome_name, fm.name AS market_name,
                    fm.external_id, fm.event_id, fm.source,
                    fo.calibration_probability, fo.opening_probability,
-                   fo.is_winner
+                   fo.is_winner,
+                   e.commence_time AS event_commence,
+                   fm.commence_time AS market_commence
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
+            LEFT JOIN events e ON e.id = fm.event_id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
               AND fo.calibration_probability >= 0.65
@@ -4422,6 +4425,8 @@ async def calibration_mce_by_sport(
                 "source": r.source,
                 "cal_prob": round(float(r.calibration_probability), 4),
                 "opening_prob": round(float(r.opening_probability), 4) if r.opening_probability else None,
+                "event_commence": str(r.event_commence) if r.event_commence else None,
+                "market_commence": str(r.market_commence) if r.market_commence else None,
             }
             for r in sr.fetchall()
         ]
