@@ -926,7 +926,7 @@ _SPREAD_RE = re.compile(
     re.IGNORECASE,
 )
 _TOTAL_RE = re.compile(
-    r"Over (\d+\.?\d*)\s+(?:1H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals)(?:\s+scored)?",
+    r"^Over (\d+\.?\d*)\s+(?:1H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals)(?:\s+scored)?$",
     re.IGNORECASE,
 )
 
@@ -997,30 +997,32 @@ async def _resolve_kalshi_spread_total_from_scores():
 
                 name = outcome.name
 
-                # Team total "Yes" outcomes: line is in market name, not outcome
-                if name.lower() in ("yes", "no") and "teamtotal" in ticker_lower:
-                    tm2 = _TOTAL_RE.search(row.market_name or "")
-                    if tm2:
-                        line = float(tm2.group(1))
-                        home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                        away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
-                        mkt_tokens = set((row.market_name or "").lower().split())
+                # Team total: "{Team} over N points scored" in outcome name
+                _tt_re = re.match(
+                    r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
+                    name, re.IGNORECASE,
+                )
+                if _tt_re:
+                    team_name = _tt_re.group(1).strip()
+                    line = float(_tt_re.group(2))
+                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                    team_tokens = set(team_name.lower().split())
 
-                        team_score = None
-                        if mkt_tokens & home_tokens:
-                            team_score = row.home_score
-                        elif mkt_tokens & away_tokens:
-                            team_score = row.away_score
+                    team_score = None
+                    if team_tokens & home_tokens:
+                        team_score = row.home_score
+                    elif team_tokens & away_tokens:
+                        team_score = row.away_score
 
-                        if team_score is not None:
-                            over = team_score > line
-                            won = over if name.lower() == "yes" else not over
-                            await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
-                                {"won": won, "oid": outcome.id},
-                            )
-                            stats["total"] += 1
-                            continue
+                    if team_score is not None:
+                        won = team_score > line
+                        await session.execute(
+                            text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                            {"won": won, "oid": outcome.id},
+                        )
+                        stats["total"] += 1
+                        continue
 
                 # Try spread pattern
                 sm = _SPREAD_RE.search(name)

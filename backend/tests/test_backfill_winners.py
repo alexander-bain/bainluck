@@ -234,6 +234,18 @@ class TestSpreadTotalParsing:
         assert m is not None
         assert float(m.group(1)) == 106.5
 
+    def test_total_does_not_match_spread_text(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        assert _TOTAL_RE.search("Cincinnati wins by over 5.5 Points") is None
+
+    def test_team_total_outcome_pattern(self):
+        import re
+        _tt = r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)"
+        m = re.match(_tt, "Miami over 109.5 points scored", re.IGNORECASE)
+        assert m is not None
+        assert m.group(1) == "Miami"
+        assert float(m.group(2)) == 109.5
+
     def test_no_match_random_text(self):
         from app.tasks.backfill_winners import _SPREAD_RE, _TOTAL_RE
         assert _SPREAD_RE.search("Yes") is None
