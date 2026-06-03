@@ -4457,47 +4457,21 @@ async def calibration_mce_by_sport(
         } if ct_row else {}
 
     snapshot_debug = []
-    if bad_samples:
+    if detail_sport:
         sd = await db.execute(text("""
-            SELECT fo.id, fo.name, fo.calibration_probability, fo.opening_probability,
-                   e.commence_time,
-                   (SELECT fos.probability || ' at ' || fos.captured_at::text
-                    FROM futures_odds_snapshots fos
-                    WHERE fos.outcome_id = fo.id
-                      AND fos.captured_at < e.commence_time
-                    ORDER BY fos.captured_at DESC LIMIT 1) AS pre_game_snap,
-                   (SELECT fos.probability || ' at ' || fos.captured_at::text
-                    FROM futures_odds_snapshots fos
-                    WHERE fos.outcome_id = fo.id
-                    ORDER BY fos.captured_at ASC LIMIT 1) AS first_snap,
-                   (SELECT fos.probability || ' at ' || fos.captured_at::text
-                    FROM futures_odds_snapshots fos
-                    WHERE fos.outcome_id = fo.id
-                    ORDER BY fos.captured_at DESC LIMIT 1) AS last_snap,
-                   (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count
-            FROM futures_outcomes fo
-            JOIN futures_markets fm ON fm.id = fo.market_id
-            LEFT JOIN events e ON e.id = fm.event_id
+            SELECT fm.source, fm.name AS market_name, fm.llm_sport_category,
+                   COUNT(fo.id) AS outcome_count
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fo.calibration_probability >= 0.65
-              AND fo.calibration_probability < 0.85
-              AND fo.calibration_probability != fo.opening_probability
-              AND NOT fo.is_winner
-            ORDER BY ABS(fo.calibration_probability - fo.opening_probability) DESC
-            LIMIT 5
+              AND fm.source IN ('polymarket', 'datagolf')
+            GROUP BY fm.source, fm.name, fm.llm_sport_category
+            ORDER BY COUNT(fo.id) DESC
+            LIMIT 10
         """), {"sport": detail_sport})
         snapshot_debug = [
-            {
-                "outcome_id": r.id, "name": r.name,
-                "cal_prob": round(float(r.calibration_probability), 4),
-                "opening_prob": round(float(r.opening_probability), 4) if r.opening_probability else None,
-                "commence_time": str(r.commence_time) if r.commence_time else None,
-                "pre_game_snap": r.pre_game_snap,
-                "first_snap": r.first_snap,
-                "last_snap": r.last_snap,
-                "snap_count": r.snap_count,
-            }
+            {"source": r.source, "market": r.market_name, "outcomes": r.outcome_count}
             for r in sd.fetchall()
         ]
 
