@@ -505,14 +505,13 @@ class TestDataGolfLeaderboardTruncation:
         assert len(leaderboard) != 50  # not flagged as truncated
 
     def test_resolution_source_is_leaderboard(self):
-        """DataGolf winner resolution should use 'leaderboard' as resolution_source."""
-        # The resolution_source was changed from 'scoring_plays' to 'leaderboard'
-        # This test ensures the correct value is used
-        import ast
+        """DataGolf winner resolution uses leaderboard/did_not_play/withdrew sources."""
         import inspect
         from app.tasks.backfill_winners import _backfill_datagolf_winners
         source = inspect.getsource(_backfill_datagolf_winners)
-        assert "resolution_source = 'leaderboard'" in source
+        assert 'res_source = "leaderboard"' in source
+        assert 'res_source = "did_not_play"' in source
+        assert 'res_source = "withdrew"' in source
         assert "resolution_source = 'scoring_plays'" not in source
 
 
