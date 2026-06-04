@@ -67,7 +67,7 @@ export default function FeedReviewPage() {
       const url = `bainluck://${item.type}/${item.data.id}`;
 
       try {
-        await fetch(
+        const resp = await fetch(
           `${API_URL}/api/admin/ranking-judgments/curation-signal?secret=${secret}`,
           {
             method: "POST",
@@ -80,6 +80,12 @@ export default function FeedReviewPage() {
             }),
           }
         );
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => "");
+          console.error(`Signal failed (${resp.status}): ${errText}`);
+          alert(`Signal failed: ${resp.status} ${errText.slice(0, 100)}`);
+          return;
+        }
         setVerdicts((prev) => ({ ...prev, [id]: signal }));
         setSubmitted((prev) => prev + 1);
       } finally {
