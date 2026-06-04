@@ -1848,6 +1848,23 @@ async def trigger_score_resolution(
     }
 
 
+@router.post("/backfill-settled/reset-cursors")
+async def reset_settled_cursors(
+    secret: str = Query(...),
+):
+    """Reset all settled events series cursors to start from page 1."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.redis_state import get_redis_client
+    rc = get_redis_client()
+    deleted = 0
+    for key in rc.scan_iter("bainluck:settled_cursor:*"):
+        rc.delete(key)
+        deleted += 1
+    rc.delete("bainluck:settled_series_cursor")
+    return {"cursors_deleted": deleted + 1}
+
+
 @router.post("/backfill-winners/kalshi-api-only")
 async def trigger_kalshi_api_only(
     secret: str = Query(...),
