@@ -4813,3 +4813,103 @@ async def calibration_mce_by_sport(
         "snapshot_debug": snapshot_debug,
         "bucket_95_100_breakdown": bucket_breakdown,
     }
+
+
+@router.get("/calibration-datagolf-diagnosis")
+async def datagolf_calibration_diagnosis(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnose DataGolf 15.4pp MCE — check NULL is_winner hypothesis."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # 1. Resolution coverage by market type
+    r1 = await db.execute(text("""
+        SELECT SPLIT_PART(fm.external_id, ':', 4) AS mtype,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE fo.is_winner = true) AS winners,
+               COUNT(*) FILTER (WHERE fo.is_winner = false) AS losers,
+               COUNT(*) FILTER (WHERE fo.is_winner IS NULL) AS unresolved
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+        GROUP BY SPLIT_PART(fm.external_id, ':', 4)
+        ORDER BY total DESC
+    """))
+    by_type = [dict(r._mapping) for r in r1.fetchall()]
+
+    # 2. Per-bucket NULL is_winner count
+    r2 = await db.execute(text("""
+        SELECT LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) AS bucket,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE fo.is_winner = true) AS winners,
+               COUNT(*) FILTER (WHERE fo.is_winner IS NULL) AS null_winner,
+               ROUND(AVG(COALESCE(fo.calibration_probability, fo.opening_probability))::numeric, 3) AS avg_prob,
+               ROUND((COUNT(*) FILTER (WHERE fo.is_winner = true)::numeric
+                      / NULLIF(COUNT(*), 0)), 3) AS win_rate
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0.005 AND fo.opening_probability < 0.98
+        GROUP BY bucket ORDER BY bucket
+    """))
+    by_bucket = [dict(r._mapping) for r in r2.fetchall()]
+
+    # 3. Resolution source distribution
+    r3 = await db.execute(text("""
+        SELECT COALESCE(fo.resolution_source, 'NULL') AS src,
+               COUNT(*) AS n,
+               COUNT(*) FILTER (WHERE fo.is_winner = true) AS winners,
+               COUNT(*) FILTER (WHERE fo.is_winner IS NULL) AS null_winner
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+        GROUP BY fo.resolution_source ORDER BY n DESC
+    """))
+    by_source = [dict(r._mapping) for r in r3.fetchall()]
+
+    # 4. Simulated MCE excluding NULL is_winner
+    r4 = await db.execute(text("""
+        WITH dg AS (
+            SELECT COALESCE(fo.calibration_probability, fo.opening_probability) AS p,
+                   fo.is_winner,
+                   CASE
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.05 THEN 0.025
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.15 THEN 0.10
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.25 THEN 0.20
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.35 THEN 0.30
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.45 THEN 0.40
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.55 THEN 0.50
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.65 THEN 0.60
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.75 THEN 0.70
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.85 THEN 0.80
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.95 THEN 0.90
+                       ELSE 0.975
+                   END AS mid
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+              AND fo.is_winner IS NOT NULL
+              AND fo.opening_probability > 0.005 AND fo.opening_probability < 0.98
+        ),
+        b AS (
+            SELECT mid, AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) AS a, COUNT(*) AS n
+            FROM dg GROUP BY mid
+        )
+        SELECT ROUND((SUM(ABS(a - mid) * n) / SUM(n) * 100)::numeric, 2) AS mce,
+               SUM(n) AS outcomes
+        FROM b
+    """))
+    sim = r4.first()
+
+    return {
+        "by_market_type": by_type,
+        "by_bucket": by_bucket,
+        "by_resolution_source": by_source,
+        "simulated_mce_excluding_null": {
+            "mce_pp": float(sim.mce) if sim and sim.mce else None,
+            "outcomes": int(sim.outcomes) if sim and sim.outcomes else 0,
+        },
+    }
