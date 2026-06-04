@@ -1496,6 +1496,66 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                         )
                                         stats["opening_set"] += 1
 
+                        # --- Phase 2.5: previous_price snapshot backfill ---
+                        # Settled markets have previous_price_dollars — the last
+                        # real trade price before settlement. Much better than
+                        # opening (extreme placeholder) or last_price (settlement).
+                        # Timestamp at open_time so it sorts before game start.
+                        prev_inserts = []
+                        for event_data in events:
+                            for mkt in (event_data.get("markets") or []):
+                                ticker = mkt.get("ticker", "")
+                                prev_str = mkt.get("previous_price_dollars")
+                                open_time_str = mkt.get("open_time")
+                                vol = float(mkt.get("volume_fp") or 0)
+                                if not ticker or not prev_str or vol <= 0:
+                                    continue
+                                try:
+                                    prev_p = float(prev_str)
+                                except (ValueError, TypeError):
+                                    continue
+                                if prev_p <= 0 or prev_p >= 1:
+                                    continue
+                                prev_inserts.append((ticker, prev_p, open_time_str))
+
+                        if prev_inserts:
+                            from dateutil.parser import parse as _dt_parse
+                            for ticker, prev_p, ot_str in prev_inserts:
+                                try:
+                                    snap_t = _dt_parse(ot_str) if ot_str else None
+                                except Exception:
+                                    snap_t = None
+                                if not snap_t:
+                                    continue
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO futures_odds_snapshots
+                                            (outcome_id, bookmaker, probability,
+                                             last_price, captured_at)
+                                        SELECT fo.id, 'kalshi', :prob, :price, :ts
+                                        FROM futures_outcomes fo
+                                        WHERE fo.external_id = :ticker
+                                        ON CONFLICT DO NOTHING
+                                    """),
+                                    {"prob": round(prev_p, 6),
+                                     "price": round(prev_p, 4),
+                                     "ts": snap_t, "ticker": ticker},
+                                )
+                            stats["prev_price_snaps"] = (
+                                stats.get("prev_price_snaps", 0) + len(prev_inserts)
+                            )
+                            # Reset cal_prob so Part A recomputes with new data
+                            prev_tickers = [t for t, _, _ in prev_inserts]
+                            await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET calibration_probability = NULL
+                                    WHERE external_id = ANY(:tickers)
+                                      AND calibration_probability IS NOT NULL
+                                """),
+                                {"tickers": prev_tickers},
+                            )
+
                         # --- Phase 3: Winner resolution from API result field ---
                         # Bulk UPDATE: collect all ticker→result pairs from the page,
                         # then resolve winners and losers in two batch UPDATEs.
