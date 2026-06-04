@@ -1131,6 +1131,9 @@ async def _backfill_candlestick_snapshots(limit: int = 500):
             if not candidates:
                 return stats
 
+            logger.info("Candlestick backfill: %d candidates, first ticker: %s",
+                        len(candidates), candidates[0].ticker if candidates else "?")
+
             for i in range(0, len(candidates), 10):
                 batch = candidates[i:i + 10]
                 tickers = [r.ticker for r in batch if r.ticker]
@@ -1142,8 +1145,13 @@ async def _backfill_candlestick_snapshots(limit: int = 500):
                         tickers, period_interval=60,
                     )
                     stats["fetched"] += len(candle_data)
+                    if i == 0:
+                        logger.info("Candlestick first batch: tickers=%s, results=%d, candle_counts=%s",
+                                    tickers[:3], len(candle_data),
+                                    {k: len(v) for k, v in list(candle_data.items())[:3]})
                 except Exception as e:
                     stats["errors"].append(f"batch {i}: {e}")
+                    logger.warning("Candlestick batch %d error: %s", i, e)
                     await asyncio.sleep(2)
                     continue
 
