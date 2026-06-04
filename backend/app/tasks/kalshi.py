@@ -1090,119 +1090,152 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_candlestick_snapshots(limit: int = 500):
-    """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes.
+async def _backfill_candlestick_snapshots(limit: int = 5000):
+    """Backfill previous_price snapshots for ALL settled Kalshi series.
 
-    Targets resolved outcomes with ≤5 snapshots in markets with real trading
-    volume. Creates FuturesOddsSnapshot rows from hourly candle data, giving
-    Part A real pre-game prices instead of sparse opening-price fallbacks.
+    Fetches settled events from the Kalshi API and creates snapshots from
+    previous_price_dollars (the last real trade price before settlement).
+    Unlike the regular settled events backfill which rotates through series
+    with a cursor, this processes ALL series with unprocessed outcomes in
+    one pass — designed for one-time catch-up.
     """
     import asyncio
-    from app.models.models import FuturesOddsSnapshot
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    stats = {"candidates": 0, "fetched": 0, "snapshots_created": 0, "errors": []}
+    stats = {"series": 0, "events": 0, "snaps": 0, "winners": 0, "errors": []}
 
     try:
         from app.services.kalshi_api import KalshiAPIService
         service = KalshiAPIService()
 
         async with get_task_session() as session:
-            result = await session.execute(
+            # Find series that still have outcomes needing better calibration
+            sr = await session.execute(
                 text("""
-                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
-                           fm.commence_time
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fm.id = fo.market_id
-                    WHERE fm.status = 'resolved'
-                      AND fm.source = 'kalshi'
-                      AND fm.volume > 0
-                      AND fo.calibration_probability IS NOT NULL
-                      AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                           WHERE fos.outcome_id = fo.id) <= 5
-                    ORDER BY fm.volume DESC
-                    LIMIT :lim
-                """),
-                {"lim": limit},
+                    SELECT DISTINCT regexp_replace(fm.external_id, '-.*', '') AS prefix
+                    FROM futures_markets fm
+                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fm.external_id ~ '^KX'
+                      AND (fo.calibration_probability IS NULL
+                           OR fo.calibration_probability = fo.opening_probability)
+                      AND fo.opening_probability IS NOT NULL
+                    ORDER BY 1
+                """)
             )
-            candidates = result.fetchall()
-            stats["candidates"] = len(candidates)
+            series_list = [r[0] for r in sr.fetchall()]
+            stats["series"] = len(series_list)
+            logger.info("Previous-price backfill: %d series to process", len(series_list))
 
-            if not candidates:
-                return stats
+            from dateutil.parser import parse as _dt_parse
+            import time as _time
+            _start = _time.monotonic()
 
-            logger.info("Candlestick backfill: %d candidates, first ticker: %s",
-                        len(candidates), candidates[0].ticker if candidates else "?")
+            for series in series_list:
+                if (_time.monotonic() - _start) > 540:
+                    logger.info("Previous-price backfill: time budget after %d series", series_list.index(series))
+                    break
 
-            for i in range(0, len(candidates), 10):
-                batch = candidates[i:i + 10]
-                tickers = [r.ticker for r in batch if r.ticker]
-                if not tickers:
-                    continue
-
-                try:
-                    candle_data = await service.get_market_candlesticks_batch(
-                        tickers, period_interval=60,
-                    )
-                    stats["fetched"] += len(candle_data)
-                    if i == 0:
-                        logger.info("Candlestick first batch: tickers=%s, results=%d, candle_counts=%s",
-                                    tickers[:3], len(candle_data),
-                                    {k: len(v) for k, v in list(candle_data.items())[:3]})
-                except Exception as e:
-                    stats["errors"].append(f"batch {i}: {e}")
-                    logger.warning("Candlestick batch %d error: %s", i, e)
-                    await asyncio.sleep(2)
-                    continue
-
-                ticker_to_outcome = {r.ticker: r for r in batch}
-
-                for ticker, candles in candle_data.items():
-                    row = ticker_to_outcome.get(ticker)
-                    if not row or not candles:
-                        continue
-
-                    for candle in candles:
-                        ts = candle.get("t")
-                        price = candle.get("yes_price")
-                        if ts is None or price is None or price <= 0 or price >= 1:
+                cursor = None
+                for page in range(50):
+                    try:
+                        events, cursor = await service.get_events(
+                            status="settled", series_ticker=series,
+                            with_nested_markets=True, limit=200, cursor=cursor,
+                        )
+                    except Exception as e:
+                        if "429" in str(e):
+                            await asyncio.sleep(5)
                             continue
+                        stats["errors"].append(f"{series}: {e}")
+                        break
 
-                        captured = datetime.fromtimestamp(ts, tz=timezone.utc)
-                        stmt = pg_insert(FuturesOddsSnapshot).values(
-                            outcome_id=row.outcome_id,
-                            bookmaker="kalshi",
-                            probability=round(price, 6),
-                            last_price=round(price, 4),
-                            captured_at=captured,
-                        ).on_conflict_do_nothing()
-                        await session.execute(stmt)
-                        stats["snapshots_created"] += 1
+                    if not events:
+                        break
 
-                await session.commit()
-                await asyncio.sleep(1)
+                    for ev in events:
+                        stats["events"] += 1
+                        for mkt in (ev.get("markets") or []):
+                            ticker = mkt.get("ticker", "")
+                            result_val = mkt.get("result")
+                            prev_str = mkt.get("previous_price_dollars")
+                            open_time_str = mkt.get("open_time")
+                            vol = float(mkt.get("volume_fp") or 0)
 
-            # Reset calibration_probability on outcomes that got new snapshots
-            # so Part A can recompute with the richer data
-            if stats["snapshots_created"] > 0:
-                outcome_ids = [r.outcome_id for r in candidates]
-                await session.execute(
-                    text("""
-                        UPDATE futures_outcomes
-                        SET calibration_probability = NULL
-                        WHERE id = ANY(:ids)
-                    """),
-                    {"ids": outcome_ids},
-                )
-                await session.commit()
+                            # Phase A: resolve is_winner
+                            if ticker and result_val is not None:
+                                is_w = result_val == "yes"
+                                wr = await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET is_winner = :w, resolution_source = 'api_settlement'
+                                        WHERE external_id = :t
+                                          AND (resolution_source IS NULL
+                                               OR resolution_source IN
+                                                   ('pass2_guess','binary_higher_wins','multi_max_prob'))
+                                    """),
+                                    {"w": is_w, "t": ticker},
+                                )
+                                stats["winners"] += wr.rowcount
+
+                            # Phase B: create previous_price snapshot
+                            if not prev_str or vol <= 0:
+                                continue
+                            try:
+                                prev_p = float(prev_str)
+                            except (ValueError, TypeError):
+                                continue
+                            if prev_p <= 0 or prev_p >= 1:
+                                continue
+                            try:
+                                snap_t = _dt_parse(open_time_str) if open_time_str else None
+                            except Exception:
+                                snap_t = None
+                            if not snap_t:
+                                continue
+
+                            await session.execute(
+                                text("""
+                                    INSERT INTO futures_odds_snapshots
+                                        (outcome_id, bookmaker, probability, last_price, captured_at)
+                                    SELECT fo.id, 'kalshi', :prob, :price, :ts
+                                    FROM futures_outcomes fo
+                                    WHERE fo.external_id = :ticker
+                                    ON CONFLICT DO NOTHING
+                                """),
+                                {"prob": round(prev_p, 6), "price": round(prev_p, 4),
+                                 "ts": snap_t, "ticker": ticker},
+                            )
+                            stats["snaps"] += 1
+
+                    await session.commit()
+
+                    if not cursor:
+                        break
+                    await asyncio.sleep(0.5)
+
+            # Reset cal_prob for outcomes that got new data
+            await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fo.calibration_probability = fo.opening_probability
+                      AND fo.opening_probability IS NOT NULL
+                """)
+            )
+            await session.commit()
 
     except Exception as e:
         stats["errors"].append(str(e))
-        logger.error("Candlestick backfill error: %s", e)
+        logger.error("Previous-price backfill error: %s", e)
 
     logger.info(
-        "Candlestick backfill: %d candidates, %d fetched, %d snapshots created, %d errors",
-        stats["candidates"], stats["fetched"], stats["snapshots_created"], len(stats["errors"]),
+        "Previous-price backfill: %d series, %d events, %d snaps, %d winners, %d errors",
+        stats["series"], stats["events"], stats["snaps"], stats["winners"], len(stats["errors"]),
     )
     return stats
 
