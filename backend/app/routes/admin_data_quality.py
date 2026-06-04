@@ -4963,24 +4963,6 @@ async def datagolf_calibration_diagnosis(
         for r in r7.fetchall()
     ]
 
-    return {
-        "by_market_type": by_type,
-        "by_bucket": by_bucket,
-        "by_resolution_source": by_source,
-        "simulated_mce_excluding_null": {
-            "mce_pp": float(sim.mce) if sim and sim.mce else None,
-            "outcomes": int(sim.outcomes) if sim and sim.outcomes else 0,
-        },
-        "cal_vs_opening": {
-            "total": cp.total, "cal_null": cp.cal_null,
-            "cal_eq_open": cp.cal_eq_open, "cal_diff": cp.cal_diff,
-            "avg_open": float(cp.avg_open) if cp.avg_open else None,
-            "avg_cal": float(cp.avg_cal) if cp.avg_cal else None,
-        } if cp else {},
-        "cal_only_buckets": cal_only_buckets,
-        "high_probability_losers": high_losers,
-    }
-
     # 8. Probability sum check per market
     r8 = await db.execute(text("""
         SELECT fm.name, fm.external_id,
