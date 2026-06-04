@@ -2118,22 +2118,27 @@ async def _backfill_datagolf_winners():
                     dg_id = ext[3:]
 
                     pos_str = pos_by_dg.get(dg_id)
+                    res_source = "leaderboard"
                     if pos_str is None:
                         if can_infer_absent:
                             won = False
+                            res_source = "did_not_play"
                         else:
                             continue
                     else:
+                        upper = pos_str.strip().upper()
+                        if upper in ("WD", "DNS", "W/D"):
+                            res_source = "withdrew"
                         won = _datagolf_check_placement(pos_str, market_type)
                     if won is None:
                         continue
 
                     await session.execute(
                         text("""
-                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'leaderboard'
+                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src
                             WHERE id = :oid
                         """),
-                        {"won": won, "oid": out_row.id},
+                        {"won": won, "src": res_source, "oid": out_row.id},
                     )
                     if won:
                         stats["winners_set"] += 1
