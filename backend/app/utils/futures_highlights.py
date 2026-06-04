@@ -85,15 +85,15 @@ _TOP_TIER_SOCCER_RE = re.compile(
 # sports markets get (league tier, EI, live status). Without these baselines,
 # politics/geopolitics/economics/tech markets score near-zero and never appear.
 CATEGORY_BASE_SCORES: dict[str, float] = {
-    "politics": 50.0,
-    "geopolitics": 55.0,
-    "economics": 50.0,
-    "tech": 50.0,
-    "entertainment": 52.0,
-    "culture": 48.0,
-    "health": 42.0,
-    "weather": 38.0,
-    "crypto": 35.0,
+    "politics": 45.0,
+    "geopolitics": 45.0,
+    "economics": 42.0,
+    "tech": 42.0,
+    "entertainment": 40.0,
+    "culture": 38.0,
+    "health": 38.0,
+    "weather": 32.0,
+    "crypto": 28.0,
 }
 SPORTS_CATEGORY_BASE = 18.5
 
@@ -149,7 +149,12 @@ _BORING_PATTERNS = re.compile(
     r"|women.s champions league"
     r"|coca.cola \d+ winner"
     r"|detroit grand prix"
-    r"|opendoor .* up or down)",
+    r"|opendoor .* up or down"
+    r"|closing market cap"
+    r"|ipo closing"
+    r"|\bmarket cap\b.*(range|\$\d)"
+    r"|college (baseball|softball|lacrosse|field hockey)"
+    r"|college basketball.*(big west|patriot|horizon|southland|big south|meac|swac|summit|ohio valley))",
     re.IGNORECASE,
 )
 
@@ -211,7 +216,7 @@ _COMPELLING_PATTERNS = [
         r"(ceasefire|peace deal|treaty)",
         r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league|wimbledon|french open|australian open|us open|grand slam|ufc).*(champion|winner|title)",
         r"(fed decision|interest rate|recession|rate cut)",
-        r"\bipo\b|acquire|bankrupt|fail|earnings",
+        r"\bipo\b(?!.*(closing|market cap|cap range))|acquire|bankrupt|fail|earnings",
         r"(taylor swift|beyonce|drake|kardashian|bieber)",
         r"(openai|gpt|claude|ai model|deepseek|gemini)",
         r"(u\.?s\.? president|presidential election).*(winner|2028|2026)",
@@ -226,7 +231,7 @@ _COMPELLING_PATTERNS = [
         r"(royal family|king charles|prince|princess|meghan|harry)",
         r"(nobel prize|pulitzer|ballon d.or)",
         r"(oscars?|academy award|emmy|grammy|golden globe|tony award|bafta|cannes|sundance|eurovision)",
-        r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)",
+        r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)(?!.*(?:S\d+E\d+|season \d+.*(?:episode|elimination|eviction)))",
         r"(box office|rotten tomatoes|netflix|disney\+|hbo|spotify|billboard|#1 song|#1 album)",
         r"(bridesmaids?|wedding|engaged|engagement|married|divorce)",
     ]

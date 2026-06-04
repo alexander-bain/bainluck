@@ -169,7 +169,18 @@ _REGIONAL_US_ELECTION_RE = re.compile(
 )
 
 _LOW_SIGNAL_SPORT_RE = re.compile(
-    r"\b(table tennis|ping pong|wtt|badminton|snooker|darts)\b",
+    r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
+    r"esports|counter.?strike|cs2|csgo|valorant|league of legends|"
+    r"dota|overwatch|call of duty|rocket league|blast slam)\b",
+    re.IGNORECASE,
+)
+
+_EPISODE_LEVEL_RE = re.compile(
+    r"("
+    r"S\d{1,2}E\d{1,2}"
+    r"|season \d+.*(episode|elimination|eviction|week \d)"
+    r"|episode \d+.*(elimination|eviction|winner)"
+    r")",
     re.IGNORECASE,
 )
 
@@ -599,6 +610,7 @@ def classify_market_quality(
         re.IGNORECASE,
     )
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
+    episode_level = bool(_EPISODE_LEVEL_RE.search(name))
 
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
@@ -617,6 +629,8 @@ def classify_market_quality(
         reasons.append("regional_us_election")
     if low_signal_sport:
         reasons.append("low_signal_sport")
+    if episode_level:
+        reasons.append("episode_level")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
@@ -649,6 +663,7 @@ def classify_market_quality(
         or entertainment_metric
         or regional_election
         or low_signal_sport
+        or episode_level
     ):
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
@@ -1473,12 +1488,12 @@ def apply_quality_score(raw_score: float, quality: MarketQuality) -> float:
     adjusted = max(0, raw_score + quality_score_adjustment(quality))
 
     if quality.quality_class == "compelling":
-        return min(100, adjusted)
+        return min(95, adjusted)
 
     if quality.quality_class == "low_quality":
-        return min(70, adjusted)
+        return min(65, adjusted)
 
-    ceiling = 94 if quality.has_named_salient_entity else 88
+    ceiling = 88 if quality.has_named_salient_entity else 82
     return min(ceiling, adjusted)
 
 

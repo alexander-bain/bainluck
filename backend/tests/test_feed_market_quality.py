@@ -288,7 +288,7 @@ class TestMarketQualityClassification:
             assert "ladder_or_bucket" not in quality.reasons, name
             assert "social_filler" not in quality.reasons, name
             assert quality.explanation_required is True, name
-            assert apply_quality_score(100, quality) == 100, name
+            assert apply_quality_score(100, quality) == 95, name
             assert editorial_archetype(name, category) == expected_archetype, name
 
     def test_niche_low_signal_sports_are_low_quality(self):
@@ -369,7 +369,7 @@ class TestMarketQualityClassification:
         assert quality.quality_class == "compelling"
         assert "absurd_but_real" in quality.reasons
         assert quality.story_key == "story:aliens_disclosure"
-        assert apply_quality_score(88, quality) == 100
+        assert apply_quality_score(88, quality) == 95
 
     def test_shareable_celebrity_life_markets_are_serendipity_candidates(self):
         examples = [
@@ -670,8 +670,8 @@ class TestMarketQualityClassification:
         )
 
         assert normal.quality_class == "normal"
-        assert apply_quality_score(100, normal) < 100
-        assert apply_quality_score(100, compelling) == 100
+        assert apply_quality_score(100, normal) <= 88
+        assert apply_quality_score(100, compelling) == 95
 
     def test_low_quality_score_ceiling_prevents_bucket_saturation(self):
         quality = classify_market_quality(
@@ -680,7 +680,7 @@ class TestMarketQualityClassification:
         )
 
         assert quality.quality_class == "low_quality"
-        assert apply_quality_score(100, quality) <= 70
+        assert apply_quality_score(100, quality) <= 65
 
     def test_repetitive_oil_ranges_collapse_to_one_boring_family(self):
         qualities = [

@@ -385,7 +385,7 @@ class TestDiscoverMarketQuality:
         assert quality.quality_class == "compelling"
         assert "compelling_topic" in quality.reasons
         assert quality_score_adjustment(quality) == 12
-        assert apply_quality_score(92, quality) == 100
+        assert apply_quality_score(92, quality) == 95
 
     def test_health_outbreak_gets_extra_compelling_boost(self):
         quality = classify_market_quality(
@@ -433,11 +433,11 @@ class TestDiscoverMarketQuality:
         )
 
         assert normal_salient.quality_class == "normal"
-        assert apply_quality_score(99, normal_salient) == 94
+        assert apply_quality_score(99, normal_salient) == 88
         assert normal_generic.quality_class == "normal"
-        assert apply_quality_score(99, normal_generic) == 88
+        assert apply_quality_score(99, normal_generic) == 82
         assert low_quality.quality_class == "low_quality"
-        assert apply_quality_score(120, low_quality) == 70
+        assert apply_quality_score(120, low_quality) == 65
 
     def test_sports_personnel_story_gets_sports_drama_boost(self):
         quality = classify_market_quality(
