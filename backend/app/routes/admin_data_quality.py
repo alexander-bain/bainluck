@@ -1748,6 +1748,16 @@ async def trigger_backfill_winners(
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
 
 
+@router.post("/calibration/recompute")
+async def trigger_calibration_recompute(secret: str = Query(...)):
+    """Force recompute the public calibration cache."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.precompute_calibration_main", queue="background")
+    return {"status": "queued", "task_id": result.id}
+
+
 @router.post("/backfill-winners/score-resolution")
 async def trigger_score_resolution(
     secret: str = Query(...),
