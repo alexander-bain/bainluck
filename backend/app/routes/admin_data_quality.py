@@ -5006,9 +5006,8 @@ async def datagolf_calibration_diagnosis(
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.source = 'datagolf'
-          AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
         ORDER BY fo.opening_probability DESC
-        LIMIT 20
+        LIMIT 15
     """))
     spot_check = [
         {"name": r.name, "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
