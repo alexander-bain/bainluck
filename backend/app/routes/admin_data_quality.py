@@ -4662,29 +4662,36 @@ async def calibration_mce_by_sport(
         sim_row = sim.first()
         if sim_row and sim_row.mce is not None:
             bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
-        top_bucket = await db.execute(text("""
-            SELECT fo.name, fm.external_id, fm.source,
-                   fo.calibration_probability, fo.opening_probability,
-                   fo.resolution_source,
-                   (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
+        vol_check = await db.execute(text("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE fm.volume > 0) AS has_volume,
+                COUNT(*) FILTER (WHERE fm.volume > 10) AS vol_gt_10,
+                COUNT(*) FILTER (WHERE fm.volume > 100) AS vol_gt_100,
+                AVG(fm.volume) FILTER (WHERE fm.volume > 0) AS avg_vol,
+                COUNT(*) FILTER (WHERE fo.calibration_probability >= 0.95
+                    AND NOT fo.is_winner) AS top_bucket_losers,
+                COUNT(*) FILTER (WHERE fo.calibration_probability >= 0.95
+                    AND NOT fo.is_winner AND fm.volume > 0) AS top_losers_with_vol
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fo.calibration_probability >= 0.95
-              AND NOT fo.is_winner
-            ORDER BY RANDOM()
-            LIMIT 15
+              AND fm.source = 'kalshi'
+              AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+              AND fo.calibration_probability IS NOT NULL
+              AND fo.is_winner IS NOT NULL
         """), {"sport": detail_sport})
-        bucket_breakdown["top_bucket_losers"] = [
-            {
-                "name": r.name[:30], "ext": r.external_id[:35], "src": r.source[:5],
-                "cal": round(float(r.calibration_probability), 3),
-                "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
-                "res": r.resolution_source, "snaps": r.snaps,
-            }
-            for r in top_bucket.fetchall()
-        ]
+        vr = vol_check.first()
+        bucket_breakdown["volume_analysis"] = {
+            "total_props": vr.total,
+            "has_volume": vr.has_volume,
+            "vol_gt_10": vr.vol_gt_10,
+            "vol_gt_100": vr.vol_gt_100,
+            "avg_vol_where_nonzero": round(float(vr.avg_vol), 1) if vr.avg_vol else 0,
+            "top_bucket_losers": vr.top_bucket_losers,
+            "top_losers_with_volume": vr.top_losers_with_vol,
+        } if vr else {}
 
         orphan = await db.execute(text("""
             SELECT COUNT(*) AS cnt
