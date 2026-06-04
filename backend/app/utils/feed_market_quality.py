@@ -1544,7 +1544,7 @@ def apply_explanation_quality_score(
     topic is self-explanatory enough to carry itself.
     """
     if has_strong_hook(hook_description):
-        return min(100, raw_score + 5)
+        return min(98, raw_score + 3)
 
     if has_specific_explanation(
         hook_description=hook_description,
@@ -1554,10 +1554,10 @@ def apply_explanation_quality_score(
         return raw_score
 
     if quality.quality_class == "compelling":
-        return min(96, raw_score)
+        return min(93, raw_score)
     if quality.quality_class == "normal":
-        return min(90, raw_score)
-    return min(65, raw_score)
+        return min(80, raw_score)
+    return min(60, raw_score)
 
 
 def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:

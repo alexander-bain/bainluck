@@ -1614,7 +1614,7 @@ class TestFeedQualityDebug:
                 headline="Multi-source",
                 quality=quality,
             )
-            == 93
+            == 91
         )
 
     def test_generic_explanation_caps_normal_market(self):
@@ -1635,7 +1635,7 @@ class TestFeedQualityDebug:
                 headline="New favorite",
                 quality=quality,
             )
-            == 90
+            == 80
         )
 
     def test_health_outbreak_counts_as_specific_without_hook(self):
