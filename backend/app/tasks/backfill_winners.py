@@ -103,6 +103,36 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                     stats["events_found"] += 1
                     nested = event_data.get("markets") or []
 
+                    if not nested:
+                        stats.setdefault("no_markets", 0)
+                        stats["no_markets"] += 1
+
+                    api_tickers = {m.get("ticker", "") for m in nested if m.get("ticker")}
+                    db_result = await session.execute(
+                        text("""
+                            SELECT fo.external_id, fo.resolution_source
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fo.market_id = fm.id
+                            WHERE fm.source = 'kalshi'
+                              AND fm.external_id = :event_ticker
+                              AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                            LIMIT 5
+                        """),
+                        {"event_ticker": event_ticker},
+                    )
+                    unresolved = db_result.all()
+                    if unresolved:
+                        for ur in unresolved:
+                            if ur[0] not in api_tickers:
+                                mismatches = stats.setdefault("ticker_mismatches", [])
+                                if len(mismatches) < 10:
+                                    mismatches.append({
+                                        "event_ticker": event_ticker,
+                                        "db_outcome_ext_id": ur[0],
+                                        "db_resolution_source": ur[1],
+                                        "api_tickers": list(api_tickers)[:3],
+                                    })
+
                     for market_data in nested:
                         ticker = market_data.get("ticker", "")
                         result = market_data.get("result")
