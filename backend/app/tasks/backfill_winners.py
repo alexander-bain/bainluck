@@ -3393,6 +3393,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
+    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
 
     # Phase 2: Set is_winner from current_probability (all sources, fast)
@@ -3451,6 +3452,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "kalshi_period_props": period_prop_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
+        "kalshi_markets_api": kalshi_markets_stats,
         "polymarket_api": poly_api_stats,
         "bookmaker_calibration": bookmaker_stats,
     }
