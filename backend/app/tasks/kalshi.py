@@ -1264,13 +1264,21 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 _rc = get_redis_client()
 
                 _PRIORITY_SERIES = [
-                    "KXNBAGAME", "KXNBASPREAD", "KXNBATEAMTOTAL", "KXNBAPTS",
-                    "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBA2HWINNER",
+                    # Ordered by remaining pass2_guess count (June 3)
+                    "KXNCAAMBTOTAL", "KXNCAAMBSPREAD", "KXNCAABBGAME",
+                    "KXNBATEAMTOTAL", "KXNBAREB", "KXNBAPTS", "KXNBAAST",
+                    "KXNBATOTAL", "KXMLBHRR", "KXMLBTB",
+                    "KXNBAGAME", "KXNBASPREAD", "KXNBA3PT", "KXNBA2HWINNER",
+                    "KXNHLPTS", "KXNHLGOAL", "KXNHLAST", "KXNHLGAME",
                     "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
-                    "KXNHLGAME", "KXNHLGOAL", "KXNHLPTS", "KXNHLFIRSTGOAL",
-                    "KXNHLAST", "KXNHLSAVES", "KXNHLANYGOAL",
-                    "KXNCAAMBGAME", "KXNCAAMBSPREAD", "KXNCAAMBTOTAL",
+                    "KXMLBHIT", "KXMLBHR", "KXMLBKS",
+                    "KXNCAAMBGAME", "KXNCAAMB1HTOTAL", "KXNCAAMB1HWINNER",
+                    "KXNCAAMB1HSPREAD", "KXNCAAWBGAME",
+                    "KXNHLSAVES", "KXNHLANYGOAL", "KXNHLFIRSTGOAL",
                     "KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL",
+                    "KXATPCHALLENGERMATCH", "KXATPSETWINNER",
+                    "KXCS2MAP", "KXCS2GAME",
+                    "KXNASDAQ100U", "KXINXU",
                 ]
 
                 _series_cursor_key = "bainluck:settled_series_cursor"
