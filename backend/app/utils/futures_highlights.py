@@ -683,7 +683,7 @@ def compute_futures_highlight(
             result.reasons.append("moderate_surprise")
 
     # === Cap score at 100 ===
-    result.score = min(100, result.score)
+    result.score = min(98, result.score)
 
     # === Determine primary reason for display ===
     priority_order = [

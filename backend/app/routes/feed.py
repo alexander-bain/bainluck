@@ -776,7 +776,7 @@ def _apply_external_curator_recall_score(
     """Give reviewed external-curator matches a bounded recall lift."""
     if not is_external_curator_recall:
         return score
-    boosted = min(100, score + _EXTERNAL_CURATOR_RECALL_SCORE_BONUS)
+    boosted = min(98, score + _EXTERNAL_CURATOR_RECALL_SCORE_BONUS)
     if boosted != score:
         delta = boosted - score
         delta_label: int | float = int(delta) if float(delta).is_integer() else delta
@@ -1439,7 +1439,7 @@ def _apply_manual_review_decision_map(
             continue
         decision = decisions.get((str(item.get("type")), str(item_id)))
         if decision == "accepted_promote":
-            item["score"] = min(100, float(item.get("score") or 0) + 8)
+            item["score"] = min(98, float(item.get("score") or 0) + 8)
             item["_review_decision"] = decision
         elif decision == "accepted_downrank":
             item["score"] = max(0, float(item.get("score") or 0) - 18)
@@ -2254,7 +2254,7 @@ def _score_market_trace(
         sport_key=market.sport.key if market.sport else None,
         outcome_names=[o.name for o in market.outcomes if o.name],
     )
-    final_score = min(100, int(explanation_score * p_result.multiplier))
+    final_score = min(98, int(explanation_score * p_result.multiplier))
 
     blockers = list(runtime_filters["blockers"])
     if quality.quality_class == "suppress":
@@ -3520,7 +3520,7 @@ async def _score_events(
                 )
             ),
         )
-        personalized_score = min(100, int(base_score * p_result.multiplier))
+        personalized_score = min(98, int(base_score * p_result.multiplier))
 
         # --- "Nah" sport hard filter ---
         # If the user explicitly said "Nah" to this sport, don't show it
@@ -4015,7 +4015,7 @@ async def _score_sports_mode_futures(
             sport_key=market.sport.key if market.sport else None,
             outcome_names=outcome_names,
         )
-        personalized_score = min(100, int(base_score * p_result.multiplier))
+        personalized_score = min(98, int(base_score * p_result.multiplier))
         if not my_teams_only and personalized_score < 15:
             continue
 
@@ -4826,7 +4826,7 @@ async def _score_futures(
         discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
         llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
         if llm_score_adjustment:
-            base_score = max(0, min(100, base_score + llm_score_adjustment))
+            base_score = max(0, min(98, base_score + llm_score_adjustment))
             highlight_result.reasons.append(
                 f"discover_llm_score:{llm_score_adjustment:+d}"
             )
@@ -4844,7 +4844,7 @@ async def _score_futures(
                 ) * _interestingness_blend_weight
                 # Cap: interestingness can add at most 15 points over base
                 base_score = min(blended, pre_blend + 15)
-                base_score = max(0, min(100, base_score))
+                base_score = max(0, min(98, base_score))
                 i_reasons = cached_entry.get("reasons") or []
                 if abs(base_score - pre_blend) >= 0.5:
                     delta = base_score - pre_blend
@@ -4968,7 +4968,7 @@ async def _score_futures(
             )
             + _discover_llm_feature_tokens(discover_llm_metadata),
         )
-        personalized_score = min(100, int(base_score * p_result.multiplier))
+        personalized_score = min(98, int(base_score * p_result.multiplier))
 
         # --- "Nah" category hard filter for futures ---
         is_nah = any("sport_nah" in r for r in p_result.reasons)

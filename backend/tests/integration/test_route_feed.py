@@ -690,7 +690,7 @@ class TestDiscoverReviewDecisionScoring:
             },
         )
 
-        assert items[0]["score"] == 100
+        assert items[0]["score"] == 98
         assert items[0]["_review_decision"] == "accepted_promote"
         assert items[1]["score"] == 0
         assert items[1]["_review_decision"] == "accepted_downrank"

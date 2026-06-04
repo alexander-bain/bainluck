@@ -1584,8 +1584,8 @@ class TestFeedQualityDebug:
             is_external_curator_recall=True,
         )
 
-        assert score == 100
-        assert reasons == ["external_curator_recall:+22"]
+        assert score == 98
+        assert reasons == ["external_curator_recall:+20"]
 
     def test_external_curator_recall_boost_skips_non_recalled_market(self):
         reasons = []
