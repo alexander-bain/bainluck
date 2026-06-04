@@ -1866,6 +1866,39 @@ async def trigger_kalshi_markets_backfill(
     return stats
 
 
+@router.get("/retrotag-pool")
+async def retrotag_pool(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count outcomes that retro-tagging would discover on next run."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL
+                AND fo.current_probability IS NOT NULL
+                AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+            ) AS retrotag_clean,
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL
+                AND fo.is_winner = true
+                AND (fo.current_probability IS NULL
+                     OR (fo.current_probability > 0.05 AND fo.current_probability < 0.95))
+            ) AS retrotag_guess,
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL) AS total_null_source
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+    """))
+    row = r.first()
+    return {
+        "retrotag_clean_candidates": row[0],
+        "retrotag_guess_candidates": row[1],
+        "total_null_source": row[2],
+    }
+
+
 @router.post("/backfill-settled/reset-cursors")
 async def reset_settled_cursors(
     secret: str = Query(...),
