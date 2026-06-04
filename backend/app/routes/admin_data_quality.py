@@ -4662,34 +4662,28 @@ async def calibration_mce_by_sport(
         sim_row = sim.first()
         if sim_row and sim_row.mce is not None:
             bucket_breakdown["sim_mce_opening"] = float(sim_row.mce)
-        snap_detail = await db.execute(text("""
-            SELECT fo.name, fo.calibration_probability, fo.opening_probability,
-                   e.commence_time,
-                   fos.probability AS snap_prob, fos.captured_at AS snap_time
+        top_bucket = await db.execute(text("""
+            SELECT fo.name, fm.external_id, fm.source,
+                   fo.calibration_probability, fo.opening_probability,
+                   fo.resolution_source,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
-            LEFT JOIN events e ON e.id = fm.event_id
-            CROSS JOIN LATERAL (
-                SELECT fos2.probability, fos2.captured_at
-                FROM futures_odds_snapshots fos2
-                WHERE fos2.outcome_id = fo.id
-                ORDER BY fos2.captured_at
-            ) fos
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
-              AND fo.calibration_probability BETWEEN 0.80 AND 0.82
+              AND fo.calibration_probability >= 0.95
               AND NOT fo.is_winner
-              AND fm.external_id LIKE 'KXNHLGOAL%%'
-            LIMIT 20
+            ORDER BY RANDOM()
+            LIMIT 15
         """), {"sport": detail_sport})
-        bucket_breakdown["snap_timeline"] = [
+        bucket_breakdown["top_bucket_losers"] = [
             {
-                "name": r.name, "cal": round(float(r.calibration_probability), 3),
+                "name": r.name[:30], "ext": r.external_id[:35], "src": r.source[:5],
+                "cal": round(float(r.calibration_probability), 3),
                 "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
-                "commence": str(r.commence_time) if r.commence_time else None,
-                "snap_prob": round(float(r.snap_prob), 4), "snap_time": str(r.snap_time),
+                "res": r.resolution_source, "snaps": r.snaps,
             }
-            for r in snap_detail.fetchall()
+            for r in top_bucket.fetchall()
         ]
 
         orphan = await db.execute(text("""
