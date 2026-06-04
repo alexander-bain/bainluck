@@ -3978,7 +3978,7 @@ async def _score_sports_mode_futures(
             market_name=market.name,
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
-            external_id=market.external_id,
+            external_id=market.__dict__.get('external_id'),
         )
         if quality.quality_class == "suppress":
             continue
@@ -4783,7 +4783,7 @@ async def _score_futures(
             market_name=market.name,
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
-            external_id=market.external_id,
+            external_id=market.__dict__.get('external_id'),
         )
         if quality.quality_class == "suppress":
             continue
