@@ -4904,6 +4904,65 @@ async def datagolf_calibration_diagnosis(
     """))
     sim = r4.first()
 
+    # 5. Cal prob vs opening prob
+    r5 = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL) AS cal_null,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NOT NULL
+                AND fo.calibration_probability = fo.opening_probability) AS cal_eq_open,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NOT NULL
+                AND fo.calibration_probability != fo.opening_probability) AS cal_diff,
+            ROUND(AVG(fo.opening_probability)::numeric, 4) AS avg_open,
+            ROUND(AVG(fo.calibration_probability)::numeric, 4) AS avg_cal
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+    """))
+    cp = r5.first()
+
+    # 6. Per-bucket using ONLY calibration_probability (no COALESCE)
+    r6 = await db.execute(text("""
+        WITH dg AS (
+            SELECT fo.calibration_probability AS p, fo.is_winner,
+                   LEAST(FLOOR(fo.calibration_probability * 10)::int, 9) AS bucket
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+              AND fo.calibration_probability IS NOT NULL
+              AND fo.is_winner IS NOT NULL
+              AND fo.calibration_probability > 0.005 AND fo.calibration_probability < 0.98
+        )
+        SELECT bucket, COUNT(*) AS n,
+               ROUND(AVG(p)::numeric, 3) AS avg_prob,
+               ROUND(AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)::numeric, 3) AS win_rate
+        FROM dg GROUP BY bucket ORDER BY bucket
+    """))
+    cal_only_buckets = [dict(r._mapping) for r in r6.fetchall()]
+
+    # 7. Sample high-probability losers
+    r7 = await db.execute(text("""
+        SELECT fo.name, fm.name AS market_name,
+               SPLIT_PART(fm.external_id, ':', 4) AS mtype,
+               fo.opening_probability, fo.calibration_probability,
+               fo.is_winner, fo.resolution_source
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.40
+          AND fo.is_winner = false
+        ORDER BY COALESCE(fo.calibration_probability, fo.opening_probability) DESC
+        LIMIT 10
+    """))
+    high_losers = [
+        {"name": r.name, "market": r.market_name[:40], "type": r.mtype,
+         "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
+         "cal": round(float(r.calibration_probability), 3) if r.calibration_probability else None,
+         "res": r.resolution_source}
+        for r in r7.fetchall()
+    ]
+
     return {
         "by_market_type": by_type,
         "by_bucket": by_bucket,
@@ -4912,4 +4971,12 @@ async def datagolf_calibration_diagnosis(
             "mce_pp": float(sim.mce) if sim and sim.mce else None,
             "outcomes": int(sim.outcomes) if sim and sim.outcomes else 0,
         },
+        "cal_vs_opening": {
+            "total": cp.total, "cal_null": cp.cal_null,
+            "cal_eq_open": cp.cal_eq_open, "cal_diff": cp.cal_diff,
+            "avg_open": float(cp.avg_open) if cp.avg_open else None,
+            "avg_cal": float(cp.avg_cal) if cp.avg_cal else None,
+        } if cp else {},
+        "cal_only_buckets": cal_only_buckets,
+        "high_probability_losers": high_losers,
     }
