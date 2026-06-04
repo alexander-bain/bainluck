@@ -3175,6 +3175,35 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         dg_makecut_fix_stats["errors"].append(str(e))
 
+    # Phase 0g-retag: Mark DataGolf losers not on leaderboard as did_not_play.
+    # These are players DataGolf predicted but who never competed. Their
+    # is_winner=false is correct but they shouldn't be in calibration.
+    try:
+        async with get_task_session() as session:
+            retag = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'did_not_play'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner = false
+                      AND fo.resolution_source = 'leaderboard'
+                      AND fm.market_metadata IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM jsonb_array_elements(fm.market_metadata->'leaderboard') AS lb
+                          WHERE lb->>'dg_id' = SUBSTRING(fo.external_id FROM 4)
+                      )
+                """)
+            )
+            if retag.rowcount > 0:
+                await session.commit()
+                logger.info("DataGolf retag: %d outcomes → did_not_play", retag.rowcount)
+    except Exception as e:
+        logger.warning("DataGolf retag failed: %s", e)
+
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
