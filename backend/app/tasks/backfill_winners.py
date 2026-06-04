@@ -136,6 +136,13 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     stats["losers_set"] += updated.rowcount
                             else:
                                 stats["not_found"] += 1
+                                samples = stats.setdefault("not_found_samples", [])
+                                if len(samples) < 5:
+                                    samples.append({
+                                        "event_ticker": event_ticker,
+                                        "market_ticker": ticker,
+                                        "result": result,
+                                    })
 
                 if not dry_run:
                     await session.commit()
