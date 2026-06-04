@@ -239,6 +239,123 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     return stats
 
 
+async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
+    """Resolve Kalshi outcomes by paginating the markets API directly.
+
+    The per-event API returns empty markets for old events. The markets
+    API (GET /markets?status=settled) returns all settled markets with
+    result fields. Paginates with cursor persistence, 1000 markets/page,
+    and batch-updates outcomes. Much faster than the per-event approach
+    for the 48K outcomes the per-event API can't reach.
+    """
+    import asyncio
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks.redis_state import get_redis_client
+
+    _rc = get_redis_client()
+    _cursor_key = "bainluck:kalshi_markets_winner_cursor"
+    _raw = _rc.get(_cursor_key)
+    cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or None)
+
+    stats = {
+        "pages": 0, "markets_scanned": 0,
+        "winners_set": 0, "losers_set": 0,
+        "no_result": 0, "errors": [],
+    }
+
+    service = KalshiAPIService()
+    try:
+        total_resolved = 0
+        for _ in range(limit // 1000 + 1):
+            try:
+                markets, cursor = await service.get_markets(
+                    status="settled",
+                    limit=1000,
+                    cursor=cursor,
+                )
+            except Exception as e:
+                stats["errors"].append(str(e)[:200])
+                break
+
+            stats["pages"] += 1
+            if not markets:
+                _rc.delete(_cursor_key)
+                break
+
+            yes_tickers = []
+            no_tickers = []
+            for mkt in markets:
+                stats["markets_scanned"] += 1
+                ticker = mkt.get("ticker", "")
+                result = mkt.get("result")
+                if not ticker:
+                    continue
+                if result is None:
+                    stats["no_result"] += 1
+                    continue
+                if result == "yes":
+                    yes_tickers.append(ticker)
+                else:
+                    no_tickers.append(ticker)
+
+            if yes_tickers or no_tickers:
+                async with get_task_session() as session:
+                    if yes_tickers:
+                        r = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET is_winner = true,
+                                    resolution_source = 'api_settlement'
+                                FROM futures_markets fm
+                                WHERE fo.market_id = fm.id
+                                  AND fm.source = 'kalshi'
+                                  AND fo.external_id = ANY(:tickers)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                            """),
+                            {"tickers": yes_tickers},
+                        )
+                        stats["winners_set"] += r.rowcount
+
+                    if no_tickers:
+                        r = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET is_winner = false,
+                                    resolution_source = 'api_settlement'
+                                FROM futures_markets fm
+                                WHERE fo.market_id = fm.id
+                                  AND fm.source = 'kalshi'
+                                  AND fo.external_id = ANY(:tickers)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                            """),
+                            {"tickers": no_tickers},
+                        )
+                        stats["losers_set"] += r.rowcount
+
+                    await session.commit()
+                    total_resolved += stats["winners_set"] + stats["losers_set"]
+
+            if cursor:
+                _rc.setex(_cursor_key, 86400 * 14, cursor)
+            else:
+                _rc.delete(_cursor_key)
+                break
+
+            await asyncio.sleep(0.3)
+
+    except Exception as e:
+        stats["errors"].append(str(e)[:200])
+    finally:
+        await service.close()
+
+    logger.info(
+        "Kalshi markets backfill: %d pages, %d scanned, %d winners, %d losers",
+        stats["pages"], stats["markets_scanned"],
+        stats["winners_set"], stats["losers_set"],
+    )
+    return stats
+
+
 async def _backfill_polymarket_winners():
     """Set is_winner on Polymarket outcomes from settlement prices.
 

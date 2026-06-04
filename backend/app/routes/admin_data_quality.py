@@ -1848,6 +1848,24 @@ async def trigger_score_resolution(
     }
 
 
+@router.post("/backfill-winners/kalshi-markets")
+async def trigger_kalshi_markets_backfill(
+    secret: str = Query(...),
+    limit: int = Query(10000),
+):
+    """Resolve Kalshi winners via the markets API (not events API).
+
+    Much faster for old events where the per-event API returns empty
+    markets. Pages through GET /markets?status=settled with cursor
+    persistence, 1000 markets/page.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.backfill_winners import _backfill_kalshi_winners_via_markets
+    stats = await _backfill_kalshi_winners_via_markets(limit=limit)
+    return stats
+
+
 @router.post("/backfill-settled/reset-cursors")
 async def reset_settled_cursors(
     secret: str = Query(...),
