@@ -2925,6 +2925,19 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
+    import time as _t
+    _phase_times = {}
+
+    def _start_phase(name):
+        _phase_times[name] = _t.monotonic()
+
+    def _end_phase(name):
+        if name in _phase_times:
+            elapsed = _t.monotonic() - _phase_times[name]
+            _phase_times[name] = round(elapsed, 1)
+
+    _pipeline_start = _t.monotonic()
+
     # Phase 0-fix-categories: DataGolf markets must always be golf.
     # LLM enrichment sometimes reclassifies them (e.g. "Volvo China Open"
     # ended up as hockey, adding 3K+ golf outcomes to hockey calibration).
@@ -2944,7 +2957,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         logger.warning("DataGolf category fix failed: %s", e)
 
+    _end_phase("fix_categories")
+
     # Phase 0-link-props: Link sports prop markets to their parent game events.
+    _start_phase("link_props")
     # Must run BEFORE commence_time fixes and calibration price computation so
     # that newly linked markets get authoritative Event commence_time via Part A.
     # This is the primary fix for hockey calibration (19.6pp → ~3pp MCE).
@@ -3272,19 +3288,30 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         ml_repair_stats["errors"].append(str(e))
 
+    _pre_api_elapsed = round(_t.monotonic() - _pipeline_start, 1)
+    logger.info("Backfill phases 0-0i complete in %.1fs", _pre_api_elapsed)
+
     # Phase 1a: Kalshi score-based resolution for game markets linked to
     # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
     # game scores even when the Kalshi API has purged the market data.
+    _start_phase("score_resolution")
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
+    _end_phase("score_resolution")
 
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
+    _start_phase("kalshi_api")
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
+    _end_phase("kalshi_api")
+    _start_phase("kalshi_markets_api")
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
+    _end_phase("kalshi_markets_api")
+    _start_phase("polymarket_api")
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
+    _end_phase("polymarket_api")
 
     # Phase 2: Set is_winner from current_probability (all sources, fast)
     # Only handles markets not already resolved by API settlement above.
@@ -3345,6 +3372,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "kalshi_markets_api": kalshi_markets_stats,
         "polymarket_api": poly_api_stats,
         "bookmaker_calibration": bookmaker_stats,
+        "phase_times_seconds": {
+            "pre_api_phases": _pre_api_elapsed,
+            **{k: v for k, v in _phase_times.items() if isinstance(v, (int, float))},
+            "total": round(_t.monotonic() - _pipeline_start, 1),
+        },
     }
 
 
