@@ -5006,7 +5006,7 @@ async def datagolf_calibration_diagnosis(
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
-          AND fm.external_id LIKE '%byron_nelson%make_cut%'
+          AND fm.external_id = 'datagolf:pga:19:make_cut'
         ORDER BY fo.opening_probability DESC
         LIMIT 20
     """))
