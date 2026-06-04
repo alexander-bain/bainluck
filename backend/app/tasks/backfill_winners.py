@@ -133,6 +133,46 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                         "api_tickers": list(api_tickers)[:3],
                                     })
 
+                    # For events with no API markets, try to resolve from
+                    # current_probability directly (the data is in our DB)
+                    if not nested:
+                        resolve_r = await session.execute(
+                            text("""
+                                WITH market_check AS (
+                                    SELECT fm.id AS market_id
+                                    FROM futures_markets fm
+                                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                                    WHERE fm.source = 'kalshi'
+                                      AND fm.external_id = :event_ticker
+                                      AND fm.status = 'resolved'
+                                    GROUP BY fm.id
+                                    HAVING SUM(CASE WHEN fo.is_winner
+                                               AND fo.resolution_source NOT IN
+                                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                               THEN 1 ELSE 0 END) = 0
+                                       AND COUNT(*) FILTER (
+                                           WHERE fo.current_probability >= 0.95
+                                              OR fo.current_probability <= 0.05
+                                       ) = COUNT(*)
+                                       AND COUNT(*) >= 1
+                                )
+                                UPDATE futures_outcomes fo
+                                SET is_winner = (fo.current_probability >= 0.95),
+                                    resolution_source = 'clean_resolution'
+                                FROM market_check mc
+                                WHERE fo.market_id = mc.market_id
+                                  AND fo.current_probability IS NOT NULL
+                                RETURNING fo.is_winner
+                            """),
+                            {"event_ticker": event_ticker},
+                        )
+                        fallback_rows = resolve_r.all()
+                        for r in fallback_rows:
+                            if r[0]:
+                                stats["winners_set"] += 1
+                            else:
+                                stats["losers_set"] += 1
+
                     for market_data in nested:
                         ticker = market_data.get("ticker", "")
                         result = market_data.get("result")
