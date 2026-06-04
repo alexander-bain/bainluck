@@ -4980,43 +4980,33 @@ async def datagolf_calibration_diagnosis(
         LIMIT 15
     """))
     prob_sums = [dict(r._mapping) for r in r8.fetchall()]
-    return {
-        "by_market_type": by_type,
-        "by_bucket": by_bucket,
-        "by_resolution_source": by_source,
-        "simulated_mce_excluding_null": {
-            "mce_pp": float(sim.mce) if sim and sim.mce else None,
-            "outcomes": int(sim.outcomes) if sim and sim.outcomes else 0,
-        },
-        "cal_vs_opening": {
-            "total": cp.total, "cal_null": cp.cal_null,
-            "cal_eq_open": cp.cal_eq_open, "cal_diff": cp.cal_diff,
-            "avg_open": float(cp.avg_open) if cp.avg_open else None,
-            "avg_cal": float(cp.avg_cal) if cp.avg_cal else None,
-        } if cp else {},
-        "cal_only_buckets": cal_only_buckets,
-        "high_probability_losers": high_losers,
-        "probability_sums": prob_sums,
-    }
 
-    # 9. Spot-check a specific make_cut market
+    # 9. Spot-check high-probability make_cut outcomes
     r9 = await db.execute(text("""
-        SELECT fo.name, fo.opening_probability, fo.calibration_probability,
+        SELECT fo.name, fm.name AS market_name, fm.external_id,
+               fo.opening_probability, fo.calibration_probability,
                fo.is_winner, fo.resolution_source
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.source = 'datagolf'
+          AND fm.status = 'resolved'
+          AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
+          AND fo.is_winner = false
+          AND fo.opening_probability > 0.5
         ORDER BY fo.opening_probability DESC
         LIMIT 15
     """))
     spot_check = [
-        {"name": r.name, "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
+        {"name": r.name, "market": r.market_name[:40], "ext": r.external_id,
+         "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
          "cal": round(float(r.calibration_probability), 3) if r.calibration_probability else None,
-         "winner": r.is_winner, "res": r.resolution_source}
+         "res": r.resolution_source}
         for r in r9.fetchall()
     ]
+
     return {
-        "by_market_type": by_type, "by_bucket": by_bucket,
+        "by_market_type": by_type,
+        "by_bucket": by_bucket,
         "by_resolution_source": by_source,
         "simulated_mce_excluding_null": {
             "mce_pp": float(sim.mce) if sim and sim.mce else None,
