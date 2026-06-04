@@ -2238,7 +2238,9 @@ async def _backfill_from_current_probability():
             await session.commit()
 
             # Pass 2: Mutually-exclusive markets (prob sum 0.5-1.5)
-            # Max-probability outcome is the winner.
+            # Max-probability outcome is the winner. Only guess on markets
+            # that have NEVER been guessed — don't re-guess markets where
+            # a previous guess was overwritten by a reset or repair phase.
             result2 = await session.execute(
                 text("""
                     WITH stuck_markets AS (
@@ -2250,6 +2252,13 @@ async def _backfill_from_current_probability():
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
                           AND fo.current_probability IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM futures_outcomes fo3
+                              WHERE fo3.market_id = fm.id
+                                AND fo3.resolution_source IN
+                                    ('pass2_guess', 'api_settlement',
+                                     'clean_resolution', 'game_score', 'box_score')
+                          )
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
                            AND SUM(fo.current_probability) BETWEEN 0.5 AND 1.5
@@ -3230,7 +3239,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0c-retrotag2: Tag remaining untagged outcomes with midrange
     # current_probability as pass2_guess (they were resolved by Pass 2's
     # arbitrary pick from stale probabilities, not from authoritative data).
-    retro2_stats = {"tagged": 0, "errors": []}
+    # Also tag NULL-source LOSER outcomes as 'pass2_loser' to stop them
+    # from being scanned on every cycle (88K+ outcomes were NULL-source
+    # with is_winner=false, never matching retrotag2 but still scanned).
+    retro2_stats = {"tagged": 0, "losers_tagged": 0, "errors": []}
     try:
         for _ in range(3):
             async with get_task_session() as session:
@@ -3256,6 +3268,28 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                     break
                 retro2_stats["tagged"] += r.rowcount
                 logger.info("Retro-tagging pass2_guess: %d tagged", r.rowcount)
+
+        # Tag NULL-source losers so they stop being scanned
+        for _ in range(5):
+            async with get_task_session() as session:
+                r = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET resolution_source = 'pass2_loser'
+                        WHERE fo.id IN (
+                            SELECT fo2.id FROM futures_outcomes fo2
+                            JOIN futures_markets fm ON fo2.market_id = fm.id
+                            WHERE fm.status = 'resolved'
+                              AND fo2.resolution_source IS NULL
+                              AND fo2.is_winner = false
+                            LIMIT 100000
+                        )
+                    """)
+                )
+                await session.commit()
+                if r.rowcount == 0:
+                    break
+                retro2_stats["losers_tagged"] += r.rowcount
     except Exception as e:
         retro2_stats["errors"].append(str(e))
 
