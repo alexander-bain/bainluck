@@ -365,6 +365,13 @@ def backfill_kalshi_settled(self, limit: int = 5000):
     return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
+def backfill_kalshi_candlestick(self, limit: int = 500):
+    """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
+    from app.tasks.kalshi import _backfill_candlestick_snapshots
+    return _tracked_run("kalshi_candlestick", _backfill_candlestick_snapshots(limit))
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.backfill_polymarket_winners")
 def backfill_polymarket_winners(self, limit: int = 10000):
     """Resolve Polymarket winners from Gamma API settlement data."""

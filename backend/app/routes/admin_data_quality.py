@@ -1766,10 +1766,13 @@ async def trigger_candlestick_backfill(
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    from app.tasks.kalshi import _backfill_candlestick_snapshots
-    from app.tasks.base import run_async
-    result = await run_async(_backfill_candlestick_snapshots(limit=limit))
-    return result
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.backfill_kalshi_candlestick",
+        kwargs={"limit": limit},
+        queue="background",
+    )
+    return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
 @router.post("/backfill-winners/score-resolution")
