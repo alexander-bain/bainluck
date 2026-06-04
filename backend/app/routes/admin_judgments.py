@@ -1477,6 +1477,11 @@ async def create_curation_signal(
         m = re.search(r"/event/([^?#/]+)", clean_url)
         if m:
             market_ticker = m.group(1)
+    elif url.startswith("bainluck://"):
+        source_platform = "internal"
+        m = re.search(r"bainluck://(?:futures|tournament)/(\d+)", url)
+        if m:
+            market_ticker = m.group(1)
 
     # Try to find the market in our DB and get rich context
     market_id = None
@@ -1499,11 +1504,17 @@ async def create_curation_signal(
             )
             market = result.scalar_one_or_none()
         elif source_platform == "polymarket":
-            # Polymarket slugs match via name ILIKE or group_id
             result = await db.execute(
                 select(FuturesMarket).where(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.external_id.ilike(f"%{market_ticker}%"),
+                ).limit(1)
+            )
+            market = result.scalar_one_or_none()
+        elif source_platform == "internal":
+            result = await db.execute(
+                select(FuturesMarket).where(
+                    FuturesMarket.id == int(market_ticker),
                 ).limit(1)
             )
             market = result.scalar_one_or_none()
