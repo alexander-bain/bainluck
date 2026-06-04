@@ -3207,6 +3207,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fo.is_winner = false
                       AND fo.resolution_source = 'leaderboard'
                       AND fm.market_metadata IS NOT NULL
+                      AND fm.market_metadata->'leaderboard' IS NOT NULL
+                      AND jsonb_typeof(fm.market_metadata->'leaderboard') = 'array'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM jsonb_array_elements(fm.market_metadata->'leaderboard') AS lb
