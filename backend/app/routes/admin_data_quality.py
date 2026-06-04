@@ -1758,6 +1758,20 @@ async def trigger_calibration_recompute(secret: str = Query(...)):
     return {"status": "queued", "task_id": result.id}
 
 
+@router.post("/backfill-candlestick")
+async def trigger_candlestick_backfill(
+    secret: str = Query(...),
+    limit: int = Query(500),
+):
+    """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.kalshi import _backfill_candlestick_snapshots
+    from app.tasks.base import run_async
+    result = await run_async(_backfill_candlestick_snapshots(limit=limit))
+    return result
+
+
 @router.post("/backfill-winners/score-resolution")
 async def trigger_score_resolution(
     secret: str = Query(...),

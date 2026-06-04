@@ -1090,6 +1090,115 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
+async def _backfill_candlestick_snapshots(limit: int = 500):
+    """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes.
+
+    Targets resolved outcomes with ≤5 snapshots in markets with real trading
+    volume. Creates FuturesOddsSnapshot rows from hourly candle data, giving
+    Part A real pre-game prices instead of sparse opening-price fallbacks.
+    """
+    import asyncio
+    from app.models.models import FuturesOddsSnapshot
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stats = {"candidates": 0, "fetched": 0, "snapshots_created": 0, "errors": []}
+
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+        service = KalshiAPIService()
+
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                           fm.commence_time
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    WHERE fm.status = 'resolved'
+                      AND fm.source = 'kalshi'
+                      AND fm.volume > 0
+                      AND fo.calibration_probability IS NOT NULL
+                      AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                           WHERE fos.outcome_id = fo.id) <= 5
+                    ORDER BY fm.volume DESC
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            )
+            candidates = result.fetchall()
+            stats["candidates"] = len(candidates)
+
+            if not candidates:
+                return stats
+
+            for i in range(0, len(candidates), 10):
+                batch = candidates[i:i + 10]
+                tickers = [r.ticker for r in batch if r.ticker]
+                if not tickers:
+                    continue
+
+                try:
+                    candle_data = await service.get_market_candlesticks_batch(
+                        tickers, period_interval=60,
+                    )
+                    stats["fetched"] += len(candle_data)
+                except Exception as e:
+                    stats["errors"].append(f"batch {i}: {e}")
+                    await asyncio.sleep(2)
+                    continue
+
+                ticker_to_outcome = {r.ticker: r for r in batch}
+
+                for ticker, candles in candle_data.items():
+                    row = ticker_to_outcome.get(ticker)
+                    if not row or not candles:
+                        continue
+
+                    for candle in candles:
+                        ts = candle.get("t")
+                        price = candle.get("yes_price")
+                        if ts is None or price is None or price <= 0 or price >= 1:
+                            continue
+
+                        captured = datetime.fromtimestamp(ts, tz=timezone.utc)
+                        stmt = pg_insert(FuturesOddsSnapshot).values(
+                            outcome_id=row.outcome_id,
+                            bookmaker="kalshi",
+                            probability=round(price, 6),
+                            last_price=round(price, 4),
+                            captured_at=captured,
+                        ).on_conflict_do_nothing()
+                        await session.execute(stmt)
+                        stats["snapshots_created"] += 1
+
+                await session.commit()
+                await asyncio.sleep(1)
+
+            # Reset calibration_probability on outcomes that got new snapshots
+            # so Part A can recompute with the richer data
+            if stats["snapshots_created"] > 0:
+                outcome_ids = [r.outcome_id for r in candidates]
+                await session.execute(
+                    text("""
+                        UPDATE futures_outcomes
+                        SET calibration_probability = NULL
+                        WHERE id = ANY(:ids)
+                    """),
+                    {"ids": outcome_ids},
+                )
+                await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Candlestick backfill error: %s", e)
+
+    logger.info(
+        "Candlestick backfill: %d candidates, %d fetched, %d snapshots created, %d errors",
+        stats["candidates"], stats["fetched"], stats["snapshots_created"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_from_settled_events(limit: int = 5000):
     """Recover historical prices and fix market status from Kalshi settled events.
 

@@ -2926,6 +2926,16 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         link_props_stats["errors"].append(str(e))
         logger.warning("Link sports props failed: %s", e)
 
+    # Phase 0-candlestick: Backfill hourly snapshots from Kalshi for sparse outcomes.
+    # Must run BEFORE calibration price computation so Part A has richer data.
+    candlestick_stats = {"snapshots_created": 0, "errors": []}
+    try:
+        from app.tasks.kalshi import _backfill_candlestick_snapshots
+        candlestick_stats = await _backfill_candlestick_snapshots(limit=500)
+    except Exception as e:
+        candlestick_stats["errors"].append(str(e))
+        logger.warning("Candlestick backfill failed: %s", e)
+
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
     commence_stats = {"golf": 0, "hockey": 0, "golf_error": None, "hockey_error": None}
