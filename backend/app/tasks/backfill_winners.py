@@ -2237,91 +2237,12 @@ async def _backfill_from_current_probability():
             stats["clean_losers"] = sum(1 for r in rows if not r[0])
             await session.commit()
 
-            # Pass 2: Mutually-exclusive markets (prob sum 0.5-1.5)
-            # Max-probability outcome is the winner. Only guess on markets
-            # that have NEVER been guessed — don't re-guess markets where
-            # a previous guess was overwritten by a reset or repair phase.
-            result2 = await session.execute(
-                text("""
-                    WITH stuck_markets AS (
-                        SELECT fm.id AS market_id,
-                               SUM(fo.current_probability) AS prob_sum,
-                               MAX(fo.current_probability) AS max_prob,
-                               COUNT(*) AS n_outcomes
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                          AND NOT EXISTS (
-                              SELECT 1 FROM futures_outcomes fo3
-                              WHERE fo3.market_id = fm.id
-                                AND fo3.resolution_source IN
-                                    ('pass2_guess', 'api_settlement',
-                                     'clean_resolution', 'game_score', 'box_score')
-                          )
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND SUM(fo.current_probability) BETWEEN 0.5 AND 1.5
-                           AND MAX(fo.current_probability) > 0.05
-                           AND COUNT(*) >= 2
-                        LIMIT 50000
-                    ),
-                    ranked AS (
-                        SELECT fo.id AS outcome_id, fo.market_id,
-                               fo.current_probability,
-                               sm.max_prob,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY fo.market_id
-                                   ORDER BY fo.current_probability DESC
-                               ) AS rn
-                        FROM futures_outcomes fo
-                        JOIN stuck_markets sm ON sm.market_id = fo.market_id
-                        WHERE fo.current_probability IS NOT NULL
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (r.rn = 1),
-                        resolution_source = 'pass2_guess'
-                    FROM ranked r
-                    WHERE fo.id = r.outcome_id
-                    RETURNING fo.is_winner
-                """)
-            )
-            rows2 = result2.all()
-            stats["mutex_winners"] = sum(1 for r in rows2 if r[0])
-            stats["mutex_losers"] = sum(1 for r in rows2 if not r[0])
-            await session.commit()
-
-            # Pass 3: Independent threshold markets (prob sum > 1.5)
-            # Each outcome decided independently: > 0.50 = winner, < 0.50 = loser
-            result3 = await session.execute(
-                text("""
-                    WITH threshold_markets AS (
-                        SELECT fm.id AS market_id
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                          AND fm.source != 'datagolf'
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND SUM(fo.current_probability) > 1.5
-                           AND COUNT(*) >= 2
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability > 0.50),
-                        resolution_source = 'pass3_threshold'
-                    FROM threshold_markets tm
-                    WHERE fo.market_id = tm.market_id
-                      AND fo.current_probability IS NOT NULL
-                      AND fo.current_probability != 0.50
-                    RETURNING fo.is_winner
-                """)
-            )
-            rows3 = result3.all()
-            stats["threshold_winners"] = sum(1 for r in rows3 if r[0])
-            stats["threshold_losers"] = sum(1 for r in rows3 if not r[0])
-            await session.commit()
+            # Passes 2-3 DISABLED — guessing from midrange current_probability
+            # has a ~19% error rate (3,865 Kalshi + 2,205 Polymarket wrong
+            # winners as of June 4). Wrong guesses actively corrupt calibration.
+            # Markets without authoritative settlement data stay unresolved
+            # (is_winner=NULL) and are excluded from calibration, which is
+            # better than including wrong data. See #754.
 
             # Pass 4: All-losers markets — every outcome at <= 0.10
             # The winning outcome isn't in our DB; mark existing as losers
@@ -2350,119 +2271,20 @@ async def _backfill_from_current_probability():
             stats["all_losers_set"] = result4.rowcount
             await session.commit()
 
-            # Pass 5: Single-outcome binary markets (e.g., "Over 2.5 maps")
-            # These have exactly 1 outcome, so passes 2-3 skip them (need >= 2).
-            # If the probability clearly moved away from 0.50, resolve based on direction.
-            result5 = await session.execute(
-                text("""
-                    WITH single_outcome AS (
-                        SELECT fm.id AS market_id
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND COUNT(*) = 1
-                           AND MAX(fo.current_probability) != 0.50
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability > 0.50),
-                        resolution_source = 'pass3_threshold'
-                    FROM single_outcome so
-                    WHERE fo.market_id = so.market_id
-                      AND fo.current_probability IS NOT NULL
-                    RETURNING fo.is_winner
-                """)
-            )
-            rows5 = result5.all()
-            stats["single_winners"] = sum(1 for r in rows5 if r[0])
-            stats["single_losers"] = sum(1 for r in rows5 if not r[0])
-            await session.commit()
-
-            # Pass 6: Binary markets (2 outcomes) where current_probability
-            # didn't reach clean extremes but one side is clearly higher.
-            # Settled Kalshi binary markets (overtime, BTTS, home runs)
-            # often have prices like 0.45/0.55 — not clean enough for Pass 1
-            # but the higher-probability outcome won. Use > 0.50 threshold.
-            result6 = await session.execute(
-                text("""
-                    WITH binary_unresolved AS (
-                        SELECT fm.id AS market_id
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND COUNT(*) = 2
-                           AND MAX(fo.current_probability) BETWEEN 0.10 AND 0.95
-                           AND MAX(fo.current_probability) != MIN(fo.current_probability)
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability > 0.50),
-                        resolution_source = 'binary_higher_wins'
-                    FROM binary_unresolved bu
-                    WHERE fo.market_id = bu.market_id
-                      AND fo.current_probability IS NOT NULL
-                    RETURNING fo.is_winner
-                """)
-            )
-            rows6 = result6.all()
-            stats["binary_winners"] = sum(1 for r in rows6 if r[0])
-            stats["binary_losers"] = sum(1 for r in rows6 if not r[0])
-            await session.commit()
-
-            # Pass 7: Multi-outcome markets (3+ outcomes) where the highest-
-            # probability outcome is the winner. For resolved markets with
-            # midrange prices, pick the outcome with max current_probability.
-            result7 = await session.execute(
-                text("""
-                    WITH multi_unresolved AS (
-                        SELECT fm.id AS market_id,
-                               MAX(fo.current_probability) AS max_prob
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND COUNT(*) >= 3
-                           AND MAX(fo.current_probability) > 0.10
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability = mu.max_prob),
-                        resolution_source = 'multi_max_prob'
-                    FROM multi_unresolved mu
-                    WHERE fo.market_id = mu.market_id
-                      AND fo.current_probability IS NOT NULL
-                    RETURNING fo.is_winner
-                """)
-            )
-            rows7 = result7.all()
-            stats["multi_winners"] = sum(1 for r in rows7 if r[0])
-            stats["multi_losers"] = sum(1 for r in rows7 if not r[0])
-            await session.commit()
+            # Passes 5-7 DISABLED — same reason as Passes 2-3. See #754.
 
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Current-probability winner backfill error: %s", e)
 
-    total_w = (stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"]
-               + stats["single_winners"] + stats.get("binary_winners", 0) + stats.get("multi_winners", 0))
-    total_l = (stats["clean_losers"] + stats["mutex_losers"] + stats["threshold_losers"]
-               + stats["all_losers_set"] + stats["single_losers"]
-               + stats.get("binary_losers", 0) + stats.get("multi_losers", 0))
+    total_w = stats["clean_winners"]
+    total_l = stats["clean_losers"] + stats["all_losers_set"]
     logger.info(
-        "Current-probability winner backfill: %d winners (clean=%d, mutex=%d, threshold=%d, single=%d), "
-        "%d losers (clean=%d, mutex=%d, threshold=%d, all_losers=%d, single=%d), %d errors",
-        total_w, stats["clean_winners"], stats["mutex_winners"], stats["threshold_winners"],
-        stats["single_winners"],
-        total_l, stats["clean_losers"], stats["mutex_losers"], stats["threshold_losers"],
-        stats["all_losers_set"], stats["single_losers"], len(stats["errors"]),
+        "Current-probability winner backfill: %d winners (clean=%d), "
+        "%d losers (clean=%d, all_losers=%d), %d errors",
+        total_w, stats["clean_winners"],
+        total_l, stats["clean_losers"], stats["all_losers_set"],
+        len(stats["errors"]),
     )
     return stats
 
