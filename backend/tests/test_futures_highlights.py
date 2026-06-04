@@ -59,7 +59,7 @@ class TestComputeFuturesHighlight:
             ],
         )
 
-        assert result.score >= 90
+        assert result.score >= 65
         assert "sports_postseason_story" in result.reasons
 
     def test_conference_finals_path_does_not_get_championship_boost(self):

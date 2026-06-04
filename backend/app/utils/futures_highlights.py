@@ -240,8 +240,8 @@ _COMPELLING_PATTERNS = [
 BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
 FOREIGN_LOCAL_ELECTION_PENALTY = -30
-COMPELLING_BOOST = 12  # per matching pattern, max 3
-SPORTS_POSTSEASON_STORY_BOOST = 55
+COMPELLING_BOOST = 8  # per matching pattern, max 3
+SPORTS_POSTSEASON_STORY_BOOST = 40
 
 # Cultural gravity — high-interest culture/entertainment markets get a tier
 # boost similar to how sports get league tier bonuses. These are markets a
@@ -297,8 +297,8 @@ _CULTURAL_GRAVITY_T2 = re.compile(
     r")",
     re.IGNORECASE,
 )
-CULTURAL_GRAVITY_T1_BOOST = 25
-CULTURAL_GRAVITY_T2_BOOST = 15
+CULTURAL_GRAVITY_T1_BOOST = 18
+CULTURAL_GRAVITY_T2_BOOST = 10
 
 _ELECTION_MARKET_RE = re.compile(
     r"\b(election|electoral|nominee|primary|presidential|president|parliamentary|congressional)\b",
@@ -328,19 +328,19 @@ _SPORTS_POSTSEASON_STORY_RE = re.compile(
 
 # Scoring weights
 FUTURES_WEIGHTS = {
-    "major_movement_24h": 25,       # Leader moved >5% in 24h
-    "moderate_movement_24h": 15,    # Leader moved 2-5% in 24h
-    "leader_change": 30,            # #1 ranking changed
-    "rank_shakeup": 15,             # Multiple rank changes in top 5
-    "high_tier_market": 15,         # Championship/conference
-    "major_league": 10,             # Major sport/league
-    "secondary_league": 5,          # Secondary sport
-    "resolving_soon_7d": 13.5,      # Resolves within 7 days (tuned)
-    "resolving_soon_30d": 8,        # Resolves within 30 days
-    "multi_source": 10,             # Available from 2+ sources
-    "source_divergence": 20,        # Sources disagree by >5%
-    "high_volume": 15,              # Market has significant trade volume
-    "moderate_volume": 8,           # Market has some trade volume
+    "major_movement_24h": 12,       # Leader moved >5% in 24h
+    "moderate_movement_24h": 6,     # Leader moved 2-5% in 24h
+    "leader_change": 15,            # #1 ranking changed
+    "rank_shakeup": 8,              # Multiple rank changes in top 5
+    "high_tier_market": 10,         # Championship/conference
+    "major_league": 8,              # Major sport/league
+    "secondary_league": 4,          # Secondary sport
+    "resolving_soon_7d": 8,         # Resolves within 7 days
+    "resolving_soon_30d": 4,        # Resolves within 30 days
+    "multi_source": 8,              # Available from 2+ sources
+    "source_divergence": 12,        # Sources disagree by >5%
+    "high_volume": 8,               # Market has significant trade volume
+    "moderate_volume": 4,           # Market has some trade volume
 }
 
 # Thresholds
@@ -661,10 +661,10 @@ def compute_futures_highlight(
     ):
         velocity = volume_24h / volume_7d_avg
         if velocity >= 3.0:
-            result.score += 12
+            result.score += 8
             result.reasons.append("volume_spike")
         elif velocity >= 1.5:
-            result.score += 5
+            result.score += 3
             result.reasons.append("volume_uptick")
 
     # === Surprise factor (current vs opening probability) ===
@@ -676,10 +676,10 @@ def compute_futures_highlight(
             if opening is not None and current is not None:
                 max_surprise = max(max_surprise, abs(current - opening))
         if max_surprise >= 0.20:
-            result.score += 15
+            result.score += 10
             result.reasons.append("major_surprise")
         elif max_surprise >= 0.10:
-            result.score += 8
+            result.score += 5
             result.reasons.append("moderate_surprise")
 
     # === Cap score at 100 ===
