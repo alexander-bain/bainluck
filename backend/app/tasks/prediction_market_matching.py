@@ -1586,20 +1586,33 @@ async def _poll_live_prediction_market_prices():
     now = datetime.now(timezone.utc)
 
     async with get_task_session() as session:
-        # Find all linked prediction markets where the event is currently live
+        # Find linked prediction markets where the event is live OR starting
+        # within 3 hours. Pre-game prop prices undergo price discovery in the
+        # hours before game time — polling only live events misses this entirely
+        # and leaves props with 1-2 snapshots from the 2h full-poll interval.
+        from datetime import timedelta
+        upcoming_cutoff = now + timedelta(hours=3)
         result = await session.execute(
             select(FuturesMarket, Event)
             .join(Event, FuturesMarket.event_id == Event.id)
             .where(
                 FuturesMarket.source.in_(["kalshi", "polymarket"]),
                 FuturesMarket.event_id.isnot(None),
-                Event.status == "live",
+                or_(
+                    Event.status == "live",
+                    and_(
+                        Event.status == "scheduled",
+                        Event.commence_time.isnot(None),
+                        Event.commence_time <= upcoming_cutoff,
+                        Event.commence_time > now,
+                    ),
+                ),
             )
         )
         rows = result.all()
 
         if not rows:
-            logger.debug("No live-linked prediction markets to poll")
+            logger.debug("No live or upcoming linked prediction markets to poll")
             return stats
 
         live_event_ids = set()
