@@ -234,6 +234,7 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",
         "snapshot-coverage-metrics-daily",
+        "resolve-winners",
     }
 
     def test_no_missing_entries(self):

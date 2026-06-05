@@ -409,6 +409,20 @@ def mark_resolved_futures(self):
     return run_async(_mark_resolved_impl())
 
 
+@celery_app.task(bind=True, name="app.tasks.resolve_winners", soft_time_limit=540, time_limit=600)
+def resolve_winners(self, limit: int = 2000):
+    """Dedicated winner resolution — API settlement + score-based only.
+
+    Runs independently from the full backfill_winners pipeline, which
+    spends most of its 14-min budget on calibration price computation,
+    DataGolf leaderboards, golf/hockey commence_time fixes, and other
+    non-resolution work. This task focuses solely on resolving is_winner
+    from authoritative sources.
+    """
+    from app.tasks.backfill_winners import _resolve_winners_only
+    return _tracked_run("resolve_winners", _resolve_winners_only(limit=limit))
+
+
 @celery_app.task(bind=True, name="app.tasks.backfill_winners", soft_time_limit=840, time_limit=900)
 def backfill_winners(self, dry_run: bool = False, limit: int = 2000):
     """Backfill is_winner on FuturesOutcome from Kalshi settlement + Polymarket resolution."""
@@ -1530,6 +1544,12 @@ celery_app.conf.beat_schedule = {
     "backfill-winners": {
         "task": "app.tasks.backfill_winners",
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
+    },
+    "resolve-winners": {
+        "task": "app.tasks.resolve_winners",
+        "schedule": crontab(minute=15, hour="1,3,5,7,9,11,13,15,17,19,21,23"),  # Every 2 hours
+        "kwargs": {"limit": 2000},
+        "options": {"queue": "background"},
     },
     "backfill-historical-links": {
         "task": "app.tasks.backfill_historical_links",

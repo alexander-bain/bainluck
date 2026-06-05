@@ -2923,6 +2923,107 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     return stats
 
 
+async def _resolve_winners_only(limit: int = 2000):
+    """Dedicated winner resolution from authoritative sources only.
+
+    Runs independently from the full _backfill_all_winners pipeline,
+    which spends most of its 14-min budget on calibration prices,
+    DataGolf leaderboards, commence_time fixes, and other non-resolution
+    work. This function focuses solely on setting is_winner from:
+    - Moneyline repair (re-null misresolved non-moneyline)
+    - Score-based resolution (moneyline, BTTS, spreads, totals, player props)
+    - Kalshi per-event API settlement
+    - Kalshi markets API settlement (for old events with empty per-event responses)
+    - Polymarket API settlement
+    - Clean resolution (pass2_guess → clean_resolution upgrade)
+    - Pass 1 clean resolution (current_probability at extremes)
+    """
+    import time as _t
+    _start = _t.monotonic()
+    stats = {}
+
+    # Moneyline repair
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = NULL, resolution_source = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fo.resolution_source = 'game_score'
+                      AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
+                """)
+            )
+            stats["ml_repair"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        stats["ml_repair_error"] = str(e)[:200]
+
+    # Score-based resolution
+    score_stats = await _resolve_kalshi_from_scores()
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    period_prop_stats = await _resolve_kalshi_period_props()
+    stats["score"] = {
+        "moneyline": score_stats.get("moneyline", 0),
+        "btts": score_stats.get("btts", 0),
+        "total": spread_total_stats.get("total", 0),
+        "player_props": player_prop_stats.get("resolved", 0),
+    }
+
+    # Kalshi API settlement (per-event + markets)
+    kalshi_stats = await _backfill_kalshi_winners(limit=limit)
+    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
+    stats["kalshi_api"] = {
+        "winners": kalshi_stats.get("winners_set", 0),
+        "losers": kalshi_stats.get("losers_set", 0),
+        "api_miss": kalshi_stats.get("api_miss", 0),
+    }
+    stats["kalshi_markets"] = {
+        "winners": kalshi_markets_stats.get("winners_set", 0),
+        "losers": kalshi_markets_stats.get("losers_set", 0),
+        "pages": kalshi_markets_stats.get("pages", 0),
+    }
+
+    # Polymarket API settlement
+    poly_stats = await _backfill_polymarket_winners_from_api(limit=10000)
+    stats["polymarket_api"] = {
+        "winners": poly_stats.get("winners_set", 0) + poly_stats.get("api_winners", 0),
+    }
+
+    # Clean resolution (Pass 1 only)
+    prob_stats = await _backfill_from_current_probability()
+    stats["clean_resolution"] = {
+        "winners": prob_stats.get("clean_winners", 0),
+        "losers": prob_stats.get("clean_losers", 0),
+    }
+
+    # Phase 2b: upgrade pass2_guess → clean_resolution
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'clean_resolution'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fo.resolution_source = 'pass2_guess'
+                      AND (fo.current_probability >= 0.95
+                           OR fo.current_probability <= 0.05)
+                """)
+            )
+            stats["guess_upgraded"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        stats["guess_upgrade_error"] = str(e)[:200]
+
+    stats["duration_seconds"] = round(_t.monotonic() - _start, 1)
+    return stats
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     import time as _t
