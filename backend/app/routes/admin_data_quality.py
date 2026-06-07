@@ -5042,26 +5042,30 @@ async def datagolf_calibration_diagnosis(
         for r in r9a.fetchall()
     ]
 
-    # 9. Spot-check high-probability make_cut outcomes
+    # 9. Leaderboard analysis for make_cut markets
     r9 = await db.execute(text("""
-        SELECT fo.name, fm.name AS market_name, fm.external_id,
-               fo.opening_probability, fo.calibration_probability,
-               fo.is_winner, fo.resolution_source
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE fm.source = 'datagolf'
-          AND fm.status = 'resolved'
+        SELECT fm.name, fm.external_id,
+               jsonb_array_length(fm.market_metadata->'leaderboard') AS lb_size,
+               (SELECT COUNT(*) FROM jsonb_array_elements(fm.market_metadata->'leaderboard') lb
+                WHERE lb->>'position' ~ '^T?[0-9]+$') AS numeric_pos,
+               (SELECT COUNT(*) FROM jsonb_array_elements(fm.market_metadata->'leaderboard') lb
+                WHERE UPPER(lb->>'position') IN ('CUT','MC','MDF','WD','DQ','DNS','W/D')) AS cut_pos,
+               (SELECT COUNT(*) FROM futures_outcomes fo
+                WHERE fo.market_id = fm.id AND fo.is_winner = true) AS fo_winners,
+               (SELECT COUNT(*) FROM futures_outcomes fo
+                WHERE fo.market_id = fm.id AND fo.is_winner = false
+                  AND fo.resolution_source NOT IN ('did_not_play','withdrew')) AS fo_losers_in_cal
+        FROM futures_markets fm
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
           AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
-          AND fo.is_winner = false
-          AND fo.opening_probability > 0.5
-        ORDER BY fo.opening_probability DESC
-        LIMIT 15
+          AND fm.market_metadata->'leaderboard' IS NOT NULL
+          AND jsonb_typeof(fm.market_metadata->'leaderboard') = 'array'
+        ORDER BY jsonb_array_length(fm.market_metadata->'leaderboard') DESC
+        LIMIT 10
     """))
     spot_check = [
-        {"name": r.name, "market": r.market_name[:40], "ext": r.external_id,
-         "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
-         "cal": round(float(r.calibration_probability), 3) if r.calibration_probability else None,
-         "res": r.resolution_source}
+        {"name": r.name[:45], "lb_size": r.lb_size, "numeric": r.numeric_pos,
+         "cut": r.cut_pos, "fo_winners": r.fo_winners, "fo_losers_in_cal": r.fo_losers_in_cal}
         for r in r9.fetchall()
     ]
 
