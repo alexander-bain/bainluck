@@ -5112,38 +5112,26 @@ async def datagolf_calibration_diagnosis(
         "truncated_lb_losers": truncated_losers,
     }
 
-    # 11. Make-cut per-bucket breakdown (filtered properly)
+    # 11. Simple make_cut count check
     r11 = await db.execute(text("""
-        WITH mc AS (
-            SELECT COALESCE(fo.calibration_probability, fo.opening_probability) AS p,
-                   fo.is_winner,
-                   CASE
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.1 THEN 0.05
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.2 THEN 0.15
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.3 THEN 0.25
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.4 THEN 0.35
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.5 THEN 0.45
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.6 THEN 0.55
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.7 THEN 0.65
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.8 THEN 0.75
-                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.9 THEN 0.85
-                       ELSE 0.95
-                   END AS mid
-            FROM futures_outcomes fo
-            JOIN futures_markets fm ON fm.id = fo.market_id
-            WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
-              AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
-              AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
-              AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0.005
-              AND fo.is_winner IS NOT NULL
-              AND COALESCE(fo.resolution_source, '') NOT IN ('did_not_play', 'withdrew')
-        )
-        SELECT mid, COUNT(*) AS n,
-               SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
-               ROUND(AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)::numeric, 3) AS win_rate
-        FROM mc GROUP BY mid ORDER BY mid
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE fo.is_winner) AS winners,
+               COUNT(*) FILTER (WHERE NOT fo.is_winner) AS losers,
+               COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL) AS has_open,
+               COUNT(*) FILTER (WHERE fo.calibration_probability IS NOT NULL) AS has_cal,
+               COUNT(*) FILTER (WHERE fo.resolution_source = 'did_not_play') AS dnp,
+               COUNT(*) FILTER (WHERE fo.resolution_source = 'leaderboard') AS lb
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+          AND fm.external_id LIKE '%:make_cut'
     """))
-    make_cut_buckets = [dict(r._mapping) for r in r11.fetchall()]
+    mc_row = r11.first()
+    make_cut_buckets = [{
+        "total": mc_row.total, "winners": mc_row.winners, "losers": mc_row.losers,
+        "has_open": mc_row.has_open, "has_cal": mc_row.has_cal,
+        "did_not_play": mc_row.dnp, "leaderboard": mc_row.lb,
+    }] if mc_row else []
 
     return {
         "by_market_type": by_type, "by_bucket": by_bucket,
