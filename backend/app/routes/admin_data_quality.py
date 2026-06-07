@@ -5133,11 +5133,10 @@ async def datagolf_calibration_diagnosis(
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
               AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
-              AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0.005
+              AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
+              AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0.005
               AND fo.is_winner IS NOT NULL
-              AND (fo.resolution_source IS NULL
-                   OR fo.resolution_source NOT IN ('did_not_play', 'withdrew', 'pass2_guess', 'pass3_threshold'))
+              AND fo.resolution_source NOT IN ('did_not_play', 'withdrew')
         )
         SELECT mid, COUNT(*) AS n,
                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
