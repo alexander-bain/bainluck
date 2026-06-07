@@ -1206,7 +1206,8 @@ async def _resolve_kalshi_from_scores():
                 # the spread/total/player prop resolvers
                 _non_ml = ("total", "spread", "pts", "reb", "ast", "3pt",
                            "blk", "stl", "hrr", "hit", "tb", "ks", "hr",
-                           "rfi", "f5", "1h", "2h", "mention")
+                           "rfi", "f5", "mention",
+                           "1htotal", "1hspread", "2htotal", "2hspread")
                 if any(t in ticker_lower for t in _non_ml):
                     stats["skipped"] += 1
                     continue
@@ -1389,76 +1390,114 @@ async def _resolve_kalshi_spread_total_from_scores():
                 if resolved_team_total:
                     continue
 
-                # For spread/total parsing, use first outcome
-                outcome = outcomes_list[0]
-                name = outcome.name or ""
+                # For spread/total parsing, try each outcome until one matches
+                resolved_st = False
+                for outcome in outcomes_list:
+                    name = outcome.name or ""
 
-                # Try spread pattern
-                sm = _SPREAD_RE.search(name)
-                if sm:
-                    team_name = sm.group(1).strip()
-                    line = float(sm.group(2))
+                    # Try spread pattern
+                    sm = _SPREAD_RE.search(name)
+                    if sm:
+                        team_name = sm.group(1).strip()
+                        line = float(sm.group(2))
 
-                    if is_1h:
-                        h1_scores = await _get_halftime_score(session, row.event_id)
-                        if h1_scores is None:
-                            stats["no_plays"] += 1
+                        if is_1h:
+                            h1_scores = await _get_halftime_score(session, row.event_id)
+                            if h1_scores is None:
+                                stats["no_plays"] += 1
+                                resolved_st = True
+                                break
+                            h1_home, h1_away = h1_scores
+                        else:
+                            h1_home, h1_away = row.home_score, row.away_score
+
+                        home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
+                        away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                        team_tokens = set(team_name.lower().split())
+
+                        if team_tokens & home_tokens:
+                            margin = h1_home - h1_away
+                        elif team_tokens & away_tokens:
+                            margin = h1_away - h1_home
+                        else:
                             continue
-                        h1_home, h1_away = h1_scores
-                    else:
-                        h1_home, h1_away = row.home_score, row.away_score
 
-                    # Determine which team the spread is for
+                        won = margin > line
+                        for oc in outcomes_list:
+                            oc_won = won if oc.id == outcome.id else not won
+                            await session.execute(
+                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                {"won": oc_won, "oid": oc.id},
+                            )
+                        stats["h1_spread" if is_1h else "spread"] += 1
+                        resolved_st = True
+                        break
+
+                    # Try total pattern
+                    tm = _TOTAL_RE.search(name)
+                    if tm:
+                        direction = tm.group("dir").lower()
+                        line = float(tm.group(2))
+
+                        if is_1h:
+                            h1_scores = await _get_halftime_score(session, row.event_id)
+                            if h1_scores is None:
+                                stats["no_plays"] += 1
+                                resolved_st = True
+                                break
+                            total = h1_scores[0] + h1_scores[1]
+                        else:
+                            total = row.home_score + row.away_score
+
+                        won = total > line if direction == "over" else total < line
+                        for oc in outcomes_list:
+                            is_over = bool(re.match(r"(?:over|under)", oc.name or "", re.IGNORECASE))
+                            oc_won = won if oc.id == outcome.id else not won
+                            await session.execute(
+                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                {"won": oc_won, "oid": oc.id},
+                            )
+                        stats["h1_total" if is_1h else "total"] += 1
+                        resolved_st = True
+                        break
+
+                # Fallback: team-name-only outcomes on 2-outcome markets
+                # (e.g., "Penn" on KXNCAAMBGAME, "California" on KXNCAAMB1HWINNER)
+                if not resolved_st and len(outcomes_list) == 2:
                     home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
                     away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
-                    team_tokens = set(team_name.lower().split())
-
-                    if team_tokens & home_tokens:
-                        margin = h1_home - h1_away
-                    elif team_tokens & away_tokens:
-                        margin = h1_away - h1_home
-                    else:
-                        stats["no_parse"] += 1
-                        continue
-
-                    won = margin > line
-                    await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
-                        {"won": won, "oid": outcome.id},
-                    )
-                    if is_1h:
-                        stats["h1_spread"] += 1
-                    else:
-                        stats["spread"] += 1
-                    continue
-
-                # Try total pattern
-                tm = _TOTAL_RE.search(name)
-                if tm:
-                    direction = tm.group("dir").lower()
-                    line = float(tm.group(2))
 
                     if is_1h:
                         h1_scores = await _get_halftime_score(session, row.event_id)
-                        if h1_scores is None:
-                            stats["no_plays"] += 1
-                            continue
-                        total = h1_scores[0] + h1_scores[1]
+                        if h1_scores:
+                            h_score, a_score = h1_scores
+                        else:
+                            h_score, a_score = None, None
                     else:
-                        total = row.home_score + row.away_score
+                        h_score, a_score = row.home_score, row.away_score
 
-                    won = total > line if direction == "over" else total < line
-                    await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
-                        {"won": won, "oid": outcome.id},
-                    )
-                    if is_1h:
-                        stats["h1_total"] += 1
-                    else:
-                        stats["total"] += 1
-                    continue
+                    if h_score is not None and a_score is not None and h_score != a_score:
+                        home_won = h_score > a_score
+                        for oc in outcomes_list:
+                            oc_tokens = set((oc.name or "").lower().split())
+                            is_home = bool(oc_tokens & home_tokens) and not bool(oc_tokens & away_tokens)
+                            is_away = bool(oc_tokens & away_tokens) and not bool(oc_tokens & home_tokens)
+                            if is_home:
+                                won = home_won
+                            elif is_away:
+                                won = not home_won
+                            else:
+                                continue
+                            await session.execute(
+                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                {"won": won, "oid": oc.id},
+                            )
+                            resolved_st = True
+                        if resolved_st:
+                            stats["spread"] += 1
 
-                stats["no_parse"] += 1
+                if not resolved_st:
+                    stats["no_parse"] += 1
 
             await session.commit()
 
