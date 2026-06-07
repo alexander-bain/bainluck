@@ -5136,7 +5136,7 @@ async def datagolf_calibration_diagnosis(
               AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
               AND COALESCE(fo.calibration_probability, fo.opening_probability) > 0.005
               AND fo.is_winner IS NOT NULL
-              AND fo.resolution_source NOT IN ('did_not_play', 'withdrew')
+              AND COALESCE(fo.resolution_source, '') NOT IN ('did_not_play', 'withdrew')
         )
         SELECT mid, COUNT(*) AS n,
                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
