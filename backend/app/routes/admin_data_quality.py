@@ -4981,6 +4981,49 @@ async def datagolf_calibration_diagnosis(
     """))
     prob_sums = [dict(r._mapping) for r in r8.fetchall()]
 
+    # 9a. Per-market-type MCE excluding did_not_play/withdrew
+    r9a = await db.execute(text("""
+        WITH dg AS (
+            SELECT SPLIT_PART(fm.external_id, ':', 4) AS mtype,
+                   COALESCE(fo.calibration_probability, fo.opening_probability) AS p,
+                   fo.is_winner,
+                   CASE
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.05 THEN 0.025
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.15 THEN 0.10
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.25 THEN 0.20
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.35 THEN 0.30
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.45 THEN 0.40
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.55 THEN 0.50
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.65 THEN 0.60
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.75 THEN 0.70
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.85 THEN 0.80
+                       WHEN COALESCE(fo.calibration_probability, fo.opening_probability) < 0.95 THEN 0.90
+                       ELSE 0.975
+                   END AS mid
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+              AND fo.is_winner IS NOT NULL
+              AND fo.opening_probability > 0.005 AND fo.opening_probability < 0.98
+              AND (fo.resolution_source IS NULL
+                   OR fo.resolution_source NOT IN ('did_not_play', 'withdrew', 'pass2_guess', 'pass3_threshold'))
+        ),
+        b AS (
+            SELECT mtype, mid,
+                   AVG(CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) AS a,
+                   COUNT(*) AS n
+            FROM dg GROUP BY mtype, mid
+        )
+        SELECT mtype,
+            ROUND((SUM(ABS(a - mid) * n) / SUM(n) * 100)::numeric, 2) AS mce,
+            SUM(n) AS outcomes
+        FROM b GROUP BY mtype ORDER BY mce DESC
+    """))
+    per_type_mce = [
+        {"type": r.mtype, "mce_pp": float(r.mce), "outcomes": int(r.outcomes)}
+        for r in r9a.fetchall()
+    ]
+
     # 9. Spot-check high-probability make_cut outcomes
     r9 = await db.execute(text("""
         SELECT fo.name, fm.name AS market_name, fm.external_id,
@@ -5021,5 +5064,6 @@ async def datagolf_calibration_diagnosis(
         "cal_only_buckets": cal_only_buckets,
         "high_probability_losers": high_losers,
         "probability_sums": prob_sums,
+        "per_type_mce": per_type_mce,
         "byron_nelson_make_cut_spot_check": spot_check,
     }
