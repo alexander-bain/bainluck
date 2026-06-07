@@ -14,6 +14,7 @@ Data flow:
     → FuturesMarket.market_metadata.round_history (round transition timestamps)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -753,6 +754,8 @@ async def _snapshot_leaderboard() -> dict:
                 except Exception as e:
                     logger.error("Leaderboard snapshot error for tour=%s: %s", tour, e)
                     continue
+                finally:
+                    await asyncio.sleep(1.5)
 
     finally:
         await service.close()

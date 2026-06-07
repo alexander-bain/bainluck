@@ -420,10 +420,21 @@ async def _phase1_pass1_ticker_scan(
                 stats["funnel"].setdefault("sport_time_fallback_linked", 0)
                 stats["funnel"]["sport_time_fallback_linked"] += 1
 
-        await _try_link_market(
-            session, market, matchup, matched_event, stats,
-            ticker_game_date, now, polymarket_backfill_queue,
-        )
+        try:
+            await _try_link_market(
+                session, market, matchup, matched_event, stats,
+                ticker_game_date, now, polymarket_backfill_queue,
+            )
+        except Exception as e:
+            if "deadlock" in str(e).lower():
+                stats["funnel"].setdefault("phase1_deadlocks", 0)
+                stats["funnel"]["phase1_deadlocks"] += 1
+            else:
+                stats["errors"].append(f"pass1 market {market.id}: {str(e)[:100]}")
+            try:
+                await session.rollback()
+            except Exception:
+                pass
 
     return processed_ids
 
@@ -511,10 +522,21 @@ async def _phase1_pass2_general_scan(
             game_date_override=pass2_game_date,
         )
 
-        await _try_link_market(
-            session, market, matchup, matched_event, stats,
-            pass2_game_date, now, polymarket_backfill_queue,
-        )
+        try:
+            await _try_link_market(
+                session, market, matchup, matched_event, stats,
+                pass2_game_date, now, polymarket_backfill_queue,
+            )
+        except Exception as e:
+            if "deadlock" in str(e).lower():
+                stats["funnel"].setdefault("phase1_deadlocks", 0)
+                stats["funnel"]["phase1_deadlocks"] += 1
+            else:
+                stats["errors"].append(f"pass2 market {market.id}: {str(e)[:100]}")
+            try:
+                await session.rollback()
+            except Exception:
+                pass
 
 
 async def _phase15_revalidate(

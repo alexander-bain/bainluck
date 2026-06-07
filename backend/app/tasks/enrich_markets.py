@@ -692,6 +692,10 @@ async def enrich_discover_llm_metadata(limit: int = 100):
             except Exception as exc:
                 logger.warning("Discover LLM metadata failed for market %s: %s", market.id, exc)
                 stats["errors"] += 1
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
 
             stats["processed"] += 1
             await asyncio.sleep(0.15)
