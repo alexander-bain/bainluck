@@ -5069,6 +5069,27 @@ async def datagolf_calibration_diagnosis(
         for r in r9.fetchall()
     ]
 
+    # 10. Sample losers in calibration for a truncated-lb tournament
+    r10 = await db.execute(text("""
+        SELECT fo.name, fo.opening_probability, fo.is_winner,
+               fo.resolution_source,
+               (SELECT lb->>'position' FROM jsonb_array_elements(fm.market_metadata->'leaderboard') lb
+                WHERE lb->>'dg_id' = SUBSTRING(fo.external_id FROM 4) LIMIT 1) AS lb_position
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
+          AND fm.name LIKE '%PLAYERS%Make the Cut%'
+          AND fo.is_winner = false
+          AND fo.resolution_source NOT IN ('did_not_play', 'withdrew')
+        ORDER BY fo.opening_probability DESC
+        LIMIT 10
+    """))
+    truncated_losers = [
+        {"name": r.name, "open": round(float(r.opening_probability), 3) if r.opening_probability else None,
+         "res": r.resolution_source, "lb_pos": r.lb_position}
+        for r in r10.fetchall()
+    ]
+
     return {
         "by_market_type": by_type,
         "by_bucket": by_bucket,
@@ -5087,5 +5108,6 @@ async def datagolf_calibration_diagnosis(
         "high_probability_losers": high_losers,
         "probability_sums": prob_sums,
         "per_type_mce": per_type_mce,
-        "byron_nelson_make_cut_spot_check": spot_check,
+        "leaderboard_analysis": spot_check,
+        "truncated_lb_losers": truncated_losers,
     }
