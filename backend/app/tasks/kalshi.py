@@ -892,9 +892,10 @@ async def _fix_hockey_commence_times() -> int:
                 WHERE fm.event_id = e.id
                   AND fm.source = 'kalshi'
                   AND fm.llm_sport_category = 'hockey'
+                  AND fm.external_id LIKE 'KXNHL%'
                   AND e.commence_time IS NOT NULL
                   AND (fm.commence_time IS NULL
-                       OR ABS(EXTRACT(EPOCH FROM fm.commence_time - e.commence_time)) > 86400)
+                       OR ABS(EXTRACT(EPOCH FROM fm.commence_time - e.commence_time)) > 1800)
                 RETURNING fm.id
             """)
         )
@@ -910,6 +911,7 @@ async def _fix_hockey_commence_times() -> int:
                 FROM futures_markets
                 WHERE source = 'kalshi'
                   AND llm_sport_category = 'hockey'
+                  AND external_id LIKE 'KXNHL%%'
                   AND event_id IS NULL
                   AND commence_time IS NOT NULL
             """)
@@ -921,7 +923,7 @@ async def _fix_hockey_commence_times() -> int:
             ticker = m.ticker or m.external_id or ""
             game_date = extract_game_date_from_ticker(ticker)
             if game_date and m.commence_time:
-                if abs((m.commence_time - game_date).total_seconds()) > 86400:
+                if abs((m.commence_time - game_date).total_seconds()) > 1800:
                     await session.execute(
                         text("UPDATE futures_markets SET commence_time = :dt WHERE id = :id"),
                         {"dt": game_date, "id": m.id},
