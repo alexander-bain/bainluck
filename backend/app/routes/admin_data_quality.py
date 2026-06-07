@@ -5124,7 +5124,7 @@ async def datagolf_calibration_diagnosis(
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.source = 'datagolf' AND fm.status = 'resolved'
-          AND fm.external_id LIKE '%:make_cut'
+          AND SPLIT_PART(fm.external_id, ':', 4) = 'make_cut'
     """))
     mc_row = r11.first()
     make_cut_buckets = [{
