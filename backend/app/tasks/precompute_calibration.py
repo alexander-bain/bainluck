@@ -178,7 +178,8 @@ async def _precompute_calibration_main():
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   AND (fo.resolution_source IS NULL
                        OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'did_not_play', 'withdrew'))
+                                                    'did_not_play', 'withdrew',
+                                                    'all_losers', 'pass2_loser'))
             ),
             mode_prices AS (
                 SELECT vm_id, adj_opening_probability AS mode_price
@@ -625,7 +626,8 @@ async def _compute_time_horizon_calibration():
                       AND fo.opening_probability > 0 AND fo.opening_probability < 1
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'did_not_play', 'withdrew'))
+                                                    'did_not_play', 'withdrew',
+                                                    'all_losers', 'pass2_loser'))
                 ),
                 horizon_snap AS (
                     SELECT
@@ -916,7 +918,8 @@ async def _query_futures_fair_fight_impl(db):
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND (fo.resolution_source IS NULL
                    OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'did_not_play', 'withdrew'))
+                                                    'did_not_play', 'withdrew',
+                                                    'all_losers', 'pass2_loser'))
         )
         SELECT source, category, prob, is_winner
         FROM matched_outcomes
