@@ -1866,6 +1866,24 @@ async def trigger_kalshi_markets_backfill(
     return stats
 
 
+@router.post("/backfill-winners/kalshi-targeted")
+async def trigger_kalshi_targeted(
+    secret: str = Query(...),
+    limit: int = Query(200),
+):
+    """Look up specific event tickers that need resolution via markets API.
+
+    O(events needing work) not O(all settled events). Queries DB for
+    event tickers with pass2_guess outcomes, then GET /markets?event_ticker=X
+    for each to get the result field.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.backfill_winners import _backfill_kalshi_winners_targeted
+    stats = await _backfill_kalshi_winners_targeted(limit=limit)
+    return stats
+
+
 @router.get("/retrotag-pool")
 async def retrotag_pool(
     secret: str = Query(...),

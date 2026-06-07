@@ -239,6 +239,140 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     return stats
 
 
+async def _backfill_kalshi_winners_targeted(limit: int = 2000):
+    """Resolve Kalshi outcomes by looking up SPECIFIC event tickers that need work.
+
+    Instead of paginating ALL settled markets (millions of pages), queries
+    the DB for event tickers with pass2_guess outcomes, then looks up each
+    via GET /markets?event_ticker=X&status=settled to get the result field.
+    O(events needing work) not O(all settled events).
+    """
+    import asyncio
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks.redis_state import get_redis_client
+
+    _rc = get_redis_client()
+    _cursor_key = "bainluck:kalshi_targeted_cursor"
+    _raw = _rc.get(_cursor_key)
+    _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
+
+    stats = {
+        "tickers_queried": 0, "markets_found": 0,
+        "winners_set": 0, "losers_set": 0,
+        "api_empty": 0, "errors": [],
+    }
+
+    async with get_task_session() as session:
+        result = await session.execute(
+            text("""
+                SELECT DISTINCT fm.external_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.source = 'kalshi'
+                  AND fm.status = 'resolved'
+                  AND fm.external_id > :cursor
+                  AND fo.resolution_source IN ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                ORDER BY fm.external_id ASC
+                LIMIT :limit
+            """),
+            {"cursor": _last_cursor, "limit": limit},
+        )
+        event_tickers = [r[0] for r in result.all()]
+
+    if not event_tickers:
+        if _last_cursor:
+            _rc.delete(_cursor_key)
+            logger.info("Kalshi targeted backfill: cursor wrapped")
+        return stats
+
+    _rc.setex(_cursor_key, 86400 * 14, event_tickers[-1])
+    logger.info("Kalshi targeted backfill: %d event tickers to look up", len(event_tickers))
+
+    service = KalshiAPIService()
+    try:
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_markets(event_ticker):
+            async with sem:
+                try:
+                    markets, _ = await service.get_markets(
+                        status="settled",
+                        event_ticker=event_ticker,
+                        limit=100,
+                    )
+                    return event_ticker, markets
+                except Exception:
+                    return event_ticker, []
+
+        batch_size = 100
+        for batch_start in range(0, len(event_tickers), batch_size):
+            batch = event_tickers[batch_start:batch_start + batch_size]
+            results = await asyncio.gather(*[_fetch_markets(t) for t in batch])
+
+            yes_tickers = []
+            no_tickers = []
+            for event_ticker, markets in results:
+                stats["tickers_queried"] += 1
+                if not markets:
+                    stats["api_empty"] += 1
+                    continue
+                stats["markets_found"] += len(markets)
+                for mkt in markets:
+                    ticker = mkt.get("ticker", "")
+                    result_val = mkt.get("result")
+                    if not ticker or result_val is None:
+                        continue
+                    if result_val == "yes":
+                        yes_tickers.append(ticker)
+                    else:
+                        no_tickers.append(ticker)
+
+            if yes_tickers or no_tickers:
+                async with get_task_session() as session:
+                    if yes_tickers:
+                        r = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET is_winner = true, resolution_source = 'api_settlement'
+                                FROM futures_markets fm
+                                WHERE fo.market_id = fm.id
+                                  AND fm.source = 'kalshi'
+                                  AND fo.external_id = ANY(:tickers)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                            """),
+                            {"tickers": yes_tickers},
+                        )
+                        stats["winners_set"] += r.rowcount
+                    if no_tickers:
+                        r = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET is_winner = false, resolution_source = 'api_settlement'
+                                FROM futures_markets fm
+                                WHERE fo.market_id = fm.id
+                                  AND fm.source = 'kalshi'
+                                  AND fo.external_id = ANY(:tickers)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                            """),
+                            {"tickers": no_tickers},
+                        )
+                        stats["losers_set"] += r.rowcount
+                    await session.commit()
+
+            logger.info(
+                "Kalshi targeted: %d/%d tickers, %d markets, %d winners, %d losers, %d empty",
+                min(batch_start + batch_size, len(event_tickers)), len(event_tickers),
+                stats["markets_found"], stats["winners_set"], stats["losers_set"],
+                stats["api_empty"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e)[:200])
+    finally:
+        await service.close()
+
+    return stats
+
+
 async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
     """Resolve Kalshi outcomes by paginating the markets API directly.
 
@@ -2973,9 +3107,17 @@ async def _resolve_winners_only(limit: int = 2000):
         "player_props": player_prop_stats.get("resolved", 0),
     }
 
-    # Kalshi API settlement (per-event + markets)
+    # Kalshi API settlement — targeted first (only events needing work),
+    # then per-event broad sweep, then markets API pagination
+    kalshi_targeted_stats = await _backfill_kalshi_winners_targeted(limit=limit)
     kalshi_stats = await _backfill_kalshi_winners(limit=limit)
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
+    stats["kalshi_targeted"] = {
+        "winners": kalshi_targeted_stats.get("winners_set", 0),
+        "losers": kalshi_targeted_stats.get("losers_set", 0),
+        "api_empty": kalshi_targeted_stats.get("api_empty", 0),
+        "queried": kalshi_targeted_stats.get("tickers_queried", 0),
+    }
     stats["kalshi_api"] = {
         "winners": kalshi_stats.get("winners_set", 0),
         "losers": kalshi_stats.get("losers_set", 0),
