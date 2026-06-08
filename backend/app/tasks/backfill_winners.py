@@ -3504,6 +3504,30 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         logger.warning("DataGolf retag failed: %s", e)
 
+    # Phase 0g-retag2: For DataGolf markets WITHOUT a leaderboard, tag all
+    # non-authoritative losers as did_not_play. Without leaderboard data we
+    # can't verify who actually played. Resolution sources like 'all_losers'
+    # and 'pass2_loser' are guesses — not verified against results.
+    try:
+        async with get_task_session() as session:
+            retag2 = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'did_not_play'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner = false
+                      AND fo.resolution_source IN ('all_losers', 'pass2_loser', 'multi_max_prob')
+                """)
+            )
+            if retag2.rowcount > 0:
+                await session.commit()
+                logger.info("DataGolf retag2: %d non-authoritative losers → did_not_play", retag2.rowcount)
+    except Exception as e:
+        logger.warning("DataGolf retag2 failed: %s", e)
+
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
