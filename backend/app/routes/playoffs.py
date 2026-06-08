@@ -2196,18 +2196,33 @@ async def get_playoff_grid_cached(
         try:
             rc = get_async_redis_client()
             cached = await rc.get(cache_key)
-            await rc.aclose()
             if cached:
+                await rc.aclose()
                 return json.loads(cached)
+            # Stale fallback: serve old data while recomputing
+            stale = await rc.get(f"{cache_key}:stale")
+            if stale:
+                await rc.aclose()
+                return json.loads(stale)
+            await rc.aclose()
         except Exception:
             pass  # Fall through to live query
 
-    result = await get_playoff_grid(league_slug, hours, top, debug, db)
+    import asyncio as _asyncio
+    try:
+        result = await _asyncio.wait_for(
+            get_playoff_grid(league_slug, hours, top, debug, db),
+            timeout=25,
+        )
+    except _asyncio.TimeoutError:
+        return {"teams": [], "columns": [], "error": "timeout"}
 
     if cache_eligible:
         try:
             rc = get_async_redis_client()
-            await rc.set(cache_key, json.dumps(result, default=str), ex=3600)
+            payload = json.dumps(result, default=str)
+            await rc.set(cache_key, payload, ex=3600)
+            await rc.set(f"{cache_key}:stale", payload, ex=86400)
             await rc.aclose()
         except Exception:
             pass
