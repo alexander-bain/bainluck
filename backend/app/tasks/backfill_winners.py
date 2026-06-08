@@ -1584,7 +1584,6 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
                       AND e.box_score_data IS NOT NULL
-                      AND fo.is_winner = false
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
