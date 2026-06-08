@@ -1092,154 +1092,114 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_trade_history(limit: int = 500):
+async def _backfill_trade_history(limit: int = 2000):
     """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob.
 
-    Uses the settled events API to discover sub-market tickers, then fetches
-    trades for each. Our DB stores event-level tickers (KXNHLPTS-26APR08WSHTOR)
-    but the trades API needs sub-market tickers (KXNHLPTS-...-TORWKARLSSON71-1).
-
-    Creates snapshots from trade data so Part A can find real pre-game prices
-    instead of falling back to extreme opening prices.
+    Directly queries outcomes with extreme opening prices and NULL cal_prob,
+    then fetches trades from the Kalshi API using fo.external_id (which stores
+    the full sub-market ticker like KXNHLPTS-26MAR20NJWSH-NJJBRATT63-2).
     """
     import asyncio
     from dateutil.parser import parse as _dt_parse
 
-    stats = {"series_checked": 0, "events_scanned": 0, "trades_fetched": 0,
-             "snapshots_created": 0, "outcomes_reset": 0, "errors": []}
+    stats = {"candidates": 0, "fetched": 0, "trades_found": 0,
+             "snapshots_created": 0, "empty": 0, "errors": []}
 
     try:
         from app.services.kalshi_api import KalshiAPIService
         service = KalshiAPIService()
 
         async with get_task_session() as session:
-            # Find series with outcomes needing trade data
-            sr = await session.execute(
+            result = await session.execute(
                 text("""
-                    SELECT DISTINCT regexp_replace(fm.external_id, '-.*', '') AS prefix
-                    FROM futures_markets fm
-                    JOIN futures_outcomes fo ON fo.market_id = fm.id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
-                      AND fm.external_id ~ '^KX'
+                    SELECT fo.id AS outcome_id, fo.external_id AS ticker
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    WHERE fm.status = 'resolved'
+                      AND fm.source = 'kalshi'
                       AND fo.calibration_probability IS NULL
                       AND fo.opening_probability IS NOT NULL
-                      AND (fo.opening_probability >= 0.90 OR fo.opening_probability <= 0.10)
-                    ORDER BY 1
-                """)
+                      AND fo.external_id IS NOT NULL
+                      AND fo.external_id LIKE 'KX%-%-%'
+                    ORDER BY fm.commence_time DESC NULLS LAST
+                    LIMIT :lim
+                """),
+                {"lim": limit},
             )
-            series_list = [r[0] for r in sr.fetchall()]
-            logger.info("Trade backfill: %d series with extreme-opening outcomes", len(series_list))
+            candidates = result.fetchall()
+            stats["candidates"] = len(candidates)
+
+            if not candidates:
+                return stats
+
+            logger.info("Trade backfill: %d candidates, first=%s",
+                        len(candidates), candidates[0].ticker[:50] if candidates else "?")
 
             import time as _time
             _start = _time.monotonic()
             reset_ids: list[int] = []
 
-            for series in series_list:
-                if (_time.monotonic() - _start) > 480:
+            for row in candidates:
+                if (_time.monotonic() - _start) > 540:
+                    logger.info("Trade backfill: time budget after %d fetched", stats["fetched"])
                     break
-                stats["series_checked"] += 1
 
-                cursor = None
-                for page in range(20):
+                try:
+                    trades, _ = await service.get_market_trades(row.ticker, limit=100)
+                    stats["fetched"] += 1
+                except Exception as e:
+                    if "429" in str(e):
+                        await asyncio.sleep(5)
+                    stats["errors"].append(str(e)[:100])
+                    continue
+
+                if not trades:
+                    stats["empty"] += 1
+                    continue
+
+                stats["trades_found"] += len(trades)
+                created_any = False
+
+                for trade in trades:
                     try:
-                        events, cursor = await service.get_events(
-                            status="settled", series_ticker=series,
-                            with_nested_markets=True, limit=100, cursor=cursor,
-                        )
-                    except Exception as e:
-                        if "429" in str(e):
-                            await asyncio.sleep(5)
-                            continue
-                        stats["errors"].append(f"{series}: {e}")
-                        break
+                        price = float(trade.get("yes_price_dollars", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    if price <= 0 or price >= 1:
+                        continue
 
-                    if not events:
-                        break
-                    stats["events_scanned"] += len(events)
+                    try:
+                        captured = _dt_parse(trade["created_time"])
+                    except Exception:
+                        continue
 
-                    for ev in events:
-                        for mkt in (ev.get("markets") or []):
-                            sub_ticker = mkt.get("ticker", "")
-                            if not sub_ticker:
-                                continue
+                    await session.execute(
+                        text("""
+                            INSERT INTO futures_odds_snapshots
+                                (outcome_id, bookmaker, probability, last_price, captured_at)
+                            VALUES (:oid, 'kalshi', :prob, :price, :ts)
+                            ON CONFLICT DO NOTHING
+                        """),
+                        {"oid": row.outcome_id, "prob": round(price, 6),
+                         "price": round(price, 4), "ts": captured},
+                    )
+                    stats["snapshots_created"] += 1
+                    created_any = True
 
-                            # Check if this outcome needs trade data
-                            check = await session.execute(
-                                text("""
-                                    SELECT id FROM futures_outcomes
-                                    WHERE external_id = :tk
-                                      AND calibration_probability IS NULL
-                                      AND opening_probability IS NOT NULL
-                                      AND (opening_probability >= 0.90 OR opening_probability <= 0.10)
-                                    LIMIT 1
-                                """),
-                                {"tk": sub_ticker},
-                            )
-                            outcome_row = check.first()
-                            if not outcome_row:
-                                continue
+                if created_any:
+                    reset_ids.append(row.outcome_id)
 
-                            # Fetch trades for this sub-market
-                            try:
-                                trades, _ = await service.get_market_trades(
-                                    sub_ticker, limit=100,
-                                )
-                            except Exception as e:
-                                if "429" in str(e):
-                                    await asyncio.sleep(3)
-                                continue
-
-                            if not trades:
-                                continue
-
-                            stats["trades_fetched"] += len(trades)
-
-                            for trade in trades:
-                                try:
-                                    price = float(trade.get("yes_price_dollars", 0))
-                                except (ValueError, TypeError):
-                                    continue
-                                if price <= 0 or price >= 1:
-                                    continue
-                                try:
-                                    captured = _dt_parse(trade["created_time"])
-                                except Exception:
-                                    continue
-
-                                await session.execute(
-                                    text("""
-                                        INSERT INTO futures_odds_snapshots
-                                            (outcome_id, bookmaker, probability,
-                                             last_price, captured_at)
-                                        VALUES (:oid, 'kalshi', :prob, :price, :ts)
-                                        ON CONFLICT DO NOTHING
-                                    """),
-                                    {"oid": outcome_row.id, "prob": round(price, 6),
-                                     "price": round(price, 4), "ts": captured},
-                                )
-                                stats["snapshots_created"] += 1
-
-                            reset_ids.append(outcome_row.id)
-
+                if stats["fetched"] % 100 == 0:
                     await session.commit()
-
-                    if not cursor:
-                        break
                     await asyncio.sleep(0.3)
 
-            # Reset cal_prob for outcomes that got new trade snapshots
             if reset_ids:
                 await session.execute(
-                    text("""
-                        UPDATE futures_outcomes
-                        SET calibration_probability = NULL
-                        WHERE id = ANY(:ids)
-                    """),
+                    text("UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"),
                     {"ids": reset_ids},
                 )
                 stats["outcomes_reset"] = len(reset_ids)
-                await session.commit()
+            await session.commit()
 
         await service.close()
 
@@ -1248,9 +1208,9 @@ async def _backfill_trade_history(limit: int = 500):
         logger.error("Trade backfill error: %s", e)
 
     logger.info(
-        "Trade backfill: %d series, %d events, %d trades, %d snapshots, %d reset, %d errors",
-        stats["series_checked"], stats["events_scanned"], stats["trades_fetched"],
-        stats["snapshots_created"], stats["outcomes_reset"], len(stats["errors"]),
+        "Trade backfill: %d candidates, %d fetched, %d trades, %d snaps, %d empty, %d errors",
+        stats["candidates"], stats["fetched"], stats["trades_found"],
+        stats["snapshots_created"], stats["empty"], len(stats["errors"]),
     )
     return stats
 
