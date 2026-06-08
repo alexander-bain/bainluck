@@ -1819,7 +1819,7 @@ async def trigger_score_resolution(
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
 
-    # Phase 2b: upgrade pass2_guess → clean_resolution inline
+    # Phase 2b: upgrade pass2_guess LOSERS → clean_resolution
     upgrade_stats = {"upgraded": 0, "errors": []}
     try:
         async with get_task_session() as session:
@@ -1830,8 +1830,8 @@ async def trigger_score_resolution(
                 WHERE fo.market_id = fm.id
                   AND fm.status = 'resolved'
                   AND fo.resolution_source = 'pass2_guess'
-                  AND (fo.current_probability >= 0.95
-                       OR fo.current_probability <= 0.05)
+                  AND fo.is_winner = false
+                  AND fo.current_probability <= 0.05
             """))
             upgrade_stats["upgraded"] = r.rowcount
             await session.commit()

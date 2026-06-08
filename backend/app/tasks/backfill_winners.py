@@ -148,7 +148,8 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     GROUP BY fm.id
                                     HAVING SUM(CASE WHEN fo.is_winner
                                                AND fo.resolution_source NOT IN
-                                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                                THEN 1 ELSE 0 END) = 0
                                        AND COUNT(*) FILTER (
                                            WHERE fo.current_probability >= 0.95
@@ -271,7 +272,8 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
                   AND fm.external_id > :cursor
-                  AND fo.resolution_source IN ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                  AND fo.resolution_source IN ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                 ORDER BY fm.external_id ASC
                 LIMIT :limit
             """),
@@ -517,7 +519,8 @@ async def _backfill_polymarket_winners():
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
-                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                    THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
@@ -1179,7 +1182,8 @@ async def _resolve_kalshi_from_scores():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 10000
                 """)
@@ -1331,7 +1335,8 @@ async def _resolve_kalshi_spread_total_from_scores():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) <= 2
                     LIMIT 10000
@@ -1583,7 +1588,8 @@ async def _resolve_kalshi_player_props_from_boxscore():
                       AND fo.is_winner = false
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
-                               ('pass2_guess', 'binary_higher_wins', 'multi_max_prob'))
+                               ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold'))
                     LIMIT 10000
                 """)
             )
@@ -1707,7 +1713,8 @@ async def _resolve_kalshi_period_props():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) = 1
                     LIMIT 5000
@@ -2393,7 +2400,8 @@ async def _backfill_from_current_probability():
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
-                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob')
+                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                    THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
@@ -3181,7 +3189,11 @@ async def _resolve_winners_only(limit: int = 2000):
         "losers": prob_stats.get("clean_losers", 0),
     }
 
-    # Phase 2b: upgrade pass2_guess → clean_resolution
+    # Phase 2b: upgrade pass2_guess LOSERS → clean_resolution
+    # Only upgrade losers (is_winner=false) at extremes — these are
+    # unambiguously correct. Winners at extremes might be wrong guesses
+    # that happened to have high probability; leave them for authoritative
+    # resolution (game_score, api_settlement).
     try:
         async with get_task_session() as session:
             r = await session.execute(
@@ -3192,8 +3204,8 @@ async def _resolve_winners_only(limit: int = 2000):
                     WHERE fo.market_id = fm.id
                       AND fm.status = 'resolved'
                       AND fo.resolution_source = 'pass2_guess'
-                      AND (fo.current_probability >= 0.95
-                           OR fo.current_probability <= 0.05)
+                      AND fo.is_winner = false
+                      AND fo.current_probability <= 0.05
                 """)
             )
             stats["guess_upgraded"] = r.rowcount
@@ -3625,10 +3637,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Only handles markets not already resolved by API settlement above.
     prob_stats = await _backfill_from_current_probability()
 
-    # Phase 2b: Upgrade pass2_guess → clean_resolution where settlement data
-    # has since arrived (polling updated current_probability to 0/1 after
-    # the guess was tagged). Doesn't change is_winner — just upgrades the
-    # resolution_source so these outcomes count in calibration.
+    # Phase 2b: Upgrade pass2_guess LOSERS → clean_resolution where
+    # current_probability reached settlement extreme. Only losers —
+    # winners at extremes might be wrong guesses.
     guess_upgrade_stats = {"upgraded": 0, "errors": []}
     try:
         async with get_task_session() as session:
@@ -3640,8 +3651,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                     WHERE fo.market_id = fm.id
                       AND fm.status = 'resolved'
                       AND fo.resolution_source = 'pass2_guess'
-                      AND (fo.current_probability >= 0.95
-                           OR fo.current_probability <= 0.05)
+                      AND fo.is_winner = false
+                      AND fo.current_probability <= 0.05
                 """)
             )
             guess_upgrade_stats["upgraded"] = r.rowcount
