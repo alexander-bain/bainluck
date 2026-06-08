@@ -4975,6 +4975,78 @@ async def calibration_mce_by_sport(
     }
 
 
+@router.get("/calibration-90plus-losers")
+async def calibration_90plus_losers(
+    secret: str = Query(...),
+    category: str = Query("hockey"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show actual outcomes in the 90%+ bucket that are losing."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT fo.name, fm.name AS market_name, fm.source, fm.external_id,
+               fo.opening_probability, fo.calibration_probability,
+               fo.is_winner, fo.resolution_source,
+               (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND COALESCE(fm.llm_sport_category, '') = :cat
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.90
+          AND fo.is_winner = false
+          AND fo.opening_probability IS NOT NULL
+          AND (fo.resolution_source IS NULL
+               OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                'did_not_play', 'withdrew'))
+        ORDER BY RANDOM()
+        LIMIT 25
+    """), {"cat": category})
+    samples = [
+        {
+            "outcome": row.name, "market": row.market_name[:50],
+            "source": row.source, "ext_id": row.external_id[:40],
+            "open": round(float(row.opening_probability), 4) if row.opening_probability else None,
+            "cal": round(float(row.calibration_probability), 4) if row.calibration_probability else None,
+            "resolution": row.resolution_source, "snaps": row.snaps,
+        }
+        for row in r.fetchall()
+    ]
+
+    # Count totals
+    r2 = await db.execute(text("""
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL) AS cal_null,
+               COUNT(*) FILTER (WHERE fo.calibration_probability IS NOT NULL
+                   AND fo.calibration_probability >= 0.90) AS cal_high,
+               COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL
+                   AND fo.opening_probability >= 0.90) AS cal_null_open_high
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND COALESCE(fm.llm_sport_category, '') = :cat
+          AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.90
+          AND fo.is_winner = false
+          AND fo.opening_probability IS NOT NULL
+          AND (fo.resolution_source IS NULL
+               OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                'did_not_play', 'withdrew'))
+    """), {"cat": category})
+    counts = r2.first()
+
+    return {
+        "category": category,
+        "total_90plus_losers": counts.total,
+        "breakdown": {
+            "cal_null_open_high": counts.cal_null_open_high,
+            "cal_high": counts.cal_high,
+            "cal_null_total": counts.cal_null,
+        },
+        "samples": samples,
+    }
+
+
 @router.post("/datagolf-retag")
 async def datagolf_retag(
     secret: str = Query(...),
