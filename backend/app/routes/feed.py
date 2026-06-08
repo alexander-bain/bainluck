@@ -966,6 +966,16 @@ async def get_feed(
                 )
                 _set_feed_timing_header(response, _started_at)
                 return _json_module.loads(cached)
+            # Stale fallback: serve old data if primary cache expired
+            _stale_key = f"{_cache_key}:stale"
+            stale = await _async_redis.get(_stale_key)
+            if stale:
+                await _async_redis.aclose()
+                _previous_at = _record_feed_timing(
+                    _timings, _started_at, _previous_at, "cache_stale_hit"
+                )
+                _set_feed_timing_header(response, _started_at)
+                return _json_module.loads(stale)
         except Exception:
             _cache_key = None
 
@@ -1416,9 +1426,9 @@ async def get_feed(
     # --- Write to cache ---
     if _cache_key and _async_redis:
         try:
-            await _async_redis.setex(
-                _cache_key, _cache_ttl, _json_module.dumps(payload, default=str)
-            )
+            _payload_json = _json_module.dumps(payload, default=str)
+            await _async_redis.setex(_cache_key, _cache_ttl, _payload_json)
+            await _async_redis.setex(f"{_cache_key}:stale", 300, _payload_json)
             await _async_redis.aclose()
         except Exception:
             pass
