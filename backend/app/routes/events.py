@@ -3197,10 +3197,10 @@ async def get_game_markets(
             if game_ticker_conditions:
                 category_or_ticker.extend(game_ticker_conditions)
 
-            # Time window: only match markets whose commence_time is within ±12h
-            # of this event. Prevents Game 1's 1H total from leaking into Game 3.
-            time_lower = event.commence_time - timedelta(hours=12)
-            time_upper = event.commence_time + timedelta(hours=12)
+            # Time window: only match markets whose commence_time is within ±6h
+            # of this event. Prevents Game 1's markets from leaking into Game 3.
+            time_lower = event.commence_time - timedelta(hours=6)
+            time_upper = event.commence_time + timedelta(hours=6)
 
             # Also find Polymarket sub-markets via parent group_id.
             # Polymarket series events (e.g., "Celtics vs. 76ers") contain sub-markets
@@ -3214,13 +3214,9 @@ async def get_game_markets(
                     FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
                     or_(*home_conditions),
                     or_(*away_conditions),
-                    or_(
-                        and_(
-                            FuturesMarket.commence_time >= time_lower,
-                            FuturesMarket.commence_time <= time_upper,
-                        ),
-                        FuturesMarket.commence_time.is_(None),
-                    ),
+                    FuturesMarket.commence_time.isnot(None),
+                    FuturesMarket.commence_time >= time_lower,
+                    FuturesMarket.commence_time <= time_upper,
                 )
                 .limit(5)
             )
@@ -3251,19 +3247,25 @@ async def get_game_markets(
                     sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),
-                    or_(
-                        and_(
-                            FuturesMarket.commence_time >= time_lower,
-                            FuturesMarket.commence_time <= time_upper,
-                        ),
-                        FuturesMarket.commence_time.is_(None),
-                    ),
+                    FuturesMarket.commence_time.isnot(None),
+                    FuturesMarket.commence_time >= time_lower,
+                    FuturesMarket.commence_time <= time_upper,
                 )
             )
             linked_ids = {m.id for m in markets}
+            from app.utils.prediction_market_matching import extract_game_date_from_ticker
+            event_date = event.commence_time.date() if event.commence_time else None
             for m in unlinked_result.scalars().all():
-                if m.id not in linked_ids:
-                    markets.append(m)
+                if m.id in linked_ids:
+                    continue
+                # Extra safety: if the ticker encodes a game date, require it
+                # matches the event date (prevents cross-game contamination
+                # in multi-game series with the same teams)
+                if event_date and m.external_id:
+                    ticker_date = extract_game_date_from_ticker(m.external_id)
+                    if ticker_date and ticker_date.date() != event_date:
+                        continue
+                markets.append(m)
 
     if not markets:
         return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None}

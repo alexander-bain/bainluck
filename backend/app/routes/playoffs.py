@@ -346,8 +346,12 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \b(?:steals|blocks|assists|rebounds|scoring)\s+(?:leader|per\s+game)\b |  # Stat categories
     \bwhich\s+teams\s+will\s+play\b |  # "Which teams will play in..." matchup markets
     \bwhich\s+cities\b    |   # Expansion city markets
-    \bcover\s+of\b        |   # "Cover of NBA 2K27"
-    \b2k\d+\b             |   # Video game markets (NBA 2K27, etc.)
+    \bcover\b             |   # "Cover of NBA 2K27", "Cover Athlete"
+    \b2k\b                |   # Video game markets (NBA 2K, 2K27, etc.)
+    \bathlete\b            |   # "Cover Athlete" novelty markets
+    \bticket\s+price\b    |   # "NBA Finals Ticket Price" prop markets
+    \bfirst\s+(?:basket|tip|score)\b |  # Opening play prop markets
+    \bopening\s+tip\b     |   # "Opening Tip Winner"
     \b\d+\+\s+(?:golf|major|championship)\b |  # "1+ golf major championship wins"
     \b(?:and|&)\b(?=.*\b(?:cup|champion|final))  |
     \besports?\b          |   # Esports markets
