@@ -326,6 +326,30 @@ class KalshiAPIService(BaseAPIClient):
             logger.warning("Failed to get candlesticks for %s: %s", ticker, e)
             return []
 
+    async def get_market_trades(
+        self,
+        ticker: str,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[dict], str | None]:
+        """Get trade history for a market.
+
+        Returns list of trades with created_time, yes_price_dollars, count_fp.
+        Works for settled markets (unlike candlesticks) but Kalshi purges
+        older trade data — returns empty for old markets.
+        """
+        params: dict = {"ticker": ticker, "limit": min(limit, 100)}
+        if cursor:
+            params["cursor"] = cursor
+
+        response = await self.client.get(
+            f"{self.BASE_URL}/markets/trades",
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("trades", []), data.get("cursor") or None
+
     async def get_market_candlesticks_batch(
         self,
         tickers: list[str],

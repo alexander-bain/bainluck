@@ -1092,6 +1092,132 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
+async def _backfill_trade_history(limit: int = 500):
+    """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob.
+
+    For resolved outcomes where calibration_probability IS NULL (no pre-game
+    snapshot found), fetches individual trades from the Kalshi API and creates
+    snapshots. This recovers real traded prices that our 2-hour polling missed.
+
+    Kalshi purges trade history after some period — older markets return empty.
+    We process what's available and move on.
+    """
+    import asyncio
+    from dateutil.parser import parse as _dt_parse
+
+    stats = {"candidates": 0, "tickers_fetched": 0, "trades_found": 0,
+             "snapshots_created": 0, "empty": 0, "errors": []}
+
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+        service = KalshiAPIService()
+
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                           fm.commence_time
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    WHERE fm.status = 'resolved'
+                      AND fm.source = 'kalshi'
+                      AND fo.calibration_probability IS NULL
+                      AND fo.opening_probability IS NOT NULL
+                      AND fo.external_id IS NOT NULL
+                    ORDER BY fm.commence_time DESC NULLS LAST
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            )
+            candidates = result.fetchall()
+            stats["candidates"] = len(candidates)
+
+            if not candidates:
+                return stats
+
+            logger.info("Trade history backfill: %d candidates", len(candidates))
+
+            import time as _time
+            _start = _time.monotonic()
+
+            for row in candidates:
+                if (_time.monotonic() - _start) > 540:
+                    logger.info("Trade history backfill: time budget after %d tickers",
+                                stats["tickers_fetched"])
+                    break
+
+                try:
+                    trades, _ = await service.get_market_trades(row.ticker, limit=100)
+                    stats["tickers_fetched"] += 1
+                except Exception as e:
+                    if "429" in str(e):
+                        await asyncio.sleep(5)
+                    stats["errors"].append(f"{row.ticker}: {e}")
+                    continue
+
+                if not trades:
+                    stats["empty"] += 1
+                    continue
+
+                stats["trades_found"] += len(trades)
+
+                for trade in trades:
+                    try:
+                        price = float(trade.get("yes_price_dollars", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    if price <= 0 or price >= 1:
+                        continue
+
+                    try:
+                        captured = _dt_parse(trade["created_time"])
+                    except Exception:
+                        continue
+
+                    await session.execute(
+                        text("""
+                            INSERT INTO futures_odds_snapshots
+                                (outcome_id, bookmaker, probability, last_price, captured_at)
+                            VALUES (:oid, 'kalshi', :prob, :price, :ts)
+                            ON CONFLICT DO NOTHING
+                        """),
+                        {"oid": row.outcome_id, "prob": round(price, 6),
+                         "price": round(price, 4), "ts": captured},
+                    )
+                    stats["snapshots_created"] += 1
+
+                if stats["tickers_fetched"] % 50 == 0:
+                    await session.commit()
+                    await asyncio.sleep(0.5)
+
+            # Reset cal_prob for outcomes that got new snapshots
+            if stats["snapshots_created"] > 0:
+                ids = [r.outcome_id for r in candidates[:stats["tickers_fetched"]]]
+                await session.execute(
+                    text("""
+                        UPDATE futures_outcomes
+                        SET calibration_probability = NULL
+                        WHERE id = ANY(:ids)
+                    """),
+                    {"ids": ids},
+                )
+            await session.commit()
+
+        await service.close()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Trade history backfill error: %s", e)
+
+    logger.info(
+        "Trade history backfill: %d candidates, %d fetched, %d trades, "
+        "%d snapshots, %d empty, %d errors",
+        stats["candidates"], stats["tickers_fetched"], stats["trades_found"],
+        stats["snapshots_created"], stats["empty"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_candlestick_snapshots(limit: int = 5000):
     """Backfill previous_price snapshots for ALL settled Kalshi series.
 
