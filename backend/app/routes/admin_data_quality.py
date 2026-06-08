@@ -4984,6 +4984,18 @@ async def datagolf_retag(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
+    # Fix: restore multi_max_prob winners that were wrongly retagged
+    fix = await db.execute(text("""
+        UPDATE futures_outcomes fo
+        SET resolution_source = 'multi_max_prob'
+        FROM futures_markets fm
+        WHERE fo.market_id = fm.id
+          AND fm.source = 'datagolf'
+          AND fo.is_winner = true
+          AND fo.resolution_source = 'did_not_play'
+    """))
+
+    # Only retag non-authoritative LOSER sources (not multi_max_prob)
     r = await db.execute(text("""
         UPDATE futures_outcomes fo
         SET resolution_source = 'did_not_play'
@@ -4992,10 +5004,10 @@ async def datagolf_retag(
           AND fm.source = 'datagolf'
           AND fm.status = 'resolved'
           AND fo.is_winner = false
-          AND fo.resolution_source IN ('all_losers', 'pass2_loser', 'multi_max_prob')
+          AND fo.resolution_source IN ('all_losers', 'pass2_loser')
     """))
     await db.commit()
-    return {"retagged": r.rowcount}
+    return {"restored_winners": fix.rowcount, "retagged_losers": r.rowcount}
 
 
 @router.get("/calibration-datagolf-diagnosis")

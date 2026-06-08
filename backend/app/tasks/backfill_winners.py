@@ -3531,7 +3531,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fm.source = 'datagolf'
                       AND fm.status = 'resolved'
                       AND fo.is_winner = false
-                      AND fo.resolution_source IN ('all_losers', 'pass2_loser', 'multi_max_prob')
+                      AND fo.resolution_source IN ('all_losers', 'pass2_loser')
                 """)
             )
             if retag2.rowcount > 0:
