@@ -4975,6 +4975,29 @@ async def calibration_mce_by_sport(
     }
 
 
+@router.post("/datagolf-retag")
+async def datagolf_retag(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Retag DataGolf non-authoritative losers as did_not_play."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        UPDATE futures_outcomes fo
+        SET resolution_source = 'did_not_play'
+        FROM futures_markets fm
+        WHERE fo.market_id = fm.id
+          AND fm.source = 'datagolf'
+          AND fm.status = 'resolved'
+          AND fo.is_winner = false
+          AND fo.resolution_source IN ('all_losers', 'pass2_loser', 'multi_max_prob')
+    """))
+    await db.commit()
+    return {"retagged": r.rowcount}
+
+
 @router.get("/calibration-datagolf-diagnosis")
 async def datagolf_calibration_diagnosis(
     secret: str = Query(...),
