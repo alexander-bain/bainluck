@@ -1884,6 +1884,22 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.get("/option-c-cached")
+async def option_c_cached(
+    secret: str = Query(...),
+):
+    """Read pre-computed Option C analysis from Redis (saved by scripts/option_c_analysis.py)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    rc = get_redis_client()
+    data = rc.get("bainluck:option_c_analysis")
+    if not data:
+        raise HTTPException(status_code=404, detail="Run scripts/option_c_analysis.py first")
+    return _json.loads(data)
+
+
 @router.get("/option-c-analysis")
 async def option_c_analysis(
     secret: str = Query(...),
