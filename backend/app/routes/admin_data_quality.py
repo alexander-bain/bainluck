@@ -5003,7 +5003,8 @@ async def calibration_90plus_losers(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     r = await db.execute(text("""
-        SELECT fo.name, fm.name AS market_name, fm.source, fm.external_id,
+        SELECT fo.name, fm.name AS market_name, fm.source,
+               fm.external_id AS market_ext_id, fo.external_id AS outcome_ext_id,
                fo.opening_probability, fo.calibration_probability,
                fo.is_winner, fo.resolution_source,
                (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snaps
@@ -5023,7 +5024,8 @@ async def calibration_90plus_losers(
     samples = [
         {
             "outcome": row.name, "market": row.market_name[:50],
-            "source": row.source, "ext_id": row.external_id[:40],
+            "source": row.source, "mkt_ext": row.market_ext_id[:40],
+            "outcome_ext": row.outcome_ext_id[:60] if row.outcome_ext_id else None,
             "open": round(float(row.opening_probability), 4) if row.opening_probability else None,
             "cal": round(float(row.calibration_probability), 4) if row.calibration_probability else None,
             "resolution": row.resolution_source, "snaps": row.snaps,
