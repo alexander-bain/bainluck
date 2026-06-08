@@ -1528,11 +1528,11 @@ async def _get_halftime_score(session, event_id: int):
             SELECT home_score, away_score
             FROM scoring_plays
             WHERE event_id = :eid
-              AND LOWER(period) IN :periods
+              AND LOWER(period) = ANY(:periods)
             ORDER BY captured_at DESC
             LIMIT 1
         """),
-        {"eid": event_id, "periods": tuple(_FIRST_HALF_PERIODS)},
+        {"eid": event_id, "periods": list(_FIRST_HALF_PERIODS)},
     )
     row = result.first()
     if row:
@@ -1756,10 +1756,10 @@ async def _resolve_kalshi_period_props():
                         text("""
                             SELECT home_score, away_score FROM scoring_plays
                             WHERE event_id = :eid
-                              AND LOWER(period) IN :periods
+                              AND LOWER(period) = ANY(:periods)
                             ORDER BY captured_at DESC LIMIT 1
                         """),
-                        {"eid": row.event_id, "periods": tuple(periods)},
+                        {"eid": row.event_id, "periods": list(periods)},
                     )
 
                 play_row = plays.first()
