@@ -1884,6 +1884,132 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.get("/option-c-analysis")
+async def option_c_analysis(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exact numbers for Option C: re-null clean_resolution winners that
+    originated from pass2_guess and are blocking score-based resolution."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    queries = {}
+
+    r = await db.execute(text("""
+        SELECT COUNT(*) FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'clean_resolution'
+          AND fo.is_winner = true
+          AND fm.source = 'kalshi' AND fm.status = 'resolved'
+    """))
+    queries["kalshi_clean_winners_total"] = r.scalar()
+
+    r = await db.execute(text("""
+        SELECT COUNT(DISTINCT fm.id) FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND fo.resolution_source = 'clean_resolution' AND fo.is_winner = true
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo2
+              WHERE fo2.market_id = fm.id
+                AND fo2.resolution_source = 'pass2_guess'
+          )
+    """))
+    queries["markets_with_clean_winner_AND_pass2guess_sibling"] = r.scalar()
+
+    r = await db.execute(text("""
+        SELECT COUNT(fo.id) FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'clean_resolution'
+          AND fo.is_winner = true AND fm.source = 'kalshi'
+          AND e.home_score IS NOT NULL AND e.status IN ('completed', 'closed')
+    """))
+    queries["clean_winners_with_game_scores"] = r.scalar()
+
+    r = await db.execute(text("""
+        SELECT COUNT(fo.id) FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'pass2_guess'
+          AND fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND e.home_score IS NOT NULL AND e.status IN ('completed', 'closed')
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo2
+              WHERE fo2.market_id = fm.id
+                AND fo2.resolution_source = 'clean_resolution'
+                AND fo2.is_winner = true
+          )
+    """))
+    queries["pass2_guess_BLOCKED_by_clean_winner_sibling"] = r.scalar()
+
+    r = await db.execute(text("""
+        SELECT regexp_replace(fm.external_id, '-.*', ''), COUNT(fo.id)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'clean_resolution'
+          AND fo.is_winner = true AND fm.source = 'kalshi'
+          AND e.home_score IS NOT NULL
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 15
+    """))
+    queries["clean_winners_with_scores_by_prefix"] = {
+        row[0]: row[1] for row in r.fetchall()
+    }
+
+    r = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN fo.current_probability >= 0.95 THEN 'prob>=0.95'
+                WHEN fo.current_probability >= 0.50 THEN 'prob 0.50-0.95'
+                WHEN fo.current_probability IS NULL THEN 'prob NULL'
+                ELSE 'prob<0.50 (LIKELY WRONG)'
+            END, COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'clean_resolution'
+          AND fo.is_winner = true AND fm.source = 'kalshi'
+        GROUP BY 1 ORDER BY 2 DESC
+    """))
+    queries["clean_winner_probability_distribution"] = {
+        row[0]: row[1] for row in r.fetchall()
+    }
+
+    r = await db.execute(text("""
+        SELECT fm.source, fo.is_winner, COUNT(*)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'clean_resolution'
+        GROUP BY 1, 2 ORDER BY 3 DESC
+    """))
+    queries["all_clean_resolution_by_source"] = [
+        {"source": row[0], "is_winner": row[1], "count": row[2]}
+        for row in r.fetchall()
+    ]
+
+    # What Option C would re-null: clean_resolution winners on markets
+    # that have game scores AND still have pass2_guess siblings
+    r = await db.execute(text("""
+        SELECT COUNT(fo.id)
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        JOIN events e ON fm.event_id = e.id
+        WHERE fo.resolution_source = 'clean_resolution'
+          AND fo.is_winner = true AND fm.source = 'kalshi'
+          AND e.home_score IS NOT NULL AND e.status IN ('completed', 'closed')
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo2
+              WHERE fo2.market_id = fm.id
+                AND fo2.resolution_source IN ('pass2_guess', 'pass2_loser',
+                    'binary_higher_wins', 'multi_max_prob')
+          )
+    """))
+    queries["option_c_re_null_count"] = r.scalar()
+
+    return queries
+
+
 @router.get("/retrotag-pool")
 async def retrotag_pool(
     secret: str = Query(...),
