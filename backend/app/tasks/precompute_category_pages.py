@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Redis key prefix and TTL (2 hours — task runs every 1h, so there's overlap)
 CACHE_PREFIX = "bainluck:category:"
 CACHE_TTL = 7200
+STALE_CACHE_TTL = 86400  # 24 hours — served when primary cache is cold
 
 
 async def _precompute_politics():
@@ -46,7 +47,9 @@ async def _precompute_entertainment():
         response = await get_entertainment(db)
 
     rc = get_redis_client()
-    rc.set(f"{CACHE_PREFIX}entertainment", json.dumps(response, default=str), ex=CACHE_TTL)
+    payload = json.dumps(response, default=str)
+    rc.set(f"{CACHE_PREFIX}entertainment", payload, ex=CACHE_TTL)
+    rc.set(f"{CACHE_PREFIX}entertainment:stale", payload, ex=STALE_CACHE_TTL)
     logger.info("Cached entertainment category page (%d markets)", response.get("total_markets", 0))
     return response.get("total_markets", 0)
 
@@ -61,7 +64,9 @@ async def _precompute_economics():
         response = await get_economics(db)
 
     rc = get_redis_client()
-    rc.set(f"{CACHE_PREFIX}economics", json.dumps(response, default=str), ex=CACHE_TTL)
+    payload = json.dumps(response, default=str)
+    rc.set(f"{CACHE_PREFIX}economics", payload, ex=CACHE_TTL)
+    rc.set(f"{CACHE_PREFIX}economics:stale", payload, ex=STALE_CACHE_TTL)
     logger.info("Cached economics category page (%d markets)", response.get("total_markets", 0))
     return response.get("total_markets", 0)
 

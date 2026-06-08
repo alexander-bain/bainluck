@@ -3526,8 +3526,9 @@ async def get_game_markets(
                     "source": market.source,
                 })
 
-    # 6. Sort totals by threshold value
+    # 6. Sort totals and spreads by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
+    spreads.sort(key=lambda s: s.get("threshold") or 0)
 
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
@@ -3628,6 +3629,16 @@ async def get_game_markets(
     for group in team_total_by_side.values():
         group.sort(key=lambda x: x.get("threshold", 0) or 0)
         team_total_items.extend(_enforce_monotonicity(group))
+
+    # 7d. Enforce monotonicity on spreads — group by team side
+    spread_by_side: dict[str, list[dict]] = {}
+    for sp in spreads:
+        side = sp.get("team_side", "unknown")
+        spread_by_side.setdefault(side, []).append(sp)
+    spreads = []
+    for group in spread_by_side.values():
+        group.sort(key=lambda x: abs(x.get("threshold", 0) or 0))
+        spreads.extend(_enforce_monotonicity(group, prob_key="probability"))
 
     # 8. Calculate pace
     pace = _estimate_game_pace(

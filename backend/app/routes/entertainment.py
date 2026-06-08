@@ -450,19 +450,50 @@ def _build_cultural(themed: dict) -> list[dict]:
 
 @router.get("")
 async def get_entertainment_cached(db: AsyncSession = Depends(get_db)):
-    """Return all entertainment market data (Redis-cached, precomputed hourly)."""
+    """Return all entertainment market data (Redis-cached, precomputed hourly).
+
+    Falls back to a stale cache (24h TTL) when the primary cache is cold,
+    and wraps the live DB query with a 25s timeout so Heroku never kills
+    the connection.
+    """
+    import asyncio
     from app.tasks.redis_state import get_async_redis_client
 
     try:
         rc = get_async_redis_client()
         cached = await rc.get("bainluck:category:entertainment")
-        await rc.aclose()
         if cached:
+            await rc.aclose()
             return json.loads(cached)
+        # Primary cache miss — try stale fallback
+        stale = await rc.get("bainluck:category:entertainment:stale")
+        await rc.aclose()
+        if stale:
+            logger.info("Entertainment: serving stale cache (primary miss)")
+            return json.loads(stale)
     except Exception:
         pass  # Fall through to live query
 
-    return await get_entertainment(db)
+    # Live DB fallback with timeout guard
+    try:
+        response = await asyncio.wait_for(get_entertainment(db), timeout=25)
+    except asyncio.TimeoutError:
+        logger.warning("Entertainment live query timed out after 25s")
+        return {"error": "timeout", "themes": {}}
+
+    # Populate stale cache for future cold-cache resilience
+    try:
+        rc = get_async_redis_client()
+        await rc.set(
+            "bainluck:category:entertainment:stale",
+            json.dumps(response, default=str),
+            ex=86400,
+        )
+        await rc.aclose()
+    except Exception:
+        logger.warning("Entertainment: failed to write stale cache", exc_info=True)
+
+    return response
 
 
 async def get_entertainment(db: AsyncSession):

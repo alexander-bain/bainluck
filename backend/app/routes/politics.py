@@ -51,13 +51,23 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 ]
 
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
+    # International FIRST — prevents foreign presidential elections from matching "presidential"
+    (re.compile(
+        r"\b(?:uk\s*election|france|french|germany|german|canada|canadian|brazil|brazilian|"
+        r"mexico|mexican|australia|australian|india|indian|japan|japanese|"
+        r"colombia|colombian|chile|chilean|argentina|argentin|nigeria|nigerian|"
+        r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|"
+        r"israel|israeli|iran|iranian|taiwan|taiwanese|philippines|filipino|"
+        r"indonesia|indonesian|egypt|egyptian|south\s*korea|korean|"
+        r"italy|italian|spain|spanish|netherlands|dutch|"
+        r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy)\b", re.I,
+    ), "international"),
+    (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
     (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|primary)\b", re.I), "presidential"),
     (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|midterm|2026\s*election)\b", re.I), "congressional"),
     (re.compile(r"\b(?:governor|gubernatorial)\b", re.I), "gubernatorial"),
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
-    (re.compile(r"\b(?:uk\s*election|france|germany|canada|brazil|mexico|australia|india|japan|eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy)\b", re.I), "international"),
-    (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
     (re.compile(r"\b(?:approval\s*rating|favorab|popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
     (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador)\b", re.I), "policy"),
 ]
@@ -179,10 +189,15 @@ _BUCKET_LABEL_RE = re.compile(
 )
 
 _NON_US_RE = re.compile(
-    r"\b(?:french|france|uk\b|british|canada|canadian|german|brazil|"
-    r"mexico|australian|india|japan|eu\b|european|south\s*korea|"
-    r"democratic\s*(?:vp|vice)|mélenchon|macron|starmer|trudeau|"
-    r"modi|scholz|lula|amlo|meloni)\b",
+    r"\b(?:french|france|uk\b|british|canada|canadian|german|germany|brazil|brazilian|"
+    r"mexico|mexican|australia|australian|india|indian|japan|japanese|"
+    r"colombia|colombian|chile|chilean|argentina|argentin|nigeria|nigerian|"
+    r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|"
+    r"israel|israeli|iran|iranian|taiwan|taiwanese|philippines|filipino|"
+    r"indonesia|indonesian|egypt|egyptian|south\s*korea|korean|"
+    r"italy|italian|spain|spanish|netherlands|dutch|"
+    r"eu\b|european|mélenchon|macron|starmer|trudeau|"
+    r"modi|scholz|lula|amlo|meloni|milei|petro|boric)\b",
     re.I,
 )
 
