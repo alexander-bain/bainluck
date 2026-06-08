@@ -399,8 +399,20 @@ async def get_economics(db: AsyncSession):
     # --- Inflation section ---
     cpi_releases = []
     inflation_side = []
+    # Filter out past-month CPI markets (e.g., "May 2026" when it's June)
+    _current_month = now.month
+    _current_year = now.year
+    _MONTH_NUMS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+                   "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
     for m in inflation_markets:
         name_lower = (m.name or "").lower()
+        # Skip past-month CPI releases
+        _mo_check = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{4})\b", name_lower)
+        if _mo_check:
+            _m_num = _MONTH_NUMS.get(_mo_check.group(1)[:3], 0)
+            _m_year = int(_mo_check.group(2))
+            if (_m_year < _current_year) or (_m_year == _current_year and _m_num < _current_month):
+                continue
         outcomes = _outcomes_sorted(m)
         has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
         if ("cpi" in name_lower or "inflation" in name_lower) and len(outcomes) >= 3:

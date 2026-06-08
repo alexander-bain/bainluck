@@ -125,6 +125,10 @@ def _open_weather_query():
             not_(FuturesMarket.name.ilike("%monkeypox%")),
             not_(FuturesMarket.name.ilike("%mpox%")),
             not_(FuturesMarket.name.ilike("%ebola%")),
+            not_(FuturesMarket.name.ilike("%hantavirus%")),
+            not_(FuturesMarket.name.ilike("%vaccine%")),
+            not_(FuturesMarket.name.ilike("%measles%")),
+            not_(FuturesMarket.name.ilike("%screwworm%")),
         )
     )
 

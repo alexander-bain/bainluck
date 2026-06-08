@@ -3792,7 +3792,7 @@ async def get_game_markets(
         "spreads": spreads,
         "period_markets": period_markets,
         "matchups": matchups,
-        "other": other_markets,
+        "other": sorted(other_markets, key=lambda x: (_extract_threshold(x.get("outcome_name", "")) or 0)),
         "pace": pace,
     }
 

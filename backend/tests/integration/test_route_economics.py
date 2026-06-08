@@ -268,8 +268,8 @@ class TestEconomicsSeededInflation:
         mock_db.execute.return_value = _query_result([
             _market(
                 market_id=20,
-                name="CPI YoY for May 2026?",
-                external_id="kxcpi-may2026",
+                name="CPI YoY for Aug 2026?",
+                external_id="kxcpi-aug2026",
                 source="kalshi",
                 outcomes=[
                     _outcome("2.0%-2.5%", 0.25, outcome_id=200, rank=1),
@@ -284,7 +284,7 @@ class TestEconomicsSeededInflation:
         assert inf["count"] == 1
         assert len(inf["cpi_releases"]) == 1
         cpi = inf["cpi_releases"][0]
-        assert cpi["mo"] == "May"
+        assert cpi["mo"] == "Aug"
         assert isinstance(cpi["brackets"], list)
         assert len(cpi["brackets"]) == 3
         assert "peakIs" in cpi

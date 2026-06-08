@@ -73,10 +73,15 @@ def source(market: FuturesMarket) -> str:
 
 
 def is_resolved(market: FuturesMarket) -> bool:
-    """A market is effectively resolved if any outcome is >= 99%."""
-    for o in market.outcomes:
-        if float(o.current_probability or 0) >= 0.99:
-            return True
+    """A market is effectively resolved if any outcome is >= 99% or all near-zero."""
+    probs = [float(o.current_probability or 0) for o in market.outcomes
+             if o.current_probability is not None]
+    if not probs:
+        return False
+    if any(p >= 0.99 for p in probs):
+        return True
+    if len(probs) >= 2 and all(p <= 0.01 for p in probs):
+        return True
     return False
 
 

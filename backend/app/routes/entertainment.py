@@ -54,6 +54,8 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxrt", "movies"),
     ("kxbeastgames", "tv_streaming"),
     ("kxbachelor", "tv_streaming"),
+    ("kxloveisland", "tv_streaming"),
+    ("kxli", "tv_streaming"),
     ("kxpodcast", "social_media"),
     ("kxelon", "social_media"),
     ("kxmusk", "social_media"),
@@ -62,7 +64,7 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross|worldwide\s*gross|film|movie)\b", re.I), "movies"),
     (re.compile(r"\b(?:rotten\s*tomatoes|RT\s*score|critic\s*score|tomatometer)\b", re.I), "movies"),
-    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|bachelor|big\s*brother|beast\s*games)\b", re.I), "tv_streaming"),
+    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|bachelor|big\s*brother|beast\s*games|love\s*island)\b", re.I), "tv_streaming"),
     (re.compile(r"\b(?:spotify|billboard|hot\s*100|album|song|artist|concert|tour|grammy|music|rapper|singer|band)\b", re.I), "music"),
     (re.compile(r"\b(?:oscar|emmy|golden\s*globe|sag\s*award|tony|bafta|cannes|sundance|venice\s*film)\b", re.I), "awards"),
     (re.compile(r"\b(?:youtube|tiktok|instagram|twitter|x\.com|subscriber|follower|views|viral|mrbeast|influencer|streamer|twitch|podcast|elon|musk|tweet)\b", re.I), "social_media"),
