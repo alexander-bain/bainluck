@@ -3154,32 +3154,13 @@ async def _resolve_winners_only(limit: int = 2000):
         "player_props": player_prop_stats.get("resolved", 0),
     }
 
-    # Kalshi API settlement — targeted first (only events needing work),
-    # then per-event broad sweep, then markets API pagination
-    kalshi_targeted_stats = await _backfill_kalshi_winners_targeted(limit=limit)
-    kalshi_stats = await _backfill_kalshi_winners(limit=limit)
-    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
-    stats["kalshi_targeted"] = {
-        "winners": kalshi_targeted_stats.get("winners_set", 0),
-        "losers": kalshi_targeted_stats.get("losers_set", 0),
-        "api_empty": kalshi_targeted_stats.get("api_empty", 0),
-        "queried": kalshi_targeted_stats.get("tickers_queried", 0),
-    }
-    stats["kalshi_api"] = {
-        "winners": kalshi_stats.get("winners_set", 0),
-        "losers": kalshi_stats.get("losers_set", 0),
-        "api_miss": kalshi_stats.get("api_miss", 0),
-    }
+    # Kalshi markets API pagination (the only API path that still finds
+    # unresolved outcomes — per-event and targeted both return empty).
+    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=10000)
     stats["kalshi_markets"] = {
         "winners": kalshi_markets_stats.get("winners_set", 0),
         "losers": kalshi_markets_stats.get("losers_set", 0),
         "pages": kalshi_markets_stats.get("pages", 0),
-    }
-
-    # Polymarket API settlement
-    poly_stats = await _backfill_polymarket_winners_from_api(limit=10000)
-    stats["polymarket_api"] = {
-        "winners": poly_stats.get("winners_set", 0) + poly_stats.get("api_winners", 0),
     }
 
     # Clean resolution (Pass 1 only)
