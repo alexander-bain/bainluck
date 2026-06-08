@@ -71,12 +71,22 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
 ]
 
 
+_ENTERTAINMENT_EXCLUDE_RE = re.compile(
+    r"\b(?:net\s*worth|stock|share\s*price|market\s*cap|IPO|revenue|"
+    r"earnings|quarterly|valuation|GDP|CPI|inflation|interest\s*rate|"
+    r"SpaceX\s+launch|launch\s+count|rocket)\b",
+    re.IGNORECASE,
+)
+
+
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
     for prefix, theme in _THEME_BY_TICKER:
         if ext.startswith(prefix):
             return theme
     name = market.name or ""
+    if _ENTERTAINMENT_EXCLUDE_RE.search(name):
+        return "excluded"
     for pat, theme in _THEME_BY_NAME:
         if pat.search(name):
             return theme
@@ -527,6 +537,8 @@ async def get_entertainment(db: AsyncSession):
         if _is_resolved(m):
             continue
         theme = _classify_theme(m)
+        if theme == "excluded":
+            continue
         themed[theme].append(m)
 
     # Build all enriched rows for trending scoring

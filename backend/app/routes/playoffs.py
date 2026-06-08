@@ -377,6 +377,12 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bplayer\s+points\b   |   # "Player Points" props
     \bNIT\b               |   # NIT Tournament (not NCAA Tournament)
     \bseed\s+to\s+win\b   |   # "Seed to win the Championship" props
+    \battend\b            |   # "Will Trump attend the NBA Finals?"
+    \bexact\s+(?:series\s+)?score\b |  # Exact series score markets
+    \b\d+-\d+\b.*\bexact\b |  # "4-0 be the exact..." series score
+    \bseries\s+score\b    |   # "Series Score" props
+    \bfirst\s+goal\b      |   # "First Goal Scorer" props
+    \blast\s+goal\b       |   # "Last Goal Scorer" props
     \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,
