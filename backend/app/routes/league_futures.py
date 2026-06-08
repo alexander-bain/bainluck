@@ -211,6 +211,24 @@ async def get_league_futures(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all open futures markets for a league, grouped by section."""
+    import asyncio
+    import json as _json
+
+    # Redis cache: 5 min primary, 24h stale fallback
+    _cache_key = f"bainluck:league:{sport_key}"
+    _stale_key = f"{_cache_key}:stale"
+    try:
+        from app.tasks.redis_state import get_redis_client
+        _rc = get_redis_client()
+        cached = _rc.get(_cache_key)
+        if cached:
+            return _json.loads(cached.decode() if isinstance(cached, bytes) else cached)
+        stale = _rc.get(_stale_key)
+        if stale:
+            return _json.loads(stale.decode() if isinstance(stale, bytes) else stale)
+    except Exception:
+        _rc = None
+
     now = datetime.now(timezone.utc)
 
     # Determine the sport category from the key
@@ -263,7 +281,10 @@ async def get_league_futures(
         .limit(200)
     )
 
-    result = await db.execute(query)
+    try:
+        result = await asyncio.wait_for(db.execute(query), timeout=25)
+    except asyncio.TimeoutError:
+        return {"sport_key": sport_key, "sections": {}, "total_markets": 0, "error": "timeout"}
     markets = list(result.scalars().unique().all())
 
     # Group by section + deduplicate by canonical_market_key
@@ -357,8 +378,18 @@ async def get_league_futures(
     # Remove empty sections
     sections = {k: v for k, v in sections.items() if v}
 
-    return {
+    response = {
         "sport_key": sport_key,
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),
     }
+
+    try:
+        if _rc:
+            payload = _json.dumps(response, default=str)
+            _rc.setex(_cache_key, 300, payload)
+            _rc.setex(_stale_key, 86400, payload)
+    except Exception:
+        pass
+
+    return response

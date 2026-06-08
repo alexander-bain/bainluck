@@ -655,6 +655,10 @@ EPL_CONFIG = LeagueConfig(
         r"\bScottish\b",
         r"\bRussian\b",
         r"\bUkrainian\b",
+        r"\bEFL\b",
+        r"\bChampionship\b(?!.*League)",
+        r"\bLeague One\b",
+        r"\bLeague Two\b",
     ],
     columns=[
         GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
