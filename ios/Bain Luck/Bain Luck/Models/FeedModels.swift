@@ -70,6 +70,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     // One of these will be populated based on `type`
     let event: FeedEventData?
     let futures: FeedFuturesData?
+    let tournament: FeedTournamentData?
 
     // Personalization fields
     let personalized: Bool?
@@ -80,6 +81,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     var id: String {
         if let e = event { return "event-\(e.id)" }
         if let f = futures { return "futures-\(f.id)" }
+        if let t = tournament { return "tournament-\(t.key)" }
         return [
             "feed",
             type,
@@ -121,9 +123,15 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         if type == "event" {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
             futures = nil
+            tournament = nil
+        } else if type == "tournament" {
+            tournament = try c.decodeIfPresent(FeedTournamentData.self, forKey: .data)
+            event = nil
+            futures = nil
         } else {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
+            tournament = nil
         }
     }
 }
@@ -179,6 +187,37 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let matchedOutcomes: [MatchedOutcome]?
 }
 
+// MARK: - Feed Tournament Data
+
+/// Tournament payload embedded inside a tournament-type feed card.
+nonisolated struct FeedTournamentData: Decodable, Sendable {
+    let key: String
+    let name: String
+    let slug: String?
+    let tour: String?
+    let tourLabel: String?
+    let isMajor: Bool?
+    let venue: String?
+    let location: String?
+    let startDate: String?
+    let endDate: String?
+    let scheduleStatus: String?
+    let commenceTime: String?
+    let resolutionDate: String?
+    let golfers: [FeedTournamentGolfer]?
+    let sourceCount: Int?
+}
+
+/// Golfer entry in a tournament feed card.
+nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
+    let name: String
+    let probability: Double
+    let rank: Int
+    let movement24h: Double?
+
+    var id: String { name }
+}
+
 /// Outcome matched to the user's followed team (from my_teams_only feed).
 nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     let name: String
@@ -212,6 +251,11 @@ nonisolated struct PinsResponse: Decodable, Sendable {
 nonisolated struct PinRequest: Encodable, Sendable {
     let pinType: String
     let targetId: Int
+
+    enum CodingKeys: String, CodingKey {
+        case pinType = "pin_type"
+        case targetId = "target_id"
+    }
 }
 
 // MARK: - Grouped Feed Response

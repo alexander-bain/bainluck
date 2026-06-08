@@ -215,6 +215,7 @@ struct DiscoverView: View {
     private func itemId(_ item: FeedItem) -> String {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
+        if let t = item.tournament { return "tournament-\(t.key)" }
         return UUID().uuidString
     }
 
@@ -227,12 +228,14 @@ struct DiscoverView: View {
     private func rawItemId(_ item: FeedItem) -> String {
         if let e = item.event { return String(e.id) }
         if let f = item.futures { return String(f.id) }
+        if let t = item.tournament { return t.key }
         return item.id
     }
 
     private func itemName(_ item: FeedItem) -> String? {
         if let e = item.event { return "\(e.awayTeam) vs \(e.homeTeam)" }
         if let f = item.futures { return f.name }
+        if let t = item.tournament { return t.name }
         return nil
     }
 
@@ -708,6 +711,12 @@ struct DiscoverView: View {
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
+                                    } else if item.type == "tournament", let t = item.tournament {
+                                        NativeTournamentDiscoverCard(
+                                            data: t,
+                                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                                            navigationPath: $navigationPath
+                                        )
                                     }
                                 }
                             }

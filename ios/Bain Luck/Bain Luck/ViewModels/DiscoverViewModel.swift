@@ -25,9 +25,20 @@ final class DiscoverViewModel: ObservableObject {
         for attempt in 1...3 {
             do {
                 let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
-                items = Self.interleave(response.items)
-                hasMore = response.hasMore
-                nextOffset = response.offset + response.items.count
+                let renderable = response.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil }
+
+                if renderable.count < 10 {
+                    let fallback = try await APIClient.shared.fetchFeed(limit: 200, cacheTTL: nil)
+                    let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil }
+                    items = Self.interleave(fallbackRenderable)
+                    hasMore = fallback.hasMore
+                    nextOffset = fallback.offset + fallback.items.count
+                } else {
+                    items = Self.interleave(renderable)
+                    hasMore = response.hasMore
+                    nextOffset = response.offset + response.items.count
+                }
+
                 error = nil
                 loading = false
                 return
