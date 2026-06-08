@@ -1338,7 +1338,6 @@ async def _resolve_kalshi_spread_total_from_scores():
                                    ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
-                       AND COUNT(*) <= 2
                     LIMIT 10000
                 """)
             )
@@ -3256,6 +3255,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         candlestick_stats["errors"].append(str(e))
         logger.warning("Candlestick backfill failed: %s", e)
+
+    # Phase 0-trades: Backfill snapshots from Kalshi trade history for outcomes
+    # missing calibration_probability. Creates real traded-price snapshots that
+    # our 2-hour polling missed. Must run BEFORE calibration price computation.
+    trade_stats = {"snapshots_created": 0, "errors": []}
+    try:
+        from app.tasks.kalshi import _backfill_trade_history
+        trade_stats = await _backfill_trade_history(limit=500)
+    except Exception as e:
+        trade_stats["errors"].append(str(e))
+        logger.warning("Trade history backfill failed: %s", e)
 
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
