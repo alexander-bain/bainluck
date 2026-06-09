@@ -16,7 +16,7 @@ router = APIRouter(prefix="/admin/source-health", tags=["admin-source-health"])
 
 def _check_admin_secret(secret: str) -> bool:
     import os
-    return secret == os.getenv("ADMIN_SECRET", "")
+    return secret == os.getenv("ADMIN_TOKEN", os.getenv("ADMIN_SECRET", ""))
 
 
 # Map each source to its primary task names for Redis metric lookups
