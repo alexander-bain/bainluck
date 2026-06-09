@@ -545,6 +545,48 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 stats["errors"].append({"check": check_name, "error": str(exc)[:200]})
                 # Continue to next check — don't let one failure block others
 
+    # --- Link rate change detection ---
+    # Snapshot per-sport/league link rates and alert on significant changes.
+    try:
+        link_rates = {}
+        for source in ("kalshi", "polymarket"):
+            lr_result = await session.execute(text(f"""
+                SELECT llm_sport_category,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE event_id IS NOT NULL) AS linked
+                FROM futures_markets
+                WHERE source = '{source}'
+                  AND status = 'open'
+                  AND llm_sport_category IS NOT NULL
+                  AND (category IS NULL OR category NOT IN ('championship','award','season_win_total','player_futures','division','conference'))
+                GROUP BY llm_sport_category
+                HAVING COUNT(*) >= 5
+            """))
+            for row in lr_result.all():
+                sport, total, linked = row[0], row[1], row[2]
+                pct = round(100.0 * linked / max(total, 1), 1)
+                link_rates[f"{source}:{sport}"] = pct
+
+        from app.tasks.redis_state import record_link_rate_snapshot, get_link_rate_changes
+        record_link_rate_snapshot(link_rates)
+
+        changes = get_link_rate_changes(threshold_pp=5.0)
+        drops = [c for c in changes if c.get("delta") is not None and c["delta"] < -5]
+        if drops:
+            for drop in drops:
+                alert_msg = (
+                    f"Link rate drop: {drop['key']} went from "
+                    f"{drop['yesterday']}% to {drop['today']}% "
+                    f"({drop['delta']:+.1f}pp)"
+                )
+                logger.warning(alert_msg)
+                stats["alerts_fired"] += 1
+            stats["link_rate_drops"] = drops
+
+        stats["link_rate_snapshot"] = link_rates
+    except Exception as exc:
+        logger.warning("Link rate snapshot failed: %s", exc)
+
     logger.info(
         "Watchdog complete: %d/%d passed, %d alerts fired, %d deduped, %d errors",
         stats["checks_passed"],
