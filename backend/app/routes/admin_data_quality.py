@@ -1901,20 +1901,27 @@ async def trigger_kalshi_targeted(
     return stats
 
 
-@router.get("/option-c-cached")
-async def option_c_cached(
+@router.get("/redis-read")
+async def redis_read(
     secret: str = Query(...),
+    key: str = Query("bainluck:option_c_analysis"),
 ):
-    """Read pre-computed Option C analysis from Redis (saved by scripts/option_c_analysis.py)."""
+    """Read any bainluck: prefixed Redis key. For diagnostic scripts that
+    save results to Redis for retrieval via the API."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not key.startswith("bainluck:"):
+        raise HTTPException(status_code=400, detail="Key must start with bainluck:")
     import json as _json
     from app.tasks.redis_state import get_redis_client
     rc = get_redis_client()
-    data = rc.get("bainluck:option_c_analysis")
+    data = rc.get(key)
     if not data:
-        raise HTTPException(status_code=404, detail="Run scripts/option_c_analysis.py first")
-    return _json.loads(data)
+        raise HTTPException(status_code=404, detail=f"Key {key} not found")
+    try:
+        return _json.loads(data)
+    except Exception:
+        return {"raw": data.decode() if isinstance(data, bytes) else str(data)}
 
 
 @router.get("/option-c-analysis")
