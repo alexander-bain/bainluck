@@ -5135,7 +5135,7 @@ async def datagolf_retag(
           AND fo.resolution_source = 'did_not_play'
     """))
 
-    # Only retag non-authoritative LOSER sources (not multi_max_prob)
+    # Retag non-authoritative LOSER sources as did_not_play
     r = await db.execute(text("""
         UPDATE futures_outcomes fo
         SET resolution_source = 'did_not_play'
@@ -5144,7 +5144,8 @@ async def datagolf_retag(
           AND fm.source = 'datagolf'
           AND fm.status = 'resolved'
           AND fo.is_winner = false
-          AND fo.resolution_source IN ('all_losers', 'pass2_loser')
+          AND (fo.resolution_source IN ('all_losers', 'pass2_loser')
+               OR fo.resolution_source IS NULL)
     """))
     await db.commit()
     return {"restored_winners": fix.rowcount, "retagged_losers": r.rowcount}
