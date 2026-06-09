@@ -868,11 +868,11 @@ GOLF_CONFIG = LeagueConfig(
         r"\bGolf\b",
     ],
     columns=[
-        GridColumn(key="make_cut", label="Make Cut", order=1, sequential=False),
-        GridColumn(key="top_20", label="Top 20", order=2, sequential=False),
-        GridColumn(key="top_10", label="Top 10", order=3, sequential=False),
-        GridColumn(key="top_5", label="Top 5", order=4, sequential=False),
-        GridColumn(key="win", label="Win", order=5, sequential=False),
+        GridColumn(key="make_cut", label="Make Cut", order=1, sequential=True),
+        GridColumn(key="top_20", label="Top 20", order=2, sequential=True),
+        GridColumn(key="top_10", label="Top 10", order=3, sequential=True),
+        GridColumn(key="top_5", label="Top 5", order=4, sequential=True),
+        GridColumn(key="win", label="Win", order=5, sequential=True),
     ],
     matching_rules=[
         MarketMatchingRule(

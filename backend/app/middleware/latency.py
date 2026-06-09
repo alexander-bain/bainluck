@@ -83,6 +83,18 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
 
+        # Log memory for slow requests to diagnose OOM crashes (#809)
+        if duration_ms > 5000:
+            try:
+                import resource
+                rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+                logger.warning(
+                    "Slow request: %s %.0fms RSS=%.0fMB",
+                    path[:60], duration_ms, rss_mb,
+                )
+            except Exception:
+                pass
+
         # Sampling: only record every Nth request.
         _request_counter += 1
         if _request_counter % SAMPLE_RATE != 0:

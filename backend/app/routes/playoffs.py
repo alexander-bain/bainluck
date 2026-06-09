@@ -2237,7 +2237,7 @@ async def get_playoff_grid_cached(
         try:
             rc = get_async_redis_client()
             payload = json.dumps(result, default=str)
-            await rc.set(cache_key, payload, ex=3600)
+            await rc.set(cache_key, payload, ex=900)
             await rc.set(f"{cache_key}:stale", payload, ex=86400)
             await rc.aclose()
         except Exception:
