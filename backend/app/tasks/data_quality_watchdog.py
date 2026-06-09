@@ -88,6 +88,44 @@ CHECKS: list[dict[str, Any]] = [
         "severity": "P1",
         "message": "Polymarket winner coverage below 99% — backfill may be stalled",
     },
+    # --- ESPN freshness (P0) ---
+    {
+        "name": "espn_freshness",
+        "query": (
+            "SELECT COUNT(*) FROM events "
+            "WHERE espn_id IS NOT NULL "
+            "AND updated_at > NOW() - INTERVAL '6 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P0",
+        "message": "No ESPN-linked events updated in 6 hours — live scores, win probability, and Score Differential chart not updating",
+    },
+    # --- StatPal freshness (P1) ---
+    {
+        "name": "statpal_freshness",
+        "query": (
+            "SELECT COUNT(*) FROM events "
+            "WHERE statpal_fixture_id IS NOT NULL "
+            "AND updated_at > NOW() - INTERVAL '6 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P1",
+        "message": "No StatPal-linked events updated in 6 hours — livescores and play-by-play may be stalled",
+    },
+    # --- ScoreSnapshot freshness (P1) — core product chart data ---
+    {
+        "name": "score_snapshot_freshness",
+        "query": (
+            "SELECT COUNT(*) FROM score_snapshots "
+            "WHERE captured_at > NOW() - INTERVAL '12 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P1",
+        "message": "No ScoreSnapshots captured in 12 hours — Score Differential charts will be empty for recent games",
+    },
     # --- Snapshot sparsity (P1) ---
     {
         "name": "odds_api_sparsity",
