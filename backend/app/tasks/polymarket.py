@@ -296,7 +296,7 @@ async def _poll_polymarket_markets():
 
             try:
                 events_data = await service.get_events(
-                    active=True, closed=False, limit=100, offset=page * 100,
+                    active=None, closed=None, limit=100, offset=page * 100,
                 )
             except Exception as e:
                 logger.warning("Error fetching Polymarket page %d: %s", page, e)
