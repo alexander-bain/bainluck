@@ -769,6 +769,7 @@ def get_db_size_history(days: int = 90) -> list:
 # =============================================================================
 
 LINK_RATE_SNAPSHOT_PREFIX = "bainluck:link_rate_snapshot"
+SOURCE_COVERAGE_SNAPSHOT_PREFIX = "bainluck:source_coverage_snapshot"
 
 
 def record_link_rate_snapshot(rates: dict[str, float]) -> None:
@@ -826,6 +827,56 @@ def get_link_rate_changes(threshold_pp: float = 5.0) -> list[dict]:
                 changes.append({"key": key, "today": t, "yesterday": None, "delta": None, "note": "new"})
             elif t is None and y is not None:
                 changes.append({"key": key, "today": None, "yesterday": y, "delta": None, "note": "disappeared"})
+
+        return sorted(changes, key=lambda c: abs(c.get("delta") or 0), reverse=True)
+    except Exception:
+        return []
+
+
+def record_source_coverage_snapshot(rates: dict[str, float]) -> None:
+    """Store today's per-sport/source event coverage rates in Redis."""
+    from datetime import datetime, timezone
+    try:
+        r = get_redis_client()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{SOURCE_COVERAGE_SNAPSHOT_PREFIX}:{today}"
+        r.hset(key, mapping={k: str(v) for k, v in rates.items()})
+        r.expire(key, 86400 * 7)
+    except Exception:
+        pass
+
+
+def get_source_coverage_changes(threshold_pp: float = 5.0) -> list[dict]:
+    """Compare today's source coverage vs yesterday's. Return significant changes."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        r = get_redis_client()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        today_data = r.hgetall(f"{SOURCE_COVERAGE_SNAPSHOT_PREFIX}:{today}")
+        yesterday_data = r.hgetall(f"{SOURCE_COVERAGE_SNAPSHOT_PREFIX}:{yesterday}")
+
+        if not today_data or not yesterday_data:
+            return []
+
+        def _decode(d):
+            return {
+                (k.decode() if isinstance(k, bytes) else k): float(v.decode() if isinstance(v, bytes) else v)
+                for k, v in d.items()
+            }
+
+        today_rates = _decode(today_data)
+        yesterday_rates = _decode(yesterday_data)
+
+        changes = []
+        for key in set(today_rates) | set(yesterday_rates):
+            t = today_rates.get(key)
+            y = yesterday_rates.get(key)
+            if t is not None and y is not None:
+                delta = t - y
+                if abs(delta) >= threshold_pp:
+                    changes.append({"key": key, "today": t, "yesterday": y, "delta": round(delta, 1)})
 
         return sorted(changes, key=lambda c: abs(c.get("delta") or 0), reverse=True)
     except Exception:

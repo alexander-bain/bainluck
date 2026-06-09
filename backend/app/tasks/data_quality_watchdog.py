@@ -587,6 +587,60 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Link rate snapshot failed: %s", exc)
 
+    # --- Event-level source coverage change detection ---
+    # "What % of events have data from each source?" — the metric that
+    # matches the user experience on event detail pages.
+    try:
+        from app.tasks.redis_state import record_source_coverage_snapshot, get_source_coverage_changes
+
+        # Tier 1 sports only — these are the ones users actually look at
+        _TIER1 = ("basketball_nba", "icehockey_nhl", "baseball_mlb",
+                  "americanfootball_nfl", "basketball_wnba", "basketball_ncaab")
+        _SOURCES = ("betting", "espn", "kalshi", "polymarket", "stat_model", "mlb")
+
+        coverage = {}
+        for sport in _TIER1:
+            cov_result = await session.execute(text(f"""
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'betting') AS has_betting,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'espn') AS has_espn,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'kalshi') AS has_kalshi,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'polymarket') AS has_polymarket,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'stat_model') AS has_stat_model,
+                    COUNT(*) FILTER (WHERE win_probability_sources ? 'mlb') AS has_mlb
+                FROM events e
+                JOIN sports s ON e.sport_id = s.id
+                WHERE s.key = :sport
+                  AND e.status IN ('scheduled', 'live', 'completed', 'closed')
+                  AND e.commence_time > NOW() - INTERVAL '7 days'
+            """), {"sport": sport})
+            row = cov_result.first()
+            if row and row[0] > 0:
+                total = row[0]
+                for i, src in enumerate(_SOURCES):
+                    pct = round(100.0 * row[i + 1] / total, 1)
+                    coverage[f"{sport}:{src}"] = pct
+
+        record_source_coverage_snapshot(coverage)
+
+        cov_changes = get_source_coverage_changes(threshold_pp=5.0)
+        cov_drops = [c for c in cov_changes if c.get("delta") is not None and c["delta"] < -5]
+        if cov_drops:
+            for drop in cov_drops:
+                alert_msg = (
+                    f"Source coverage drop: {drop['key']} went from "
+                    f"{drop['yesterday']}% to {drop['today']}% "
+                    f"({drop['delta']:+.1f}pp)"
+                )
+                logger.warning(alert_msg)
+                stats["alerts_fired"] += 1
+            stats["source_coverage_drops"] = cov_drops
+
+        stats["source_coverage_snapshot"] = coverage
+    except Exception as exc:
+        logger.warning("Source coverage snapshot failed: %s", exc)
+
     logger.info(
         "Watchdog complete: %d/%d passed, %d alerts fired, %d deduped, %d errors",
         stats["checks_passed"],
