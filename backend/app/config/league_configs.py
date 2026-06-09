@@ -351,6 +351,7 @@ NFL_CONFIG = LeagueConfig(
     name="NFL Playoffs 2025-26",
     sport_category="football",
     sport_keys=["americanfootball_nfl"],
+    external_id_prefixes=["KXNFL"],
     stage_key="football",
     league_name_patterns=[
         r"\bNFL\b",
@@ -485,6 +486,7 @@ WNBA_CONFIG = LeagueConfig(
     name="WNBA Playoffs 2026",
     sport_category="basketball",
     sport_keys=["basketball_wnba"],
+    external_id_prefixes=["KXWNBA"],
     stage_key="basketball",
     league_name_patterns=[
         r"\bWNBA\b",
