@@ -499,7 +499,6 @@ async def get_cities(db: AsyncSession):
     query = _open_weather_query().where(
         or_(
             FuturesMarket.name.ilike("Highest temperature in%"),
-            FuturesMarket.name.ilike("Lowest temperature in%"),
             FuturesMarket.name.ilike("Highest temperature in%on%"),
         )
     )

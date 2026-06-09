@@ -988,6 +988,12 @@ async def _link_sports_props_to_events() -> dict:
         "KXNBAPR": "KXNBAGAME",
         "KXNBAPRA": "KXNBAGAME",
         "KXNBARA": "KXNBAGAME",
+        # Baseball
+        "KXMLBHIT": "KXMLBGAME",
+        "KXMLBHR": "KXMLBGAME",
+        "KXMLBKS": "KXMLBGAME",
+        "KXMLBHRR": "KXMLBGAME",
+        "KXMLBRFI": "KXMLBGAME",
     }
 
     stats: dict = {"total_linked": 0, "cal_prob_reset": 0, "errors": []}
