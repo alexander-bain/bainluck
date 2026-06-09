@@ -5041,6 +5041,33 @@ async def calibration_mce_by_sport(
     }
 
 
+@router.get("/volume-stats")
+async def volume_stats(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check how many outcomes have volume populated."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    r = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE fo.volume IS NOT NULL) AS has_volume,
+            COUNT(*) FILTER (WHERE fo.volume = 0) AS vol_zero,
+            COUNT(*) FILTER (WHERE fo.volume > 0) AS vol_positive,
+            COUNT(*) FILTER (WHERE fo.volume IS NULL) AS vol_null
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+    """))
+    row = r.first()
+    return {
+        "total": row.total, "has_volume": row.has_volume,
+        "vol_zero": row.vol_zero, "vol_positive": row.vol_positive,
+        "vol_null": row.vol_null,
+    }
+
+
 @router.get("/calibration-90plus-losers")
 async def calibration_90plus_losers(
     secret: str = Query(...),
