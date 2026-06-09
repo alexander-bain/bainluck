@@ -214,6 +214,28 @@ class KalshiAPIService(BaseAPIClient):
         response.raise_for_status()
         return response.json()
 
+    async def get_market(self, ticker: str) -> Optional[dict]:
+        """Get a single market by ticker. Returns None only for 404."""
+        import asyncio as _asyncio
+        for _attempt in range(3):
+            try:
+                response = await self.client.get(
+                    f"{self.BASE_URL}/markets/{ticker}",
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429:
+                    await _asyncio.sleep(3 * (_attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json().get("market")
+            except Exception:
+                if _attempt < 2:
+                    await _asyncio.sleep(1)
+                    continue
+                return None
+        return None
+
     async def get_markets(
         self,
         status: Optional[str] = "open",

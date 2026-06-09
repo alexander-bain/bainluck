@@ -1901,6 +1901,45 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.get("/test-kalshi-market-endpoint")
+async def test_kalshi_market_endpoint(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test if Kalshi GET /markets/{ticker} works for old settled tickers."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    r = await db.execute(text("""
+        SELECT fo.external_id
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.resolution_source = 'pass2_guess'
+          AND fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND fm.event_id IS NULL
+        ORDER BY random() LIMIT 5
+    """))
+    tickers = [row[0] for row in r.fetchall()]
+
+    from app.services.kalshi_api import KalshiAPIService
+    service = KalshiAPIService()
+    results = []
+    try:
+        for ticker in tickers:
+            market = await service.get_market(ticker)
+            results.append({
+                "ticker": ticker,
+                "found": market is not None,
+                "result": market.get("result") if market else None,
+                "status": market.get("status") if market else None,
+                "keys": list(market.keys())[:10] if market else None,
+            })
+    finally:
+        await service.close()
+
+    return {"test_results": results}
+
+
 @router.get("/redis-read")
 async def redis_read(
     secret: str = Query(...),
