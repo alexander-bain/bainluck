@@ -3141,6 +3141,38 @@ async def _resolve_winners_only(limit: int = 2000):
     _start = _t.monotonic()
     stats = {}
 
+    # Phase 0: Fix stale scheduled events
+    # 13,524 events stuck in 'scheduled' despite being completed.
+    # Transitioning to 'closed' makes them eligible for ESPN ID matching,
+    # score backfill, and score-based winner resolution.
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE events
+                    SET status = 'closed'
+                    WHERE status = 'scheduled'
+                      AND commence_time < NOW() - INTERVAL '2 days'
+                """)
+            )
+            stats["stale_scheduled_fixed"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        stats["stale_fix_error"] = str(e)[:200]
+
+    # Phase 0b: Backfill ESPN IDs + scores for newly-eligible events
+    # The stale fix above may have unlocked thousands of events that
+    # now qualify for ESPN matching and score fetching.
+    try:
+        from app.tasks.espn_sync import _backfill_espn_ids, _backfill_box_scores
+        espn_id_stats = await _backfill_espn_ids(limit=500)
+        stats["espn_ids_matched"] = espn_id_stats.get("events_matched", 0)
+
+        box_stats = await _backfill_box_scores(limit=200, priority_calibration=True)
+        stats["box_scores_fetched"] = box_stats.get("fetched", 0)
+    except Exception as e:
+        stats["espn_backfill_error"] = str(e)[:200]
+
     # Moneyline repair
     try:
         async with get_task_session() as session:
