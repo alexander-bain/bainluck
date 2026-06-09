@@ -1122,11 +1122,14 @@ async def _backfill_trade_history(limit: int = 1000):
                     LEFT JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
                       AND fm.source = 'kalshi'
-                      AND fo.calibration_probability IS NULL
                       AND fo.opening_probability IS NOT NULL
                       AND fo.external_id LIKE 'KX%%-%%-%%'
                       AND COALESCE(fo.resolution_source, '') NOT IN
                           ('no_pregame_trading', 'did_not_play', 'withdrew')
+                      AND (fo.calibration_probability IS NULL
+                           OR (fo.calibration_probability = fo.opening_probability
+                               AND (fo.opening_probability >= 0.90
+                                    OR fo.opening_probability <= 0.10)))
                     ORDER BY fm.commence_time DESC NULLS LAST
                     LIMIT :lim
                 """),
