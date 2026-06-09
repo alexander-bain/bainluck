@@ -874,8 +874,8 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
 
-      {/* Score Differential Chart - requires actual score data to be meaningful */}
-      {historyData && (historyData.score_history?.length ?? 0) > 0 && (
+      {/* Score Differential Chart - always show for live/completed games */}
+      {historyData && ((historyData.history?.length ?? 0) > 0 || (historyData.score_history?.length ?? 0) > 0 || (historyData.espn_history?.length ?? 0) > 0) && (
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             Score Differential
