@@ -3799,9 +3799,10 @@ async def sawtooth_fix(
 @router.post("/prediction-markets/backfill-wps")
 async def backfill_win_probability_sources(
     secret: str = Query(...),
+    limit: int = Query(500),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """One-time backfill: write win_probability_sources for ALL linked game markets."""
+    """Backfill win_probability_sources for linked moneyline game markets."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
@@ -3809,6 +3810,7 @@ async def backfill_win_probability_sources(
 
     stats = {"processed": 0, "written": 0, "skipped": 0, "errors": 0}
 
+    # Only fetch GAME (moneyline) markets — much smaller than ALL linked markets
     result = await db.execute(
         select(FuturesMarket, Event)
         .join(Event, FuturesMarket.event_id == Event.id)
@@ -3816,7 +3818,13 @@ async def backfill_win_probability_sources(
         .where(
             FuturesMarket.source.in_(["kalshi", "polymarket"]),
             FuturesMarket.event_id.isnot(None),
+            or_(
+                FuturesMarket.external_id.ilike("%game%"),
+                FuturesMarket.name.ilike("% vs.%"),
+                FuturesMarket.name.ilike("% vs %"),
+            ),
         )
+        .limit(limit)
     )
     rows = result.unique().all()
 
