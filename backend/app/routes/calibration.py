@@ -912,7 +912,8 @@ async def public_calibration(
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND (fo.resolution_source IS NULL
                    OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'did_not_play', 'withdrew'))
+                                                    'did_not_play', 'withdrew',
+                                                    'no_pregame_trading'))
         ),
         -- Detect default/placeholder pricing: if 50%+ of outcomes in a
         -- multi-outcome market share the exact same opening_probability,

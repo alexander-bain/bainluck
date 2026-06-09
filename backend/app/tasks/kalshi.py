@@ -1092,18 +1092,21 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_trade_history(limit: int = 2000):
-    """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob.
+async def _backfill_trade_history(limit: int = 1000):
+    """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
-    Directly queries outcomes with extreme opening prices and NULL cal_prob,
-    then fetches trades from the Kalshi API using fo.external_id (which stores
-    the full sub-market ticker like KXNHLPTS-26MAR20NJWSH-NJJBRATT63-2).
+    For each outcome with calibration_probability IS NULL:
+    1. Fetch trades from Kalshi API using the sub-market ticker
+    2. If pre-game trades exist: create snapshots → Part A gets real prices
+    3. If trades exist but ALL are post-game: tag 'no_pregame_trading'
+       (proven zero pre-game liquidity → exclude from calibration)
+    4. If API returns empty (purged): leave as-is (can't prove anything)
     """
     import asyncio
     from dateutil.parser import parse as _dt_parse
 
-    stats = {"candidates": 0, "fetched": 0, "trades_found": 0,
-             "snapshots_created": 0, "empty": 0, "errors": []}
+    stats = {"candidates": 0, "fetched": 0, "pregame_snaps": 0,
+             "no_pregame": 0, "api_empty": 0, "errors": []}
 
     try:
         from app.services.kalshi_api import KalshiAPIService
@@ -1112,15 +1115,18 @@ async def _backfill_trade_history(limit: int = 2000):
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
-                    SELECT fo.id AS outcome_id, fo.external_id AS ticker
+                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                           COALESCE(e.commence_time, fm.commence_time) AS commence
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
+                    LEFT JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
                       AND fm.source = 'kalshi'
                       AND fo.calibration_probability IS NULL
                       AND fo.opening_probability IS NOT NULL
-                      AND fo.external_id IS NOT NULL
-                      AND fo.external_id LIKE 'KX%-%-%'
+                      AND fo.external_id LIKE 'KX%%-%%-%%'
+                      AND COALESCE(fo.resolution_source, '') NOT IN
+                          ('no_pregame_trading', 'did_not_play', 'withdrew')
                     ORDER BY fm.commence_time DESC NULLS LAST
                     LIMIT :lim
                 """),
@@ -1132,16 +1138,15 @@ async def _backfill_trade_history(limit: int = 2000):
             if not candidates:
                 return stats
 
-            logger.info("Trade backfill: %d candidates, first=%s",
-                        len(candidates), candidates[0].ticker[:50] if candidates else "?")
+            logger.info("Trade backfill: %d candidates", len(candidates))
 
             import time as _time
             _start = _time.monotonic()
-            reset_ids: list[int] = []
+            pregame_ids: list[int] = []
 
             for row in candidates:
-                if (_time.monotonic() - _start) > 540:
-                    logger.info("Trade backfill: time budget after %d fetched", stats["fetched"])
+                if (_time.monotonic() - _start) > 480:
+                    logger.info("Trade backfill: time budget after %d", stats["fetched"])
                     break
 
                 try:
@@ -1150,55 +1155,66 @@ async def _backfill_trade_history(limit: int = 2000):
                 except Exception as e:
                     if "429" in str(e):
                         await asyncio.sleep(5)
-                    stats["errors"].append(str(e)[:100])
+                    stats["errors"].append(str(e)[:80])
                     continue
 
                 if not trades:
-                    stats["empty"] += 1
+                    stats["api_empty"] += 1
                     continue
 
-                stats["trades_found"] += len(trades)
-                created_any = False
-
+                # Separate pre-game vs post-game trades
+                pregame_trades = []
+                has_any_trade = False
                 for trade in trades:
+                    has_any_trade = True
                     try:
                         price = float(trade.get("yes_price_dollars", 0))
-                    except (ValueError, TypeError):
-                        continue
-                    if price <= 0 or price >= 1:
-                        continue
-
-                    try:
                         captured = _dt_parse(trade["created_time"])
                     except Exception:
                         continue
+                    if price <= 0 or price >= 1:
+                        continue
+                    if row.commence and captured < row.commence:
+                        pregame_trades.append((price, captured))
 
+                if pregame_trades:
+                    # Real pre-game trading exists — create snapshots
+                    for price, captured in pregame_trades:
+                        await session.execute(
+                            text("""
+                                INSERT INTO futures_odds_snapshots
+                                    (outcome_id, bookmaker, probability, last_price, captured_at)
+                                VALUES (:oid, 'kalshi', :prob, :price, :ts)
+                                ON CONFLICT DO NOTHING
+                            """),
+                            {"oid": row.outcome_id, "prob": round(price, 6),
+                             "price": round(price, 4), "ts": captured},
+                        )
+                    stats["pregame_snaps"] += len(pregame_trades)
+                    pregame_ids.append(row.outcome_id)
+
+                elif has_any_trade:
+                    # Trades exist but ALL are post-game → proven no pre-game trading
                     await session.execute(
                         text("""
-                            INSERT INTO futures_odds_snapshots
-                                (outcome_id, bookmaker, probability, last_price, captured_at)
-                            VALUES (:oid, 'kalshi', :prob, :price, :ts)
-                            ON CONFLICT DO NOTHING
+                            UPDATE futures_outcomes
+                            SET resolution_source = 'no_pregame_trading'
+                            WHERE id = :oid
                         """),
-                        {"oid": row.outcome_id, "prob": round(price, 6),
-                         "price": round(price, 4), "ts": captured},
+                        {"oid": row.outcome_id},
                     )
-                    stats["snapshots_created"] += 1
-                    created_any = True
+                    stats["no_pregame"] += 1
 
-                if created_any:
-                    reset_ids.append(row.outcome_id)
-
-                if stats["fetched"] % 100 == 0:
+                if stats["fetched"] % 50 == 0:
                     await session.commit()
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.5)
 
-            if reset_ids:
+            # Reset cal_prob for outcomes that got pre-game snapshots
+            if pregame_ids:
                 await session.execute(
                     text("UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"),
-                    {"ids": reset_ids},
+                    {"ids": pregame_ids},
                 )
-                stats["outcomes_reset"] = len(reset_ids)
             await session.commit()
 
         await service.close()
@@ -1208,9 +1224,10 @@ async def _backfill_trade_history(limit: int = 2000):
         logger.error("Trade backfill error: %s", e)
 
     logger.info(
-        "Trade backfill: %d candidates, %d fetched, %d trades, %d snaps, %d empty, %d errors",
-        stats["candidates"], stats["fetched"], stats["trades_found"],
-        stats["snapshots_created"], stats["empty"], len(stats["errors"]),
+        "Trade backfill: %d candidates, %d fetched, %d pregame_snaps, "
+        "%d no_pregame, %d api_empty, %d errors",
+        stats["candidates"], stats["fetched"], stats["pregame_snaps"],
+        stats["no_pregame"], stats["api_empty"], len(stats["errors"]),
     )
     return stats
 
