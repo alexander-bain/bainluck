@@ -396,23 +396,38 @@ async def get_economics(db: AsyncSession):
     # Sort FOMC meetings chronologically
     fomc_meetings.sort(key=lambda x: x.get("sort_key", 0))
 
-    # --- Inflation section ---
-    cpi_releases = []
-    inflation_side = []
-    # Filter out past-month CPI markets (e.g., "May 2026" when it's June)
+    # --- Shared date filter: skip markets with past month+year in name ---
     _current_month = now.month
     _current_year = now.year
     _MONTH_NUMS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
                    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+    _DATE_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{4})\b", re.I)
+
+    def _is_past_date(name: str) -> bool:
+        m = _DATE_RE.search(name.lower())
+        if not m:
+            return False
+        m_num = _MONTH_NUMS.get(m.group(1)[:3], 0)
+        m_year = int(m.group(2))
+        return (m_year < _current_year) or (m_year == _current_year and m_num < _current_month)
+
+    # Filter past-date markets from ALL themed sections
+    for theme_key, theme_markets in list(themed.items()):
+        themed[theme_key] = [m for m in theme_markets if not _is_past_date(m.name or "")]
+
+    # Re-read filtered lists
+    fed_markets = themed.get("fed", [])
+    inflation_markets = themed.get("inflation", [])
+    jobs_markets = themed.get("jobs", [])
+    recession_markets = themed.get("recession", [])
+    markets_markets = themed.get("markets", [])
+    energy_markets = themed.get("energy", [])
+
+    # --- Inflation section ---
+    cpi_releases = []
+    inflation_side = []
     for m in inflation_markets:
         name_lower = (m.name or "").lower()
-        # Skip past-month CPI releases
-        _mo_check = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{4})\b", name_lower)
-        if _mo_check:
-            _m_num = _MONTH_NUMS.get(_mo_check.group(1)[:3], 0)
-            _m_year = int(_mo_check.group(2))
-            if (_m_year < _current_year) or (_m_year == _current_year and _m_num < _current_month):
-                continue
         outcomes = _outcomes_sorted(m)
         has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
         if ("cpi" in name_lower or "inflation" in name_lower) and len(outcomes) >= 3:

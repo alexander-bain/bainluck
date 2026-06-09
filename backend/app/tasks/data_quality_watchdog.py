@@ -126,6 +126,30 @@ CHECKS: list[dict[str, Any]] = [
         "severity": "P1",
         "message": "No ScoreSnapshots captured in 12 hours — Score Differential charts will be empty for recent games",
     },
+    # --- DataGolf freshness (P1) ---
+    {
+        "name": "datagolf_freshness",
+        "query": (
+            "SELECT COUNT(*) FROM futures_markets "
+            "WHERE source = 'datagolf' AND updated_at > NOW() - INTERVAL '12 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P1",
+        "message": "No DataGolf markets updated in 12 hours — golf leaderboards and probabilities may be stale",
+    },
+    # --- MLB win probability freshness (P1) ---
+    {
+        "name": "mlb_win_prob_freshness",
+        "query": (
+            "SELECT COUNT(*) FROM win_prob_snapshots "
+            "WHERE source = 'mlb' AND captured_at > NOW() - INTERVAL '12 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P1",
+        "message": "No MLB win probability snapshots in 12 hours — baseball live charts not updating",
+    },
     # --- Snapshot sparsity (P1) ---
     {
         "name": "odds_api_sparsity",
