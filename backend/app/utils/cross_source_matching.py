@@ -20,7 +20,7 @@ from app.models import FuturesMarket
 # ---------------------------------------------------------------------------
 
 GARBAGE_OUTCOME_RE = re.compile(
-    r"^(?:player|person|candidate|option|party)\s+[A-Z]{1,3}$", re.I
+    r"^(?:player|person|candidate|option|party|song|movie|show|app|team|ticker|choice)\s+[A-Z0-9]{1,3}$", re.I
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = {
