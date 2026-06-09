@@ -2893,28 +2893,121 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     max_id = max(row.id for row in markets)
     _rc.setex(_offset_key, 86400 * 7, str(max_id))
 
-    # Group by event_id to avoid duplicate API calls for sibling sub-markets
+    # Separate markets by lookup strategy:
+    # - With poly_event_id: group by event for batch event lookup
+    # - Without: look up each market individually by condition_id
     by_event: dict[str, list] = {}
+    by_condition: list = []
     for row in markets:
-        eid = row.poly_event_id or row.external_id
-        by_event.setdefault(eid, []).append(row)
+        if row.poly_event_id:
+            by_event.setdefault(row.poly_event_id, []).append(row)
+        else:
+            by_condition.append(row)
 
     logger.info(
-        "Polymarket API winner backfill: %d markets across %d events",
-        len(markets), len(by_event),
+        "Polymarket API winner backfill: %d by event (%d events), %d by condition",
+        sum(len(v) for v in by_event.values()), len(by_event), len(by_condition),
     )
 
     import time as _time
     _t0 = _time.monotonic()
-    _MAX_RUNTIME = 720  # bail at 12 min (soft limit is 14 min)
+    _MAX_RUNTIME = 420  # 7 min (resolve_winners has 9 min soft limit)
+
+    # Dead-CID cache: skip condition_ids that returned 404 on previous runs
+    _dead_key = "bainluck:poly_dead_cids"
+    dead_cids = _rc.smembers(_dead_key)
+    dead_cids = {c.decode() if isinstance(c, bytes) else c for c in dead_cids}
 
     service = PolymarketAPIService()
     try:
+        # --- Phase A: Condition-ID lookups (concurrent) ---
+        sem = asyncio.Semaphore(10)
+
+        async def _fetch_market(cid):
+            async with sem:
+                return cid, await service.get_market_by_condition(str(cid))
+
+        alive_conditions = [r for r in by_condition if r.external_id not in dead_cids]
+        stats["skipped_dead"] = len(by_condition) - len(alive_conditions)
+
+        for batch_start in range(0, len(alive_conditions), 200):
+            if _time.monotonic() - _t0 > _MAX_RUNTIME:
+                break
+            batch = alive_conditions[batch_start:batch_start + 200]
+            results = await asyncio.gather(*[_fetch_market(r.external_id) for r in batch])
+
+            async with get_task_session() as session:
+                for cid, market_data in results:
+                    stats["markets_checked"] += 1
+                    if not market_data:
+                        stats["api_miss"] += 1
+                        _rc.sadd(_dead_key, cid)
+                        continue
+
+                    prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
+                    if isinstance(prices_raw, str):
+                        try:
+                            prices_raw = _json.loads(prices_raw)
+                        except (ValueError, TypeError):
+                            prices_raw = []
+                    try:
+                        prices = [float(p) for p in prices_raw]
+                    except (ValueError, TypeError):
+                        prices = []
+
+                    if not prices or len(prices) < 2:
+                        stats["not_settled"] += 1
+                        continue
+
+                    if max(prices) < 0.90 or min(prices) > 0.10:
+                        stats["not_settled"] += 1
+                        continue
+
+                    yes_won = prices[0] >= 0.90
+                    stats["prices_synced"] += 1
+
+                    r_w = await session.execute(
+                        text("""
+                            UPDATE futures_outcomes
+                            SET current_probability = :price,
+                                is_winner = :won,
+                                resolution_source = 'api_settlement'
+                            WHERE external_id = :cid
+                              AND COALESCE(resolution_source, '') != 'api_settlement'
+                        """),
+                        {"price": prices[0], "won": yes_won, "cid": cid},
+                    )
+                    if r_w.rowcount > 0:
+                        stats["winners_set" if yes_won else "losers_set"] += r_w.rowcount
+
+                    # Also resolve the _no counterpart
+                    no_cid = f"{cid}_no"
+                    r_n = await session.execute(
+                        text("""
+                            UPDATE futures_outcomes
+                            SET current_probability = :price,
+                                is_winner = :won,
+                                resolution_source = 'api_settlement'
+                            WHERE external_id = :cid
+                              AND COALESCE(resolution_source, '') != 'api_settlement'
+                        """),
+                        {"price": prices[1] if len(prices) > 1 else (1.0 - prices[0]),
+                         "won": not yes_won, "cid": no_cid},
+                    )
+                    if r_n.rowcount > 0:
+                        stats["losers_set" if yes_won else "winners_set"] += r_n.rowcount
+
+                await session.commit()
+
+        # Set TTL on dead CIDs cache
+        _rc.expire(_dead_key, 86400 * 7)
+
+        # --- Phase B: Event-ID lookups (original logic) ---
         event_ids = list(by_event.keys())
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
             if _time.monotonic() - _t0 > _MAX_RUNTIME:
-                logger.info("Polymarket API backfill: time limit approaching, stopping after %d/%d events", batch_start, len(event_ids))
+                logger.info("Polymarket API backfill: time limit, stopping after %d/%d events", batch_start, len(event_ids))
                 break
             batch = event_ids[batch_start:batch_start + batch_size]
 
@@ -3204,8 +3297,17 @@ async def _resolve_winners_only(limit: int = 2000):
         "player_props": player_prop_stats.get("resolved", 0),
     }
 
-    # Kalshi markets API pagination (the only API path that still finds
-    # unresolved outcomes — per-event and targeted both return empty).
+    # Polymarket API settlement (concurrent condition_id lookups)
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=5000)
+    stats["polymarket_api"] = {
+        "winners": poly_api_stats.get("winners_set", 0),
+        "losers": poly_api_stats.get("losers_set", 0),
+        "api_miss": poly_api_stats.get("api_miss", 0),
+        "prices_synced": poly_api_stats.get("prices_synced", 0),
+        "skipped_dead": poly_api_stats.get("skipped_dead", 0),
+    }
+
+    # Kalshi markets API pagination
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=10000)
     stats["kalshi_markets"] = {
         "winners": kalshi_markets_stats.get("winners_set", 0),
