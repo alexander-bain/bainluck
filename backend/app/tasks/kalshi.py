@@ -1098,15 +1098,17 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_trade_history(limit: int = 200):
+async def _backfill_trade_history(limit: int = 500):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
-    For each outcome with calibration_probability IS NULL:
+    For each outcome where cal_prob is missing or fell back to extreme opening:
     1. Fetch trades from Kalshi API using the sub-market ticker
     2. If pre-game trades exist: create snapshots → Part A gets real prices
     3. If trades exist but ALL are post-game: tag 'no_pregame_trading'
-       (proven zero pre-game liquidity → exclude from calibration)
     4. If API returns empty (purged): leave as-is (can't prove anything)
+
+    Processes in batches of 25 with a fresh HTTP client per batch to stay
+    within the 200MB worker memory limit.
     """
     import asyncio
     from dateutil.parser import parse as _dt_parse
@@ -1115,14 +1117,12 @@ async def _backfill_trade_history(limit: int = 200):
              "no_pregame": 0, "api_empty": 0, "errors": []}
 
     try:
-        from app.services.kalshi_api import KalshiAPIService
-        service = KalshiAPIService()
-
+        # Load candidates into plain tuples to release DB result set
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
-                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
-                           COALESCE(e.commence_time, fm.commence_time) AS commence
+                    SELECT fo.id, fo.external_id,
+                           COALESCE(e.commence_time, fm.commence_time)
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     LEFT JOIN events e ON e.id = fm.event_id
@@ -1141,25 +1141,35 @@ async def _backfill_trade_history(limit: int = 200):
                 """),
                 {"lim": limit},
             )
-            candidates = result.fetchall()
-            stats["candidates"] = len(candidates)
+            candidates = [(r[0], r[1], r[2]) for r in result.fetchall()]
 
-            if not candidates:
-                return stats
+        stats["candidates"] = len(candidates)
+        if not candidates:
+            return stats
 
-            logger.info("Trade backfill: %d candidates", len(candidates))
+        logger.info("Trade backfill: %d candidates", len(candidates))
 
-            import time as _time
-            _start = _time.monotonic()
+        import time as _time
+        _start = _time.monotonic()
+        BATCH = 25
+
+        for batch_start in range(0, len(candidates), BATCH):
+            if (_time.monotonic() - _start) > 480:
+                logger.info("Trade backfill: time budget at %d/%d",
+                            stats["fetched"], len(candidates))
+                break
+
+            batch = candidates[batch_start:batch_start + BATCH]
+
+            # Fresh HTTP client per batch — prevents memory accumulation
+            from app.services.kalshi_api import KalshiAPIService
+            svc = KalshiAPIService()
             pregame_ids: list[int] = []
+            no_pregame_ids: list[int] = []
 
-            for row in candidates:
-                if (_time.monotonic() - _start) > 480:
-                    logger.info("Trade backfill: time budget after %d", stats["fetched"])
-                    break
-
+            for oid, ticker, commence in batch:
                 try:
-                    trades, _ = await service.get_market_trades(row.ticker, limit=100)
+                    trades, _ = await svc.get_market_trades(ticker, limit=100)
                     stats["fetched"] += 1
                 except Exception as e:
                     if "429" in str(e):
@@ -1171,62 +1181,64 @@ async def _backfill_trade_history(limit: int = 200):
                     stats["api_empty"] += 1
                     continue
 
-                # Separate pre-game vs post-game trades
-                pregame_trades = []
-                has_any_trade = False
+                pregame = []
+                has_any = False
                 for trade in trades:
-                    has_any_trade = True
+                    has_any = True
                     try:
                         price = float(trade.get("yes_price_dollars", 0))
-                        captured = _dt_parse(trade["created_time"])
+                        ts = _dt_parse(trade["created_time"])
                     except Exception:
                         continue
                     if price <= 0 or price >= 1:
                         continue
-                    if row.commence and captured < row.commence:
-                        pregame_trades.append((price, captured))
+                    if commence and ts < commence:
+                        pregame.append((oid, price, ts))
 
-                if pregame_trades:
-                    # Real pre-game trading exists — create snapshots
-                    for price, captured in pregame_trades:
-                        await session.execute(
-                            text("""
-                                INSERT INTO futures_odds_snapshots
-                                    (outcome_id, bookmaker, probability, last_price, captured_at)
-                                VALUES (:oid, 'kalshi', :prob, :price, :ts)
-                                ON CONFLICT DO NOTHING
-                            """),
-                            {"oid": row.outcome_id, "prob": round(price, 6),
-                             "price": round(price, 4), "ts": captured},
-                        )
-                    stats["pregame_snaps"] += len(pregame_trades)
-                    pregame_ids.append(row.outcome_id)
+                if pregame:
+                    pregame_ids.append(oid)
+                    async with get_task_session() as session:
+                        for snap_oid, price, ts in pregame:
+                            await session.execute(
+                                text("""
+                                    INSERT INTO futures_odds_snapshots
+                                        (outcome_id, bookmaker, probability, last_price, captured_at)
+                                    VALUES (:oid, 'kalshi', :prob, :price, :ts)
+                                    ON CONFLICT DO NOTHING
+                                """),
+                                {"oid": snap_oid, "prob": round(price, 6),
+                                 "price": round(price, 4), "ts": ts},
+                            )
+                        await session.commit()
+                    stats["pregame_snaps"] += len(pregame)
 
-                elif has_any_trade:
-                    # Trades exist but ALL are post-game → proven no pre-game trading
-                    await session.execute(
-                        text("""
-                            UPDATE futures_outcomes
-                            SET resolution_source = 'no_pregame_trading'
-                            WHERE id = :oid
-                        """),
-                        {"oid": row.outcome_id},
-                    )
+                elif has_any:
+                    no_pregame_ids.append(oid)
                     stats["no_pregame"] += 1
 
-                if stats["fetched"] % 20 == 0:
+            await svc.close()
+            del svc
+
+            # Batch DB updates
+            if no_pregame_ids or pregame_ids:
+                async with get_task_session() as session:
+                    if no_pregame_ids:
+                        await session.execute(
+                            text("""
+                                UPDATE futures_outcomes
+                                SET resolution_source = 'no_pregame_trading'
+                                WHERE id = ANY(:ids)
+                            """),
+                            {"ids": no_pregame_ids},
+                        )
+                    if pregame_ids:
+                        await session.execute(
+                            text("UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"),
+                            {"ids": pregame_ids},
+                        )
                     await session.commit()
-                    await asyncio.sleep(1)
 
-            # Reset cal_prob for outcomes that got pre-game snapshots
-            if pregame_ids:
-                await session.execute(
-                    text("UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"),
-                    {"ids": pregame_ids},
-                )
-            await session.commit()
-
-        await service.close()
+            await asyncio.sleep(1)
 
     except Exception as e:
         stats["errors"].append(str(e))
