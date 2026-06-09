@@ -383,6 +383,12 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bseries\s+score\b    |   # "Series Score" props
     \bfirst\s+goal\b      |   # "First Goal Scorer" props
     \blast\s+goal\b       |   # "Last Goal Scorer" props
+    \bseries\s+length\b   |   # "Series Length" props
+    \bgames?\s+played\b   |   # "Games Played in Finals"
+    \bsweep\b             |   # "Will the series be a sweep?"
+    \bwin\s+in\s+\d\s+games?\b |  # "Win in 4 games"
+    \b[4567]-[0-3]\b      |   # Series scores: 4-0, 4-1, 4-2, 4-3
+    \bfinals?\s+mvp\b     |   # "Finals MVP" (more specific than bare \bmvp\b)
     \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,

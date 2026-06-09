@@ -76,7 +76,11 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
 _ENTERTAINMENT_EXCLUDE_RE = re.compile(
     r"\b(?:net\s*worth|stock|share\s*price|market\s*cap|IPO|revenue|"
     r"earnings|quarterly|valuation|GDP|CPI|inflation|interest\s*rate|"
-    r"SpaceX\s+launch|launch\s+count|rocket)\b",
+    r"SpaceX|starlink|tesla\s+(?:stock|delivery|production)|"
+    r"launch\s+count|rocket|satellite|orbit|"
+    r"richest|billionaire|fortune|wealth|"
+    r"SEC\s+investigation|antitrust|lawsuit|"
+    r"company\s+stake|acquisition|acquire)\b",
     re.IGNORECASE,
 )
 

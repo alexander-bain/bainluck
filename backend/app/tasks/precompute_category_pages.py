@@ -125,6 +125,32 @@ async def _precompute_golf():
     return "ok"
 
 
+async def _precompute_grids():
+    """Pre-warm championship grid caches for MLB, NBA, NHL."""
+    from app.tasks.base import get_task_session
+    from app.routes.playoffs import get_playoff_grid
+    from app.tasks.redis_state import get_redis_client
+    import asyncio
+
+    rc = get_redis_client()
+    warmed = []
+    for slug in ["mlb", "nba", "nhl"]:
+        try:
+            async with get_task_session() as session:
+                result = await asyncio.wait_for(
+                    get_playoff_grid(slug, hours=None, top=10, debug=False, db=session),
+                    timeout=120,
+                )
+                payload = json.dumps(result, default=str)
+                cache_key = f"bainluck:category:playoffs:{slug}"
+                rc.setex(cache_key, 3600, payload)
+                rc.setex(f"{cache_key}:stale", 86400, payload)
+                warmed.append(slug)
+        except Exception:
+            logger.exception("Failed to precompute %s grid", slug)
+    return warmed
+
+
 async def _precompute_all_category_pages():
     """Precompute all category page caches."""
     results = {}
@@ -134,6 +160,7 @@ async def _precompute_all_category_pages():
         ("economics", _precompute_economics),
         ("weather", _precompute_weather),
         ("golf", _precompute_golf),
+        ("grids", _precompute_grids),
     ]:
         try:
             results[name] = await fn()
