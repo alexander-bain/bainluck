@@ -1545,6 +1545,7 @@ _PROP_TICKER_TO_STAT = {
     "kxnhlgoal": "goals", "kxnhlanygoal": "goals", "kxnhlpts": "points",
     "kxnhlast": "assists", "kxnhlsaves": "saves",
     "kxmlbhit": "hits", "kxmlbhr": "home runs", "kxmlbks": "strikeouts",
+    "kxnba2d": "double doubles",
 }
 
 _PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
@@ -1619,12 +1620,15 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     continue
 
                 m = _PROP_RE.match(row.outcome_name or "")
-                if not m:
+                if m:
+                    player_name = m.group(1).strip()
+                    threshold = int(m.group(2))
+                elif stat_name in ("double doubles", "triple doubles"):
+                    player_name = (row.outcome_name or "").strip()
+                    threshold = 1
+                else:
                     stats["no_parse"] += 1
                     continue
-
-                player_name = m.group(1).strip()
-                threshold = int(m.group(2))
 
                 bs_id = id(row.box_score_data)
                 if bs_id not in _bs_cache:
