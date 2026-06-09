@@ -1626,13 +1626,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         # --- Phase 1.6: Store per-outcome volume ---
                         vol_tickers = []
                         vol_values = []
+                        vol_rows = 0
                         for event_data in events:
                             for mkt in (event_data.get("markets") or []):
                                 ticker = mkt.get("ticker", "")
                                 vol_raw = mkt.get("volume_fp")
                                 if ticker and vol_raw is not None:
-                                    vol_tickers.append(ticker)
-                                    vol_values.append(int(float(vol_raw)))
+                                    try:
+                                        vol_tickers.append(ticker)
+                                        vol_values.append(int(float(vol_raw)))
+                                    except (ValueError, TypeError):
+                                        pass
                         if vol_tickers:
                             vol_rows = 0
                             for vt, vv in zip(vol_tickers, vol_values):
@@ -1803,6 +1807,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             page_resolved > 0
                             or resolve_result.rowcount > 0
                             or winners_set > 0
+                            or vol_rows > 0
                         )
                         if page_useful:
                             _empty_pages = 0
