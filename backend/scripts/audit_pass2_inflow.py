@@ -13,16 +13,17 @@ conn = psycopg2.connect(url)
 cur = conn.cursor()
 results = {}
 
-# 1. pass2_guess by updated_at date
+# 1. pass2_guess on recently-resolved markets (proxy for new inflow)
 cur.execute("""
-    SELECT DATE(fo.updated_at), COUNT(*)
+    SELECT DATE(fm.resolution_date), COUNT(fo.id)
     FROM futures_outcomes fo
+    JOIN futures_markets fm ON fo.market_id = fm.id
     WHERE fo.resolution_source = 'pass2_guess'
-      AND fo.updated_at > NOW() - INTERVAL '7 days'
+      AND fm.resolution_date > NOW() - INTERVAL '14 days'
     GROUP BY 1
     ORDER BY 1
 """)
-results["pass2_guess_by_date"] = {str(r[0]): r[1] for r in cur.fetchall()}
+results["pass2_guess_on_recent_markets"] = {str(r[0]): r[1] for r in cur.fetchall()}
 
 # 2. All code paths that write 'pass2_guess' - check if retrotag2 is still active
 cur.execute("""
