@@ -1519,25 +1519,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 if not series_needing_work:
                     return stats
 
-                # Pre-load outcome tickers that need resolution for the
-                # series we're about to process. Scoped to avoid full table scan.
-                _series_patterns = [s + "%" for s in series_needing_work]
-                needs_work_result = await session.execute(
-                    text("""
-                        SELECT fo.external_id
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fo.market_id = fm.id
-                        WHERE fm.source = 'kalshi'
-                          AND fo.resolution_source IN
-                              ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                               'clean_resolution', 'pass2_loser', 'pass3_threshold')
-                          AND fo.external_id LIKE ANY(:patterns)
-                    """),
-                    {"patterns": _series_patterns},
-                )
-                _needs_work_tickers = {r[0] for r in needs_work_result.all()}
-                logger.info("Settled events: %d outcome tickers need work across %d series",
-                            len(_needs_work_tickers), len(series_needing_work))
+                _needs_work_tickers = None  # disabled — batch UPDATEs filter in SQL
 
                 for series in series_needing_work:
                     if (_time.monotonic() - _start_time) > _MAX_SECONDS:
@@ -1608,8 +1590,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             stats["markets_resolved"] += resolve_result.rowcount
 
                         # --- Phase 1.5: Batch resolve is_winner from settlement ---
-                        # Only collect tickers that are in the needs-work set.
-                        # Skips ~95% of tickers that are already resolved.
                         yes_tickers = []
                         no_tickers = []
                         for event_data in events:
@@ -1617,8 +1597,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 ticker = mkt.get("ticker", "")
                                 result_val = mkt.get("result")
                                 if not ticker or result_val is None:
-                                    continue
-                                if ticker not in _needs_work_tickers:
                                     continue
                                 if result_val == "yes":
                                     yes_tickers.append(ticker)
@@ -1663,10 +1641,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             page_resolved += r_no.rowcount
 
                         stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + page_resolved
-                        # Remove resolved tickers from the set
-                        for t in yes_tickers + no_tickers:
-                            _needs_work_tickers.discard(t)
-
                         # --- Phase 1.6: Store per-outcome volume ---
                         vol_tickers = []
                         vol_values = []
