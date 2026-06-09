@@ -3897,11 +3897,8 @@ async def _compute_calibration_prices():
             # commence_time inaccuracies caused mid-event prices to be used
             # as closing lines. The sanity check (Part A-sanity below) will
             # prevent the same problem from recurring.
-            # One-time reset DISABLED (was active until 2026-06-10).
-            # The reset was nulling ALL hockey/golf cal_probs every 6h,
-            # undoing previous fixes and recreating the 0.99 fallback problem.
-            stats["reset_golf_hockey"] = 0
-            if False:
+            from datetime import date
+            if date.today() <= date(2026, 6, 12):
                 reset_gh = await session.execute(
                     text("""
                         UPDATE futures_outcomes fo
