@@ -1911,7 +1911,8 @@ async def test_kalshi_market_endpoint(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     r = await db.execute(text("""
-        SELECT fo.external_id
+        SELECT DISTINCT fo.external_id AS outcome_ticker,
+               fm.external_id AS market_ticker
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
         WHERE fo.resolution_source = 'pass2_guess'
@@ -1919,20 +1920,22 @@ async def test_kalshi_market_endpoint(
           AND fm.event_id IS NULL
         ORDER BY random() LIMIT 5
     """))
-    tickers = [row[0] for row in r.fetchall()]
+    rows = r.fetchall()
+    tickers = [(row[0], row[1]) for row in rows]  # (outcome_ticker, market_ticker)
 
     from app.services.kalshi_api import KalshiAPIService
     service = KalshiAPIService()
     results = []
     try:
-        for ticker in tickers:
-            market = await service.get_market(ticker)
+        for outcome_ticker, market_ticker in tickers:
+            # Try market ticker (the correct one for the API)
+            market = await service.get_market(market_ticker)
             results.append({
-                "ticker": ticker,
+                "outcome_ticker": outcome_ticker,
+                "market_ticker": market_ticker,
                 "found": market is not None,
                 "result": market.get("result") if market else None,
                 "status": market.get("status") if market else None,
-                "keys": list(market.keys())[:10] if market else None,
             })
     finally:
         await service.close()
