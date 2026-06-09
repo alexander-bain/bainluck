@@ -1092,7 +1092,7 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_trade_history(limit: int = 1000):
+async def _backfill_trade_history(limit: int = 200):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
     For each outcome with calibration_probability IS NULL:
@@ -1208,9 +1208,9 @@ async def _backfill_trade_history(limit: int = 1000):
                     )
                     stats["no_pregame"] += 1
 
-                if stats["fetched"] % 50 == 0:
+                if stats["fetched"] % 20 == 0:
                     await session.commit()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
 
             # Reset cal_prob for outcomes that got pre-game snapshots
             if pregame_ids:
