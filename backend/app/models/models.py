@@ -788,6 +788,10 @@ class FuturesOutcome(Base):
     is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
     resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
 
+    # Trading activity (from Kalshi settled events API, per sub-market)
+    # NULL = not yet fetched, 0 = confirmed zero trading
+    volume: Mapped[Optional[int]] = mapped_column(Integer)
+
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

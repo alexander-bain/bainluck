@@ -1640,6 +1640,28 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + page_resolved
 
+                        # --- Phase 1.6: Store per-outcome volume ---
+                        vol_tickers = []
+                        vol_values = []
+                        for event_data in events:
+                            for mkt in (event_data.get("markets") or []):
+                                ticker = mkt.get("ticker", "")
+                                vol_raw = mkt.get("volume_fp")
+                                if ticker and vol_raw is not None:
+                                    vol_tickers.append(ticker)
+                                    vol_values.append(int(float(vol_raw)))
+                        if vol_tickers:
+                            for vt, vv in zip(vol_tickers, vol_values):
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes
+                                        SET volume = :vol
+                                        WHERE external_id = :tk AND volume IS NULL
+                                    """),
+                                    {"vol": vv, "tk": vt},
+                                )
+                            stats["volume_set"] = stats.get("volume_set", 0) + len(vol_tickers)
+
                         # --- Phase 2: Snapshot backfill (respects limit) ---
                         if total_snapshots < limit:
                             matched = await session.execute(
