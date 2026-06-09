@@ -975,6 +975,13 @@ async def _backfill_espn_ids(limit: int = 1000):
     try:
         async with get_task_session() as session:
             # Find completed events without ESPN IDs in ESPN-supported sports
+            # Filter to ESPN sports IN the SQL query (not post-filter) to
+            # avoid 86K non-ESPN events consuming the limit.
+            espn_sport_ids_result = await session.execute(
+                select(Sport.id).where(Sport.key.in_(espn_sports))
+            )
+            espn_sport_ids = [r[0] for r in espn_sport_ids_result.all()]
+
             result = await session.execute(
                 select(Event)
                 .options(selectinload(Event.sport))
@@ -984,6 +991,7 @@ async def _backfill_espn_ids(limit: int = 1000):
                     Event.commence_time.isnot(None),
                     Event.home_team_name.isnot(None),
                     Event.away_team_name.isnot(None),
+                    Event.sport_id.in_(espn_sport_ids),
                 )
                 .order_by(Event.commence_time.desc())
                 .limit(limit)
@@ -992,11 +1000,6 @@ async def _backfill_espn_ids(limit: int = 1000):
 
             if not events:
                 return {"status": "no_events_to_backfill", **stats}
-
-            # Filter to ESPN-supported sports
-            events = [e for e in events if e.sport and e.sport.key in ESPN_SPORT_MAPPING]
-            if not events:
-                return {"status": "no_espn_sports_to_backfill", **stats}
 
             # Group by (sport, date) to minimize API calls
             from collections import defaultdict
