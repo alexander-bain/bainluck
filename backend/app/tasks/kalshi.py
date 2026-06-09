@@ -1634,8 +1634,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     vol_tickers.append(ticker)
                                     vol_values.append(int(float(vol_raw)))
                         if vol_tickers:
+                            vol_rows = 0
                             for vt, vv in zip(vol_tickers, vol_values):
-                                await session.execute(
+                                vr = await session.execute(
                                     text("""
                                         UPDATE futures_outcomes
                                         SET volume = :vol
@@ -1643,7 +1644,12 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     """),
                                     {"vol": vv, "tk": vt},
                                 )
-                            stats["volume_set"] = stats.get("volume_set", 0) + len(vol_tickers)
+                                vol_rows += vr.rowcount
+                            await session.commit()
+                            stats["volume_set"] = stats.get("volume_set", 0) + vol_rows
+                            if vol_rows > 0 and stats.get("volume_set", 0) <= vol_rows:
+                                logger.info("Phase 1.6: set volume on %d outcomes (attempted %d tickers)",
+                                            vol_rows, len(vol_tickers))
 
                         # --- Phase 2: Snapshot backfill (respects limit) ---
                         if total_snapshots < limit:
