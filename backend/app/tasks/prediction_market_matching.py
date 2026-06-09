@@ -801,7 +801,13 @@ async def _match_prediction_markets(limit: int = 500):
                 .where(
                     FuturesMarket.source.in_(["kalshi", "polymarket"]),
                     FuturesMarket.event_id.isnot(None),
-                    Event.status.in_(["scheduled", "live"]),
+                    or_(
+                        Event.status.in_(["scheduled", "live"]),
+                        and_(
+                            Event.status.in_(["completed", "closed"]),
+                            Event.commence_time >= now - timedelta(hours=24),
+                        ),
+                    ),
                 )
             )
             linked_rows = linked_result.all()
