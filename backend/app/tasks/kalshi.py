@@ -1098,7 +1098,7 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
-async def _backfill_trade_history(limit: int = 500):
+async def _backfill_trade_history(limit: int = 100):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
     For each outcome where cal_prob is missing or fell back to extreme opening:
@@ -1149,9 +1149,10 @@ async def _backfill_trade_history(limit: int = 500):
 
         logger.info("Trade backfill: %d candidates", len(candidates))
 
+        import gc
         import time as _time
         _start = _time.monotonic()
-        BATCH = 25
+        BATCH = 10
 
         for batch_start in range(0, len(candidates), BATCH):
             if (_time.monotonic() - _start) > 480:
@@ -1238,6 +1239,7 @@ async def _backfill_trade_history(limit: int = 500):
                         )
                     await session.commit()
 
+            gc.collect()
             await asyncio.sleep(1)
 
     except Exception as e:
