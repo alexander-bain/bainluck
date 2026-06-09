@@ -1519,22 +1519,25 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 if not series_needing_work:
                     return stats
 
-                # Pre-load ALL outcome tickers that need resolution.
-                # O(1) set lookup per API ticker instead of DB UPDATE per ticker.
+                # Pre-load outcome tickers that need resolution for the
+                # series we're about to process. Scoped to avoid full table scan.
+                _series_patterns = [s + "%" for s in series_needing_work]
                 needs_work_result = await session.execute(
                     text("""
                         SELECT fo.external_id
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'kalshi'
-                          AND (fo.resolution_source IS NULL
-                               OR fo.resolution_source IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                    'clean_resolution', 'pass2_loser', 'pass3_threshold'))
-                    """)
+                          AND fo.resolution_source IN
+                              ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
+                               'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                          AND fo.external_id LIKE ANY(:patterns)
+                    """),
+                    {"patterns": _series_patterns},
                 )
                 _needs_work_tickers = {r[0] for r in needs_work_result.all()}
-                logger.info("Settled events: %d outcome tickers need work", len(_needs_work_tickers))
+                logger.info("Settled events: %d outcome tickers need work across %d series",
+                            len(_needs_work_tickers), len(series_needing_work))
 
                 for series in series_needing_work:
                     if (_time.monotonic() - _start_time) > _MAX_SECONDS:
