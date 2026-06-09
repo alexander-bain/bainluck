@@ -178,10 +178,10 @@ class TestLeagueSpecificConfigs:
     def test_bundesliga_max_teams(self):
         assert BUNDESLIGA_CONFIG.max_teams == 18
 
-    def test_golf_not_sequential(self):
-        """Golf columns are NOT sequential (finishing positions, not rounds)."""
+    def test_golf_sequential(self):
+        """Golf columns are sequential (make_cut → top_20 → top_10 → top_5 → win)."""
         for col in GOLF_CONFIG.columns:
-            assert col.sequential is False
+            assert col.sequential is True
 
     def test_golf_columns(self):
         keys = [c.key for c in GOLF_CONFIG.columns]
