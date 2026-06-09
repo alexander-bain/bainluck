@@ -5135,20 +5135,44 @@ async def datagolf_retag(
           AND fo.resolution_source = 'did_not_play'
     """))
 
-    # Retag non-authoritative LOSER sources as did_not_play
-    r = await db.execute(text("""
+    # Revert wrongly-tagged did_not_play outcomes: those that ARE on the
+    # leaderboard (with CUT/MC/WD position) should be 'leaderboard', not
+    # 'did_not_play'. Also revert outcomes in markets without leaderboards
+    # — those should have NULL resolution_source (we can't determine status).
+    revert_on_lb = await db.execute(text("""
         UPDATE futures_outcomes fo
-        SET resolution_source = 'did_not_play'
+        SET resolution_source = 'leaderboard'
         FROM futures_markets fm
         WHERE fo.market_id = fm.id
           AND fm.source = 'datagolf'
-          AND fm.status = 'resolved'
+          AND fo.resolution_source = 'did_not_play'
           AND fo.is_winner = false
-          AND (fo.resolution_source IN ('all_losers', 'pass2_loser')
-               OR fo.resolution_source IS NULL)
+          AND fm.market_metadata->'leaderboard' IS NOT NULL
+          AND jsonb_typeof(fm.market_metadata->'leaderboard') = 'array'
+          AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(fm.market_metadata->'leaderboard') AS lb
+              WHERE lb->>'dg_id' = SUBSTRING(fo.external_id FROM 4)
+          )
+    """))
+    revert_no_lb = await db.execute(text("""
+        UPDATE futures_outcomes fo
+        SET resolution_source = NULL
+        FROM futures_markets fm
+        WHERE fo.market_id = fm.id
+          AND fm.source = 'datagolf'
+          AND fo.resolution_source = 'did_not_play'
+          AND fo.is_winner = false
+          AND (fm.market_metadata IS NULL
+               OR fm.market_metadata->'leaderboard' IS NULL
+               OR jsonb_typeof(fm.market_metadata->'leaderboard') != 'array')
     """))
     await db.commit()
-    return {"restored_winners": fix.rowcount, "retagged_losers": r.rowcount}
+    return {
+        "restored_winners": fix.rowcount,
+        "reverted_on_leaderboard": revert_on_lb.rowcount,
+        "reverted_no_leaderboard": revert_no_lb.rowcount,
+    }
 
 
 @router.get("/calibration-datagolf-diagnosis")
