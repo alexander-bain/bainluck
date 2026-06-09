@@ -1487,28 +1487,10 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
                 _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
 
-                # Single bulk query to find all series needing work instead
-                # of 117 sequential EXISTS queries
-                needs_result = await session.execute(
-                    text("""
-                        SELECT DISTINCT regexp_replace(fm.external_id, '-.*', '')
-                        FROM futures_markets fm
-                        WHERE fm.source = 'kalshi'
-                          AND regexp_replace(fm.external_id, '-.*', '') = ANY(:prefixes)
-                          AND (
-                              fm.status != 'resolved'
-                              OR EXISTS (
-                                  SELECT 1 FROM futures_outcomes fo
-                                  WHERE fo.market_id = fm.id
-                                    AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                              )
-                          )
-                    """),
-                    {"prefixes": check_list},
-                )
-                needs_set = {r[0] for r in needs_result.all()}
-                # Preserve priority ordering
-                series_needing_work = [s for s in check_list if s in needs_set]
+                # Just use the check_list directly — the early exit per series
+                # handles the case where a series has no work. Avoids the slow
+                # regexp + correlated subquery that was causing SoftTimeLimitExceeded.
+                series_needing_work = list(check_list)
 
                 logger.info(
                     "Settled events: %d series need work (checked %d of %d): %s",
