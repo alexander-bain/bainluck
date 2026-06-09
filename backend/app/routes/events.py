@@ -430,7 +430,7 @@ _EI_CACHE_TTL = 300  # 5 minutes
 # Completed games: cached indefinitely. Live/scheduled: 30s TTL.
 _game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
 _GAME_MARKETS_LIVE_TTL = 30
-_GAME_MARKETS_MAX_SIZE = 200
+_GAME_MARKETS_MAX_SIZE = 30
 
 # Sport-specific expected game-total threshold ranges.
 # Thresholds outside these bounds are from a different sport (cross-game
@@ -468,7 +468,7 @@ _SPORT_TEAM_TOTAL_RANGE: dict[str, tuple[float, float]] = {
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
-_EVENT_DETAIL_MAX_SIZE = 500
+_EVENT_DETAIL_MAX_SIZE = 50
 
 
 async def _load_ei_percentiles(db: AsyncSession) -> dict:
@@ -3807,7 +3807,7 @@ async def get_game_markets(
 
 _related_futures_cache: dict[int, tuple[float, str, dict]] = {}
 _RELATED_FUTURES_LIVE_TTL = 60
-_RELATED_FUTURES_MAX_SIZE = 200
+_RELATED_FUTURES_MAX_SIZE = 30
 
 
 @router.get("/{event_id}/related-futures")
