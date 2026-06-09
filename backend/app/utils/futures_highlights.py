@@ -145,7 +145,9 @@ _BORING_PATTERNS = re.compile(
     r"|how many launches will spacex"
     r"|allegiance \d+ winner"
     r"|college baseball.*(tournament|champion)"
-    r"|\([A-Z]{1,5}\) (up or down)"
+    r"|\([A-Z]{1,6}\) (up or down)"
+    r"|daily up.down"
+    r"|\bup or down on (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|june|july)"
     r"|women.s champions league"
     r"|coca.cola \d+ winner"
     r"|detroit grand prix"
@@ -154,7 +156,16 @@ _BORING_PATTERNS = re.compile(
     r"|ipo closing"
     r"|\bmarket cap\b.*(range|\$\d)"
     r"|college (baseball|softball|lacrosse|field hockey)"
-    r"|college basketball.*(big west|patriot|horizon|southland|big south|meac|swac|summit|ohio valley))",
+    r"|college basketball.*(big west|patriot|horizon|southland|big south|meac|swac|summit|ohio valley)"
+    r"|regional champion"
+    r"|how many.*(posts|tweets|truths|visits)"
+    r"|truth social posts this week"
+    r"|series score after game"
+    r"|game \d+ winner to be champion"
+    r"|week \d+.*elimination"
+    r"|iihf\b"
+    r"|euroleague\b"
+    r"|super league champion)",
     re.IGNORECASE,
 )
 

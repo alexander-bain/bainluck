@@ -180,6 +180,7 @@ _EPISODE_LEVEL_RE = re.compile(
     r"S\d{1,2}E\d{1,2}"
     r"|season \d+.*(episode|elimination|eviction|week \d)"
     r"|episode \d+.*(elimination|eviction|winner)"
+    r"|week \d+.*(?:elimination|eviction)"
     r")",
     re.IGNORECASE,
 )
@@ -251,7 +252,7 @@ _COMPELLING_RE = re.compile(
     r"\b("
     r"war|invade|invasion|strike|ceasefire|peace deal|treaty|coup|"
     r"revolution|overthrow|regime|taiwan|ukraine|israel|iran|russia|china|"
-    r"president|presidential|election|nominee|fed|recession|rate cut|"
+    r"president|presidential|election|nominee|fed\s+(?:decision|rate|fund|cut|hike)|recession|rate cut|"
     r"hurricane|tornado|earthquake|wildfire|flood|"
     r"openai|gpt|claude|ai model|deepseek|gemini|ipo|bankrupt|earnings|"
     r"bitcoin|btc|ethereum|eth|crypto|"
