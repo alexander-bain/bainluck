@@ -1532,8 +1532,9 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
                     series_resolved = 0
                     series_snapshots = 0
+                    _empty_pages = 0
 
-                    for page_num in range(50):
+                    for page_num in range(200):
                         for _retry in range(3):
                             try:
                                 events, cursor = await service.get_events(
@@ -1586,33 +1587,58 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             series_resolved += resolve_result.rowcount
                             stats["markets_resolved"] += resolve_result.rowcount
 
-                        # --- Phase 1.5: Resolve is_winner from settlement ---
-                        # Outcomes in partially-resolved markets may have
-                        # is_winner=false/resolution_source=NULL because
-                        # forward capture only set some siblings. The settled
-                        # events API has authoritative result for every market.
+                        # --- Phase 1.5: Batch resolve is_winner from settlement ---
+                        yes_tickers = []
+                        no_tickers = []
                         for event_data in events:
                             for mkt in (event_data.get("markets") or []):
                                 ticker = mkt.get("ticker", "")
                                 result_val = mkt.get("result")
                                 if not ticker or result_val is None:
                                     continue
-                                is_winner = result_val == "yes"
-                                settled = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET is_winner = :win,
-                                            resolution_source = 'api_settlement'
-                                        WHERE external_id = :ticker
-                                          AND (resolution_source IS NULL
-                                               OR resolution_source IN
-                                                   ('pass2_guess', 'binary_higher_wins',
-                                                    'multi_max_prob'))
-                                    """),
-                                    {"win": is_winner, "ticker": ticker},
-                                )
-                                if settled.rowcount > 0:
-                                    stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + settled.rowcount
+                                if result_val == "yes":
+                                    yes_tickers.append(ticker)
+                                else:
+                                    no_tickers.append(ticker)
+
+                        page_resolved = 0
+                        if yes_tickers:
+                            r_yes = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes fo
+                                    SET is_winner = true, resolution_source = 'api_settlement'
+                                    FROM futures_markets fm
+                                    WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
+                                      AND fo.external_id = ANY(:tickers)
+                                      AND (fo.resolution_source IS NULL
+                                           OR fo.resolution_source IN
+                                               ('pass2_guess', 'binary_higher_wins',
+                                                'multi_max_prob', 'clean_resolution',
+                                                'pass2_loser', 'pass3_threshold'))
+                                """),
+                                {"tickers": yes_tickers},
+                            )
+                            page_resolved += r_yes.rowcount
+
+                        if no_tickers:
+                            r_no = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes fo
+                                    SET is_winner = false, resolution_source = 'api_settlement'
+                                    FROM futures_markets fm
+                                    WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
+                                      AND fo.external_id = ANY(:tickers)
+                                      AND (fo.resolution_source IS NULL
+                                           OR fo.resolution_source IN
+                                               ('pass2_guess', 'binary_higher_wins',
+                                                'multi_max_prob', 'clean_resolution',
+                                                'pass2_loser', 'pass3_threshold'))
+                                """),
+                                {"tickers": no_tickers},
+                            )
+                            page_resolved += r_no.rowcount
+
+                        stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + page_resolved
 
                         # --- Phase 2: Snapshot backfill (respects limit) ---
                         if total_snapshots < limit:
@@ -1754,73 +1780,34 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 {"tickers": prev_tickers},
                             )
 
-                        # --- Phase 3: Winner resolution from API result field ---
-                        # Bulk UPDATE: collect all ticker→result pairs from the page,
-                        # then resolve winners and losers in two batch UPDATEs.
-                        winners_set = 0
-                        yes_tickers = []
-                        no_tickers = []
-                        for event_data in events:
-                            for mkt in (event_data.get("markets") or []):
-                                ticker = mkt.get("ticker", "")
-                                result = mkt.get("result")
-                                if not ticker or result is None:
-                                    continue
-                                if result == "yes":
-                                    yes_tickers.append(ticker)
-                                else:
-                                    no_tickers.append(ticker)
-
-                        if yes_tickers:
-                            r_yes = await session.execute(
-                                text("""
-                                    UPDATE futures_outcomes fo
-                                    SET is_winner = true,
-                                        resolution_source = 'api_settlement'
-                                    FROM futures_markets fm
-                                    WHERE fo.market_id = fm.id
-                                      AND fm.source = 'kalshi'
-                                      AND fo.external_id = ANY(:tickers)
-                                      AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                                """),
-                                {"tickers": yes_tickers},
-                            )
-                            winners_set += r_yes.rowcount
-
-                        if no_tickers:
-                            r_no = await session.execute(
-                                text("""
-                                    UPDATE futures_outcomes fo
-                                    SET is_winner = false,
-                                        resolution_source = 'api_settlement'
-                                    FROM futures_markets fm
-                                    WHERE fo.market_id = fm.id
-                                      AND fm.source = 'kalshi'
-                                      AND fo.external_id = ANY(:tickers)
-                                      AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                                """),
-                                {"tickers": no_tickers},
-                            )
-                            winners_set += r_no.rowcount
-
+                        # Phase 3 merged into Phase 1.5 above (same batch UPDATEs)
+                        winners_set = page_resolved
                         stats.setdefault("winners_resolved", 0)
                         stats["winners_resolved"] += winners_set
-                        if yes_tickers or no_tickers:
-                            logger.info(
-                                "Phase 3: series=%s page=%d yes=%d no=%d updated=%d",
-                                series, page_num, len(yes_tickers),
-                                len(no_tickers), winners_set,
-                            )
 
                         await session.commit()
 
+                        # Track consecutive empty pages for early exit
+                        page_useful = (
+                            page_resolved > 0
+                            or resolve_result.rowcount > 0
+                            or winners_set > 0
+                        )
+                        if page_useful:
+                            _empty_pages = 0
+                        else:
+                            _empty_pages += 1
+
                         if not cursor:
-                            # Series fully paginated — clear saved cursor
                             _rc.delete(_cursor_key)
                             break
-                        # Save cursor so next run resumes here
+                        # Early exit: 5 consecutive pages with 0 results
+                        if _empty_pages >= 5:
+                            logger.info("Settled events: %s early exit after %d empty pages at page %d", series, _empty_pages, page_num)
+                            _rc.setex(_cursor_key, 86400 * 7, cursor)
+                            break
                         _rc.setex(_cursor_key, 86400 * 7, cursor)
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.1)
 
                     if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
                         logger.info(
