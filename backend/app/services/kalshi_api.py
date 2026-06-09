@@ -667,6 +667,8 @@ class KalshiAPIService(BaseAPIClient):
             "KXNHL", "KXNHLEAST", "KXNHLWEST",
             "KXMLB", "KXMLBAL", "KXMLBNL",
             "KXNFL", "KXNFLNFC", "KXNFLAFC",
+            # Game winner (moneyline) — Kalshi retains settled events forever
+            "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
             # Game-level (neg-risk, status=None — missed by unfiltered pagination)
             "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
             "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
@@ -683,25 +685,33 @@ class KalshiAPIService(BaseAPIClient):
             "KXNBAMENTION", "KXNHLMENTION", "KXMLBMENTION", "KXNFLMENTION",
         ]
         supplemented = 0
+        _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
         for st in _SPORTS_SERIES_TICKERS:
-            if any(e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()):
+            # Game series always need the supplementary fetch — the main scan
+            # finds open events but misses thousands of settled ones.
+            if st not in _GAME_SERIES and any(
+                e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()
+            ):
                 continue
             try:
-                await asyncio.sleep(0.3)
-                events_page, _ = await self.get_events(
-                    status=None,
-                    series_ticker=st,
-                    with_nested_markets=True,
-                    limit=50,
-                )
-                for event_data in events_page:
-                    nested = event_data.get("markets", [])
-                    if nested and all(m.get("status") == "finalized" for m in nested):
-                        continue
-                    parsed_event = self._parse_event(event_data)
-                    if parsed_event and parsed_event.event_ticker not in all_events:
-                        all_events[parsed_event.event_ticker] = parsed_event
-                        supplemented += 1
+                max_series_pages = 25 if st in _GAME_SERIES else 5
+                series_cursor = None
+                for _sp in range(max_series_pages):
+                    await asyncio.sleep(0.3)
+                    events_page, series_cursor = await self.get_events(
+                        status=None,
+                        series_ticker=st,
+                        with_nested_markets=True,
+                        limit=200,
+                        cursor=series_cursor,
+                    )
+                    for event_data in events_page:
+                        parsed_event = self._parse_event(event_data)
+                        if parsed_event and parsed_event.event_ticker not in all_events:
+                            all_events[parsed_event.event_ticker] = parsed_event
+                            supplemented += 1
+                    if not series_cursor:
+                        break
             except Exception as e:
                 logger.debug("Supplementary fetch for %s failed: %s", st, e)
         if supplemented:
