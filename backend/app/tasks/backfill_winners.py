@@ -3307,6 +3307,81 @@ async def _resolve_winners_only(limit: int = 2000):
         "skipped_dead": poly_api_stats.get("skipped_dead", 0),
     }
 
+    # Kalshi settled events — lean winner-only scan (no snapshots/volume)
+    try:
+        import asyncio as _asyncio
+        from app.services.kalshi_api import KalshiAPIService
+        from app.tasks.redis_state import get_redis_client
+        _rc2 = get_redis_client()
+
+        _top_series = [
+            "KXNCAAMBTOTAL", "KXNCAAMBSPREAD", "KXNCAABBGAME",
+            "KXNBATEAMTOTAL", "KXNCAAMB1HTOTAL", "KXNCAAMB1HWINNER",
+            "KXNCAAWBGAME", "KXATPCHALLENGERMATCH", "KXCS2MAP",
+            "KXNASDAQ100U", "KXMLBTB", "KXCS2GAME", "KXINXU",
+        ]
+        settled_stats = {"pages": 0, "resolved": 0}
+        service2 = KalshiAPIService()
+        try:
+            for series in _top_series:
+                if _t.monotonic() - _start > 420:
+                    break
+                ck = f"bainluck:settled_cursor:{series}"
+                cursor = _rc2.get(ck)
+                if cursor:
+                    cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
+                empty_pages = 0
+                for _ in range(100):
+                    try:
+                        events, cursor = await service2.get_events(
+                            status="settled", series_ticker=series,
+                            with_nested_markets=True, limit=200, cursor=cursor)
+                    except Exception:
+                        break
+                    settled_stats["pages"] += 1
+                    if not events:
+                        break
+                    yes_t, no_t = [], []
+                    for ev in events:
+                        for mkt in (ev.get("markets") or []):
+                            tk = mkt.get("ticker", "")
+                            rs = mkt.get("result")
+                            if tk and rs is not None:
+                                (yes_t if rs == "yes" else no_t).append(tk)
+                    page_resolved = 0
+                    async with get_task_session() as sess:
+                        if yes_t:
+                            r = await sess.execute(text("""
+                                UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement'
+                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                            """), {"t": yes_t})
+                            page_resolved += r.rowcount
+                        if no_t:
+                            r = await sess.execute(text("""
+                                UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement'
+                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                            """), {"t": no_t})
+                            page_resolved += r.rowcount
+                        await sess.commit()
+                    settled_stats["resolved"] += page_resolved
+                    if page_resolved == 0:
+                        empty_pages += 1
+                    else:
+                        empty_pages = 0
+                    if not cursor:
+                        _rc2.delete(ck)
+                        break
+                    if empty_pages >= 5:
+                        _rc2.setex(ck, 86400 * 7, cursor)
+                        break
+                    _rc2.setex(ck, 86400 * 7, cursor)
+                    await _asyncio.sleep(0.1)
+        finally:
+            await service2.close()
+        stats["kalshi_settled_lean"] = settled_stats
+    except Exception as e:
+        stats["kalshi_settled_error"] = str(e)[:200]
+
     # Kalshi markets API pagination
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=10000)
     stats["kalshi_markets"] = {
