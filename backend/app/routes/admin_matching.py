@@ -3794,3 +3794,81 @@ async def sawtooth_fix(
         "total_snapshots_deleted": total_snapshots_deleted,
         "results": results,
     }
+
+
+@router.post("/prediction-markets/backfill-wps")
+async def backfill_win_probability_sources(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """One-time backfill: write win_probability_sources for ALL linked game markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.prediction_market_matching import find_moneyline_outcome, extract_matchup
+
+    stats = {"processed": 0, "written": 0, "skipped": 0, "errors": 0}
+
+    result = await db.execute(
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+        )
+    )
+    rows = result.unique().all()
+
+    by_event_source = {}
+    for market, event in rows:
+        key = (event.id, market.source)
+        ext = (market.external_id or "").lower()
+        if key not in by_event_source or "game" in ext:
+            by_event_source[key] = (market, event)
+
+    for (event_id, source), (market, event) in by_event_source.items():
+        stats["processed"] += 1
+        wps = event.win_probability_sources or {}
+        if source in wps:
+            stats["skipped"] += 1
+            continue
+
+        if market.source == "kalshi":
+            ext = (market.external_id or "").lower()
+            prefix = ext.split("-")[0] if "-" in ext else ext
+            if not prefix.endswith("game"):
+                stats["skipped"] += 1
+                continue
+
+        try:
+            matchup = extract_matchup(market.name, market.external_id)
+            if not matchup:
+                stats["skipped"] += 1
+                continue
+
+            ml = find_moneyline_outcome(
+                list(market.outcomes), matchup,
+                event.home_team_name, event.away_team_name,
+            )
+            if not ml:
+                stats["skipped"] += 1
+                continue
+
+            outcome, yes_is_home = ml
+            prob = float(outcome.current_probability or 0)
+            home_prob = prob if yes_is_home else 1.0 - prob
+
+            new_wps = dict(wps)
+            new_wps[source] = round(home_prob, 4)
+            await db.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(win_probability_sources=new_wps)
+            )
+            stats["written"] += 1
+        except Exception as e:
+            stats["errors"] += 1
+
+    await db.commit()
+    return stats
