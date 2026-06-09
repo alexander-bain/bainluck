@@ -389,6 +389,10 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bwin\s+in\s+\d\s+games?\b |  # "Win in 4 games"
     \b[4567]-[0-3]\b      |   # Series scores: 4-0, 4-1, 4-2, 4-3
     \bfinals?\s+mvp\b     |   # "Finals MVP" (more specific than bare \bmvp\b)
+    \bplayer\s+to\s+record\b | # "Player to Record 40+ Points" finals props
+    \btotal\s+(?:rebounds?|assists?|points?|goals?|saves?)\s+leader\b | # "Total Rebounds Leader"
+    \bbuzzer\s+beater\b   |   # "Number of Buzzer Beaters"
+    \bnumber\s+of\b        |   # "Number of [stat]" prop markets
     \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,
