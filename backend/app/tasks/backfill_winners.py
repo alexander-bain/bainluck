@@ -1573,6 +1573,8 @@ async def _resolve_kalshi_player_props_from_boxscore():
     """
     stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "errors": []}
 
+    all_prop_prefixes = list(_PROP_TICKER_TO_STAT.keys()) + list(_COMBO_STATS.keys())
+
     try:
         async with get_task_session() as session:
             result = await session.execute(
@@ -1588,16 +1590,19 @@ async def _resolve_kalshi_player_props_from_boxscore():
                            OR fo.resolution_source IN
                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold'))
-                    LIMIT 10000
-                """)
+                      AND LOWER(fm.external_id) LIKE ANY(:prefixes)
+                    ORDER BY fm.id
+                    LIMIT 50000
+                """),
+                {"prefixes": [p + "%" for p in all_prop_prefixes]},
             )
             rows = result.all()
 
-            updates = []
+            winner_ids = []
+            loser_ids = []
+            _bs_cache = {}
             for row in rows:
                 ticker_lower = (row.ticker or "").lower()
-                raw_bs = row.box_score_data or {}
-                box_score = raw_bs.get("players", raw_bs) if isinstance(raw_bs, dict) else {}
 
                 stat_name = None
                 combo_stats = None
@@ -1621,21 +1626,25 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 player_name = m.group(1).strip()
                 threshold = int(m.group(2))
 
+                bs_id = id(row.box_score_data)
+                if bs_id not in _bs_cache:
+                    raw_bs = row.box_score_data or {}
+                    raw_players = raw_bs.get("players", raw_bs) if isinstance(raw_bs, dict) else {}
+                    _bs_cache[bs_id] = {
+                        _normalize_player_name(k): v
+                        for k, v in raw_players.items()
+                    }
+                norm_box = _bs_cache[bs_id]
+
                 player_norm = _normalize_player_name(player_name)
-                player_stats = None
-                for bs_name, bs_stats in box_score.items():
-                    if _normalize_player_name(bs_name) == player_norm:
-                        player_stats = bs_stats
-                        break
+                player_stats = norm_box.get(player_norm)
 
                 if player_stats is None and "," in player_name:
                     parts = player_name.split(",", 1)
-                    flipped = f"{parts[1].strip()} {parts[0].strip()}"
-                    flipped_norm = _normalize_player_name(flipped)
-                    for bs_name, bs_stats in box_score.items():
-                        if _normalize_player_name(bs_name) == flipped_norm:
-                            player_stats = bs_stats
-                            break
+                    flipped_norm = _normalize_player_name(
+                        f"{parts[1].strip()} {parts[0].strip()}"
+                    )
+                    player_stats = norm_box.get(flipped_norm)
 
                 if player_stats is None:
                     stats["no_player"] += 1
@@ -1650,15 +1659,22 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                updates.append((row.outcome_id, actual >= threshold))
+                if actual >= threshold:
+                    winner_ids.append(row.outcome_id)
+                else:
+                    loser_ids.append(row.outcome_id)
 
-            # Batch update
-            for oid, won in updates:
+            if winner_ids:
                 await session.execute(
-                    text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'box_score' WHERE id = :oid"),
-                    {"won": won, "oid": oid},
+                    text("UPDATE futures_outcomes SET is_winner = true, resolution_source = 'box_score' WHERE id = ANY(:ids)"),
+                    {"ids": winner_ids},
                 )
-            stats["resolved"] = len(updates)
+            if loser_ids:
+                await session.execute(
+                    text("UPDATE futures_outcomes SET is_winner = false, resolution_source = 'box_score' WHERE id = ANY(:ids)"),
+                    {"ids": loser_ids},
+                )
+            stats["resolved"] = len(winner_ids) + len(loser_ids)
             await session.commit()
 
     except Exception as e:
