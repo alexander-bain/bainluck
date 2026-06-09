@@ -222,13 +222,23 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         event.period = ee.status_detail
         changed = True
 
-    # Update scores
+    # Update scores + capture ScoreSnapshot for score differential chart
+    score_changed = False
     if ee.home_score is not None and event.home_score != ee.home_score:
         event.home_score = ee.home_score
         changed = True
+        score_changed = True
     if ee.away_score is not None and event.away_score != ee.away_score:
         event.away_score = ee.away_score
         changed = True
+        score_changed = True
+    if score_changed and ee.home_score is not None and ee.away_score is not None:
+        from app.models.models import ScoreSnapshot
+        session.add(ScoreSnapshot(
+            event_id=event.id,
+            home_score=ee.home_score,
+            away_score=ee.away_score,
+        ))
 
     # Update broadcast info
     if ee.broadcasts:
