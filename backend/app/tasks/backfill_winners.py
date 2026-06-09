@@ -3546,6 +3546,47 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         logger.warning("DataGolf retag2 failed: %s", e)
 
+    # Phase 0-no-pregame: Tag outcomes where we have trade snapshots but ALL
+    # are post-game → proven zero pre-game trading. These outcomes have extreme
+    # cal_prob (fell back to opening at 0.90+) and snapshots created by the trade
+    # backfill, but none before commence_time.
+    # Requires: (a) at least 1 snapshot exists (trade data was fetched)
+    #           (b) zero snapshots before commence_time
+    #           (c) cal_prob = extreme opening (Part A couldn't find pre-game data)
+    try:
+        async with get_task_session() as session:
+            npt = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'no_pregame_trading'
+                    FROM futures_markets fm
+                    LEFT JOIN events e ON e.id = fm.event_id
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner = false
+                      AND fo.calibration_probability = fo.opening_probability
+                      AND (fo.opening_probability >= 0.90 OR fo.opening_probability <= 0.10)
+                      AND COALESCE(fo.resolution_source, '') NOT IN
+                          ('no_pregame_trading', 'did_not_play', 'withdrew')
+                      AND COALESCE(e.commence_time, fm.commence_time) IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1 FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                            AND fos.captured_at < COALESCE(e.commence_time, fm.commence_time)
+                      )
+                """)
+            )
+            if npt.rowcount > 0:
+                await session.commit()
+                logger.info("No-pregame-trading: %d outcomes tagged", npt.rowcount)
+    except Exception as e:
+        logger.warning("No-pregame-trading tag failed: %s", e)
+
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
