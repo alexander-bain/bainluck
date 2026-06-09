@@ -642,9 +642,6 @@ class KalshiAPIService(BaseAPIClient):
             )
 
             for event_data in events:
-                nested = event_data.get("markets", [])
-                if nested and all(m.get("status") == "finalized" for m in nested):
-                    continue
                 parsed_event = self._parse_event(event_data)
                 if parsed_event:
                     all_events[parsed_event.event_ticker] = parsed_event
