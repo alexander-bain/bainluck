@@ -116,6 +116,7 @@ _CATEGORY_PREFIX_RE = re.compile(
     r'|Eredivisie|Primeira Liga|Scottish Premiership|Belgian Pro League'
     r'|Super Lig|Allsvenskan|Eliteserien'
     r'|UFC\s*\d*|Bellator\s*\d*|PFL\s*\d*|ONE\s*\d*'
+    r'|(?:ATP|WTA)\s+[\w\s\-\.]+?(?=\s*:)'  # "ATP French Open:", "WTA Madrid Open:", etc.
     r'|ATP|WTA|Grand Slam|Australian Open|French Open|Wimbledon|US Open'
     r'|PGA|LIV Golf|DP World Tour'
     r'|Formula\s*1|F1|NASCAR|IndyCar'
