@@ -1078,6 +1078,10 @@ Shipped: ~~iOS-4~~ (dead views audit), ~~iOS-6~~ (feed limit), ~~iOS-GD12~~ (hea
 | iOS-7 | Rebuild native Futures browser before re-exposing — partial. May 17 groundwork shipped; needs final product review before re-exposure. | Yellow |
 
 - [idea] Firebase Remote Config for iOS feature flags / kill switches (free, unlimited fetches)
+- [idea] Widget "My Number": pinned market / followed-team probability on systemSmall. Trigger: #678 approved + #839 shipped
+- [idea] Mac menu-bar probability ticker (extends Bain_LuckApp pollLiveGames). Same trigger
+- [idea] Watch pinned-market complication; re-embed Watch in 1.1. Same trigger
+- [idea] Siri "Get Probability" App Intent over /api/events/search. Same trigger
 
 ---
 
