@@ -1571,7 +1571,7 @@ class TestGetSportPrefixFromTicker:
 # =============================================================================
 
 class TestLivePollImports:
-    """Verify the live polling function exists and imports correctly."""
+    """Verify the live polling function exists (kept as fallback code)."""
 
     def test_live_poll_function_exists(self):
         from app.tasks.prediction_market_matching import _poll_live_prediction_market_prices
@@ -1587,22 +1587,11 @@ class TestLivePollImports:
         task_names = [t for t in celery_app.tasks if "poll_live_prediction_markets" in t]
         assert len(task_names) == 1
 
-    def test_beat_schedule_entry(self):
+    def test_beat_schedule_disabled(self):
+        """Beat schedule entry removed — replaced by worker-ws WebSocket (#844)."""
         from app.tasks import celery_app
         schedule = celery_app.conf.beat_schedule
-        assert "poll-live-prediction-markets" in schedule
-        entry = schedule["poll-live-prediction-markets"]
-        assert entry["task"] == "app.tasks.poll_live_prediction_markets"
-        # Every 2 minutes
-        assert entry["schedule"] == 120.0
-
-    def test_task_is_tracked(self):
-        """Verify the task uses _tracked_run for monitoring."""
-        import inspect
-        from app.tasks import poll_live_prediction_markets
-        source = inspect.getsource(poll_live_prediction_markets)
-        assert "_tracked_run" in source
-        assert "prediction_market_live" in source
+        assert "poll-live-prediction-markets" not in schedule
 
 
 # =============================================================================
