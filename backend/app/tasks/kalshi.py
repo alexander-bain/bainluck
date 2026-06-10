@@ -1191,6 +1191,9 @@ async def _backfill_volume_only():
 
                 if vol_tickers:
                     stats["tickers"] += len(vol_tickers)
+                    if stats["pages"] <= 2:
+                        logger.info("Volume: %s page %d: %d tickers (sample: %s)",
+                                    series, page, len(vol_tickers), vol_tickers[:2])
                     async with get_task_session() as session:
                         vr = await session.execute(
                             text("""
@@ -1202,6 +1205,8 @@ async def _backfill_volume_only():
                             {"tickers": vol_tickers, "volumes": vol_values},
                         )
                         stats["rows_updated"] += vr.rowcount
+                        if vr.rowcount > 0:
+                            logger.info("Volume: %s page %d: %d rows updated", series, page, vr.rowcount)
                         await session.commit()
 
                 del events
