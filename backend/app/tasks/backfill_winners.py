@@ -3285,6 +3285,83 @@ async def _resolve_winners_only(limit: int = 2000):
     except Exception as e:
         stats["ml_repair_error"] = str(e)[:200]
 
+    # Phase 0c: Link unlinked Kalshi game markets to events via ticker parsing
+    try:
+        from app.utils.prediction_market_matching import (
+            extract_game_date_from_ticker, extract_teams_from_ticker,
+        )
+        from app.services.event_registry import find_or_create_event
+
+        _ESPN_PREFIXES = [
+            "kxncaambtotal%", "kxncaambspread%", "kxncaambgame%",
+            "kxncaamb1h%", "kxncaawbgame%", "kxncaabbgame%",
+            "kxnbateamtotal%", "kxnbareb%", "kxnbapts%", "kxnbaast%",
+            "kxnba3pt%", "kxnbatotal%", "kxnbaspread%", "kxnbagame%",
+            "kxnba1h%", "kxnba2h%", "kxnba2d%",
+            "kxnhlgame%", "kxnhlgoal%", "kxnhlpts%", "kxnhlast%",
+            "kxnhltotal%", "kxnhlfirstgoal%",
+            "kxmlbstgame%", "kxmlbhit%", "kxmlbhr%", "kxmlbtotal%",
+            "kxmlbks%", "kxmlbhrr%", "kxmlbtb%",
+        ]
+        async with get_task_session() as session:
+            unlinked = await session.execute(
+                text("""
+                    SELECT fm.id, fm.external_id, fm.name
+                    FROM futures_markets fm
+                    WHERE fm.source = 'kalshi'
+                      AND fm.event_id IS NULL
+                      AND LOWER(fm.external_id) LIKE ANY(:prefixes)
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.resolution_source = 'pass2_guess'
+                      )
+                    LIMIT 500
+                """),
+                {"prefixes": _ESPN_PREFIXES},
+            )
+            markets_to_link = unlinked.all()
+
+            linked = 0
+            for mkt in markets_to_link:
+                game_date = extract_game_date_from_ticker(mkt.external_id)
+                teams = extract_teams_from_ticker(mkt.external_id)
+                if not game_date or not teams:
+                    continue
+
+                team_a, team_b = teams
+                match = await session.execute(
+                    text("""
+                        SELECT e.id FROM events e
+                        WHERE e.commence_time BETWEEN :start AND :end
+                          AND e.status IN ('completed', 'closed')
+                          AND (
+                              (LOWER(e.home_team_name) LIKE :ta AND LOWER(e.away_team_name) LIKE :tb)
+                              OR (LOWER(e.home_team_name) LIKE :tb AND LOWER(e.away_team_name) LIKE :ta)
+                          )
+                        LIMIT 1
+                    """),
+                    {
+                        "start": game_date - __import__('datetime').timedelta(hours=28),
+                        "end": game_date + __import__('datetime').timedelta(hours=28),
+                        "ta": f"%{team_a.lower()}%",
+                        "tb": f"%{team_b.lower()}%",
+                    },
+                )
+                event_row = match.first()
+                if event_row:
+                    await session.execute(
+                        text("UPDATE futures_markets SET event_id = :eid WHERE id = :mid"),
+                        {"eid": event_row[0], "mid": mkt.id},
+                    )
+                    linked += 1
+
+            await session.commit()
+            stats["kalshi_linked"] = linked
+            stats["kalshi_link_candidates"] = len(markets_to_link)
+    except Exception as e:
+        stats["kalshi_link_error"] = str(e)[:200]
+
     # Score-based resolution
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()

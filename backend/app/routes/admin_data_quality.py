@@ -1901,6 +1901,64 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.post("/test-ticker-linking")
+async def test_ticker_linking(
+    secret: str = Query(...),
+    limit: int = Query(20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test ticker-based event linking for unlinked Kalshi markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.utils.prediction_market_matching import (
+        extract_game_date_from_ticker, extract_teams_from_ticker,
+    )
+    from datetime import timedelta
+
+    r = await db.execute(text("""
+        SELECT fm.id, fm.external_id, fm.name
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi' AND fm.event_id IS NULL
+          AND LOWER(fm.external_id) LIKE ANY(:p)
+          AND EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.resolution_source = 'pass2_guess')
+        ORDER BY random() LIMIT :lim
+    """), {"p": ["kxncaambtotal%", "kxncaambgame%", "kxmlbstgame%"], "lim": limit})
+    markets = r.all()
+
+    results = []
+    for mkt in markets:
+        game_date = extract_game_date_from_ticker(mkt.external_id)
+        teams = extract_teams_from_ticker(mkt.external_id)
+        if not game_date or not teams:
+            results.append({"ticker": mkt.external_id[:40], "parsed": False})
+            continue
+
+        team_a, team_b = teams
+        match = await db.execute(text("""
+            SELECT e.id, e.home_team_name, e.away_team_name, e.home_score, e.away_score
+            FROM events e
+            WHERE e.commence_time BETWEEN :s AND :e
+              AND (
+                  (LOWER(e.home_team_name) LIKE :ta AND LOWER(e.away_team_name) LIKE :tb)
+                  OR (LOWER(e.home_team_name) LIKE :tb AND LOWER(e.away_team_name) LIKE :ta)
+              )
+            LIMIT 1
+        """), {"s": game_date - timedelta(hours=28), "e": game_date + timedelta(hours=28),
+               "ta": f"%{team_a.lower()}%", "tb": f"%{team_b.lower()}%"})
+        event = match.first()
+        results.append({
+            "ticker": mkt.external_id[:40],
+            "date": str(game_date)[:10],
+            "team_a": team_a, "team_b": team_b,
+            "event_found": event is not None,
+            "event_id": event[0] if event else None,
+            "score": f"{event[3]}-{event[4]}" if event and event[3] else None,
+        })
+
+    matched = sum(1 for r in results if r.get("event_found"))
+    return {"total": len(results), "matched": matched, "results": results}
+
+
 @router.post("/run-lean-settled")
 async def run_lean_settled(
     secret: str = Query(...),
