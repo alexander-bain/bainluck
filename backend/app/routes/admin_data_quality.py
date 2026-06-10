@@ -5049,17 +5049,20 @@ async def volume_stats(
     """Check how many outcomes have volume populated."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    r = await db.execute(text("""
-        SELECT
-            COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE fo.volume IS NOT NULL) AS has_volume,
-            COUNT(*) FILTER (WHERE fo.volume = 0) AS vol_zero,
-            COUNT(*) FILTER (WHERE fo.volume > 0) AS vol_positive,
-            COUNT(*) FILTER (WHERE fo.volume IS NULL) AS vol_null
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
-    """))
+    try:
+        r = await db.execute(text("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE fo.volume IS NOT NULL) AS has_volume,
+                COUNT(*) FILTER (WHERE fo.volume = 0) AS vol_zero,
+                COUNT(*) FILTER (WHERE fo.volume > 0) AS vol_positive,
+                COUNT(*) FILTER (WHERE fo.volume IS NULL) AS vol_null
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+        """))
+    except Exception as e:
+        return {"error": str(e), "hint": "volume column may not exist — check if migration ran"}
     row = r.first()
     return {
         "total": row.total, "has_volume": row.has_volume,
