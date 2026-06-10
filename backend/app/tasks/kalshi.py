@@ -1638,17 +1638,18 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     except (ValueError, TypeError):
                                         pass
                         if vol_tickers:
-                            vol_rows = 0
-                            for vt, vv in zip(vol_tickers, vol_values):
-                                vr = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET volume = :vol
-                                        WHERE external_id = :tk
-                                    """),
-                                    {"vol": vv, "tk": vt},
-                                )
-                                vol_rows += vr.rowcount
+                            # Batch UPDATE using unnest for performance
+                            # (10K+ individual UPDATEs per page was too slow)
+                            vr = await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes fo
+                                    SET volume = v.vol
+                                    FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                                    WHERE fo.external_id = v.tk
+                                """),
+                                {"tickers": vol_tickers, "volumes": vol_values},
+                            )
+                            vol_rows = vr.rowcount
                             await session.commit()
                             stats["volume_set"] = stats.get("volume_set", 0) + vol_rows
                             if vol_rows > 0 and stats.get("volume_set", 0) <= vol_rows:
