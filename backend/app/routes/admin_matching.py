@@ -3904,4 +3904,24 @@ async def game_market_counts(
         text("SELECT COUNT(*) FROM futures_markets WHERE source='kalshi'")
     )
     results["total_kalshi"] = r.scalar()
+    # Check 7-day window coverage
+    r7 = await db.execute(
+        text("""
+            WITH re AS (
+                SELECT e.id, s.key AS sk FROM events e JOIN sports s ON e.sport_id = s.id
+                WHERE e.commence_time >= NOW() - INTERVAL '7 days'
+                  AND e.commence_time <= NOW() + INTERVAL '2 days'
+                  AND s.key = 'baseball_mlb'
+            ),
+            kl AS (
+                SELECT DISTINCT event_id FROM futures_markets
+                WHERE event_id IS NOT NULL AND source = 'kalshi'
+                  AND external_id LIKE 'KXMLBGAME%'
+            )
+            SELECT COUNT(*) AS total, COUNT(kl.event_id) AS covered
+            FROM re LEFT JOIN kl ON kl.event_id = re.id
+        """)
+    )
+    row = r7.one()
+    results["mlb_7day"] = {"total_events": row[0], "kalshi_game_covered": row[1]}
     return results
