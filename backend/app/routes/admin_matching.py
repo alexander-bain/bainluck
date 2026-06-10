@@ -3926,21 +3926,20 @@ async def game_market_counts(
     results["mlb_7day"] = {"total_events": row[0], "kalshi_game_covered": row[1]}
     # Events in 7-day window WITHOUT any Kalshi game market
     uncovered = await db.execute(
-        text("""
-            SELECT e.id, e.home_team, e.away_team, e.commence_time, e.status
-            FROM events e
-            JOIN sports s ON e.sport_id = s.id
-            WHERE s.key = 'baseball_mlb'
-              AND e.commence_time >= NOW() - INTERVAL '7 days'
-              AND e.commence_time <= NOW() + INTERVAL '2 days'
-              AND NOT EXISTS (
-                  SELECT 1 FROM futures_markets fm
-                  WHERE fm.event_id = e.id AND fm.source = 'kalshi'
-                    AND fm.external_id LIKE 'KXMLBGAME%'
-              )
-            ORDER BY e.commence_time DESC
-            LIMIT 10
-        """)
+        text(
+            "SELECT e.id, e.home_team, e.away_team, e.commence_time, e.status"
+            " FROM events e JOIN sports s ON e.sport_id = s.id"
+            " WHERE s.key = 'baseball_mlb'"
+            "   AND e.commence_time >= NOW() - INTERVAL '7 days'"
+            "   AND e.commence_time <= NOW() + INTERVAL '2 days'"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM futures_markets fm"
+            "     WHERE fm.event_id = e.id AND fm.source = 'kalshi'"
+            "       AND fm.external_id LIKE :game_pat"
+            "   )"
+            " ORDER BY e.commence_time DESC LIMIT 10"
+        ),
+        {"game_pat": "KXMLBGAME%"},
     )
     uncovered_rows = uncovered.all()
     results["uncovered_mlb_events"] = [
