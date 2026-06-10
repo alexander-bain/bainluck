@@ -3953,17 +3953,16 @@ async def game_market_counts(
         sample_time = uncovered_rows[0][3]
         if sample_time:
             nearby = await db.execute(
-                text("""
-                    SELECT external_id, name, commence_time, event_id
-                    FROM futures_markets
-                    WHERE source = 'kalshi'
-                      AND external_id LIKE 'KXMLBGAME%'
-                      AND commence_time BETWEEN :t - INTERVAL '6 hours'
-                        AND :t + INTERVAL '6 hours'
-                    ORDER BY commence_time
-                    LIMIT 5
-                """),
-                {"t": sample_time},
+                text(
+                    "SELECT external_id, name, commence_time, event_id"
+                    " FROM futures_markets"
+                    " WHERE source = 'kalshi'"
+                    "   AND external_id LIKE :pat"
+                    "   AND commence_time BETWEEN :t - INTERVAL '6 hours'"
+                    "     AND :t + INTERVAL '6 hours'"
+                    " ORDER BY commence_time LIMIT 5"
+                ),
+                {"t": sample_time, "pat": "KXMLBGAME%"},
             )
             results["nearby_kalshi_for_sample"] = [
                 {"ticker": r[0], "name": str(r[1] or "")[:40],
