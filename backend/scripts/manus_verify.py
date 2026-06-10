@@ -15,7 +15,7 @@ import time
 import httpx
 
 API_KEY = os.getenv("MANUS_API_KEY", "")
-BASE_URL = "https://api.manus.im/v1"
+BASE_URL = "https://api.manus.ai/v2"
 
 
 def launch_task(brief: str, timeout_seconds: int = 600) -> dict:
@@ -23,7 +23,7 @@ def launch_task(brief: str, timeout_seconds: int = 600) -> dict:
     if not API_KEY:
         return {"status": "error", "detail": "MANUS_API_KEY not set"}
 
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    headers = {"x-manus-api-key": API_KEY, "Content-Type": "application/json"}
 
     # Launch
     try:
