@@ -25,17 +25,21 @@ def launch_task(brief: str, timeout_seconds: int = 600) -> dict:
 
     headers = {"x-manus-api-key": API_KEY, "Content-Type": "application/json"}
 
-    # Launch
+    # Launch (Manus uses dot-notation endpoints, not REST paths)
     try:
         resp = httpx.post(
-            f"{BASE_URL}/tasks",
+            f"{BASE_URL}/task.create",
             headers=headers,
-            json={"prompt": brief},
+            json={
+                "message": {"content": brief},
+                "title": f"BainLuck Verify: {brief[:60]}",
+                "hide_in_task_list": True,
+            },
             timeout=30,
         )
         resp.raise_for_status()
         task = resp.json()
-        task_id = task.get("id") or task.get("task_id")
+        task_id = task.get("task_id") or task.get("id")
         if not task_id:
             return {"status": "error", "detail": f"No task_id in response: {task}"}
     except Exception as e:
@@ -50,7 +54,8 @@ def launch_task(brief: str, timeout_seconds: int = 600) -> dict:
         time.sleep(15)
         try:
             status_resp = httpx.get(
-                f"{BASE_URL}/tasks/{task_id}",
+                f"{BASE_URL}/task.detail",
+                params={"task_id": task_id},
                 headers=headers,
                 timeout=15,
             )
