@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
@@ -20,6 +21,7 @@ interface FuturesCardProps extends CardActionCallbacks {
 
 export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
+  const [showHeatmapContext, setShowHeatmapContext] = useState(false);
   const catStyle = getCat(data.llm_sport_category);
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const leader = data.top_outcomes?.[0];
@@ -34,82 +36,400 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
+  const heatmapRows = buildHeatmapRows(data);
 
+  if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= 2) {
+    const maxProb = Math.max(...heatmapRows.map((row) => row.probability ?? 0), 0.01);
+    const themeLabel = formatComparisonTheme(data.discover_card.comparison_theme);
+
+    return (
+      <article className="relative overflow-hidden rounded-xl border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
+        <DismissBtn onDismiss={onDismiss} />
+        {trending && <TrendBadge />}
+
+        <div className="p-3 pb-2">
+          <div className="flex items-start gap-2.5">
+            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${catStyle.bg} ${catStyle.text}`}>
+              <BarChart3 size={17} strokeWidth={2.2} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${catStyle.bg} ${catStyle.text}`}>
+                  {category}
+                </span>
+                {themeLabel && (
+                  <span className="inline-flex items-center rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
+                    {themeLabel}
+                  </span>
+                )}
+                <TemporalBadge badge={data.temporal_badge} />
+              </div>
+              <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
+            </div>
+          </div>
+
+          {contextSnippet && (
+            <ExpandableContextText
+              text={contextSnippet}
+              expandedText={expandedContext}
+              className="mt-2 text-xs leading-relaxed text-text-secondary"
+              onExpand={onContextExpand}
+              onCollapse={onContextCollapse}
+            />
+          )}
+        </div>
+
+        <div className="px-3 pb-3">
+          <div className="space-y-1.5 border-y border-surface-border py-2">
+              {heatmapRows.slice(0, showHeatmapContext ? 8 : 4).map((row) => {
+                const probability = row.probability ?? 0;
+                const pct = Math.round(probability * 100);
+                const intensity = Math.max(8, Math.round((probability / maxProb) * 100));
+                return (
+                  <div
+                    key={row.key}
+                    className="grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-xs font-semibold text-text-primary" title={row.label}>{row.label}</span>
+                        {row.movement != null && <MovementBadge m={row.movement} />}
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
+                        <div
+                          className="h-full rounded-full bg-accent-brand transition-all duration-500"
+                          style={{ width: `${intensity}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? `${pct}%` : "—"}</span>
+                  </div>
+                );
+              })}
+
+            {heatmapRows.length > 4 && (
+              <button
+                type="button"
+                onClick={() => setShowHeatmapContext(!showHeatmapContext)}
+                className="px-1.5 text-xs font-medium text-accent-brand hover:underline"
+              >
+                {showHeatmapContext ? "Show fewer ranges" : `Show all ${heatmapRows.length} ranges`}
+              </button>
+            )}
+          </div>
+
+          <ActionBar
+            liked={liked}
+            setLiked={setLiked}
+            shareUrl={shareUrl}
+            shareTitle={data.name}
+            shareText={shareText}
+            contentType="futures"
+            itemId={data.id}
+            onShare={onShare}
+          />
+        </div>
+      </article>
+    );
+  }
+
+  const distributionRows = data.discover_card?.distribution_outcomes ?? [];
+  if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= 4) {
+    const maxProb = Math.max(...distributionRows.map((row) => row.probability ?? 0), 0.01);
+    const shownRows = distributionRows.slice(0, 4);
+    const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, distributionRows.length - shownRows.length);
+
+    return (
+      <article className="relative overflow-hidden rounded-xl border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
+        <DismissBtn onDismiss={onDismiss} />
+        {trending && <TrendBadge />}
+
+        <div className="p-3 pb-2">
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${catStyle.bg} ${catStyle.text}`}>
+              {category}
+            </span>
+            <span className="inline-flex items-center rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
+              Distribution
+            </span>
+            <TemporalBadge badge={data.temporal_badge} />
+          </div>
+          <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
+
+          {contextSnippet && (
+            <ExpandableContextText
+              text={contextSnippet}
+              expandedText={expandedContext}
+              className="mt-2 text-xs leading-relaxed text-text-secondary"
+              onExpand={onContextExpand}
+              onCollapse={onContextCollapse}
+            />
+          )}
+        </div>
+
+        <div className="px-3 pb-3">
+          <div className="space-y-1.5 border-y border-surface-border py-2">
+              {shownRows.map((row, index) => {
+                const probability = row.probability ?? 0;
+                const pct = Math.round(probability * 100);
+                const width = Math.max(5, Math.round((probability / maxProb) * 100));
+                const displayName = compactOutcomeName(row.label);
+                return (
+                  <div
+                    key={`${row.label}-${index}`}
+                    className="grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1"
+                  >
+                    <span className="font-mono text-xs font-semibold tabular-nums text-text-muted">{index + 1}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`min-w-0 text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
+                        <MovementBadge m={row.movement} />
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${index === 0 ? "bg-accent-brand" : "bg-text-muted/35"}`}
+                          style={{ width: `${width}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? `${pct}%` : "—"}</span>
+                  </div>
+                );
+              })}
+              {remainingCount > 0 && (
+                <div
+                  className="grid min-h-7 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted"
+                >
+                  <span className="font-mono text-xs font-semibold tabular-nums">{shownRows.length + 1}</span>
+                  <span className="truncate text-xs font-medium">Field and remaining outcomes</span>
+                  <span className="text-right text-xs font-semibold">+{remainingCount}</span>
+                </div>
+              )}
+          </div>
+
+          <ActionBar
+            liked={liked}
+            setLiked={setLiked}
+            shareUrl={shareUrl}
+            shareTitle={data.name}
+            shareText={shareText}
+            contentType="futures"
+            itemId={data.id}
+            onShare={onShare}
+          />
+        </div>
+      </article>
+    );
+  }
+
+  // A/B variant: deterministic bucket by market ID hash
+  const variantB = (data.id % 2 === 0);
+  const pctDisplay = prob != null ? `${Math.round(prob * 100)}%` : null;
+  const movementVal = leader?.movement;
+  const movementUp = movementVal != null && movementVal > 0;
+  const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1
+    ? `${movementUp ? "↑" : "↓"} ${Math.abs(movementVal).toFixed(1)}`
+    : null;
+  const volumeStr = data.volume_24h != null && data.volume_24h > 0
+    ? data.volume_24h >= 1_000_000 ? `$${(data.volume_24h / 1_000_000).toFixed(1)}M vol`
+    : data.volume_24h >= 1_000 ? `$${(data.volume_24h / 1_000).toFixed(0)}K vol`
+    : `$${data.volume_24h} vol`
+    : null;
+
+  if (variantB) {
+    // ── Variant B: data-pure (no image) ──
+    return (
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={data.name} data-card-variant="B">
+        <DismissBtn onDismiss={onDismiss} />
+        {trending && <TrendBadge />}
+
+        <div className="p-4">
+          <div className="flex items-center gap-2.5 mb-3.5">
+            <div className="w-[38px] h-[38px] rounded-lg bg-surface-elevated flex items-center justify-center text-lg shrink-0">
+              {catStyle.emoji}
+            </div>
+            <div className="leading-tight min-w-0">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{category}</div>
+              {resolveText && <div className="text-[11px] text-text-muted mt-0.5">{resolveText}</div>}
+            </div>
+          </div>
+
+          {pctDisplay && (
+            <div className="flex items-end gap-3 mb-3">
+              <span className="font-mono font-bold text-4xl tracking-tight leading-none text-text-primary tabular-nums">{pctDisplay}</span>
+              {movementStr && (
+                <div className="pb-1">
+                  <div className={`font-mono font-bold text-[15px] whitespace-nowrap ${movementUp ? "text-accent-live" : "text-accent-danger"}`}>{movementStr}</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted mt-0.5">24h</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {prob != null && (
+            <div className="flex h-[7px] gap-0.5 mb-3.5">
+              <div className="rounded-full bg-accent-brand shadow-inner" style={{ width: `${Math.round(prob * 100)}%` }} />
+              <div className="rounded-full bg-text-muted/30 flex-1" />
+            </div>
+          )}
+
+          <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
+            <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
+          </Link>
+
+          {contextSnippet && (
+            <ExpandableContextText
+              text={contextSnippet}
+              expandedText={expandedContext}
+              className="text-[13px] leading-relaxed text-text-secondary mb-2.5"
+              onExpand={onContextExpand}
+              onCollapse={onContextCollapse}
+            />
+          )}
+
+          {volumeStr && <div className="text-[11px] text-text-muted">{volumeStr}{resolveText ? ` · ${resolveText}` : ""}</div>}
+
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
+        </div>
+      </article>
+    );
+  }
+
+  // ── Variant A: image-led (refined current treatment) ──
   return (
-    <article className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow" aria-label={`${data.name}`}>
+    <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={data.name} data-card-variant="A">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
-      <div className={`relative ${hasImage ? "h-44" : "h-32"} flex flex-col items-center justify-center bg-cover bg-center`} style={{
+      <div className={`relative ${hasImage ? "aspect-[16/10]" : "h-32"} flex flex-col justify-end overflow-hidden`} style={{
         background: hasImage
-          ? `linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(0,0,0,0.75)), url(${data.image_url}) center/cover`
+          ? `url(${data.image_url}) center/cover`
           : CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
       }}>
-        <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {category}</div>
+        {/* Scrim gradient */}
+        <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22))" }} />
+
+        {/* Category pill */}
+        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-white bg-white/[0.18] backdrop-blur-sm px-2.5 py-1 rounded-full">
+          {catStyle.emoji} {category}
+        </div>
+
         {!hasImage && <span className="absolute inset-0 flex items-center justify-center text-[80px] opacity-[0.08] select-none pointer-events-none">{catStyle.emoji}</span>}
+
+        {/* Probability hero bottom-left */}
         {leader && (
-          <>
-            <AnimatedProbability value={Math.round((prob ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
-            <div className="text-white/70 text-sm mt-1 font-medium max-w-[85%] text-center line-clamp-2">{leader.name}</div>
-            <div className="mt-2 flex items-center gap-2">
-              <MovementBadge m={leader.movement} />
-              <TemporalBadge badge={data.temporal_badge} />
-              {resolveText && !outcomesAreDate && !data.temporal_badge && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
+          <div className="relative z-10 px-3.5 pb-2.5">
+            <div className="flex items-end gap-2">
+              <span className="font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums">{pctDisplay}</span>
+              {movementStr && (
+                <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`}>{movementStr}</span>
+              )}
             </div>
-          </>
+            <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1">{leader.name}</div>
+          </div>
         )}
       </div>
 
-      <div className="p-4">
+      <div className="px-3.5 py-3">
         <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
-          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
+          <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
         </Link>
 
         {contextSnippet && (
           <ExpandableContextText
             text={contextSnippet}
             expandedText={expandedContext}
-            className="text-sm text-text-secondary mt-1 leading-relaxed"
+            className="text-[13px] leading-relaxed text-text-secondary mb-3"
             onExpand={onContextExpand}
             onCollapse={onContextCollapse}
           />
         )}
 
-        {data.top_outcomes.length > 1 && (
-          <>
-            <div className="mt-3 space-y-1.5">
-              {data.top_outcomes.slice(0, showContext ? undefined : 3).map((o, i) => (
-                <div key={o.id} className="flex items-center gap-2">
-                  <span className={`text-xs w-32 truncate shrink-0 ${i === 0 ? "font-semibold" : "text-text-secondary"}`} title={o.name}>{o.name}</span>
-                  <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((o.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${o.name} probability`}>
-                    <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
-                  </div>
-                  <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{o.probability != null && o.probability > 0 ? `${Math.round(o.probability * 100)}%` : "—"}</span>
-                  {i === 0 && <MovementBadge m={o.movement} />}
-                </div>
-              ))}
-            </div>
-            {data.outcome_count > 3 && (
-              <button onClick={() => setShowContext(!showContext)} className="text-xs text-blue-600 hover:text-blue-700 mt-2 font-medium">
-                {showContext ? "Show less" : data.outcome_count > 10 ? "Show more" : `Show all ${data.outcome_count} outcomes`}
-              </button>
-            )}
-          </>
-        )}
+        <div className="flex items-center gap-2 text-[11px] text-text-muted">
+          {volumeStr && <span className="whitespace-nowrap">{volumeStr}</span>}
+          {volumeStr && resolveText && <span>·</span>}
+          {resolveText && <span className="whitespace-nowrap">{resolveText}</span>}
+        </div>
 
-        <ActionBar
-          liked={liked}
-          setLiked={setLiked}
-          shareUrl={shareUrl}
-          shareTitle={data.name}
-          shareText={shareText}
-          contentType="futures"
-          itemId={data.id}
-          onShare={onShare}
-        />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
       </div>
     </article>
   );
+}
+
+type HeatmapRow = {
+  key: string;
+  label: string;
+  probability: number | null;
+  movement: number | null;
+  sortValue: number;
+};
+
+function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
+  const byLabel = new Map<string, HeatmapRow>();
+  const outcomesByName = new Map(
+    data.top_outcomes.map((outcome) => [outcome.name.toLowerCase(), outcome])
+  );
+
+  for (const point of data.discover_card?.threshold_points ?? []) {
+    const label = point.label.trim();
+    if (!label) continue;
+    const key = label.toLowerCase();
+    const matchedOutcome = outcomesByName.get(key);
+    const existing = byLabel.get(key);
+    const probability = point.probability ?? matchedOutcome?.probability ?? null;
+    const movement = matchedOutcome?.movement ?? null;
+    const sortValue = existing
+      ? Math.min(existing.sortValue, point.value)
+      : point.value;
+
+    byLabel.set(key, {
+      key,
+      label,
+      probability: existing?.probability ?? probability,
+      movement: existing?.movement ?? movement,
+      sortValue,
+    });
+  }
+
+  return Array.from(byLabel.values()).sort((a, b) => a.sortValue - b.sortValue);
+}
+
+function formatComparisonTheme(theme: string | null | undefined): string {
+  switch (theme) {
+    case "ipo_valuation":
+      return "Valuation";
+    case "commodity_ranges":
+      return "Commodity";
+    case "rotten_tomatoes_scores":
+      return "Score";
+    case "macro_ranges":
+      return "Macro";
+    case "weather_distributions":
+      return "Weather";
+    case "sports_paths":
+      return "Path";
+    default:
+      return "";
+  }
+}
+
+function compactOutcomeName(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= 22) return trimmed;
+
+  const parts = trimmed.split(" ");
+  if (parts.length < 2) return trimmed;
+
+  const suffixes = new Set(["Jr.", "Jr", "Sr.", "Sr", "II", "III", "IV"]);
+  const suffix = suffixes.has(parts[parts.length - 1]) ? ` ${parts.pop()}` : "";
+  const last = parts.pop() || "";
+  const initials = parts
+    .filter(Boolean)
+    .map((part) => `${part[0]}.`)
+    .join(" ");
+
+  return `${initials} ${last}${suffix}`.trim();
 }
 
 // ── Compact row used by GroupCard ──
