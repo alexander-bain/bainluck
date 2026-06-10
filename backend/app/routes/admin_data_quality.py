@@ -1971,7 +1971,7 @@ async def run_lean_settled(
             if not cursor:
                 rc.delete(ck)
                 break
-            if stats["empty_pages"] >= 3:
+            if stats["empty_pages"] >= max_pages:  # no early exit when testing
                 rc.setex(ck, 86400 * 7, cursor)
                 break
             rc.setex(ck, 86400 * 7, cursor)
