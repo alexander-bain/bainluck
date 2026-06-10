@@ -3190,7 +3190,12 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
         async def _fetch_market(cid):
             async with sem:
-                return cid, await service.get_market_by_condition(str(cid))
+                try:
+                    return cid, await service.get_market_by_condition(str(cid))
+                except Exception as e:
+                    if "429" in str(e) or "rate" in str(e).lower():
+                        await asyncio.sleep(2)
+                    return cid, None
 
         alive_conditions = [r for r in by_condition if r.external_id not in dead_cids]
         stats["skipped_dead"] = len(by_condition) - len(alive_conditions)
@@ -3297,7 +3302,12 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
             async with get_task_session() as session:
                 for event_id in batch:
-                    event_data = await service.get_event_by_id(str(event_id))
+                    try:
+                        event_data = await service.get_event_by_id(str(event_id))
+                    except Exception as e:
+                        if "429" in str(e) or "rate" in str(e).lower():
+                            await asyncio.sleep(2)
+                        event_data = None
                     if not event_data:
                         for row in by_event[event_id]:
                             stats["markets_checked"] += 1

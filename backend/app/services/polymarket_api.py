@@ -183,14 +183,22 @@ class PolymarketAPIService:
         """
         Get a single event by its Polymarket event ID (includes all markets
         with clobTokenIds needed for price history).
+
+        Returns None only for 404 (not found). Re-raises rate limits and
+        server errors so callers can back off instead of silently skipping.
         """
+        import httpx
+
         try:
             response = await self.gamma_client.get(f"/events/{event_id}")
             response.raise_for_status()
             return response.json()
-        except Exception as e:
-            logger.warning("Failed to get event %s: %s", event_id, e)
-            return None
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+        except httpx.TimeoutException:
+            raise
 
     async def get_sports(self) -> list[dict]:
         """
@@ -233,16 +241,20 @@ class PolymarketAPIService:
     async def get_market_by_condition(self, condition_id: str) -> Optional[dict]:
         """Fetch a single market by condition_id from Gamma API.
 
-        Returns raw dict with outcome_prices reflecting settlement for
-        resolved markets. Returns None on 404 or error.
+        Returns None only for 404. Re-raises rate limits and server errors.
         """
+        import httpx
+
         try:
             response = await self.gamma_client.get(f"/markets/{condition_id}")
             response.raise_for_status()
             return response.json()
-        except Exception as e:
-            logger.debug("Failed to get market %s: %s", condition_id, e)
-            return None
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+        except httpx.TimeoutException:
+            raise
 
     # =========================================================================
     # CLOB API — Prices & History
