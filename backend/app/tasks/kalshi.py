@@ -1099,22 +1099,23 @@ async def _link_sports_props_to_events() -> dict:
 
 
 async def _backfill_volume_only():
-    """Fast volume-only backfill from Kalshi settled events API.
+    """Volume-only backfill — processes 3 series per run to stay under 200MB.
 
-    Iterates ALL settled series and writes volume_fp per outcome.
-    Skips all other phases (status, is_winner, snapshots) for speed.
-    One batch UPDATE per page = 100x faster than the full settled events backfill.
+    Uses a Redis cursor to rotate through all series. Each run processes
+    3 series fully (all pages), then saves the cursor for the next run.
+    Call repeatedly to cover all series.
     """
     import asyncio
+    import gc
     import time as _time
 
     stats = {"series": 0, "pages": 0, "tickers": 0, "rows_updated": 0, "errors": []}
 
     try:
-        import gc
+        from app.tasks.redis_state import get_redis_client
+        _rc = get_redis_client()
         _start = _time.monotonic()
 
-        # Discover all Kalshi series with resolved markets
         async with get_task_session() as session:
             sr = await session.execute(
                 text("""
@@ -1126,14 +1127,21 @@ async def _backfill_volume_only():
             )
             all_series = [r[0] for r in sr.fetchall()]
 
-        logger.info("Volume backfill: %d series to process", len(all_series))
+        cursor_key = "bainluck:volume_backfill_cursor"
+        pos = int(_rc.get(cursor_key) or 0)
+        BATCH = 3
+        series_batch = all_series[pos:pos + BATCH]
+        next_pos = (pos + BATCH) % max(len(all_series), 1)
+        _rc.setex(cursor_key, 86400 * 7, str(next_pos))
 
-        for series in all_series:
-            if (_time.monotonic() - _start) > 540:
+        logger.info("Volume backfill: processing %d series (pos %d/%d): %s",
+                     len(series_batch), pos, len(all_series), series_batch)
+
+        for series in series_batch:
+            if (_time.monotonic() - _start) > 480:
                 break
             stats["series"] += 1
 
-            # Fresh client per series to prevent memory accumulation
             from app.services.kalshi_api import KalshiAPIService
             svc = KalshiAPIService()
             cursor = None
@@ -1183,12 +1191,13 @@ async def _backfill_volume_only():
                         stats["rows_updated"] += vr.rowcount
                         await session.commit()
 
+                del events
                 if not cursor:
                     break
                 await asyncio.sleep(0.1)
 
             await svc.close()
-            del svc, events
+            del svc
             gc.collect()
 
     except Exception as e:
