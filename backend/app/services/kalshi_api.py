@@ -694,24 +694,29 @@ class KalshiAPIService(BaseAPIClient):
             ):
                 continue
             try:
+                # Game series need both open AND settled events.
+                # Kalshi API with no status filter returns only open events;
+                # settled events require explicit status=settled.
+                statuses = [None, "settled"] if st in _GAME_SERIES else [None]
                 max_series_pages = 25 if st in _GAME_SERIES else 5
-                series_cursor = None
-                for _sp in range(max_series_pages):
-                    await asyncio.sleep(0.3)
-                    events_page, series_cursor = await self.get_events(
-                        status=None,
-                        series_ticker=st,
-                        with_nested_markets=True,
-                        limit=200,
-                        cursor=series_cursor,
-                    )
-                    for event_data in events_page:
-                        parsed_event = self._parse_event(event_data)
-                        if parsed_event and parsed_event.event_ticker not in all_events:
-                            all_events[parsed_event.event_ticker] = parsed_event
-                            supplemented += 1
-                    if not series_cursor:
-                        break
+                for fetch_status in statuses:
+                    series_cursor = None
+                    for _sp in range(max_series_pages):
+                        await asyncio.sleep(0.3)
+                        events_page, series_cursor = await self.get_events(
+                            status=fetch_status,
+                            series_ticker=st,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=series_cursor,
+                        )
+                        for event_data in events_page:
+                            parsed_event = self._parse_event(event_data)
+                            if parsed_event and parsed_event.event_ticker not in all_events:
+                                all_events[parsed_event.event_ticker] = parsed_event
+                                supplemented += 1
+                        if not series_cursor:
+                            break
             except Exception as e:
                 logger.debug("Supplementary fetch for %s failed: %s", st, e)
         if supplemented:
