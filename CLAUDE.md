@@ -423,6 +423,7 @@ When fixing ANY data quality, matching, or display issue:
 | Hook coverage | `GET /api/admin/hook-coverage` |
 | Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_TOKEN` |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` |
+| Ad-hoc SQL (read-only) | `POST /api/admin/db-query?secret=$ADMIN_TOKEN` (body: `{"sql":"...","limit":500}`) |
 | API docs | https://api.bainluck.com/docs |
 | Backlog | `docs/backlog.md` |
 | Shipped features | `docs/completed-features.md` |

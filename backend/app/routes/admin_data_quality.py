@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from sqlalchemy import select, update, or_, text, func
 
@@ -3942,6 +3943,79 @@ _MUTATING_RE = _re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
     _re.IGNORECASE,
 )
+
+
+class _DbQueryRequest(BaseModel):
+    sql: str
+    limit: int = 500
+
+
+@router.post("/db-query")
+async def admin_db_query(
+    body: _DbQueryRequest,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a read-only SQL query via POST (SQL stays out of URL/access logs).
+
+    Safety layers:
+    1. Must start with SELECT or WITH (no mutations)
+    2. No semicolons except trailing (no multi-statement)
+    3. READ ONLY transaction
+    4. 10s statement timeout
+    5. Server-side row cap (min of request limit, 1000)
+    """
+    import time as _t
+
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    sql_stripped = body.sql.strip().rstrip(";")
+
+    # Reject multi-statement (semicolons within the body)
+    if ";" in sql_stripped:
+        raise HTTPException(status_code=400, detail="Multi-statement queries not allowed")
+
+    if _MUTATING_RE.search(sql_stripped):
+        raise HTTPException(status_code=400, detail="Only SELECT queries are allowed")
+
+    upper = sql_stripped.lstrip().upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        raise HTTPException(status_code=400, detail="Query must start with SELECT or WITH")
+
+    row_cap = min(body.limit, 1000)
+    _start = _t.monotonic()
+
+    try:
+        await db.execute(text("SET TRANSACTION READ ONLY"))
+        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
+
+        has_limit = "limit" in sql_stripped.lower().split("order")[-1] or "fetch" in sql_stripped.lower()
+        bounded = sql_stripped if has_limit else f"{sql_stripped} LIMIT {row_cap}"
+        result = await db.execute(text(bounded))
+        columns = list(result.keys())
+        raw_rows = result.fetchmany(row_cap)
+        truncated = len(raw_rows) >= row_cap
+
+        def _serialize(v):
+            if v is None:
+                return None
+            if isinstance(v, (int, float, bool)):
+                return v
+            return str(v)
+
+        rows = [[_serialize(c) for c in row] for row in raw_rows]
+        duration_ms = round((_t.monotonic() - _start) * 1000, 1)
+
+        return {
+            "columns": columns,
+            "rows": rows,
+            "row_count": len(rows),
+            "truncated": truncated,
+            "duration_ms": duration_ms,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:500])
 
 
 @router.get("/query")
