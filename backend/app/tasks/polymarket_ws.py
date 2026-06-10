@@ -240,16 +240,6 @@ async def _run_polymarket_ws_consumer():
                         is_winner = True
                     elif winning_outcome.lower() == "no" and ext.endswith("_no"):
                         is_winner = True
-                    elif winning_asset and winning_asset in asset_to_market:
-                        # For non-binary markets, match by winning asset ID
-                        is_winner = any(
-                            t == winning_asset
-                            for t in (
-                                metadata.get("clob_token_ids", [])
-                                if (metadata := {}) else []
-                            )
-                        )
-
                     cal_prob = closing_prices.get(oid)
                     await session.execute(
                         update(FuturesOutcome)
