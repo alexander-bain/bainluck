@@ -3942,31 +3942,33 @@ async def game_market_counts(
             LIMIT 10
         """)
     )
+    uncovered_rows = uncovered.all()
     results["uncovered_mlb_events"] = [
-        {"id": r[0], "home": str(r[1])[:20], "away": str(r[2])[:20],
-         "time": str(r[3])[:16], "status": r[4]}
-        for r in uncovered.all()
+        {"id": r[0], "home": str(r[1] or "")[:20], "away": str(r[2] or "")[:20],
+         "time": str(r[3])[:19] if r[3] else "", "status": r[4]}
+        for r in uncovered_rows
     ]
-    # Check: do any KXMLBGAME markets exist for these events (unlinked)?
-    if results["uncovered_mlb_events"]:
-        sample_event = results["uncovered_mlb_events"][0]
-        sample_time = sample_event["time"]
-        nearby = await db.execute(
-            text("""
-                SELECT external_id, name, commence_time, event_id
-                FROM futures_markets
-                WHERE source = 'kalshi'
-                  AND external_id LIKE 'KXMLBGAME%'
-                  AND commence_time BETWEEN :t::timestamp - INTERVAL '6 hours'
-                    AND :t::timestamp + INTERVAL '6 hours'
-                ORDER BY commence_time
-                LIMIT 5
-            """),
-            {"t": sample_time},
-        )
-        results["nearby_kalshi_for_sample"] = [
-            {"ticker": r[0], "name": str(r[1])[:40], "time": str(r[2])[:16],
-             "linked_to": r[3]}
-            for r in nearby.all()
-        ]
+    if uncovered_rows:
+        sample_id = uncovered_rows[0][0]
+        sample_time = uncovered_rows[0][3]
+        if sample_time:
+            nearby = await db.execute(
+                text("""
+                    SELECT external_id, name, commence_time, event_id
+                    FROM futures_markets
+                    WHERE source = 'kalshi'
+                      AND external_id LIKE 'KXMLBGAME%%'
+                      AND commence_time BETWEEN :t - INTERVAL '6 hours'
+                        AND :t + INTERVAL '6 hours'
+                    ORDER BY commence_time
+                    LIMIT 5
+                """),
+                {"t": sample_time},
+            )
+            results["nearby_kalshi_for_sample"] = [
+                {"ticker": r[0], "name": str(r[1] or "")[:40],
+                 "time": str(r[2])[:19] if r[2] else "",
+                 "linked_to": r[3]}
+                for r in nearby.all()
+            ]
     return results
