@@ -1644,7 +1644,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     text("""
                                         UPDATE futures_outcomes
                                         SET volume = :vol
-                                        WHERE external_id = :tk AND volume IS NULL
+                                        WHERE external_id = :tk
                                     """),
                                     {"vol": vv, "tk": vt},
                                 )
