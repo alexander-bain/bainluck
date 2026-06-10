@@ -37,97 +37,108 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
   const heatmapRows = buildHeatmapRows(data);
+  const volumeStr = data.volume_24h != null && data.volume_24h > 0
+    ? data.volume_24h >= 1_000_000 ? `$${(data.volume_24h / 1_000_000).toFixed(1)}M vol`
+    : data.volume_24h >= 1_000 ? `$${(data.volume_24h / 1_000).toFixed(0)}K vol`
+    : `$${data.volume_24h} vol`
+    : null;
 
   if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= 2) {
-    const maxProb = Math.max(...heatmapRows.map((row) => row.probability ?? 0), 0.01);
-    const themeLabel = formatComparisonTheme(data.discover_card.comparison_theme);
+    const shownCells = heatmapRows.slice(0, 8);
+    const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
+    const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
 
     return (
-      <article className="relative overflow-hidden rounded-xl border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={data.name} data-card-format="heatmap">
         <DismissBtn onDismiss={onDismiss} />
         {trending && <TrendBadge />}
 
-        <div className="p-3 pb-2">
-          <div className="flex items-start gap-2.5">
-            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${catStyle.bg} ${catStyle.text}`}>
-              <BarChart3 size={17} strokeWidth={2.2} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${catStyle.bg} ${catStyle.text}`}>
-                  {category}
-                </span>
-                {themeLabel && (
-                  <span className="inline-flex items-center rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
-                    {themeLabel}
+        <div className="p-4">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
+            <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
+          </div>
+          <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
+            <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-4">{data.name}</h3>
+          </Link>
+
+          {/* Cell grid — emerald intensity ramp */}
+          <div className="flex gap-[3px]">
+            {shownCells.map((row) => {
+              const p = row.probability ?? 0;
+              const pct = Math.round(p * 100);
+              const resolved = row.resolved;
+              const isResWinner = resolved && row.isWinner;
+              const isResLoser = resolved && !row.isWinner;
+              const isLandingCell = resolved && row.isWinner && row.isLanding;
+
+              let bg: string;
+              let textColor: string;
+              if (isResLoser) {
+                bg = "var(--surface-elevated)";
+                textColor = "var(--text-muted)";
+              } else if (p >= 0.85) {
+                bg = "#10B981";
+                textColor = "#fff";
+              } else if (p >= 0.65) {
+                bg = "rgba(16,185,129,0.76)";
+                textColor = "#fff";
+              } else if (p >= 0.50) {
+                bg = "rgba(16,185,129,0.52)";
+                textColor = "#fff";
+              } else if (p >= 0.30) {
+                bg = "rgba(16,185,129,0.26)";
+                textColor = "var(--text-primary)";
+              } else {
+                bg = "rgba(16,185,129,0.11)";
+                textColor = "var(--text-muted)";
+              }
+
+              return (
+                <div
+                  key={row.key}
+                  className="flex-1 h-14 rounded-md flex flex-col items-center justify-center gap-0.5"
+                  style={{
+                    background: bg,
+                    boxShadow: isLandingCell ? "0 0 0 2px var(--accent-brand), 0 0 12px rgba(16,185,129,0.3)" : undefined,
+                  }}
+                >
+                  <span className="font-mono font-bold text-sm tabular-nums" style={{ color: textColor }}>
+                    {pct}<span className="text-[0.6em] font-bold">%</span>
                   </span>
-                )}
-                <TemporalBadge badge={data.temporal_badge} />
+                  {resolved && (
+                    <span className="text-[11px]" style={{ color: textColor }}>
+                      {isResWinner ? "✓" : "✕"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Threshold labels */}
+          <div className="flex gap-[3px] mt-[7px]">
+            {shownCells.map((row) => (
+              <div key={`label-${row.key}`} className="flex-1 text-center font-mono text-[11px] text-text-secondary">
+                {row.label}
               </div>
-              <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
-            </div>
+            ))}
           </div>
 
-          {contextSnippet && (
-            <ExpandableContextText
-              text={contextSnippet}
-              expandedText={expandedContext}
-              className="mt-2 text-xs leading-relaxed text-text-secondary"
-              onExpand={onContextExpand}
-              onCollapse={onContextCollapse}
-            />
-          )}
-        </div>
-
-        <div className="px-3 pb-3">
-          <div className="space-y-1.5 border-y border-surface-border py-2">
-              {heatmapRows.slice(0, showHeatmapContext ? 8 : 4).map((row) => {
-                const probability = row.probability ?? 0;
-                const pct = Math.round(probability * 100);
-                const intensity = Math.max(8, Math.round((probability / maxProb) * 100));
-                return (
-                  <div
-                    key={row.key}
-                    className="grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-xs font-semibold text-text-primary" title={row.label}>{row.label}</span>
-                        {row.movement != null && <MovementBadge m={row.movement} />}
-                      </div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
-                        <div
-                          className="h-full rounded-full bg-accent-brand transition-all duration-500"
-                          style={{ width: `${intensity}%` }}
-                        />
-                      </div>
-                    </div>
-                    <span className="text-right font-mono text-xs font-bold tabular-nums text-text-primary">{probability > 0 ? `${pct}%` : "—"}</span>
-                  </div>
-                );
-              })}
-
-            {heatmapRows.length > 4 && (
-              <button
-                type="button"
-                onClick={() => setShowHeatmapContext(!showHeatmapContext)}
-                className="px-1.5 text-xs font-medium text-accent-brand hover:underline"
-              >
-                {showHeatmapContext ? "Show fewer ranges" : `Show all ${heatmapRows.length} ranges`}
-              </button>
+          {/* Summary footer */}
+          <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
+            {lastAbove50Label ? (
+              <>
+                <span className="text-[12px] text-text-secondary">Above 50% through</span>
+                <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
+              </>
+            ) : (
+              <span className="text-[12px] text-text-secondary">All below 50%</span>
             )}
+            {volumeStr && <span className="ml-auto text-[11px] text-text-muted">{volumeStr}</span>}
           </div>
 
-          <ActionBar
-            liked={liked}
-            setLiked={setLiked}
-            shareUrl={shareUrl}
-            shareTitle={data.name}
-            shareText={shareText}
-            contentType="futures"
-            itemId={data.id}
-            onShare={onShare}
-          />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
         </div>
       </article>
     );
@@ -233,12 +244,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1
     ? `${movementUp ? "↑" : "↓"} ${Math.abs(movementVal).toFixed(1)}`
     : null;
-  const volumeStr = data.volume_24h != null && data.volume_24h > 0
-    ? data.volume_24h >= 1_000_000 ? `$${(data.volume_24h / 1_000_000).toFixed(1)}M vol`
-    : data.volume_24h >= 1_000 ? `$${(data.volume_24h / 1_000).toFixed(0)}K vol`
-    : `$${data.volume_24h} vol`
-    : null;
-
   if (variantB) {
     // ── Variant B: data-pure (no image) ──
     return (
