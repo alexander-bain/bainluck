@@ -1758,6 +1758,53 @@ async def trigger_calibration_recompute(secret: str = Query(...)):
     return {"status": "queued", "task_id": result.id}
 
 
+@router.post("/backfill-volume-direct")
+async def backfill_volume_direct(
+    secret: str = Query(...),
+    series: str = Query("KXNHLGOAL"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Directly populate volume for one series — runs in-request, no Celery."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.services.kalshi_api import KalshiAPIService
+    svc = KalshiAPIService()
+    total_tickers = 0
+    total_updated = 0
+    cursor = None
+    for page in range(50):
+        events, cursor = await svc.get_events(
+            status="settled", series_ticker=series,
+            with_nested_markets=True, limit=200, cursor=cursor,
+        )
+        if not events:
+            break
+        tickers = []
+        volumes = []
+        for ev in events:
+            for mkt in (ev.get("markets") or []):
+                tk = mkt.get("ticker", "")
+                vol = mkt.get("volume_fp")
+                if tk and vol is not None:
+                    tickers.append(tk)
+                    volumes.append(int(float(vol)))
+        total_tickers += len(tickers)
+        if tickers:
+            r = await db.execute(text("""
+                UPDATE futures_outcomes fo
+                SET volume = v.vol
+                FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                WHERE fo.external_id = v.tk
+            """), {"tickers": tickers, "volumes": volumes})
+            total_updated += r.rowcount
+            await db.commit()
+        if not cursor:
+            break
+    await svc.close()
+    return {"series": series, "tickers_attempted": total_tickers,
+            "rows_updated": total_updated, "pages": page + 1}
+
+
 @router.post("/backfill-volume")
 async def trigger_volume_backfill(secret: str = Query(...)):
     """Fast volume-only backfill — skips all phases except volume writes."""
