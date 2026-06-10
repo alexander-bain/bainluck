@@ -565,7 +565,7 @@ func captureScreenshot() -> PlatformImage? {
     #if os(iOS)
     let scenes = UIApplication.shared.connectedScenes
     bugReportLogger.debug("Connected scenes: \(scenes.count)")
-    guard let windowScene = scenes.compactMap({ $0 as? UIWindowScene }).first else {
+    guard let windowScene = scenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }) ?? scenes.compactMap({ $0 as? UIWindowScene }).first else {
         bugReportLogger.warning("No UIWindowScene found")
         return nil
     }
