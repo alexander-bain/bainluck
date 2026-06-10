@@ -259,6 +259,19 @@ export default function PrivacyPage() {
                 engagement time, interaction events). No PII is transmitted.
               </li>
               <li>
+                <strong>Firebase Crashlytics</strong> (Google) — collects
+                crash reports and diagnostics data from the iOS app to help
+                us identify and fix stability issues. May include device
+                model, OS version, and crash stack traces. User ID is
+                attached only when signed in, to help diagnose
+                account-specific issues.
+              </li>
+              <li>
+                <strong>Sentry</strong> — collects error reports and
+                performance data from the web application and API. Includes
+                request metadata (URL, status code, timing) but no PII.
+              </li>
+              <li>
                 <strong>Vercel</strong> — hosts the web application. Processes
                 standard HTTP requests.
               </li>
