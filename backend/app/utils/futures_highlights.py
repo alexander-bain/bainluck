@@ -250,7 +250,6 @@ _COMPELLING_PATTERNS = [
 
 BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
-FOREIGN_LOCAL_ELECTION_PENALTY = -30
 COMPELLING_BOOST = 8  # per matching pattern, max 3
 SPORTS_POSTSEASON_STORY_BOOST = 40
 
@@ -313,18 +312,6 @@ CULTURAL_GRAVITY_T2_BOOST = 10
 
 _ELECTION_MARKET_RE = re.compile(
     r"\b(election|electoral|nominee|primary|presidential|president|parliamentary|congressional)\b",
-    re.IGNORECASE,
-)
-
-_MAJOR_ELECTION_RE = re.compile(
-    r"\b("
-    r"u\.?s\.?|united states|american|president|presidential|senate|house|congress|"
-    r"republican|democratic|democrat|gop|dnc|rnc|"
-    r"governor|gubernatorial|midterm|"
-    r"uk|united kingdom|britain|british|prime minister|"
-    r"france|french|germany|german|canada|canadian|brazil|brazilian|india|indian|"
-    r"european parliament|eu parliament|eu election"
-    r")\b",
     re.IGNORECASE,
 )
 
