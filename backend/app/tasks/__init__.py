@@ -372,6 +372,13 @@ def backfill_kalshi_candlestick(self, limit: int = 500):
     return _tracked_run("kalshi_candlestick", _backfill_candlestick_snapshots(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_volume")
+def backfill_kalshi_volume(self):
+    """Fast volume-only backfill — skips all phases except volume writes."""
+    from app.tasks.kalshi import _backfill_volume_only
+    return _tracked_run("kalshi_volume", _backfill_volume_only())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_trades")
 def backfill_kalshi_trades(self, limit: int = 500):
     """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob."""

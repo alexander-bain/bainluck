@@ -1098,6 +1098,106 @@ async def _link_sports_props_to_events() -> dict:
     return stats
 
 
+async def _backfill_volume_only():
+    """Fast volume-only backfill from Kalshi settled events API.
+
+    Iterates ALL settled series and writes volume_fp per outcome.
+    Skips all other phases (status, is_winner, snapshots) for speed.
+    One batch UPDATE per page = 100x faster than the full settled events backfill.
+    """
+    import asyncio
+    import time as _time
+
+    stats = {"series": 0, "pages": 0, "tickers": 0, "rows_updated": 0, "errors": []}
+
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+        service = KalshiAPIService()
+        _start = _time.monotonic()
+
+        # Discover all Kalshi series with resolved markets
+        async with get_task_session() as session:
+            sr = await session.execute(
+                text("""
+                    SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS prefix
+                    FROM futures_markets
+                    WHERE source = 'kalshi' AND status = 'resolved' AND external_id ~ '^KX'
+                    ORDER BY 1
+                """)
+            )
+            all_series = [r[0] for r in sr.fetchall()]
+
+        logger.info("Volume backfill: %d series to process", len(all_series))
+
+        for series in all_series:
+            if (_time.monotonic() - _start) > 540:
+                break
+            stats["series"] += 1
+            cursor = None
+
+            for page in range(50):
+                try:
+                    events, cursor = await service.get_events(
+                        status="settled", series_ticker=series,
+                        with_nested_markets=True, limit=200, cursor=cursor,
+                    )
+                except Exception as e:
+                    if "429" in str(e):
+                        await asyncio.sleep(5)
+                        continue
+                    stats["errors"].append(f"{series}: {e}")
+                    break
+
+                if not events:
+                    break
+                stats["pages"] += 1
+
+                vol_tickers = []
+                vol_values = []
+                for ev in events:
+                    for mkt in (ev.get("markets") or []):
+                        ticker = mkt.get("ticker", "")
+                        vol_raw = mkt.get("volume_fp")
+                        if ticker and vol_raw is not None:
+                            try:
+                                vol_tickers.append(ticker)
+                                vol_values.append(int(float(vol_raw)))
+                            except (ValueError, TypeError):
+                                pass
+
+                if vol_tickers:
+                    stats["tickers"] += len(vol_tickers)
+                    async with get_task_session() as session:
+                        vr = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET volume = v.vol
+                                FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                                WHERE fo.external_id = v.tk
+                            """),
+                            {"tickers": vol_tickers, "volumes": vol_values},
+                        )
+                        stats["rows_updated"] += vr.rowcount
+                        await session.commit()
+
+                if not cursor:
+                    break
+                await asyncio.sleep(0.1)
+
+        await service.close()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Volume backfill error: %s", e)
+
+    logger.info(
+        "Volume backfill: %d series, %d pages, %d tickers, %d rows updated, %d errors",
+        stats["series"], stats["pages"], stats["tickers"],
+        stats["rows_updated"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_trade_history(limit: int = 100):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 

@@ -1758,6 +1758,16 @@ async def trigger_calibration_recompute(secret: str = Query(...)):
     return {"status": "queued", "task_id": result.id}
 
 
+@router.post("/backfill-volume")
+async def trigger_volume_backfill(secret: str = Query(...)):
+    """Fast volume-only backfill — skips all phases except volume writes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="background")
+    return {"status": "queued", "task_id": result.id}
+
+
 @router.post("/backfill-trades")
 async def trigger_trade_history_backfill(
     secret: str = Query(...),
