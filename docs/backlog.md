@@ -29,7 +29,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] Expand calibration sample with sportsbook spreads and totals. Issue: [#442](https://github.com/alexander-bain/bainluck/issues/442)
 - [shipped] Improve cross-source matching for paraphrased category markets. Issue: [#443](https://github.com/alexander-bain/bainluck/issues/443)
 - [ready] Finish native Futures browser before re-exposing navigation. Issue: [#444](https://github.com/alexander-bain/bainluck/issues/444)
-- [blocked] Finish App Store submission checklist. Issue: [#445](https://github.com/alexander-bain/bainluck/issues/445)
+- [active] App Store RE-submission — round-one rejection feedback addressed; verify sign-in + account deletion on device, strip Watch/visionOS. Issue: [#678](https://github.com/alexander-bain/bainluck/issues/678)
 - [ready] Finish event-detail parity gaps for half maps and player props. Issue: [#446](https://github.com/alexander-bain/bainluck/issues/446)
 - [idea] Add stored full-text search vectors only if production traces justify it. Issue: [#447](https://github.com/alexander-bain/bainluck/issues/447)
 - [shipped] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
@@ -48,7 +48,18 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] God functions extraction — 4 remaining targets. Issue: [#479](https://github.com/alexander-bain/bainluck/issues/479)
 - [ready] Split admin.py (8,684 lines). Issue: [#480](https://github.com/alexander-bain/bainluck/issues/480)
 - [ready] Split get_db() into read-only and read-write. Issue: [#481](https://github.com/alexander-bain/bainluck/issues/481)
-- [blocked] Redesign first 30 seconds — hero headline. Issue: [#482](https://github.com/alexander-bain/bainluck/issues/482)
+- [shipped] Redesign first 30 seconds — modal removed, contextual swipe teaching. Issue: [#482](https://github.com/alexander-bain/bainluck/issues/482) (closed Jun 2)
+- [ready] Resolution authority ladder: structural never-guess enforcement + CI guard. Issue: [#845](https://github.com/alexander-bain/bainluck/issues/845) (depends #806)
+- [ready] Fix backfill-winners/status timeout via Celery precompute. Issue: [#846](https://github.com/alexander-bain/bainluck/issues/846)
+- [ready] Correctness Console admin page. Issue: [#847](https://github.com/alexander-bain/bainluck/issues/847) (blocked by #846)
+- [ready] Interestingness blend on/off production baseline. Issue: [#848](https://github.com/alexander-bain/bainluck/issues/848) (needs-user)
+- [ready] Kid-labeler profile: content gate, restricted axes, honeypots. Issue: [#849](https://github.com/alexander-bain/bainluck/issues/849) (blocked by #671)
+- [ready] Cold-start signal: fast-lane young-session swipes. Issue: [#850](https://github.com/alexander-bain/bainluck/issues/850)
+- [ready] Discover chip-row category card + activation events. Issue: [#851](https://github.com/alexander-bain/bainluck/issues/851) (blocked by #850)
+- [ready] Persist story_key column; caps + dismiss read it. Issue: [#852](https://github.com/alexander-bain/bainluck/issues/852)
+- [ready] discover_llm v2: entity slugs, stakes, kid_safe. Issue: [#853](https://github.com/alexander-bain/bainluck/issues/853) (blocked by #852)
+- [ready] Fix duplicate _MAJOR_ELECTION_RE dead-code allowlist. Issue: [#854](https://github.com/alexander-bain/bainluck/issues/854)
+- [ready] Doc-drift reconciliation PR (9 items). Issue: [#855](https://github.com/alexander-bain/bainluck/issues/855)
 - [idea] Ship production push notifications. Issue: [#483](https://github.com/alexander-bain/bainluck/issues/483)
 - [idea] Email compliance infrastructure. Issue: [#484](https://github.com/alexander-bain/bainluck/issues/484)
 - [ready] BR79: Discover event card missing sport label. Issue: [#485](https://github.com/alexander-bain/bainluck/issues/485)
@@ -75,6 +86,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 **Current MCE (June 9, 2026):** Overall 2.3pp. Basketball 2.8, Weather 2.6, Soccer 3.8, Politics 3.6, Economics 5.0. **Broken:** Hockey 22.7, Golf 16.7, Football 19.3.
 
 **Open items (ordered by priority):**
+0. **Enforce resolution authority ladder** — structural never-guess policy + CI guard; prerequisite for closing #754 and its child buckets. Issue: [#845](https://github.com/alexander-bain/bainluck/issues/845). Strategy: docs/unified-strategy-2026-06.md §8.1.
 1. **Fix hockey/golf/football calibration** — root causes: sparse snapshot coverage (outcomes fall back to extreme opening prices), partial is_winner resolution, and 71K pass2_guess outcomes. Epic: [#738](https://github.com/alexander-bain/bainluck/issues/738). Key sub-issues: [#754](https://github.com/alexander-bain/bainluck/issues/754), [#683](https://github.com/alexander-bain/bainluck/issues/683), [#651](https://github.com/alexander-bain/bainluck/issues/651)
 2. **Fix pass2_guess resolution** — 71K outcomes with unreliable is_winner from stale-price heuristic. [#754](https://github.com/alexander-bain/bainluck/issues/754) (actively being worked on)
 3. **Resolve no-score and no-event outcomes** — 13K events without scores ([#805](https://github.com/alexander-bain/bainluck/issues/805)), 34K markets without events ([#804](https://github.com/alexander-bain/bainluck/issues/804))
@@ -1212,6 +1224,10 @@ Shipped: ~~Game Segments~~, ~~Line Movement Explainer~~, ~~Weather page~~, ~~Eco
 ---
 
 ## Strategic
+
+### Strategy Document (Jun 9, 2026)
+Operating strategy: `docs/unified-strategy-2026-06.md`. Roadmap reconciliation: `docs/issue-roadmap-2026-q3.md`. Correctness exit gates for the 60/40→40/60 rebalance are defined in strategy §8.2 and rendered by the Correctness Console (Issue: [#847](https://github.com/alexander-bain/bainluck/issues/847)).
+- [idea] Per-user calibration + public calibration API/badges (strategy §9 H3). Trigger: exit gates + post-launch DAU baseline.
 
 ### ~~Expert Review / Audit~~ — COMPLETED (May 14)
 
