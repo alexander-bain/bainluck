@@ -1979,6 +1979,39 @@ async def run_lean_settled(
     finally:
         await service.close()
 
+    # Collect sample tickers for debugging
+    if stats["resolved"] == 0 and stats["pages"] > 0:
+        # Re-fetch first page to show sample tickers
+        try:
+            rc.delete(ck)
+            events2, _ = await service.get_events(
+                status="settled", series_ticker=series,
+                with_nested_markets=True, limit=5)
+            api_tickers = []
+            for ev in (events2 or []):
+                for mkt in (ev.get("markets") or []):
+                    tk = mkt.get("ticker", "")
+                    if tk:
+                        api_tickers.append(tk)
+
+            async with get_task_session() as sess:
+                r = await sess.execute(text("""
+                    SELECT fo.external_id FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fo.market_id = fm.id
+                    WHERE fo.resolution_source = 'pass2_guess'
+                      AND fm.source = 'kalshi'
+                      AND fm.external_id LIKE :prefix
+                    ORDER BY random() LIMIT 5
+                """), {"prefix": series + "%"})
+                db_tickers = [row[0] for row in r.fetchall()]
+
+            stats["debug"] = {
+                "api_sample": api_tickers[:5],
+                "db_sample": db_tickers[:5],
+            }
+        except Exception:
+            pass
+
     return {"series": series, **stats}
 
 
