@@ -1140,7 +1140,7 @@ async def _backfill_volume_only():
         rest = [s for s in all_series if s not in priority]
         ordered = prio_in + rest
 
-        cursor_key = "bainluck:volume_backfill_cursor"
+        cursor_key = "bainluck:volume_backfill_v2"
         pos = int(_rc.get(cursor_key) or 0)
         BATCH = 5
         series_batch = ordered[pos:pos + BATCH]
