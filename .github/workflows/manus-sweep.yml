@@ -26,6 +26,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PUSH_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -114,8 +116,8 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add -f "Manus/audit_results/$TODAY/" "Manus/audit_results/latest"
-            git commit -m "Manus sweep (${{ steps.mode.outputs.mode }}) $TODAY — automated" || echo "No changes to commit"
-            git push || echo "Push blocked by branch protection — results saved as artifact"
+            git commit -m "Manus sweep (${{ steps.mode.outputs.mode }}) $TODAY — automated [skip ci]" || echo "No changes to commit"
+            git push || echo "Push failed — results saved as artifact"
           fi
 
       - name: Create issue on failure

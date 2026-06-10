@@ -59,6 +59,24 @@ def _parse_report(report_path: Path) -> list[dict]:
         if len(body) < 20:
             continue
 
+        # Skip Manus progress-log headings (not findings)
+        _PROGRESS_RE = re.compile(
+            r"^(Starting|Progress|I'll|I've|I am|Let me|Now |Continuing|Completed|"
+            r"Summary|Overview|Methodology|Audit Plan|Next Steps)", re.I
+        )
+        if _PROGRESS_RE.match(heading):
+            # Try to extract a real finding title from the body instead
+            body_lines = body.split("\n")
+            finding_line = next(
+                (l.lstrip("- *").strip() for l in body_lines
+                 if len(l.strip()) > 20 and _detect_severity(l) in ("P0", "P1")),
+                None,
+            )
+            if finding_line:
+                heading = finding_line[:120]
+            else:
+                continue
+
         # Extract URLs
         urls = re.findall(r"https?://[^\s\)]+", body)
         surface = urls[0] if urls else f"module:{module}"
