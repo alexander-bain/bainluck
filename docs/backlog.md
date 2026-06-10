@@ -64,6 +64,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] Doc-drift reconciliation PR (9 items). Issue: [#855](https://github.com/alexander-bain/bainluck/issues/855)
 - [idea] Probability source expansion: beyond prediction markets. Issue: [#881](https://github.com/alexander-bain/bainluck/issues/881)
 - [idea] Entertainment enrichment: TMDB imagery, OMDb RT, music charts. Issue: [#882](https://github.com/alexander-bain/bainluck/issues/882)
+- [idea] Futures detail page redesign: beat Kalshi/Polymarket on clarity. Issue: [#883](https://github.com/alexander-bain/bainluck/issues/883)
 - [idea] Discover card context snippets v2: evidence-grounded angles replacing generic hooks. Issue: [#870](https://github.com/alexander-bain/bainluck/issues/870)
 - [idea] Event detail: evidence-gated line-move attribution (replace "Why did the line move?"). Issue: [#871](https://github.com/alexander-bain/bainluck/issues/871)
 - [idea] Ship production push notifications. Issue: [#483](https://github.com/alexander-bain/bainluck/issues/483)
