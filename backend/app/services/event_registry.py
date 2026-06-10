@@ -8,7 +8,7 @@ finds it and attaches its source ID. No duplicates.
 Matching cascade:
 1. Exact source ID — check if this source already claimed an event
 2. Cross-source ID — check if ANY source already claimed it via other ID columns
-3. Structured match — sport + commence_time ± 4h + names_match on both teams
+3. Structured match — sport + commence_time ± _MATCH_WINDOW (28h) + names_match on both teams
 4. Create — no match found, create new event
 """
 
@@ -182,9 +182,10 @@ async def _find_by_structured_match(
 ) -> Optional[Event]:
     """Step 3: Find event by sport + date + team names.
 
-    Queries events with the same sport_id and commence_time within ±4 hours,
-    then scores each candidate using names_match(). Requires BOTH teams to
-    match (either in normal or swapped home/away orientation).
+    Queries events with the same sport_id and commence_time within
+    ±_MATCH_WINDOW (28h), then scores each candidate using names_match().
+    Requires BOTH teams to match (either in normal or swapped home/away
+    orientation).
 
     Uses a PostgreSQL advisory lock to prevent TOCTOU race conditions when
     concurrent workers (ESPN sync on realtime, Odds API on background) both

@@ -1091,7 +1091,7 @@ All 21 items (CQ-1 through CQ-21) shipped across 6 waves: crash risks, dedup ext
 
 **Goal:** Get Bain Luck approved and live on the App Store.
 
-**Current state:** TestFlight Build 3 uploaded. 5 parity features shipped (May 15-16). macOS + iOS builds clean. Native launch-readiness sweep is complete: the unfinished Futures browser entry point is hidden pending iOS-7, the 🍀 Bain Luck sidebar branding is preserved, Calibration remains visible, ViewModels/utilities/docs/access control cleanup is done, and APS entitlement is production-ready. No prior App Store submission attempted.
+**Current state:** TestFlight Build 3 uploaded. 5 parity features shipped (May 15-16). macOS + iOS builds clean. Native launch-readiness sweep is complete: the unfinished Futures browser entry point is hidden pending iOS-7, the 🍀 Bain Luck sidebar branding is preserved, Calibration remains visible, ViewModels/utilities/docs/access control cleanup is done, and APS entitlement is production-ready. First App Store submission was rejected — Apple required account deletion flow (added overnight) and a new-user sign-in 500 was fixed server-side (commit `67bb31b`). Resubmission tracked in [#678](https://github.com/alexander-bain/bainluck/issues/678).
 
 ### Must Do (submission blockers)
 
@@ -1232,7 +1232,7 @@ Shipped: ~~admin endpoint gating~~, ~~`/daily` page~~, ~~scorecards~~, ~~rate li
 - [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
 
 **P0 — Product (Growth):**
-- [ ] **Redesign first 30 seconds** — Hero headline for first visit, first card is always a guess card, progressive disclosure toward sign-up.
+- [x] **Redesign first 30 seconds** — Modal removed, contextual swipe teaching shipped. See [#482](https://github.com/alexander-bain/bainluck/issues/482) (closed Jun 2).
 
 **P1 — Engineering:**
 - [ ] **Split `admin.py`** (11K lines, 174 handlers) — Split into `admin_celery.py`, `admin_matching.py`, `admin_taxonomy.py`, `admin_engagement.py`, `admin_data_quality.py`.
