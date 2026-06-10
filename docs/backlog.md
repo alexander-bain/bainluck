@@ -13,6 +13,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] Add Firebase Crashlytics to iOS app (zero crash reporting today). Issue: [#839](https://github.com/alexander-bain/bainluck/issues/839)
 - [ready] GitHub repo hardening: CodeQL, secret scanning, master ruleset requiring green CI. Issue: [#840](https://github.com/alexander-bain/bainluck/issues/840)
 - [active] Manus closed-loop QA program: high-frequency sweeps, digest intake, fix verification. Issue: [#872](https://github.com/alexander-bain/bainluck/issues/872)
+- [active] Portfolio program: make Bain Luck interview-ready (6 children). Issue: [#873](https://github.com/alexander-bain/bainluck/issues/873)
 - [ready] Wire Sentry free uptime + cron monitors (one of each included on free plan). Issue: [#841](https://github.com/alexander-bain/bainluck/issues/841)
 - [ready] Heroku: verify pg:backups schedule + add free log drain. Issue: [#842](https://github.com/alexander-bain/bainluck/issues/842)
 - [ready] Adopt free ESPN extras: futures odds source, predictor, cdn game package, injuries/transactions. Issue: [#843](https://github.com/alexander-bain/bainluck/issues/843)
