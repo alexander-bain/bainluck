@@ -3924,21 +3924,49 @@ async def game_market_counts(
     )
     row = r7.one()
     results["mlb_7day"] = {"total_events": row[0], "kalshi_game_covered": row[1]}
-    # Unlinked KXMLBGAME markets with recent commence_time
-    unlinked = await db.execute(
+    # Events in 7-day window WITHOUT any Kalshi game market
+    uncovered = await db.execute(
         text("""
-            SELECT external_id, name, commence_time, status
-            FROM futures_markets
-            WHERE source = 'kalshi'
-              AND external_id LIKE 'KXMLBGAME%'
-              AND event_id IS NULL
-              AND commence_time >= NOW() - INTERVAL '7 days'
-            ORDER BY commence_time DESC
+            SELECT e.id, e.home_team, e.away_team, e.commence_time, e.status
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            WHERE s.key = 'baseball_mlb'
+              AND e.commence_time >= NOW() - INTERVAL '7 days'
+              AND e.commence_time <= NOW() + INTERVAL '2 days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.event_id = e.id AND fm.source = 'kalshi'
+                    AND fm.external_id LIKE 'KXMLBGAME%'
+              )
+            ORDER BY e.commence_time DESC
             LIMIT 10
         """)
     )
-    results["recent_unlinked_mlb"] = [
-        {"ticker": r[0], "name": str(r[1])[:50], "time": str(r[2])[:16], "status": r[3]}
-        for r in unlinked.all()
+    results["uncovered_mlb_events"] = [
+        {"id": r[0], "home": str(r[1])[:20], "away": str(r[2])[:20],
+         "time": str(r[3])[:16], "status": r[4]}
+        for r in uncovered.all()
     ]
+    # Check: do any KXMLBGAME markets exist for these events (unlinked)?
+    if results["uncovered_mlb_events"]:
+        sample_event = results["uncovered_mlb_events"][0]
+        sample_time = sample_event["time"]
+        nearby = await db.execute(
+            text("""
+                SELECT external_id, name, commence_time, event_id
+                FROM futures_markets
+                WHERE source = 'kalshi'
+                  AND external_id LIKE 'KXMLBGAME%'
+                  AND commence_time BETWEEN :t::timestamp - INTERVAL '6 hours'
+                    AND :t::timestamp + INTERVAL '6 hours'
+                ORDER BY commence_time
+                LIMIT 5
+            """),
+            {"t": sample_time},
+        )
+        results["nearby_kalshi_for_sample"] = [
+            {"ticker": r[0], "name": str(r[1])[:40], "time": str(r[2])[:16],
+             "linked_to": r[3]}
+            for r in nearby.all()
+        ]
     return results
