@@ -1907,51 +1907,53 @@ async def test_ticker_linking(
     limit: int = Query(20),
     db: AsyncSession = Depends(get_db),
 ):
-    """Test ticker-based event linking for unlinked Kalshi markets."""
+    """Test name-based event linking for unlinked Kalshi markets."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    from app.utils.prediction_market_matching import (
-        extract_game_date_from_ticker, extract_teams_from_ticker,
-    )
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
     from datetime import timedelta
+    import re
+
+    _MATCHUP_RE = re.compile(r'^(.+?)\s+(?:at|vs\.?|v)\s+(.+?)(?:\s*:\s*.+)?$', re.IGNORECASE)
 
     r = await db.execute(text("""
         SELECT fm.id, fm.external_id, fm.name
         FROM futures_markets fm
         WHERE fm.source = 'kalshi' AND fm.event_id IS NULL
-          AND LOWER(fm.external_id) LIKE ANY(:p)
+          AND fm.name LIKE '%at%:%'
           AND EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.resolution_source = 'pass2_guess')
         ORDER BY random() LIMIT :lim
-    """), {"p": ["kxncaambtotal%", "kxncaambgame%", "kxmlbstgame%"], "lim": limit})
+    """), {"lim": limit})
     markets = r.all()
 
     results = []
     for mkt in markets:
         game_date = extract_game_date_from_ticker(mkt.external_id)
-        teams = extract_teams_from_ticker(mkt.external_id)
-        if not game_date or not teams:
-            results.append({"ticker": mkt.external_id[:40], "parsed": False})
+        m = _MATCHUP_RE.match(mkt.name or "")
+        if not game_date or not m:
+            results.append({"name": (mkt.name or "")[:50], "parsed": False})
             continue
 
-        team_a, team_b = teams
+        team_a, team_b = m.group(1).strip(), m.group(2).strip()
         match = await db.execute(text("""
             SELECT e.id, e.home_team_name, e.away_team_name, e.home_score, e.away_score
             FROM events e
             WHERE e.commence_time BETWEEN :s AND :e
+              AND e.status IN ('completed', 'closed')
               AND (
                   (LOWER(e.home_team_name) LIKE :ta AND LOWER(e.away_team_name) LIKE :tb)
                   OR (LOWER(e.home_team_name) LIKE :tb AND LOWER(e.away_team_name) LIKE :ta)
               )
+            ORDER BY ABS(EXTRACT(EPOCH FROM e.commence_time - :d))
             LIMIT 1
         """), {"s": game_date - timedelta(hours=28), "e": game_date + timedelta(hours=28),
-               "ta": f"%{team_a.lower()}%", "tb": f"%{team_b.lower()}%"})
+               "ta": f"%{team_a.lower()}%", "tb": f"%{team_b.lower()}%", "d": game_date})
         event = match.first()
         results.append({
-            "ticker": mkt.external_id[:40],
+            "name": (mkt.name or "")[:50],
             "date": str(game_date)[:10],
             "team_a": team_a, "team_b": team_b,
             "event_found": event is not None,
-            "event_id": event[0] if event else None,
             "score": f"{event[3]}-{event[4]}" if event and event[3] else None,
         })
 
