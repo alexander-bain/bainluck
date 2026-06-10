@@ -1767,28 +1767,24 @@ async def backfill_volume_direct(
     """Directly populate volume for one series — runs in-request, no Celery."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    from app.services.kalshi_api import KalshiAPIService
-    svc = KalshiAPIService()
-    total_tickers = 0
-    total_updated = 0
-    cursor = None
-    for page in range(2):
-        events, cursor = await svc.get_events(
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+        svc = KalshiAPIService()
+        events, _ = await svc.get_events(
             status="settled", series_ticker=series,
-            with_nested_markets=True, limit=200, cursor=cursor,
+            with_nested_markets=True, limit=10,
         )
-        if not events:
-            break
         tickers = []
         volumes = []
-        for ev in events:
+        for ev in (events or []):
             for mkt in (ev.get("markets") or []):
                 tk = mkt.get("ticker", "")
                 vol = mkt.get("volume_fp")
                 if tk and vol is not None:
                     tickers.append(tk)
                     volumes.append(int(float(vol)))
-        total_tickers += len(tickers)
+        await svc.close()
+
         if tickers:
             r = await db.execute(text("""
                 UPDATE futures_outcomes fo
@@ -1796,13 +1792,12 @@ async def backfill_volume_direct(
                 FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
                 WHERE fo.external_id = v.tk
             """), {"tickers": tickers, "volumes": volumes})
-            total_updated += r.rowcount
             await db.commit()
-        if not cursor:
-            break
-    await svc.close()
-    return {"series": series, "tickers_attempted": total_tickers,
-            "rows_updated": total_updated, "pages": page + 1}
+            return {"series": series, "tickers": len(tickers), "updated": r.rowcount,
+                    "sample_tickers": tickers[:3]}
+        return {"series": series, "tickers": 0, "events": len(events or [])}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
 
 
 @router.post("/backfill-volume")
