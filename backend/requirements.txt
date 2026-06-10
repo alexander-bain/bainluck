@@ -10,7 +10,7 @@ psycopg2-binary>=2.9.9
 alembic>=1.13.1
 
 # HTTP Client (for odds API)
-httpx>=0.26.0
+httpx>=0.28.1
 
 # Kalshi WebSocket (real-time prices + settlement push)
 websockets>=13.0
