@@ -973,12 +973,14 @@ def diversify_discover_first_page(
     items: list[dict],
     *,
     first_page_size: int = 20,
+    cold_start: bool = False,
 ) -> list[dict]:
     """Reorder the first Discover page so it feels curated, not clustered.
 
-    This does not drop cards or change scores. It keeps the strongest item from
-    each story/category near the top while preventing one category, especially
-    politics, from swallowing the whole first page.
+    When cold_start=True (empty personalization context), tighten category caps
+    to 2 for the first 8 cards, ensuring >= 5 distinct category groups appear
+    before any category repeats heavily. This makes the first page informative
+    for new users without adding friction (#850).
     """
     if first_page_size <= 0 or len(items) <= 1:
         return items
@@ -988,11 +990,14 @@ def diversify_discover_first_page(
     archetype_counts: dict[str, int] = {}
     story_counts: dict[str, int] = {}
 
+    cold_start_cap = 2 if cold_start else None
+
     def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
         group = _discover_category_group(item)
-        if category_counts.get(group, 0) >= _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(
-            group, 3
-        ):
+        cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
+        if cold_start_cap is not None and len([s for s in category_counts.values()]) < 8:
+            cap = min(cap, cold_start_cap)
+        if category_counts.get(group, 0) >= cap:
             return False
 
         if enforce_archetype:

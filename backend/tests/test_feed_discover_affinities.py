@@ -20,6 +20,7 @@ def test_discover_category_affinity_counts_context_expands_as_interest():
     rows = [
         ("tech", "context_expand", 1),
         ("tech", "share", 1),
+        ("_pad", "open", 20),  # push above cold-start threshold
     ]
 
     result = _build_discover_category_affinities(rows)
@@ -64,6 +65,7 @@ def test_discover_category_affinity_counts_unlike_as_soft_downrank():
     rows = [
         ("soccer", "unlike", 3),
         ("soccer", "context_expand", 1),
+        ("_pad", "open", 20),  # push above cold-start threshold
     ]
 
     result = _build_discover_category_affinities(rows)
@@ -75,6 +77,7 @@ def test_discover_category_affinity_escalates_repeated_unlikes():
     rows = [
         ("baseball", "unlike", 10),
         ("baseball", "context_collapse", 1),
+        ("_pad", "open", 20),  # push above cold-start threshold
     ]
 
     result = _build_discover_category_affinities(rows)
@@ -224,3 +227,64 @@ def test_discover_feature_affinity_repeated_unlikes_are_bounded_downranks():
 
     assert result["team:boston_red_sox"] == -0.12
     assert result["region:massachusetts"] == -0.12
+
+
+# =============================================================================
+# Cold-start fast-lane (#850)
+# =============================================================================
+
+
+def test_cold_start_2x_weight_reaches_floor_with_2_dismisses():
+    """With < 20 total interactions, 2 dismisses in one category should reach
+    the -0.40 floor that previously required 3+ dismisses."""
+    from app.routes.feed import _build_discover_category_affinities
+
+    # 2 dismiss actions, total interactions = 2 (< 20 threshold)
+    rows = [("politics", "dismiss", 2)]
+    result = _build_discover_category_affinities(rows)
+    assert result.get("politics", 0) <= -0.40, (
+        f"Cold-start 2x weight should make 2 dismisses reach -0.40 floor, got {result.get('politics')}"
+    )
+
+
+def test_no_boost_above_20_interactions():
+    """With >= 20 total interactions, normal weights apply — 2 dismisses
+    should NOT reach -0.40."""
+    from app.routes.feed import _build_discover_category_affinities
+
+    # 2 dismiss + 18 other interactions = 20 total (no boost)
+    rows = [("politics", "dismiss", 2), ("sports", "open", 18)]
+    result = _build_discover_category_affinities(rows)
+    assert result.get("politics", 0) > -0.40, (
+        f"Above 20 interactions, 2 dismisses should NOT reach -0.40, got {result.get('politics')}"
+    )
+
+
+def test_cold_start_diversify_first_page_spread():
+    """Cold-start mode should produce >= 5 distinct category groups in first 8 cards."""
+    from app.utils.feed_market_quality import diversify_discover_first_page
+
+    # Build 20 items across 6 categories, 3-4 each
+    categories = ["politics", "economics", "tech", "sports", "entertainment", "weather"]
+    items = []
+    for i, cat in enumerate(categories * 4):
+        items.append({
+            "id": i,
+            "type": "futures",
+            "score": 100 - i,
+            "llm_sport_category": cat,
+            "_quality_story_key": f"story_{cat}_{i}",
+        })
+
+    result = diversify_discover_first_page(
+        items[:24], first_page_size=20, cold_start=True
+    )
+
+    first_8_groups = set()
+    for item in result[:8]:
+        cat = item.get("llm_sport_category", "other")
+        first_8_groups.add(cat)
+
+    assert len(first_8_groups) >= 5, (
+        f"Cold-start first 8 cards should have >= 5 category groups, got {len(first_8_groups)}: {first_8_groups}"
+    )
