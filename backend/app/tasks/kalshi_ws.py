@@ -184,6 +184,11 @@ async def _run_kalshi_ws_consumer():
 
         market_id = market_id_by_ext[event_ticker]
 
+        # Capture closing price from the buffer before flushing
+        async with buffer_lock:
+            ids = ticker_to_ids.get(ticker)
+            closing_price = price_buffer.get(ids[1]) if ids else None
+
         try:
             async with get_task_session() as session:
                 await session.execute(
@@ -191,17 +196,41 @@ async def _run_kalshi_ws_consumer():
                     .where(FuturesMarket.id == market_id)
                     .values(status="resolved")
                 )
+
                 if result in ("yes", "no"):
+                    is_winner = result == "yes"
+                    # Set is_winner on the settling outcome
                     await session.execute(
                         update(FuturesOutcome)
                         .where(
                             FuturesOutcome.market_id == market_id,
                             FuturesOutcome.external_id == ticker,
                         )
-                        .values(is_winner=(result == "yes"))
+                        .values(
+                            is_winner=is_winner,
+                            calibration_probability=closing_price,
+                        )
                     )
+                    # Set is_winner=False on the opposite outcome
+                    await session.execute(
+                        update(FuturesOutcome)
+                        .where(
+                            FuturesOutcome.market_id == market_id,
+                            FuturesOutcome.external_id != ticker,
+                        )
+                        .values(
+                            is_winner=not is_winner,
+                            calibration_probability=(
+                                1.0 - closing_price if closing_price else None
+                            ),
+                        )
+                    )
+
             stats["settlements"] += 1
-            logger.info("Kalshi WS: %s settled (result=%s)", ticker, result)
+            logger.info(
+                "Kalshi WS: %s settled (result=%s, closing=%.3f)",
+                ticker, result, closing_price or 0,
+            )
         except Exception:
             stats["errors"] += 1
             logger.exception("Kalshi WS: settlement error for %s", ticker)

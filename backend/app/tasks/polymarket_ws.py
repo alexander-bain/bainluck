@@ -205,7 +205,11 @@ async def _run_polymarket_ws_consumer():
         stats["trade_updates"] += 1
 
     async def handle_resolved(msg: dict):
-        """Handle market_resolved event."""
+        """Handle market_resolved event.
+
+        Sets status=resolved, is_winner on all outcomes, and captures
+        calibration_probability from the last buffered price.
+        """
         condition_id = msg.get("market", "")
         winning_outcome = msg.get("winning_outcome", "")
         winning_asset = msg.get("winning_asset_id", "")
@@ -213,6 +217,14 @@ async def _run_polymarket_ws_consumer():
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
+
+        # Capture closing prices from buffer before they're flushed
+        outcomes = outcomes_by_market.get(market_id, [])
+        closing_prices: dict[int, float] = {}
+        async with buffer_lock:
+            for oid, ext in outcomes:
+                if oid in price_buffer:
+                    closing_prices[oid] = price_buffer[oid]
 
         try:
             async with get_task_session() as session:
@@ -222,21 +234,37 @@ async def _run_polymarket_ws_consumer():
                     .values(status="resolved")
                 )
 
-                outcomes = outcomes_by_market.get(market_id, [])
                 for oid, ext in outcomes:
                     is_winner = False
                     if winning_outcome.lower() == "yes" and ext.endswith("_yes"):
                         is_winner = True
                     elif winning_outcome.lower() == "no" and ext.endswith("_no"):
                         is_winner = True
+                    elif winning_asset and winning_asset in asset_to_market:
+                        # For non-binary markets, match by winning asset ID
+                        is_winner = any(
+                            t == winning_asset
+                            for t in (
+                                metadata.get("clob_token_ids", [])
+                                if (metadata := {}) else []
+                            )
+                        )
+
+                    cal_prob = closing_prices.get(oid)
                     await session.execute(
                         update(FuturesOutcome)
                         .where(FuturesOutcome.id == oid)
-                        .values(is_winner=is_winner)
+                        .values(
+                            is_winner=is_winner,
+                            calibration_probability=cal_prob,
+                        )
                     )
 
             stats["resolutions"] += 1
-            logger.info("Polymarket WS: %s resolved (winner=%s)", condition_id[:20], winning_outcome)
+            logger.info(
+                "Polymarket WS: %s resolved (winner=%s, %d closing prices captured)",
+                condition_id[:20], winning_outcome, len(closing_prices),
+            )
         except Exception:
             stats["errors"] += 1
             logger.exception("Polymarket WS: resolution error")
