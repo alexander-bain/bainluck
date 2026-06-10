@@ -5170,7 +5170,9 @@ async def volume_stats(
                 COUNT(*) FILTER (WHERE fo.volume IS NOT NULL) AS has_volume,
                 COUNT(*) FILTER (WHERE fo.volume = 0) AS vol_zero,
                 COUNT(*) FILTER (WHERE fo.volume > 0) AS vol_positive,
-                COUNT(*) FILTER (WHERE fo.volume IS NULL) AS vol_null
+                COUNT(*) FILTER (WHERE fo.volume IS NULL) AS vol_null,
+                COUNT(*) FILTER (WHERE fo.external_id LIKE 'KX%%-%%-%%') AS submarket_ext,
+                COUNT(*) FILTER (WHERE fo.external_id NOT LIKE 'KX%%-%%-%%') AS other_ext
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
@@ -5182,6 +5184,8 @@ async def volume_stats(
         "total": row.total, "has_volume": row.has_volume,
         "vol_zero": row.vol_zero, "vol_positive": row.vol_positive,
         "vol_null": row.vol_null,
+        "submarket_ext_format": row.submarket_ext,
+        "other_ext_format": row.other_ext,
     }
 
 
