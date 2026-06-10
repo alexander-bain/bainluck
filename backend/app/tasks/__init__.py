@@ -660,6 +660,13 @@ def enrich_discover_llm_metadata(self, limit: int = 100):
     return _tracked_run("enrich_discover_llm", _enrich(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.enrich_snippet_angles", soft_time_limit=300, time_limit=360)
+def enrich_snippet_angles(self, limit: int = 125):
+    """Compute and cache snippet angles for feed-shaped markets."""
+    from app.tasks.enrich_markets import enrich_snippet_angles as _enrich
+    return _tracked_run("enrich_snippet_angles", _enrich(limit))
+
+
 @celery_app.task(bind=True, name="app.tasks.generate_discover_comparison_candidates")
 def generate_discover_comparison_candidates(self, limit: int = 60):
     """Generate cached cross-category comparison-game candidates."""
@@ -1456,6 +1463,12 @@ celery_app.conf.beat_schedule = {
         # Async/cached only: enrich feed-shaped cards, never on feed request.
         "schedule": crontab(minute=10, hour="*/6"),
         "kwargs": {"limit": 125},
+    },
+    "enrich-snippet-angles": {
+        "task": "app.tasks.enrich_snippet_angles",
+        "schedule": crontab(minute=30, hour="*/6"),
+        "kwargs": {"limit": 125},
+        "options": {"queue": "background"},
     },
     "generate-discover-comparison-candidates": {
         "task": "app.tasks.generate_discover_comparison_candidates",

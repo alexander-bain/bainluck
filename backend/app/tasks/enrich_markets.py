@@ -996,3 +996,114 @@ async def evaluate_discover_with_llm(limit: int = 50):
 
     logger.info("Discover LLM eval: %s", stats)
     return stats
+
+
+async def enrich_snippet_angles(limit: int = 125):
+    """Compute snippet angles for feed-shaped markets and cache in market_metadata.
+
+    Runs as a batched background task (same cadence as enrich_discover_llm_metadata).
+    Stores (angle_type, snippet_text) in market_metadata['snippet_v2'].
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.snippet_angles import MarketContext, select_angle
+    from sqlalchemy import case, or_
+
+    now = datetime.now(timezone.utc)
+    stats = {"processed": 0, "angles_found": 0, "skipped_fresh": 0, "errors": 0}
+
+    async with get_task_session() as session:
+        feed_categories = [
+            "politics", "geopolitics", "economics", "tech", "health",
+            "entertainment", "weather", "basketball", "baseball",
+            "football", "hockey", "soccer", "golf",
+        ]
+        feed_candidate_scope = or_(
+            FuturesMarket.llm_sport_category.in_(feed_categories),
+            FuturesMarket.volume_24h >= 5_000,
+            FuturesMarket.market_tier <= 3,
+        )
+
+        result = await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.status == "open",
+                feed_candidate_scope,
+                FuturesMarket.llm_sport_category != "crypto",
+            )
+            .order_by(
+                FuturesMarket.volume_24h.desc().nullslast(),
+                FuturesMarket.updated_at.desc().nullslast(),
+            )
+            .limit(limit * 3)
+        )
+        candidates = result.scalars().all()
+
+        for market in candidates:
+            if stats["processed"] >= limit:
+                break
+
+            # Skip if snippet_v2 was computed recently (< 2h)
+            existing = (market.market_metadata or {}).get("snippet_v2")
+            if existing and isinstance(existing, dict):
+                computed_at = existing.get("computed_at", "")
+                if computed_at:
+                    try:
+                        age = (now - datetime.fromisoformat(computed_at)).total_seconds()
+                        if age < 7200:
+                            stats["skipped_fresh"] += 1
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+            stats["processed"] += 1
+
+            # Load leader outcome
+            outcome_result = await session.execute(
+                select(FuturesOutcome)
+                .where(FuturesOutcome.market_id == market.id)
+                .order_by(FuturesOutcome.rank.asc().nullslast())
+                .limit(1)
+            )
+            leader = outcome_result.scalar_one_or_none()
+
+            ctx = MarketContext(
+                name=market.name or "",
+                probability=leader.current_probability if leader else None,
+                opening_probability=leader.opening_probability if leader else None,
+                movement_24h=leader.probability_change_24h if leader else None,
+                outcome_name=leader.name if leader else None,
+                resolution_date=market.resolution_date,
+                volume_24h=market.volume_24h,
+                now=now,
+            )
+
+            angle = select_angle(ctx)
+
+            snippet_v2 = {
+                "angle_type": angle.angle_type if angle else None,
+                "snippet_text": angle.template if angle else None,
+                "computed_at": now.isoformat(),
+            }
+
+            try:
+                next_metadata = dict(market.market_metadata or {})
+                next_metadata["snippet_v2"] = snippet_v2
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == market.id)
+                    .values(market_metadata=next_metadata)
+                )
+                if angle:
+                    stats["angles_found"] += 1
+            except Exception as exc:
+                logger.warning("Snippet angle failed for market %s: %s", market.id, exc)
+                stats["errors"] += 1
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+
+        await session.commit()
+
+    logger.info("Snippet angles: %s", stats)
+    return stats

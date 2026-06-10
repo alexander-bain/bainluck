@@ -200,6 +200,7 @@ class TestBeatScheduleCompleteness:
         "snapshot-golf-leaderboard-daily",
         "enrich-market-hooks",
         "enrich-discover-llm-metadata",
+        "enrich-snippet-angles",
         "generate-discover-comparison-candidates",
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",
