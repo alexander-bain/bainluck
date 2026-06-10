@@ -100,14 +100,8 @@ struct MainTabView: View {
                 }
 
                 Section("Quick Links") {
-                    sidebarLabel("Weather", systemImage: "cloud.sun.fill")
-                        .tag(AppTab.weather)
-                    sidebarLabel("Economics", systemImage: "chart.bar.fill")
-                        .tag(AppTab.economics)
-                    sidebarLabel("Politics", systemImage: "building.columns.fill")
-                        .tag(AppTab.politics)
-                    sidebarLabel("Entertainment", systemImage: "film.fill")
-                        .tag(AppTab.entertainment)
+                    // Category pages hidden from nav until web parity is achieved (#884).
+                    // Views stay in the detail switch for deep-link support.
                     sidebarLabel("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
                     sidebarLabel("Calibration", systemImage: "chart.dots.scatter")
