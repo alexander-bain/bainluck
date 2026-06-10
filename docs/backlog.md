@@ -380,16 +380,9 @@ These items go deeper into ranking quality. They're ordered by expected impact a
 - [idea] Polymarket RTDS activity/trades stream as a "money is moving" Discover signal — see [#837](https://github.com/alexander-bain/bainluck/issues/837) for the WS foundation.
 - [active] Human labeling and auto-evals for Discover ranking. Taxonomy doc: `docs/discover-labeling.md`. Parent issue: [#587](https://github.com/alexander-bain/bainluck/issues/587). Design handoff: [#600](https://github.com/alexander-bain/bainluck/issues/600). Subissues: [#449](https://github.com/alexander-bain/bainluck/issues/449) pairwise-labeling research/context, [#588](https://github.com/alexander-bain/bainluck/issues/588) taxonomy, [#589](https://github.com/alexander-bain/bainluck/issues/589) label storage, [#590](https://github.com/alexander-bain/bainluck/issues/590) batch export, [#591](https://github.com/alexander-bain/bainluck/issues/591) admin labeling UI, [#592](https://github.com/alexander-bain/bainluck/issues/592) labeled dataset export, [#593](https://github.com/alexander-bain/bainluck/issues/593) gold-set evals, [#594](https://github.com/alexander-bain/bainluck/issues/594) LLM judge calibration, [#595](https://github.com/alexander-bain/bainluck/issues/595) persisted eval trends, [#596](https://github.com/alexander-bain/bainluck/issues/596) first label-driven ranking tune, [#597](https://github.com/alexander-bain/bainluck/issues/597) learned reranker prototype, [#602](https://github.com/alexander-bain/bainluck/issues/602) fixable-interest triage queue, [#603](https://github.com/alexander-bain/bainluck/issues/603) complete card snapshots, [#604](https://github.com/alexander-bain/bainluck/issues/604) feed-context pairwise labeling, [#605](https://github.com/alexander-bain/bainluck/issues/605) native labeling parity.
 
-**0u-N1. Wire `market_interestingness.py` into feed ranking**
+**0u-N1. Wire market_interestingness into feed ranking — STATUS CORRECTION (Jun 9):** the blend SHIPPED via Redis (#440 closed, default weight 0.2, feed.py:5012–5028) but steps 1–2 (label calibration) were skipped. Remaining work: measured on/off baseline (Issue: [#848](https://github.com/alexander-bain/bainluck/issues/848)), then label-calibrated weights (Issue: [#596](https://github.com/alexander-bain/bainluck/issues/596) — see mechanism comment there). Do not tune weights before the baseline exists.
 
-The interestingness scoring scaffold (`utils/market_interestingness.py`, shipped May 18) has 8 calibrated signals (decisiveness, multi-source, recency, movement, resolution proximity, category novelty, volume, LLM quality) but is not yet consumed by the feed. Steps:
-1. Export ground-truth labels from Polymarket email highlights + admin review decisions to CSV
-2. Run `scripts/calibrate_interestingness.py` against labels, hill-climb weights for Precision@20/Recall@50
-3. Add `interestingness_score` column to `FuturesMarket` (nullable float, backfilled by Celery task)
-4. In `_score_futures()`, blend interestingness score with existing futures highlight score (e.g., `final = 0.6 * highlight + 0.4 * interestingness`)
-5. A/B compare old vs blended ranking via admin Discover viewer
-
-**Depends on:** Ground-truth labels (item 5 in existing next phases), calibration script (shipped)
+**Depends on:** #848 baseline measurement before #596 weight tuning
 
 **~~0u-N2~~, ~~0u-N3~~, ~~0u-N4~~** — ALL SHIPPED May 18. Stronger LLM metadata penalties, category-aware event-vs-futures balancing with entertainment floor, semantic dismiss propagation via Jaccard similarity.
 
