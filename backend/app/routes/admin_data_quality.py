@@ -1901,6 +1901,87 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.post("/run-lean-settled")
+async def run_lean_settled(
+    secret: str = Query(...),
+    series: str = Query("KXNCAAMBTOTAL"),
+    max_pages: int = Query(10),
+):
+    """Run the lean settled events scanner for ONE series inline (no Celery).
+    Returns immediately with results — bypasses worker queue."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks.redis_state import get_redis_client
+    from app.tasks.base import get_task_session
+    import asyncio
+
+    rc = get_redis_client()
+    ck = f"bainluck:settled_cursor:{series}"
+    cursor = rc.get(ck)
+    if cursor:
+        cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
+
+    stats = {"pages": 0, "resolved": 0, "events": 0, "empty_pages": 0}
+    service = KalshiAPIService()
+    try:
+        for _ in range(max_pages):
+            try:
+                events, cursor = await service.get_events(
+                    status="settled", series_ticker=series,
+                    with_nested_markets=True, limit=200, cursor=cursor)
+            except Exception as e:
+                stats["error"] = str(e)[:200]
+                break
+            stats["pages"] += 1
+            if not events:
+                break
+            stats["events"] += len(events)
+            yes_t, no_t = [], []
+            for ev in events:
+                for mkt in (ev.get("markets") or []):
+                    tk = mkt.get("ticker", "")
+                    rs = mkt.get("result")
+                    if tk and rs is not None:
+                        (yes_t if rs == "yes" else no_t).append(tk)
+
+            page_resolved = 0
+            async with get_task_session() as sess:
+                if yes_t:
+                    r = await sess.execute(text("""
+                        UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement'
+                        WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                    """), {"t": yes_t})
+                    page_resolved += r.rowcount
+                if no_t:
+                    r = await sess.execute(text("""
+                        UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement'
+                        WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                    """), {"t": no_t})
+                    page_resolved += r.rowcount
+                await sess.commit()
+
+            stats["resolved"] += page_resolved
+            if page_resolved == 0:
+                stats["empty_pages"] += 1
+            else:
+                stats["empty_pages"] = 0
+
+            if not cursor:
+                rc.delete(ck)
+                break
+            if stats["empty_pages"] >= 3:
+                rc.setex(ck, 86400 * 7, cursor)
+                break
+            rc.setex(ck, 86400 * 7, cursor)
+            await asyncio.sleep(0.1)
+    finally:
+        await service.close()
+
+    return {"series": series, **stats}
+
+
 @router.get("/test-kalshi-market-endpoint")
 async def test_kalshi_market_endpoint(
     secret: str = Query(...),
