@@ -6,10 +6,25 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 
 ## Active GitHub Execution Queue
 
-- [active] Discover feed first-page quality: suppress stale, completed, and repetitive cards. Issue: [#435](https://github.com/alexander-bain/bainluck/issues/435)
-- [ready] Daily Kalshi/Polymarket front-page ground-truth capture. Issue: [#436](https://github.com/alexander-bain/bainluck/issues/436)
+- [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)
+- [ready] Migrate Kalshi live prices to WebSocket; evaluate lifecycle channel for settlement push. Issue: [#836](https://github.com/alexander-bain/bainluck/issues/836)
+- [ready] Polymarket: CLOB market WebSocket + batch REST for live prices. Issue: [#837](https://github.com/alexander-bain/bainluck/issues/837)
+- [ready] StatPal ($99/mo) cost-benefit: migrate US majors to ESPN or commit deliberately. Issue: [#838](https://github.com/alexander-bain/bainluck/issues/838)
+- [ready] Add Firebase Crashlytics to iOS app (zero crash reporting today). Issue: [#839](https://github.com/alexander-bain/bainluck/issues/839)
+- [ready] GitHub repo hardening: CodeQL, secret scanning, master ruleset requiring green CI. Issue: [#840](https://github.com/alexander-bain/bainluck/issues/840)
+- [ready] Wire Sentry free uptime + cron monitors (one of each included on free plan). Issue: [#841](https://github.com/alexander-bain/bainluck/issues/841)
+- [ready] Heroku: verify pg:backups schedule + add free log drain. Issue: [#842](https://github.com/alexander-bain/bainluck/issues/842)
+- [ready] Adopt free ESPN extras: futures odds source, predictor, cdn game package, injuries/transactions. Issue: [#843](https://github.com/alexander-bain/bainluck/issues/843)
+- [active] Discover feed: enforce stale-card blockers and feedback-loop contract. Issue: [#828](https://github.com/alexander-bain/bainluck/issues/828)
+- [shipped] Discover feed first-page quality: suppress stale, completed, and repetitive cards. Issue: [#435](https://github.com/alexander-bain/bainluck/issues/435)
+- [shipped] Discover native market cards: threshold heatmaps and card archetypes. Issue: [#820](https://github.com/alexander-bain/bainluck/issues/820)
+- [shipped] Discover native market cards: multi-outcome distribution cards. Issue: [#822](https://github.com/alexander-bain/bainluck/issues/822)
+- [active] Discover native market cards: comparison bundles for related markets. Issue: [#823](https://github.com/alexander-bain/bainluck/issues/823)
+- [ready] iOS Discover: render native card archetypes from discover_card. Issue: [#829](https://github.com/alexander-bain/bainluck/issues/829)
+- [ready] Discover audit: add native-card format and degenerate-card ratchets. Issue: [#830](https://github.com/alexander-bain/bainluck/issues/830)
+- [shipped] Daily Kalshi/Polymarket front-page ground-truth capture. Issue: [#436](https://github.com/alexander-bain/bainluck/issues/436)
 - [active] Evolution chart/grid probability disagreement. Issue: [#415](https://github.com/alexander-bain/bainluck/issues/415)
-- [ready] Wire calibrated market interestingness into Discover ranking. Issue: [#440](https://github.com/alexander-bain/bainluck/issues/440)
+- [shipped] Wire calibrated market interestingness into Discover ranking. Issue: [#440](https://github.com/alexander-bain/bainluck/issues/440)
 - [ready] Schedule engagement-calibrated Discover ranking review. Issue: [#441](https://github.com/alexander-bain/bainluck/issues/441)
 - [ready] Expand calibration sample with sportsbook spreads and totals. Issue: [#442](https://github.com/alexander-bain/bainluck/issues/442)
 - [shipped] Improve cross-source matching for paraphrased category markets. Issue: [#443](https://github.com/alexander-bain/bainluck/issues/443)
@@ -22,7 +37,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [shipped] Flag effectively-settled Discover sports futures for settlement follow-up. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
 - [ready] Investigate May 21 API outage (503s during Manus sweep). Issue: [#469](https://github.com/alexander-bain/bainluck/issues/469)
 - [ready] NBA championship grid data staleness — column sums off, Knicks stale. Issue: [#471](https://github.com/alexander-bain/bainluck/issues/471)
-- [ready] Discover feed health score 30/100 — stale dates, no temporal cues. Issue: [#470](https://github.com/alexander-bain/bainluck/issues/470)
+- [shipped] Discover feed health score 30/100 — stale dates, no temporal cues. Issue: [#470](https://github.com/alexander-bain/bainluck/issues/470)
 - [ready] Weather page zombie markets and health/pandemic misclassification. Issue: [#472](https://github.com/alexander-bain/bainluck/issues/472)
 - [ready] Standardize error/loading states across all pages. Issue: [#473](https://github.com/alexander-bain/bainluck/issues/473)
 - [ready] Calibration per-category accuracy hill-climb (parent). Issue: [#474](https://github.com/alexander-bain/bainluck/issues/474)
@@ -38,7 +53,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [idea] Email compliance infrastructure. Issue: [#484](https://github.com/alexander-bain/bainluck/issues/484)
 - [ready] BR79: Discover event card missing sport label. Issue: [#485](https://github.com/alexander-bain/bainluck/issues/485)
 - [ready] BR77: Stale weather market past resolution date. Issue: [#486](https://github.com/alexander-bain/bainluck/issues/486)
-- [ready] BR62: Better aggregation for related/clustered markets. Issue: [#487](https://github.com/alexander-bain/bainluck/issues/487)
+- [shipped] BR62: Better aggregation for related/clustered markets. Issue: [#487](https://github.com/alexander-bain/bainluck/issues/487)
 - [ready] Link rate denominator accuracy — season futures and taxonomy. Issue: [#488](https://github.com/alexander-bain/bainluck/issues/488)
 - [ready] Period markers: fix tennis + remaining non-ESPN sports. Issue: [#489](https://github.com/alexander-bain/bainluck/issues/489)
 - [idea] Confidence tiers on Discover cards — signal bars. Issue: [#490](https://github.com/alexander-bain/bainluck/issues/490)
@@ -57,13 +72,17 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 
 **Monitor:** `/calibration` page, `GET /api/calibration`, `GET /api/admin/backfill-winners/status`
 
+**Current MCE (June 9, 2026):** Overall 2.3pp. Basketball 2.8, Weather 2.6, Soccer 3.8, Politics 3.6, Economics 5.0. **Broken:** Hockey 22.7, Golf 16.7, Football 19.3.
+
 **Open items (ordered by priority):**
-1. **Verify golf/hockey MCE drop (May 19)** — closing line fixes shipped May 18, awaiting backfill recompute
-2. **Outcome count expansion (Subproject F)** — add spreads/totals from odds_snapshots to calibration (10-20x more data points)
-3. ~~**is_winner coverage → 95%+**~~ — ✅ DONE May 19. Kalshi 95.6%, Polymarket 95.8%, DataGolf 95.0% (see Workstream: is_winner Backfill below)
-4. **Non-NHL hockey calibration** — AHL/SHL/DEL markets excluded; need event linkage or commence_time derivation
-5. **Time-horizon calibration** — evaluate non-event markets (elections, economics) at T-30/T-7/T-1 days before resolution
-6. **Source "fair fight" comparison** — methodology for comparing accuracy controlling for market difficulty
+1. **Fix hockey/golf/football calibration** — root causes: sparse snapshot coverage (outcomes fall back to extreme opening prices), partial is_winner resolution, and 71K pass2_guess outcomes. Epic: [#738](https://github.com/alexander-bain/bainluck/issues/738). Key sub-issues: [#754](https://github.com/alexander-bain/bainluck/issues/754), [#683](https://github.com/alexander-bain/bainluck/issues/683), [#651](https://github.com/alexander-bain/bainluck/issues/651)
+2. **Fix pass2_guess resolution** — 71K outcomes with unreliable is_winner from stale-price heuristic. [#754](https://github.com/alexander-bain/bainluck/issues/754) (actively being worked on)
+3. **Resolve no-score and no-event outcomes** — 13K events without scores ([#805](https://github.com/alexander-bain/bainluck/issues/805)), 34K markets without events ([#804](https://github.com/alexander-bain/bainluck/issues/804))
+4. **Backfill snapshot history** — 150K+ outcomes with zero snapshots ([#683](https://github.com/alexander-bain/bainluck/issues/683)), 348K missing calibration_probability ([#651](https://github.com/alexander-bain/bainluck/issues/651))
+5. **Outcome count expansion (Subproject F)** — add spreads/totals from odds_snapshots to calibration
+6. **Time-horizon calibration** — evaluate non-event markets at T-30/T-7/T-1 days before resolution
+
+**Fixed (Jun 3-9):** Part C in-play overwrite, DataGolf non-playing player exclusion, pre-game polling (2-min for upcoming games), box score resolver partial resolution, DataGolf misclassification, hockey prop event linking.
 
 **Full details:** See `Workstream: is_winner Backfill` and `Workstream: Calibration Accuracy` (Subprojects A-F) below.
 
@@ -199,6 +218,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - Create "Prediction Players" audience (prediction_submit count >= 3 in 7 days)
 - ✅ "Discover Browsers" audience created (page_path = "/" or contains "/discover")
 - ✅ Retention cohort exploration created (first_visit, any return event, daily)
+- [idea] Flip data retention 2→14 months, enable free BigQuery daily export, and add 2-3 custom-insight anomaly alerts (all console-only, ~15 min)
 
 ### 0ga4b. GA4 Deep-Dive Explorations (MEDIUM PRI)
 
@@ -345,6 +365,7 @@ The following 8 items address three interconnected problems discovered in the Ma
 
 These items go deeper into ranking quality. They're ordered by expected impact and should be tackled after the immediate fixes land and we can measure the improved baseline.
 
+- [idea] Polymarket RTDS activity/trades stream as a "money is moving" Discover signal — see [#837](https://github.com/alexander-bain/bainluck/issues/837) for the WS foundation.
 - [active] Human labeling and auto-evals for Discover ranking. Taxonomy doc: `docs/discover-labeling.md`. Parent issue: [#587](https://github.com/alexander-bain/bainluck/issues/587). Design handoff: [#600](https://github.com/alexander-bain/bainluck/issues/600). Subissues: [#449](https://github.com/alexander-bain/bainluck/issues/449) pairwise-labeling research/context, [#588](https://github.com/alexander-bain/bainluck/issues/588) taxonomy, [#589](https://github.com/alexander-bain/bainluck/issues/589) label storage, [#590](https://github.com/alexander-bain/bainluck/issues/590) batch export, [#591](https://github.com/alexander-bain/bainluck/issues/591) admin labeling UI, [#592](https://github.com/alexander-bain/bainluck/issues/592) labeled dataset export, [#593](https://github.com/alexander-bain/bainluck/issues/593) gold-set evals, [#594](https://github.com/alexander-bain/bainluck/issues/594) LLM judge calibration, [#595](https://github.com/alexander-bain/bainluck/issues/595) persisted eval trends, [#596](https://github.com/alexander-bain/bainluck/issues/596) first label-driven ranking tune, [#597](https://github.com/alexander-bain/bainluck/issues/597) learned reranker prototype, [#602](https://github.com/alexander-bain/bainluck/issues/602) fixable-interest triage queue, [#603](https://github.com/alexander-bain/bainluck/issues/603) complete card snapshots, [#604](https://github.com/alexander-bain/bainluck/issues/604) feed-context pairwise labeling, [#605](https://github.com/alexander-bain/bainluck/issues/605) native labeling parity.
 
 **0u-N1. Wire `market_interestingness.py` into feed ranking**
@@ -1050,6 +1071,8 @@ Shipped: ~~iOS-4~~ (dead views audit), ~~iOS-6~~ (feed limit), ~~iOS-GD12~~ (hea
 | # | Item | Description | Safety |
 |---|------|-------------|--------|
 | iOS-7 | Rebuild native Futures browser before re-exposing — partial. May 17 groundwork shipped; needs final product review before re-exposure. | Yellow |
+
+- [idea] Firebase Remote Config for iOS feature flags / kill switches (free, unlimited fetches)
 
 ---
 
