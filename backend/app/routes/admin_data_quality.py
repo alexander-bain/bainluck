@@ -1770,32 +1770,42 @@ async def backfill_volume_direct(
     try:
         from app.services.kalshi_api import KalshiAPIService
         svc = KalshiAPIService()
-        events, _ = await svc.get_events(
-            status="settled", series_ticker=series,
-            with_nested_markets=True, limit=10,
-        )
-        tickers = []
-        volumes = []
-        for ev in (events or []):
-            for mkt in (ev.get("markets") or []):
-                tk = mkt.get("ticker", "")
-                vol = mkt.get("volume_fp")
-                if tk and vol is not None:
-                    tickers.append(tk)
-                    volumes.append(int(float(vol)))
+        total_tickers = 0
+        total_updated = 0
+        total_pages = 0
+        cursor = None
+        for page in range(50):
+            events, cursor = await svc.get_events(
+                status="settled", series_ticker=series,
+                with_nested_markets=True, limit=200, cursor=cursor,
+            )
+            if not events:
+                break
+            total_pages += 1
+            tickers = []
+            volumes = []
+            for ev in events:
+                for mkt in (ev.get("markets") or []):
+                    tk = mkt.get("ticker", "")
+                    vol = mkt.get("volume_fp")
+                    if tk and vol is not None:
+                        tickers.append(tk)
+                        volumes.append(int(float(vol)))
+            total_tickers += len(tickers)
+            if tickers:
+                r = await db.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET volume = v.vol
+                    FROM unnest(CAST(:tickers AS text[]), CAST(:volumes AS int[])) AS v(tk, vol)
+                    WHERE fo.external_id = v.tk
+                """), {"tickers": tickers, "volumes": volumes})
+                total_updated += r.rowcount
+                await db.commit()
+            if not cursor:
+                break
         await svc.close()
-
-        if tickers:
-            r = await db.execute(text("""
-                UPDATE futures_outcomes fo
-                SET volume = v.vol
-                FROM unnest(CAST(:tickers AS text[]), CAST(:volumes AS int[])) AS v(tk, vol)
-                WHERE fo.external_id = v.tk
-            """), {"tickers": tickers, "volumes": volumes})
-            await db.commit()
-            return {"series": series, "tickers": len(tickers), "updated": r.rowcount,
-                    "sample_tickers": tickers[:3]}
-        return {"series": series, "tickers": 0, "events": len(events or [])}
+        return {"series": series, "pages": total_pages,
+                "tickers": total_tickers, "updated": total_updated}
     except Exception as e:
         return {"error": str(e), "type": type(e).__name__}
 
