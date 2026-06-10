@@ -398,6 +398,8 @@ def run_suite(module_names: list[str]):
     # Save task manifest
     manifest = {
         "date": date_str,
+        "mode": sweep_mode if "sweep_mode" in dir() else os.getenv("MANUS_SWEEP_MODE", "deep"),
+        "new_findings_count": None,
         "tasks": {
             name: {
                 "task_id": tid,
@@ -567,10 +569,24 @@ def main():
         print("Set MANUS_API_KEY environment variable")
         sys.exit(1)
 
+    sweep_mode = os.getenv("MANUS_SWEEP_MODE", "deep")
+
     if args.smoke:
         module_names = ["event_detail", "feed"]
     elif args.modules:
         module_names = args.modules
+    elif sweep_mode == "light":
+        # Light sweep: feed + event_detail + one rotating module
+        _ROTATION = [
+            "market_accuracy", "category_page", "event_matching",
+            "league_page", "market_completeness", "grid",
+            "chart_timing", "visual_review",
+        ]
+        from datetime import datetime
+        _day_idx = datetime.now().timetuple().tm_yday % len(_ROTATION)
+        rotating = _ROTATION[_day_idx]
+        module_names = ["feed", "event_detail", rotating]
+        print(f"Light sweep: feed + event_detail + {rotating} (day-of-year rotation)")
     else:
         module_names = sorted(MODULES.keys(), key=lambda k: MODULES[k]["priority"])
 

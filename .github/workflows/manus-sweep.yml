@@ -2,8 +2,18 @@ name: Manus Sweep
 
 on:
   schedule:
-    - cron: "0 14 */3 * *"  # Every 3 days at 7am PT
+    - cron: "0 6,14,22 * * *"  # Light sweep 3x daily (11pm/7am/3pm PT)
+    - cron: "0 10 * * 1"       # Deep sweep weekly Monday 3am PT
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Sweep mode"
+        required: false
+        default: "light"
+        type: choice
+        options:
+          - light
+          - deep
 
 permissions:
   contents: write
@@ -11,7 +21,7 @@ permissions:
 
 jobs:
   sweep:
-    name: Manus 10-module health sweep
+    name: Manus health sweep
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -24,6 +34,18 @@ jobs:
       - name: Install httpx
         run: pip install httpx
 
+      - name: Determine sweep mode
+        id: mode
+        run: |
+          # Manual dispatch uses the input; scheduled uses cron expression
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode || 'light' }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 10 * * 1" ]; then
+            echo "mode=deep" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=light" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Verify MANUS_API_KEY is set
         env:
           MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
@@ -32,12 +54,13 @@ jobs:
             echo "::error::MANUS_API_KEY secret is not set. Add it at Settings > Secrets > Actions."
             exit 1
           fi
-          echo "MANUS_API_KEY is configured."
+          echo "MANUS_API_KEY is configured. Mode: ${{ steps.mode.outputs.mode }}"
 
       - name: Run Manus sweep
         id: sweep
         env:
           MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+          MANUS_SWEEP_MODE: ${{ steps.mode.outputs.mode }}
         run: python3 backend/scripts/manus_health_suite.py
         timeout-minutes: 45
 
@@ -51,11 +74,10 @@ jobs:
       - name: Post summary
         run: |
           TODAY=$(date -u +%Y-%m-%d)
-          REPORT="Manus/audit_results/$TODAY/combined_report.md"
           MANIFEST="Manus/audit_results/$TODAY/manifest.json"
           if [ -f "$MANIFEST" ]; then
             {
-              echo "## Manus Sweep — $TODAY"
+              echo "## Manus Sweep (${{ steps.mode.outputs.mode }}) — $TODAY"
               echo
               python3 -c "
           import json
@@ -76,20 +98,12 @@ jobs:
           "
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f "$REPORT" ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "<details><summary>Full report</summary>" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            head -200 "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-          fi
 
       - name: Upload results as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manus-sweep-${{ github.run_id }}
+          name: manus-sweep-${{ steps.mode.outputs.mode }}-${{ github.run_id }}
           path: Manus/audit_results/
           retention-days: 90
 
@@ -100,7 +114,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add -f "Manus/audit_results/$TODAY/" "Manus/audit_results/latest"
-            git commit -m "Manus sweep $TODAY — automated" || echo "No changes to commit"
+            git commit -m "Manus sweep (${{ steps.mode.outputs.mode }}) $TODAY — automated" || echo "No changes to commit"
             git push || echo "Push blocked by branch protection — results saved as artifact"
           fi
 
@@ -111,7 +125,7 @@ jobs:
         run: |
           TODAY=$(date -u +%Y-%m-%d)
           MANIFEST="Manus/audit_results/$TODAY/manifest.json"
-          BODY="The Manus health sweep failed on $TODAY."
+          BODY="The Manus health sweep (${{ steps.mode.outputs.mode }}) failed on $TODAY."
           if [ -f "$MANIFEST" ]; then
             DETAIL=$(python3 -c "
           import json
