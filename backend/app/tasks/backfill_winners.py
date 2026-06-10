@@ -34,13 +34,18 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     from app.services.kalshi_api import KalshiAPIService
 
     stats = {
-        "tickers_queried": 0, "events_found": 0,
-        "winners_set": 0, "losers_set": 0,
-        "not_found": 0, "no_result": 0, "api_miss": 0,
+        "tickers_queried": 0,
+        "events_found": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "not_found": 0,
+        "no_result": 0,
+        "api_miss": 0,
         "errors": [],
     }
 
     from app.tasks.redis_state import get_redis_client
+
     _rc = get_redis_client()
     _cursor_key = "bainluck:kalshi_winner_backfill_cursor"
     _raw = _rc.get(_cursor_key)
@@ -89,7 +94,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
         batch_size = 100
         for batch_start in range(0, len(tickers), batch_size):
-            batch = tickers[batch_start:batch_start + batch_size]
+            batch = tickers[batch_start : batch_start + batch_size]
             results = await asyncio.gather(*[_fetch(t) for t in batch])
 
             async with get_task_session() as session:
@@ -107,7 +112,9 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                         stats.setdefault("no_markets", 0)
                         stats["no_markets"] += 1
 
-                    api_tickers = {m.get("ticker", "") for m in nested if m.get("ticker")}
+                    api_tickers = {
+                        m.get("ticker", "") for m in nested if m.get("ticker")
+                    }
                     db_result = await session.execute(
                         text("""
                             SELECT fo.external_id, fo.resolution_source
@@ -126,12 +133,14 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                             if ur[0] not in api_tickers:
                                 mismatches = stats.setdefault("ticker_mismatches", [])
                                 if len(mismatches) < 10:
-                                    mismatches.append({
-                                        "event_ticker": event_ticker,
-                                        "db_outcome_ext_id": ur[0],
-                                        "db_resolution_source": ur[1],
-                                        "api_tickers": list(api_tickers)[:3],
-                                    })
+                                    mismatches.append(
+                                        {
+                                            "event_ticker": event_ticker,
+                                            "db_outcome_ext_id": ur[0],
+                                            "db_resolution_source": ur[1],
+                                            "api_tickers": list(api_tickers)[:3],
+                                        }
+                                    )
 
                     # For events with no API markets, try to resolve from
                     # current_probability directly (the data is in our DB)
@@ -198,7 +207,10 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                         )
                                     ),
                                 )
-                                .values(is_winner=is_winner, resolution_source="api_settlement")
+                                .values(
+                                    is_winner=is_winner,
+                                    resolution_source="api_settlement",
+                                )
                             )
                             if updated.rowcount > 0:
                                 if is_winner:
@@ -209,19 +221,24 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                 stats["not_found"] += 1
                                 samples = stats.setdefault("not_found_samples", [])
                                 if len(samples) < 5:
-                                    samples.append({
-                                        "event_ticker": event_ticker,
-                                        "market_ticker": ticker,
-                                        "result": result,
-                                    })
+                                    samples.append(
+                                        {
+                                            "event_ticker": event_ticker,
+                                            "market_ticker": ticker,
+                                            "result": result,
+                                        }
+                                    )
 
                 if not dry_run:
                     await session.commit()
 
             logger.info(
                 "Kalshi backfill: %d/%d tickers, %d found, %d winners, %d losers",
-                min(batch_start + batch_size, len(tickers)), len(tickers),
-                stats["events_found"], stats["winners_set"], stats["losers_set"],
+                min(batch_start + batch_size, len(tickers)),
+                len(tickers),
+                stats["events_found"],
+                stats["winners_set"],
+                stats["losers_set"],
             )
 
     except Exception as e:
@@ -233,9 +250,13 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     logger.info(
         "Kalshi winner backfill: %d queried, %d found, %d api_miss, "
         "%d winners, %d losers, %d not_found, %d errors",
-        stats["tickers_queried"], stats["events_found"], stats["api_miss"],
-        stats["winners_set"], stats["losers_set"],
-        stats["not_found"], len(stats["errors"]),
+        stats["tickers_queried"],
+        stats["events_found"],
+        stats["api_miss"],
+        stats["winners_set"],
+        stats["losers_set"],
+        stats["not_found"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -258,9 +279,12 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
     _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
 
     stats = {
-        "tickers_queried": 0, "markets_found": 0,
-        "winners_set": 0, "losers_set": 0,
-        "api_empty": 0, "errors": [],
+        "tickers_queried": 0,
+        "markets_found": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "api_empty": 0,
+        "errors": [],
     }
 
     async with get_task_session() as session:
@@ -288,7 +312,9 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
         return stats
 
     _rc.setex(_cursor_key, 86400 * 14, event_tickers[-1])
-    logger.info("Kalshi targeted backfill: %d event tickers to look up", len(event_tickers))
+    logger.info(
+        "Kalshi targeted backfill: %d event tickers to look up", len(event_tickers)
+    )
 
     service = KalshiAPIService()
     try:
@@ -308,7 +334,7 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
 
         batch_size = 100
         for batch_start in range(0, len(event_tickers), batch_size):
-            batch = event_tickers[batch_start:batch_start + batch_size]
+            batch = event_tickers[batch_start : batch_start + batch_size]
             results = await asyncio.gather(*[_fetch_markets(t) for t in batch])
 
             yes_tickers = []
@@ -363,8 +389,11 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
 
             logger.info(
                 "Kalshi targeted: %d/%d tickers, %d markets, %d winners, %d losers, %d empty",
-                min(batch_start + batch_size, len(event_tickers)), len(event_tickers),
-                stats["markets_found"], stats["winners_set"], stats["losers_set"],
+                min(batch_start + batch_size, len(event_tickers)),
+                len(event_tickers),
+                stats["markets_found"],
+                stats["winners_set"],
+                stats["losers_set"],
                 stats["api_empty"],
             )
     except Exception as e:
@@ -394,9 +423,12 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
     cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or None)
 
     stats = {
-        "pages": 0, "markets_scanned": 0,
-        "winners_set": 0, "losers_set": 0,
-        "no_result": 0, "errors": [],
+        "pages": 0,
+        "markets_scanned": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "no_result": 0,
+        "errors": [],
     }
 
     service = KalshiAPIService()
@@ -486,8 +518,10 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
 
     logger.info(
         "Kalshi markets backfill: %d pages, %d scanned, %d winners, %d losers",
-        stats["pages"], stats["markets_scanned"],
-        stats["winners_set"], stats["losers_set"],
+        stats["pages"],
+        stats["markets_scanned"],
+        stats["winners_set"],
+        stats["losers_set"],
     )
     return stats
 
@@ -508,8 +542,7 @@ async def _backfill_polymarket_winners():
             # 2. No outcome already has authoritative is_winner (skip api_settlement etc.)
             #    Pass2_guess winners are treated as unresolved so clean data can overwrite
             # 3. All outcomes have current_probability near 0 or 1 (clean resolution)
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     WITH cleanly_resolved AS (
                         SELECT fm.id AS market_id
                         FROM futures_markets fm
@@ -534,8 +567,7 @@ async def _backfill_polymarket_winners():
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
                     RETURNING fo.is_winner
-                """)
-            )
+                """))
             rows = result.all()
             stats["winners_set"] = sum(1 for r in rows if r[0])
             stats["losers_set"] = sum(1 for r in rows if not r[0])
@@ -548,7 +580,9 @@ async def _backfill_polymarket_winners():
 
     logger.info(
         "Polymarket winner backfill: %d winners, %d losers, %d errors",
-        stats["winners_set"], stats["losers_set"], len(stats["errors"]),
+        stats["winners_set"],
+        stats["losers_set"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -581,9 +615,14 @@ async def _resolve_kalshi_golf_from_datagolf():
     """
     from app.routes.golf import _normalize_tournament, _match_key
 
-    stats = {"matched_tournaments": 0, "resolved_outcomes": 0,
-             "no_tournament_match": 0, "no_player_match": 0,
-             "skipped_type": 0, "errors": []}
+    stats = {
+        "matched_tournaments": 0,
+        "resolved_outcomes": 0,
+        "no_tournament_match": 0,
+        "no_player_match": 0,
+        "skipped_type": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
@@ -620,21 +659,21 @@ async def _resolve_kalshi_golf_from_datagolf():
 
             # 2. Find stuck Kalshi golf markets (including ones with WRONG is_winner
             # from Pass 2's arbitrary pick — use max(current_prob) < 0.90 as signal)
-            kalshi_result = await session.execute(
-                text("""
+            kalshi_result = await session.execute(text("""
                     SELECT fm.id, fm.name, fm.external_id
                     FROM futures_markets fm
                     WHERE fm.source = 'kalshi'
                       AND fm.status = 'resolved'
                       AND fm.llm_sport_category = 'golf'
-                """)
-            )
+                """))
             kalshi_markets = kalshi_result.all()
 
             for row in kalshi_markets:
                 # Determine market type from name (external_id is the market
                 # name for Kalshi golf, not a ticker prefix)
-                market_type = _detect_golf_market_type(row.name or row.external_id or "")
+                market_type = _detect_golf_market_type(
+                    row.name or row.external_id or ""
+                )
                 if not market_type:
                     stats["skipped_type"] += 1
                     continue
@@ -660,7 +699,9 @@ async def _resolve_kalshi_golf_from_datagolf():
 
                 # Get outcomes and resolve
                 outcomes = await session.execute(
-                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid"),
+                    text(
+                        "SELECT id, name FROM futures_outcomes WHERE market_id = :mid"
+                    ),
                     {"mid": row.id},
                 )
 
@@ -683,7 +724,9 @@ async def _resolve_kalshi_golf_from_datagolf():
                         winner_id = min(positions, key=lambda x: x[1])[0]
                         for oid, _ in positions:
                             await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                text(
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"
+                                ),
                                 {"won": oid == winner_id, "oid": oid},
                             )
                             stats["resolved_outcomes"] += 1
@@ -707,7 +750,9 @@ async def _resolve_kalshi_golf_from_datagolf():
                             continue
 
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"),
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"
+                        ),
                         {"won": won, "oid": out.id, "src": "leaderboard"},
                     )
                     stats["resolved_outcomes"] += 1
@@ -721,9 +766,12 @@ async def _resolve_kalshi_golf_from_datagolf():
     logger.info(
         "Golf cross-ref: %d tournaments matched, %d outcomes resolved, "
         "%d no_tournament, %d no_player, %d skipped_type, %d errors",
-        stats["matched_tournaments"], stats["resolved_outcomes"],
-        stats["no_tournament_match"], stats["no_player_match"],
-        stats["skipped_type"], len(stats["errors"]),
+        stats["matched_tournaments"],
+        stats["resolved_outcomes"],
+        stats["no_tournament_match"],
+        stats["no_player_match"],
+        stats["skipped_type"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -762,18 +810,24 @@ async def _resolve_golf_matchups_from_datagolf():
     from app.services.datagolf_api import DataGolfAPIService, normalize_player_name
 
     stats = {
-        "markets_found": 0, "tournaments_grouped": 0,
-        "tournaments_with_dg": 0, "api_calls": 0,
-        "outcomes_resolved": 0, "winners_set": 0, "losers_set": 0,
-        "pushes": 0, "no_dg_event": 0, "no_matchup_data": 0,
-        "no_player_match": 0, "errors": [],
+        "markets_found": 0,
+        "tournaments_grouped": 0,
+        "tournaments_with_dg": 0,
+        "api_calls": 0,
+        "outcomes_resolved": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "pushes": 0,
+        "no_dg_event": 0,
+        "no_matchup_data": 0,
+        "no_player_match": 0,
+        "errors": [],
     }
 
     try:
         # Step 1: Find unresolved Kalshi golf H2H and 3-ball markets
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT fm.id, fm.name, fm.external_id, fm.event_id
                     FROM futures_markets fm
                     WHERE fm.source = 'kalshi'
@@ -793,16 +847,19 @@ async def _resolve_golf_matchups_from_datagolf():
                           WHERE fo.market_id = fm.id
                             AND fo.resolution_source = 'datagolf_matchup'
                       )
-                """)
-            )
+                """))
             markets = result.all()
 
         if not markets:
-            logger.info("Golf matchup resolution: nothing to do (0 unresolved H2H/3-ball markets)")
+            logger.info(
+                "Golf matchup resolution: nothing to do (0 unresolved H2H/3-ball markets)"
+            )
             return stats
 
         stats["markets_found"] = len(markets)
-        logger.info("Golf matchup resolution: %d unresolved H2H/3-ball markets", len(markets))
+        logger.info(
+            "Golf matchup resolution: %d unresolved H2H/3-ball markets", len(markets)
+        )
 
         # Step 2: Group markets by tournament
         tournament_markets: dict[str, list] = {}
@@ -870,7 +927,8 @@ async def _resolve_golf_matchups_from_datagolf():
                     if raw_rows:
                         # Filter to rows that have settlement outcomes
                         settled = [
-                            r for r in raw_rows
+                            r
+                            for r in raw_rows
                             if r.get("bet_outcome_numeric") is not None
                             or r.get("bet_outcome") is not None
                         ]
@@ -946,7 +1004,9 @@ async def _resolve_golf_matchups_from_datagolf():
 
                         # Extract round number from market name if present
                         round_match = _ROUND_RE.search(market_name)
-                        market_round = int(round_match.group(1)) if round_match else None
+                        market_round = (
+                            int(round_match.group(1)) if round_match else None
+                        )
 
                         # Load outcomes for this market
                         outcomes_result = await session.execute(
@@ -969,10 +1029,9 @@ async def _resolve_golf_matchups_from_datagolf():
                                 continue
 
                             # Look up (player1 vs player2) with round specificity
-                            result_data = (
-                                matchup_outcomes.get((k1, k2, market_round))
-                                or matchup_outcomes.get((k1, k2, None))
-                            )
+                            result_data = matchup_outcomes.get(
+                                (k1, k2, market_round)
+                            ) or matchup_outcomes.get((k1, k2, None))
                             if result_data:
                                 outcome_num = result_data["outcome"]
                                 if outcome_num == -1:
@@ -982,10 +1041,9 @@ async def _resolve_golf_matchups_from_datagolf():
                                 o1_won = outcome_num == 1
                             else:
                                 # Try reverse: player2 vs player1
-                                result_data_rev = (
-                                    matchup_outcomes.get((k2, k1, market_round))
-                                    or matchup_outcomes.get((k2, k1, None))
-                                )
+                                result_data_rev = matchup_outcomes.get(
+                                    (k2, k1, market_round)
+                                ) or matchup_outcomes.get((k2, k1, None))
                                 if result_data_rev:
                                     outcome_num = result_data_rev["outcome"]
                                     if outcome_num == -1:
@@ -1040,10 +1098,9 @@ async def _resolve_golf_matchups_from_datagolf():
                                 for j, (_, kj, _) in enumerate(outcome_keys):
                                     if i >= j:
                                         continue
-                                    result_data = (
-                                        matchup_outcomes.get((ki, kj, market_round))
-                                        or matchup_outcomes.get((ki, kj, None))
-                                    )
+                                    result_data = matchup_outcomes.get(
+                                        (ki, kj, market_round)
+                                    ) or matchup_outcomes.get((ki, kj, None))
                                     if result_data:
                                         outcome_num = result_data["outcome"]
                                         if outcome_num == 1:
@@ -1053,10 +1110,9 @@ async def _resolve_golf_matchups_from_datagolf():
                                         found_any = True
                                     else:
                                         # Try reverse
-                                        result_data_rev = (
-                                            matchup_outcomes.get((kj, ki, market_round))
-                                            or matchup_outcomes.get((kj, ki, None))
-                                        )
+                                        result_data_rev = matchup_outcomes.get(
+                                            (kj, ki, market_round)
+                                        ) or matchup_outcomes.get((kj, ki, None))
                                         if result_data_rev:
                                             outcome_num = result_data_rev["outcome"]
                                             if outcome_num == 1:
@@ -1076,7 +1132,9 @@ async def _resolve_golf_matchups_from_datagolf():
                                 continue
 
                             # Exactly one player should have the most wins
-                            winners = [k for k, v in pair_results.items() if v == max_wins]
+                            winners = [
+                                k for k, v in pair_results.items() if v == max_wins
+                            ]
 
                             for oid, pk, _ in outcome_keys:
                                 won = pk in winners and len(winners) == 1
@@ -1138,12 +1196,18 @@ async def _resolve_golf_matchups_from_datagolf():
         "Golf matchup resolution: %d markets found, %d tournaments (%d with DG data), "
         "%d API calls, %d outcomes resolved (%d winners, %d losers, %d pushes), "
         "%d no_dg_event, %d no_matchup_data, %d no_player_match, %d errors",
-        stats["markets_found"], stats["tournaments_grouped"],
-        stats["tournaments_with_dg"], stats["api_calls"],
-        stats["outcomes_resolved"], stats["winners_set"], stats["losers_set"],
+        stats["markets_found"],
+        stats["tournaments_grouped"],
+        stats["tournaments_with_dg"],
+        stats["api_calls"],
+        stats["outcomes_resolved"],
+        stats["winners_set"],
+        stats["losers_set"],
         stats["pushes"],
-        stats["no_dg_event"], stats["no_matchup_data"],
-        stats["no_player_match"], len(stats["errors"]),
+        stats["no_dg_event"],
+        stats["no_matchup_data"],
+        stats["no_player_match"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1162,8 +1226,7 @@ async def _resolve_kalshi_from_scores():
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.name AS market_name,
                            fm.external_id AS ticker,
                            e.home_team_name, e.away_team_name,
@@ -1186,8 +1249,7 @@ async def _resolve_kalshi_from_scores():
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 10000
-                """)
-            )
+                """))
             markets = result.all()
 
             for row in markets:
@@ -1208,10 +1270,28 @@ async def _resolve_kalshi_from_scores():
 
                 # Skip non-moneyline market types — these are handled by
                 # the spread/total/player prop resolvers
-                _non_ml = ("total", "spread", "pts", "reb", "ast", "3pt",
-                           "blk", "stl", "hrr", "hit", "tb", "ks", "hr",
-                           "rfi", "f5", "mention",
-                           "1htotal", "1hspread", "2htotal", "2hspread")
+                _non_ml = (
+                    "total",
+                    "spread",
+                    "pts",
+                    "reb",
+                    "ast",
+                    "3pt",
+                    "blk",
+                    "stl",
+                    "hrr",
+                    "hit",
+                    "tb",
+                    "ks",
+                    "hr",
+                    "rfi",
+                    "f5",
+                    "mention",
+                    "1htotal",
+                    "1hspread",
+                    "2htotal",
+                    "2hspread",
+                )
                 if any(t in ticker_lower for t in _non_ml):
                     stats["skipped"] += 1
                     continue
@@ -1240,8 +1320,16 @@ async def _resolve_kalshi_from_scores():
                     stats["skipped"] += 1
                     continue
 
-                home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                home_tokens = (
+                    set(row.home_team_name.lower().split())
+                    if row.home_team_name
+                    else set()
+                )
+                away_tokens = (
+                    set(row.away_team_name.lower().split())
+                    if row.away_team_name
+                    else set()
+                )
 
                 resolved_any = False
                 for out in outs:
@@ -1259,7 +1347,9 @@ async def _resolve_kalshi_from_scores():
                         continue
 
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"),
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"
+                        ),
                         {"won": won, "oid": out.id, "src": "game_score"},
                     )
                     resolved_any = True
@@ -1278,7 +1368,10 @@ async def _resolve_kalshi_from_scores():
     total = stats["moneyline"] + stats["btts"]
     logger.info(
         "Kalshi score resolution: %d moneyline, %d btts, %d skipped, %d errors",
-        stats["moneyline"], stats["btts"], stats["skipped"], len(stats["errors"]),
+        stats["moneyline"],
+        stats["btts"],
+        stats["skipped"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1293,10 +1386,27 @@ _TOTAL_RE = re.compile(
 )
 
 _FIRST_HALF_PERIODS = {
-    "q1", "q2", "1q", "2q", "1st", "2nd", "1st half", "first half",
-    "1h", "top 1st", "bot 1st", "top 2nd", "bot 2nd", "top 3rd",
-    "bot 3rd", "top 4th", "bot 4th", "top 5th", "bot 5th",
-    "1st period", "2nd period",
+    "q1",
+    "q2",
+    "1q",
+    "2q",
+    "1st",
+    "2nd",
+    "1st half",
+    "first half",
+    "1h",
+    "top 1st",
+    "bot 1st",
+    "top 2nd",
+    "bot 2nd",
+    "top 3rd",
+    "bot 3rd",
+    "top 4th",
+    "bot 4th",
+    "top 5th",
+    "bot 5th",
+    "1st period",
+    "2nd period",
 }
 
 
@@ -1310,13 +1420,19 @@ async def _resolve_kalshi_spread_total_from_scores():
       halftime score from scoring_plays
     - 1H totals: "Over N 1H points scored" → same
     """
-    stats = {"spread": 0, "total": 0, "h1_spread": 0, "h1_total": 0,
-             "no_plays": 0, "no_parse": 0, "errors": []}
+    stats = {
+        "spread": 0,
+        "total": 0,
+        "h1_spread": 0,
+        "h1_total": 0,
+        "no_plays": 0,
+        "no_parse": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
@@ -1339,8 +1455,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 10000
-                """)
-            )
+                """))
             markets = result.all()
 
             for row in markets:
@@ -1349,7 +1464,9 @@ async def _resolve_kalshi_spread_total_from_scores():
 
                 # Get all outcomes for this market
                 out = await session.execute(
-                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid"),
+                    text(
+                        "SELECT id, name FROM futures_outcomes WHERE market_id = :mid"
+                    ),
                     {"mid": row.market_id},
                 )
                 outcomes_list = out.all()
@@ -1362,13 +1479,22 @@ async def _resolve_kalshi_spread_total_from_scores():
                 for oc in outcomes_list:
                     _tt_re = re.match(
                         r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
-                        oc.name or "", re.IGNORECASE,
+                        oc.name or "",
+                        re.IGNORECASE,
                     )
                     if _tt_re:
                         team_name = _tt_re.group(1).strip()
                         line = float(_tt_re.group(2))
-                        home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                        away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                        home_tokens = (
+                            set(row.home_team_name.lower().split())
+                            if row.home_team_name
+                            else set()
+                        )
+                        away_tokens = (
+                            set(row.away_team_name.lower().split())
+                            if row.away_team_name
+                            else set()
+                        )
                         team_tokens = set(team_name.lower().split())
 
                         team_score = None
@@ -1380,12 +1506,16 @@ async def _resolve_kalshi_spread_total_from_scores():
                         if team_score is not None:
                             over = team_score > line
                             for oc2 in outcomes_list:
-                                is_over_outcome = bool(re.match(
-                                    r".+\s+over\s+", oc2.name or "", re.IGNORECASE
-                                ))
+                                is_over_outcome = bool(
+                                    re.match(
+                                        r".+\s+over\s+", oc2.name or "", re.IGNORECASE
+                                    )
+                                )
                                 won = over if is_over_outcome else not over
                                 await session.execute(
-                                    text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                    text(
+                                        "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"
+                                    ),
                                     {"won": won, "oid": oc2.id},
                                 )
                             stats["total"] += 1
@@ -1415,8 +1545,16 @@ async def _resolve_kalshi_spread_total_from_scores():
                         else:
                             h1_home, h1_away = row.home_score, row.away_score
 
-                        home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                        away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                        home_tokens = (
+                            set(row.home_team_name.lower().split())
+                            if row.home_team_name
+                            else set()
+                        )
+                        away_tokens = (
+                            set(row.away_team_name.lower().split())
+                            if row.away_team_name
+                            else set()
+                        )
                         team_tokens = set(team_name.lower().split())
 
                         if team_tokens & home_tokens:
@@ -1430,7 +1568,9 @@ async def _resolve_kalshi_spread_total_from_scores():
                         for oc in outcomes_list:
                             oc_won = won if oc.id == outcome.id else not won
                             await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                text(
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"
+                                ),
                                 {"won": oc_won, "oid": oc.id},
                             )
                         stats["h1_spread" if is_1h else "spread"] += 1
@@ -1455,10 +1595,16 @@ async def _resolve_kalshi_spread_total_from_scores():
 
                         won = total > line if direction == "over" else total < line
                         for oc in outcomes_list:
-                            is_over = bool(re.match(r"(?:over|under)", oc.name or "", re.IGNORECASE))
+                            is_over = bool(
+                                re.match(
+                                    r"(?:over|under)", oc.name or "", re.IGNORECASE
+                                )
+                            )
                             oc_won = won if oc.id == outcome.id else not won
                             await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                text(
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"
+                                ),
                                 {"won": oc_won, "oid": oc.id},
                             )
                         stats["h1_total" if is_1h else "total"] += 1
@@ -1468,8 +1614,16 @@ async def _resolve_kalshi_spread_total_from_scores():
                 # Fallback: team-name-only outcomes on 2-outcome markets
                 # (e.g., "Penn" on KXNCAAMBGAME, "California" on KXNCAAMB1HWINNER)
                 if not resolved_st and len(outcomes_list) == 2:
-                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                    home_tokens = (
+                        set(row.home_team_name.lower().split())
+                        if row.home_team_name
+                        else set()
+                    )
+                    away_tokens = (
+                        set(row.away_team_name.lower().split())
+                        if row.away_team_name
+                        else set()
+                    )
 
                     if is_1h:
                         h1_scores = await _get_halftime_score(session, row.event_id)
@@ -1480,12 +1634,20 @@ async def _resolve_kalshi_spread_total_from_scores():
                     else:
                         h_score, a_score = row.home_score, row.away_score
 
-                    if h_score is not None and a_score is not None and h_score != a_score:
+                    if (
+                        h_score is not None
+                        and a_score is not None
+                        and h_score != a_score
+                    ):
                         home_won = h_score > a_score
                         for oc in outcomes_list:
                             oc_tokens = set((oc.name or "").lower().split())
-                            is_home = bool(oc_tokens & home_tokens) and not bool(oc_tokens & away_tokens)
-                            is_away = bool(oc_tokens & away_tokens) and not bool(oc_tokens & home_tokens)
+                            is_home = bool(oc_tokens & home_tokens) and not bool(
+                                oc_tokens & away_tokens
+                            )
+                            is_away = bool(oc_tokens & away_tokens) and not bool(
+                                oc_tokens & home_tokens
+                            )
                             if is_home:
                                 won = home_won
                             elif is_away:
@@ -1493,7 +1655,9 @@ async def _resolve_kalshi_spread_total_from_scores():
                             else:
                                 continue
                             await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
+                                text(
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"
+                                ),
                                 {"won": won, "oid": oc.id},
                             )
                             resolved_st = True
@@ -1513,9 +1677,14 @@ async def _resolve_kalshi_spread_total_from_scores():
     logger.info(
         "Kalshi spread/total resolution: %d resolved (spread=%d, total=%d, "
         "h1_spread=%d, h1_total=%d), %d no_plays, %d no_parse, %d errors",
-        resolved, stats["spread"], stats["total"],
-        stats["h1_spread"], stats["h1_total"],
-        stats["no_plays"], stats["no_parse"], len(stats["errors"]),
+        resolved,
+        stats["spread"],
+        stats["total"],
+        stats["h1_spread"],
+        stats["h1_total"],
+        stats["no_plays"],
+        stats["no_parse"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1540,11 +1709,20 @@ async def _get_halftime_score(session, event_id: int):
 
 
 _PROP_TICKER_TO_STAT = {
-    "kxnbapts": "points", "kxnbaast": "assists", "kxnbareb": "rebounds",
-    "kxnbablk": "blocks", "kxnbastl": "steals", "kxnba3pt": "three pointers",
-    "kxnhlgoal": "goals", "kxnhlanygoal": "goals", "kxnhlpts": "points",
-    "kxnhlast": "assists", "kxnhlsaves": "saves",
-    "kxmlbhit": "hits", "kxmlbhr": "home runs", "kxmlbks": "strikeouts",
+    "kxnbapts": "points",
+    "kxnbaast": "assists",
+    "kxnbareb": "rebounds",
+    "kxnbablk": "blocks",
+    "kxnbastl": "steals",
+    "kxnba3pt": "three pointers",
+    "kxnhlgoal": "goals",
+    "kxnhlanygoal": "goals",
+    "kxnhlpts": "points",
+    "kxnhlast": "assists",
+    "kxnhlsaves": "saves",
+    "kxmlbhit": "hits",
+    "kxmlbhr": "home runs",
+    "kxmlbks": "strikeouts",
     "kxnba2d": "double doubles",
 }
 
@@ -1553,10 +1731,12 @@ _PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
 
 def _normalize_player_name(name: str) -> str:
     from app.utils.name_normalization import strip_diacritics
+
     n = strip_diacritics(name).lower().strip()
     n = re.sub(r"\s+(jr\.?|sr\.?|ii|iii|iv)\s*$", "", n, flags=re.IGNORECASE)
     n = n.replace(".", "").replace("'", "").replace("'", "")
     return " ".join(n.split())
+
 
 _COMBO_STATS = {
     "kxnbapa": ["points", "assists"],
@@ -1633,10 +1813,13 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 bs_id = id(row.box_score_data)
                 if bs_id not in _bs_cache:
                     raw_bs = row.box_score_data or {}
-                    raw_players = raw_bs.get("players", raw_bs) if isinstance(raw_bs, dict) else {}
+                    raw_players = (
+                        raw_bs.get("players", raw_bs)
+                        if isinstance(raw_bs, dict)
+                        else {}
+                    )
                     _bs_cache[bs_id] = {
-                        _normalize_player_name(k): v
-                        for k, v in raw_players.items()
+                        _normalize_player_name(k): v for k, v in raw_players.items()
                     }
                 norm_box = _bs_cache[bs_id]
 
@@ -1670,12 +1853,16 @@ async def _resolve_kalshi_player_props_from_boxscore():
 
             if winner_ids:
                 await session.execute(
-                    text("UPDATE futures_outcomes SET is_winner = true, resolution_source = 'box_score' WHERE id = ANY(:ids)"),
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = true, resolution_source = 'box_score' WHERE id = ANY(:ids)"
+                    ),
                     {"ids": winner_ids},
                 )
             if loser_ids:
                 await session.execute(
-                    text("UPDATE futures_outcomes SET is_winner = false, resolution_source = 'box_score' WHERE id = ANY(:ids)"),
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = false, resolution_source = 'box_score' WHERE id = ANY(:ids)"
+                    ),
                     {"ids": loser_ids},
                 )
             stats["resolved"] = len(winner_ids) + len(loser_ids)
@@ -1687,7 +1874,9 @@ async def _resolve_kalshi_player_props_from_boxscore():
 
     logger.info(
         "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d errors",
-        stats["resolved"], stats["no_player"], stats["no_parse"],
+        stats["resolved"],
+        stats["no_player"],
+        stats["no_parse"],
         len(stats["errors"]),
     )
     return stats
@@ -1703,7 +1892,18 @@ async def _resolve_kalshi_period_props():
 
     _period_map = {
         "1h": {"q1", "q2", "1q", "2q", "1st", "2nd", "1st half", "first half", "1h"},
-        "2h": {"q3", "q4", "3q", "4q", "3rd", "4th", "2nd half", "second half", "2h", "ot"},
+        "2h": {
+            "q3",
+            "q4",
+            "3q",
+            "4q",
+            "3rd",
+            "4th",
+            "2nd half",
+            "second half",
+            "2h",
+            "ot",
+        },
         "1q": {"q1", "1q", "1st"},
         "2q": {"q2", "2q", "2nd"},
         "3q": {"q3", "3q", "3rd"},
@@ -1712,8 +1912,7 @@ async def _resolve_kalshi_period_props():
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
@@ -1736,8 +1935,7 @@ async def _resolve_kalshi_period_props():
                                THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) = 1
                     LIMIT 5000
-                """)
-            )
+                """))
             markets = result.all()
 
             for row in markets:
@@ -1800,7 +1998,9 @@ async def _resolve_kalshi_period_props():
 
                 # Get the outcome and parse its name
                 out = await session.execute(
-                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
+                    text(
+                        "SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"
+                    ),
                     {"mid": row.market_id},
                 )
                 outcome = out.first()
@@ -1813,8 +2013,16 @@ async def _resolve_kalshi_period_props():
                 if sm:
                     team_name = sm.group(1).strip()
                     line = float(sm.group(2))
-                    home_tokens = set(row.home_team_name.lower().split()) if row.home_team_name else set()
-                    away_tokens = set(row.away_team_name.lower().split()) if row.away_team_name else set()
+                    home_tokens = (
+                        set(row.home_team_name.lower().split())
+                        if row.home_team_name
+                        else set()
+                    )
+                    away_tokens = (
+                        set(row.away_team_name.lower().split())
+                        if row.away_team_name
+                        else set()
+                    )
                     team_tokens = set(team_name.lower().split())
                     if team_tokens & home_tokens:
                         margin = period_home - period_away
@@ -1825,7 +2033,9 @@ async def _resolve_kalshi_period_props():
                         continue
                     won = margin > line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"
+                        ),
                         {"won": won, "oid": outcome.id},
                     )
                     stats["resolved"] += 1
@@ -1839,7 +2049,9 @@ async def _resolve_kalshi_period_props():
                     total = period_home + period_away
                     won = total > line if direction == "over" else total < line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"
+                        ),
                         {"won": won, "oid": outcome.id},
                     )
                     stats["resolved"] += 1
@@ -1855,7 +2067,9 @@ async def _resolve_kalshi_period_props():
 
     logger.info(
         "Period prop resolution: %d resolved, %d no_plays, %d no_parse, %d errors",
-        stats["resolved"], stats["no_plays"], stats["no_parse"],
+        stats["resolved"],
+        stats["no_plays"],
+        stats["no_parse"],
         len(stats["errors"]),
     )
     return stats
@@ -1877,24 +2091,26 @@ async def _resolve_golf_from_historical_outrights():
     from app.services.datagolf_api import DataGolfAPIService
 
     stats = {
-        "events_checked": 0, "api_calls": 0,
-        "outcomes_resolved": 0, "winners_set": 0, "losers_set": 0,
-        "no_match": 0, "skipped_no_db_markets": 0,
+        "events_checked": 0,
+        "api_calls": 0,
+        "outcomes_resolved": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "no_match": 0,
+        "skipped_no_db_markets": 0,
         "errors": [],
     }
 
     # Short-circuit: check if any unresolved DataGolf outcomes exist
     async with get_task_session() as session:
-        unresolved_count = await session.execute(
-            text("""
+        unresolved_count = await session.execute(text("""
                 SELECT COUNT(*) FROM futures_outcomes fo
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 WHERE fm.source = 'datagolf'
                   AND fm.status = 'resolved'
                   AND COALESCE(fo.resolution_source, '') NOT IN
                       ('datagolf_settlement', 'api_settlement')
-            """)
-        )
+            """))
         if unresolved_count.scalar() == 0:
             logger.info("Golf outrights settlement: nothing to do (all resolved)")
             return stats
@@ -1950,7 +2166,9 @@ async def _resolve_golf_from_historical_outrights():
 
                 # Fetch outrights for each market type
                 for market_type in market_types:
-                    codes_to_try = make_cut_codes if market_type == "make_cut" else [market_type]
+                    codes_to_try = (
+                        make_cut_codes if market_type == "make_cut" else [market_type]
+                    )
 
                     settlement_data = None
                     for code in codes_to_try:
@@ -1969,7 +2187,8 @@ async def _resolve_golf_from_historical_outrights():
                             if rows:
                                 # Filter to rows that have bet_outcome_numeric
                                 settled = [
-                                    r for r in rows
+                                    r
+                                    for r in rows
                                     if r.get("bet_outcome_numeric") is not None
                                     or r.get("bet_outcome") is not None
                                 ]
@@ -2063,9 +2282,13 @@ async def _resolve_golf_from_historical_outrights():
         "Golf outrights settlement: %d events checked, %d API calls, "
         "%d outcomes resolved (%d winners, %d losers), "
         "%d no_match, %d skipped, %d errors",
-        stats["events_checked"], stats["api_calls"],
-        stats["outcomes_resolved"], stats["winners_set"], stats["losers_set"],
-        stats["no_match"], stats["skipped_no_db_markets"],
+        stats["events_checked"],
+        stats["api_calls"],
+        stats["outcomes_resolved"],
+        stats["winners_set"],
+        stats["losers_set"],
+        stats["no_match"],
+        stats["skipped_no_db_markets"],
         len(stats["errors"]),
     )
     return stats
@@ -2093,8 +2316,14 @@ async def _backfill_datagolf_leaderboards():
     import json as _json
     from app.services.datagolf_api import DataGolfAPIService
 
-    stats = {"markets_checked": 0, "events_refetched": 0, "markets_updated": 0,
-             "already_full": 0, "api_miss": 0, "errors": []}
+    stats = {
+        "markets_checked": 0,
+        "events_refetched": 0,
+        "markets_updated": 0,
+        "already_full": 0,
+        "api_miss": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
@@ -2118,7 +2347,9 @@ async def _backfill_datagolf_leaderboards():
             truncated_markets = result.all()
 
         if not truncated_markets:
-            logger.info("DataGolf leaderboard backfill: no truncated leaderboards found")
+            logger.info(
+                "DataGolf leaderboard backfill: no truncated leaderboards found"
+            )
             return stats
 
         logger.info(
@@ -2159,14 +2390,17 @@ async def _backfill_datagolf_leaderboards():
 
                 # Fetch full historical results from DataGolf API
                 historical = await service.get_historical_results(
-                    tour=tour, event_id=event_id, year=year,
+                    tour=tour,
+                    event_id=event_id,
+                    year=year,
                 )
 
                 if not historical or len(historical) <= 50:
                     stats["api_miss"] += 1
                     logger.info(
                         "DataGolf leaderboard backfill: no/insufficient historical data for %s (got %d)",
-                        ext_id, len(historical) if historical else 0,
+                        ext_id,
+                        len(historical) if historical else 0,
                     )
                     await asyncio.sleep(0.5)
                     continue
@@ -2216,7 +2450,8 @@ async def _backfill_datagolf_leaderboards():
 
                 logger.info(
                     "DataGolf leaderboard backfill: updated %s with %d players (was 50)",
-                    ext_id, len(full_leaderboard),
+                    ext_id,
+                    len(full_leaderboard),
                 )
 
                 await asyncio.sleep(0.5)  # Respect DataGolf rate limits
@@ -2231,9 +2466,12 @@ async def _backfill_datagolf_leaderboards():
     logger.info(
         "DataGolf leaderboard backfill: %d checked, %d events refetched, "
         "%d markets updated, %d already_full, %d api_miss, %d errors",
-        stats["markets_checked"], stats["events_refetched"],
-        stats["markets_updated"], stats["already_full"],
-        stats["api_miss"], len(stats["errors"]),
+        stats["markets_checked"],
+        stats["events_refetched"],
+        stats["markets_updated"],
+        stats["already_full"],
+        stats["api_miss"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -2248,20 +2486,23 @@ async def _backfill_datagolf_winners():
     This function uses the leaderboard stored in market_metadata to
     determine actual placement results and set is_winner correctly.
     """
-    stats = {"markets_processed": 0, "winners_set": 0, "losers_set": 0,
-             "no_leaderboard": 0, "errors": []}
+    stats = {
+        "markets_processed": 0,
+        "winners_set": 0,
+        "losers_set": 0,
+        "no_leaderboard": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT fm.id, fm.external_id, fm.market_metadata
                     FROM futures_markets fm
                     WHERE fm.source = 'datagolf'
                       AND fm.status = 'resolved'
                       AND fm.market_metadata IS NOT NULL
-                """)
-            )
+                """))
             markets = result.all()
 
             for row in markets:
@@ -2307,7 +2548,12 @@ async def _backfill_datagolf_winners():
                 if market_type == "make_cut":
                     can_infer_absent = leaderboard_size >= 100
                 else:
-                    can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20")
+                    can_infer_absent = market_type in (
+                        "win",
+                        "top_5",
+                        "top_10",
+                        "top_20",
+                    )
 
                 for out_row in outcomes.all():
                     ext = out_row.external_id or ""
@@ -2352,8 +2598,11 @@ async def _backfill_datagolf_winners():
     logger.info(
         "DataGolf winner backfill: %d markets, %d winners, %d losers, "
         "%d no_leaderboard, %d errors",
-        stats["markets_processed"], stats["winners_set"], stats["losers_set"],
-        stats["no_leaderboard"], len(stats["errors"]),
+        stats["markets_processed"],
+        stats["winners_set"],
+        stats["losers_set"],
+        stats["no_leaderboard"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -2397,19 +2646,22 @@ async def _backfill_from_current_probability():
     3. Independent thresholds: probability sum >> 1.0, each outcome > 0.50 wins
     """
     stats = {
-        "clean_winners": 0, "clean_losers": 0,
-        "mutex_winners": 0, "mutex_losers": 0,
-        "threshold_winners": 0, "threshold_losers": 0,
+        "clean_winners": 0,
+        "clean_losers": 0,
+        "mutex_winners": 0,
+        "mutex_losers": 0,
+        "threshold_winners": 0,
+        "threshold_losers": 0,
         "all_losers_set": 0,
-        "single_winners": 0, "single_losers": 0,
+        "single_winners": 0,
+        "single_losers": 0,
         "errors": [],
     }
 
     try:
         async with get_task_session() as session:
             # Pass 1: Clean resolution (all at 0 or 1)
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     WITH cleanly_resolved AS (
                         SELECT fm.id AS market_id
                         FROM futures_markets fm
@@ -2434,8 +2686,7 @@ async def _backfill_from_current_probability():
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
                     RETURNING fo.is_winner
-                """)
-            )
+                """))
             rows = result.all()
             stats["clean_winners"] = sum(1 for r in rows if r[0])
             stats["clean_losers"] = sum(1 for r in rows if not r[0])
@@ -2450,8 +2701,7 @@ async def _backfill_from_current_probability():
 
             # Pass 4: All-losers markets — every outcome at <= 0.10
             # The winning outcome isn't in our DB; mark existing as losers
-            result4 = await session.execute(
-                text("""
+            result4 = await session.execute(text("""
                     WITH all_loser_markets AS (
                         SELECT fm.id AS market_id
                         FROM futures_markets fm
@@ -2470,8 +2720,7 @@ async def _backfill_from_current_probability():
                     FROM all_loser_markets al
                     WHERE fo.market_id = al.market_id
                     RETURNING 1
-                """)
-            )
+                """))
             stats["all_losers_set"] = result4.rowcount
             await session.commit()
 
@@ -2486,8 +2735,11 @@ async def _backfill_from_current_probability():
     logger.info(
         "Current-probability winner backfill: %d winners (clean=%d), "
         "%d losers (clean=%d, all_losers=%d), %d errors",
-        total_w, stats["clean_winners"],
-        total_l, stats["clean_losers"], stats["all_losers_set"],
+        total_w,
+        stats["clean_winners"],
+        total_l,
+        stats["clean_losers"],
+        stats["all_losers_set"],
         len(stats["errors"]),
     )
     return stats
@@ -2504,8 +2756,7 @@ async def _backfill_polymarket_group_ids():
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     UPDATE futures_markets
                     SET group_id = 'polymarket:' || COALESCE(
                         market_metadata->>'polymarket_event_id',
@@ -2513,8 +2764,7 @@ async def _backfill_polymarket_group_ids():
                     )
                     WHERE source = 'polymarket'
                       AND group_id IS NULL
-                """)
-            )
+                """))
             stats["updated"] = result.rowcount
             await session.commit()
 
@@ -2524,7 +2774,8 @@ async def _backfill_polymarket_group_ids():
 
     logger.info(
         "Polymarket group_id backfill: %d markets updated, %d errors",
-        stats["updated"], len(stats["errors"]),
+        stats["updated"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -2535,14 +2786,12 @@ async def _backfill_kalshi_group_ids():
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     UPDATE futures_markets
                     SET group_id = 'kalshi:' || external_id
                     WHERE source = 'kalshi'
                       AND group_id IS NULL
-                """)
-            )
+                """))
             stats["updated"] = result.rowcount
             await session.commit()
 
@@ -2552,7 +2801,8 @@ async def _backfill_kalshi_group_ids():
 
     logger.info(
         "Kalshi group_id backfill: %d markets updated, %d errors",
-        stats["updated"], len(stats["errors"]),
+        stats["updated"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -2574,12 +2824,16 @@ async def _null_untradeable_openings():
     existing IS NOT NULL filter. Also nulls calibration_probability to
     prevent stale values from a prior backfill run.
     """
-    stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "nulled_no_movement": 0, "errors": []}
+    stats = {
+        "nulled_zero_snap": 0,
+        "nulled_low_snap": 0,
+        "nulled_no_movement": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL
                     WHERE fo.opening_probability IS NOT NULL
@@ -2595,12 +2849,10 @@ async def _null_untradeable_openings():
                             AND fo2.opening_probability IS NOT NULL
                           LIMIT 100000
                       )
-                """)
-            )
+                """))
             stats["nulled_zero_snap"] = result.rowcount
 
-            result2 = await session.execute(
-                text("""
+            result2 = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL
                     WHERE fo.opening_probability IS NOT NULL
@@ -2620,13 +2872,11 @@ async def _null_untradeable_openings():
                             AND fo2.calibration_probability = fo2.opening_probability
                           LIMIT 50000
                       )
-                """)
-            )
+                """))
             stats["nulled_low_snap"] = result2.rowcount
 
             # Pass 3: outcomes with ≤5 snapshots where max-min spread < 2pp
-            result3 = await session.execute(
-                text("""
+            result3 = await session.execute(text("""
                     WITH candidates AS (
                         SELECT fo.id
                         FROM futures_outcomes fo
@@ -2651,13 +2901,11 @@ async def _null_untradeable_openings():
                     SET opening_probability = NULL
                     FROM snap_stats ss
                     WHERE fo.id = ss.outcome_id
-                """)
-            )
+                """))
             stats["nulled_no_movement"] = result3.rowcount
 
             # Pass 4a: outcomes in tournament WINNER markets (50+) with high opening
-            result4a = await session.execute(
-                text("""
+            result4a = await session.execute(text("""
                     WITH big_winner_markets AS (
                         SELECT fm.id AS market_id
                         FROM futures_markets fm
@@ -2675,8 +2923,7 @@ async def _null_untradeable_openings():
                     FROM big_winner_markets bm
                     WHERE fo.market_id = bm.market_id
                       AND fo.opening_probability > 0.50
-                """)
-            )
+                """))
 
             # Pass 4b: outcomes with very few snapshots AND high opening.
             # These are ask-price corruptions: yes_ask=0.99 stored as opening
@@ -2684,8 +2931,7 @@ async def _null_untradeable_openings():
             # from repeated polling. "LeBron: 8+ points" at 95% with 20
             # snapshots is legitimate; "Dort: 6+ assists" at 99% with 1
             # snapshot is the ask price.
-            result4b = await session.execute(
-                text("""
+            result4b = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL
                     WHERE fo.id IN (
@@ -2698,9 +2944,10 @@ async def _null_untradeable_openings():
                                WHERE fos.outcome_id = fo2.id) <= 2
                         LIMIT 100000
                     )
-                """)
+                """))
+            stats["nulled_ask_price"] = (result4a.rowcount or 0) + (
+                result4b.rowcount or 0
             )
-            stats["nulled_ask_price"] = (result4a.rowcount or 0) + (result4b.rowcount or 0)
 
             await session.commit()
 
@@ -2711,8 +2958,10 @@ async def _null_untradeable_openings():
     logger.info(
         "Null untradeable openings: %d zero-snap, %d low-snap, %d no-movement, "
         "%d ask-price, %d errors",
-        stats["nulled_zero_snap"], stats["nulled_low_snap"],
-        stats["nulled_no_movement"], stats.get("nulled_ask_price", 0),
+        stats["nulled_zero_snap"],
+        stats["nulled_low_snap"],
+        stats["nulled_no_movement"],
+        stats.get("nulled_ask_price", 0),
         len(stats["errors"]),
     )
     return stats
@@ -2731,17 +2980,20 @@ async def _backfill_polymarket_group_ids_from_api():
     import asyncio
     from app.services.polymarket_api import PolymarketAPIService
 
-    stats = {"events_fetched": 0, "events_with_markets": 0,
-             "markets_updated": 0, "zero_update_pages": 0, "errors": []}
+    stats = {
+        "events_fetched": 0,
+        "events_with_markets": 0,
+        "markets_updated": 0,
+        "zero_update_pages": 0,
+        "errors": [],
+    }
 
     # Fast short-circuit: skip API pagination if no null group_ids
     async with get_task_session() as session:
-        null_count = await session.execute(
-            text("""
+        null_count = await session.execute(text("""
                 SELECT COUNT(*) FROM futures_markets
                 WHERE source = 'polymarket' AND status = 'resolved' AND group_id IS NULL
-            """)
-        )
+            """))
         if null_count.scalar() == 0:
             logger.info("Polymarket API group_id backfill: skipped (0 null group_ids)")
             stats["markets_updated"] = -1
@@ -2755,8 +3007,10 @@ async def _backfill_polymarket_group_ids_from_api():
         while stats["events_fetched"] < max_events:
             try:
                 events_data = await service.get_events(
-                    active=False, closed=True,
-                    limit=100, offset=offset,
+                    active=False,
+                    closed=True,
+                    limit=100,
+                    offset=offset,
                 )
             except Exception as e:
                 stats["errors"].append(f"API page {offset}: {e}")
@@ -2822,8 +3076,10 @@ async def _backfill_polymarket_group_ids_from_api():
     logger.info(
         "Polymarket API group_id backfill: %d events fetched, %d with 2+ markets, "
         "%d markets updated, %d errors",
-        stats["events_fetched"], stats["events_with_markets"],
-        stats["markets_updated"], len(stats["errors"]),
+        stats["events_fetched"],
+        stats["events_with_markets"],
+        stats["markets_updated"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -2851,13 +3107,19 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     from app.services.polymarket_api import PolymarketAPIService
 
     stats = {
-        "markets_checked": 0, "winners_set": 0, "losers_set": 0,
+        "markets_checked": 0,
+        "winners_set": 0,
+        "losers_set": 0,
         "prices_synced": 0,
-        "api_miss": 0, "not_settled": 0, "no_match": 0, "errors": [],
+        "api_miss": 0,
+        "not_settled": 0,
+        "no_match": 0,
+        "errors": [],
     }
 
     # Resume from where last run left off
     from app.tasks.redis_state import get_redis_client
+
     _rc = get_redis_client()
     _offset_key = "bainluck:pm_winner_backfill_offset"
     _last_max_id = int(_rc.get(_offset_key) or 0)
@@ -2906,10 +3168,13 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
     logger.info(
         "Polymarket API winner backfill: %d by event (%d events), %d by condition",
-        sum(len(v) for v in by_event.values()), len(by_event), len(by_condition),
+        sum(len(v) for v in by_event.values()),
+        len(by_event),
+        len(by_condition),
     )
 
     import time as _time
+
     _t0 = _time.monotonic()
     _MAX_RUNTIME = 420  # 7 min (resolve_winners has 9 min soft limit)
 
@@ -2933,8 +3198,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         for batch_start in range(0, len(alive_conditions), 200):
             if _time.monotonic() - _t0 > _MAX_RUNTIME:
                 break
-            batch = alive_conditions[batch_start:batch_start + 200]
-            results = await asyncio.gather(*[_fetch_market(r.external_id) for r in batch])
+            batch = alive_conditions[batch_start : batch_start + 200]
+            results = await asyncio.gather(
+                *[_fetch_market(r.external_id) for r in batch]
+            )
 
             async with get_task_session() as session:
                 for cid, market_data in results:
@@ -2944,7 +3211,11 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         _rc.sadd(_dead_key, cid)
                         continue
 
-                    prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
+                    prices_raw = (
+                        market_data.get("outcomePrices")
+                        or market_data.get("outcome_prices")
+                        or []
+                    )
                     if isinstance(prices_raw, str):
                         try:
                             prices_raw = _json.loads(prices_raw)
@@ -2978,7 +3249,9 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         {"price": prices[0], "won": yes_won, "cid": cid},
                     )
                     if r_w.rowcount > 0:
-                        stats["winners_set" if yes_won else "losers_set"] += r_w.rowcount
+                        stats[
+                            "winners_set" if yes_won else "losers_set"
+                        ] += r_w.rowcount
 
                     # Also resolve the _no counterpart
                     no_cid = f"{cid}_no"
@@ -2991,11 +3264,18 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                             WHERE external_id = :cid
                               AND COALESCE(resolution_source, '') != 'api_settlement'
                         """),
-                        {"price": prices[1] if len(prices) > 1 else (1.0 - prices[0]),
-                         "won": not yes_won, "cid": no_cid},
+                        {
+                            "price": (
+                                prices[1] if len(prices) > 1 else (1.0 - prices[0])
+                            ),
+                            "won": not yes_won,
+                            "cid": no_cid,
+                        },
                     )
                     if r_n.rowcount > 0:
-                        stats["losers_set" if yes_won else "winners_set"] += r_n.rowcount
+                        stats[
+                            "losers_set" if yes_won else "winners_set"
+                        ] += r_n.rowcount
 
                 await session.commit()
 
@@ -3007,9 +3287,13 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
             if _time.monotonic() - _t0 > _MAX_RUNTIME:
-                logger.info("Polymarket API backfill: time limit, stopping after %d/%d events", batch_start, len(event_ids))
+                logger.info(
+                    "Polymarket API backfill: time limit, stopping after %d/%d events",
+                    batch_start,
+                    len(event_ids),
+                )
                 break
-            batch = event_ids[batch_start:batch_start + batch_size]
+            batch = event_ids[batch_start : batch_start + batch_size]
 
             async with get_task_session() as session:
                 for event_id in batch:
@@ -3036,14 +3320,22 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         # NegRisk parent markets: external_id = event_id.
                         # Must iterate ALL API sub-markets and match each
                         # condition_id against DB outcomes on this market.
-                        if is_negrisk or (condition_id == event_id and len(api_markets) > 1):
+                        if is_negrisk or (
+                            condition_id == event_id and len(api_markets) > 1
+                        ):
                             market_resolved = False
                             for m in api_markets:
-                                m_cid = str(m.get("conditionId") or m.get("condition_id") or "")
+                                m_cid = str(
+                                    m.get("conditionId") or m.get("condition_id") or ""
+                                )
                                 if not m_cid:
                                     continue
 
-                                m_prices_raw = m.get("outcomePrices") or m.get("outcome_prices") or []
+                                m_prices_raw = (
+                                    m.get("outcomePrices")
+                                    or m.get("outcome_prices")
+                                    or []
+                                )
                                 if isinstance(m_prices_raw, str):
                                     try:
                                         m_prices_raw = _json.loads(m_prices_raw)
@@ -3070,7 +3362,11 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                           AND (current_probability IS NULL
                                                OR ABS(current_probability - :price) > 0.001)
                                     """),
-                                    {"price": settlement_price, "mid": row.id, "cid": m_cid},
+                                    {
+                                        "price": settlement_price,
+                                        "mid": row.id,
+                                        "cid": m_cid,
+                                    },
                                 )
                                 stats["prices_synced"] += price_r.rowcount
 
@@ -3101,14 +3397,22 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         market_data = by_cond.get(condition_id)
 
                         # For parent markets: external_id = event_id, try first condition
-                        if not market_data and condition_id == event_id and len(api_markets) == 1:
+                        if (
+                            not market_data
+                            and condition_id == event_id
+                            and len(api_markets) == 1
+                        ):
                             market_data = api_markets[0]
 
                         if not market_data:
                             stats["no_match"] += 1
                             continue
 
-                        prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
+                        prices_raw = (
+                            market_data.get("outcomePrices")
+                            or market_data.get("outcome_prices")
+                            or []
+                        )
                         if isinstance(prices_raw, str):
                             try:
                                 prices_raw = _json.loads(prices_raw)
@@ -3130,7 +3434,11 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
                         # Determine winner from settlement prices
                         yes_won = prices[0] >= 0.90
-                        cid = market_data.get("conditionId") or market_data.get("condition_id") or condition_id
+                        cid = (
+                            market_data.get("conditionId")
+                            or market_data.get("condition_id")
+                            or condition_id
+                        )
 
                         # Sync settlement price to current_probability
                         await session.execute(
@@ -3153,7 +3461,9 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 FuturesOutcome.market_id == row.id,
                                 FuturesOutcome.external_id == cid,
                             )
-                            .values(is_winner=yes_won, resolution_source="api_settlement")
+                            .values(
+                                is_winner=yes_won, resolution_source="api_settlement"
+                            )
                         )
 
                         if r_bare.rowcount > 0:
@@ -3169,7 +3479,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                     FuturesOutcome.market_id == row.id,
                                     FuturesOutcome.external_id == f"{cid}_yes",
                                 )
-                                .values(is_winner=yes_won, resolution_source="api_settlement")
+                                .values(
+                                    is_winner=yes_won,
+                                    resolution_source="api_settlement",
+                                )
                             )
                             r2 = await session.execute(
                                 update(FuturesOutcome)
@@ -3177,7 +3490,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                     FuturesOutcome.market_id == row.id,
                                     FuturesOutcome.external_id == f"{cid}_no",
                                 )
-                                .values(is_winner=(not yes_won), resolution_source="api_settlement")
+                                .values(
+                                    is_winner=(not yes_won),
+                                    resolution_source="api_settlement",
+                                )
                             )
                             if r1.rowcount + r2.rowcount > 0:
                                 if yes_won:
@@ -3192,9 +3508,12 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
             logger.info(
                 "Polymarket API backfill: %d/%d events, %d winners, %d losers, "
                 "%d prices_synced, %d miss",
-                min(batch_start + batch_size, len(event_ids)), len(event_ids),
-                stats["winners_set"], stats["losers_set"],
-                stats["prices_synced"], stats["api_miss"],
+                min(batch_start + batch_size, len(event_ids)),
+                len(event_ids),
+                stats["winners_set"],
+                stats["losers_set"],
+                stats["prices_synced"],
+                stats["api_miss"],
             )
             await asyncio.sleep(0.3)
 
@@ -3207,9 +3526,13 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     logger.info(
         "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
         "%d prices_synced, %d api_miss, %d no_match, %d not_settled, %d errors",
-        stats["markets_checked"], stats["winners_set"], stats["losers_set"],
+        stats["markets_checked"],
+        stats["winners_set"],
+        stats["losers_set"],
         stats["prices_synced"],
-        stats["api_miss"], stats["no_match"], stats["not_settled"],
+        stats["api_miss"],
+        stats["no_match"],
+        stats["not_settled"],
         len(stats["errors"]),
     )
     return stats
@@ -3231,6 +3554,7 @@ async def _resolve_winners_only(limit: int = 2000):
     - Pass 1 clean resolution (current_probability at extremes)
     """
     import time as _t
+
     _start = _t.monotonic()
     stats = {}
 
@@ -3240,14 +3564,12 @@ async def _resolve_winners_only(limit: int = 2000):
     # score backfill, and score-based winner resolution.
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE events
                     SET status = 'closed'
                     WHERE status = 'scheduled'
                       AND commence_time < NOW() - INTERVAL '2 days'
-                """)
-            )
+                """))
             stats["stale_scheduled_fixed"] = r.rowcount
             await session.commit()
     except Exception as e:
@@ -3258,6 +3580,7 @@ async def _resolve_winners_only(limit: int = 2000):
     # now qualify for ESPN matching and score fetching.
     try:
         from app.tasks.espn_sync import _backfill_espn_ids, _backfill_box_scores
+
         espn_id_stats = await _backfill_espn_ids(limit=500)
         stats["espn_ids_matched"] = espn_id_stats.get("events_matched", 0)
 
@@ -3269,8 +3592,7 @@ async def _resolve_winners_only(limit: int = 2000):
     # Moneyline repair
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET is_winner = NULL, resolution_source = NULL
                     FROM futures_markets fm
@@ -3278,8 +3600,7 @@ async def _resolve_winners_only(limit: int = 2000):
                       AND fm.source = 'kalshi'
                       AND fo.resolution_source = 'game_score'
                       AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
-                """)
-            )
+                """))
             stats["ml_repair"] = r.rowcount
             await session.commit()
     except Exception as e:
@@ -3293,7 +3614,9 @@ async def _resolve_winners_only(limit: int = 2000):
         from app.utils.prediction_market_matching import extract_game_date_from_ticker
         from datetime import timedelta
 
-        _MATCHUP_RE = _re.compile(r'^(.+?)\s+(?:at|vs\.?|v)\s+(.+?)(?:\s*:\s*.+)?$', _re.IGNORECASE)
+        _MATCHUP_RE = _re.compile(
+            r"^(.+?)\s+(?:at|vs\.?|v)\s+(.+?)(?:\s*:\s*.+)?$", _re.IGNORECASE
+        )
 
         async with get_task_session() as session:
             unlinked = await session.execute(
@@ -3351,7 +3674,9 @@ async def _resolve_winners_only(limit: int = 2000):
                 event_row = match.first()
                 if event_row:
                     await session.execute(
-                        text("UPDATE futures_markets SET event_id = :eid WHERE id = :mid"),
+                        text(
+                            "UPDATE futures_markets SET event_id = :eid WHERE id = :mid"
+                        ),
                         {"eid": event_row[0], "mid": mkt.id},
                     )
                     linked += 1
@@ -3389,14 +3714,32 @@ async def _resolve_winners_only(limit: int = 2000):
         import asyncio as _asyncio
         from app.services.kalshi_api import KalshiAPIService
         from app.tasks.redis_state import get_redis_client
+
         _rc2 = get_redis_client()
 
-        _top_series = [
-            "KXNCAAMBTOTAL", "KXNCAAMBSPREAD", "KXNCAABBGAME",
-            "KXNBATEAMTOTAL", "KXNCAAMB1HTOTAL", "KXNCAAMB1HWINNER",
-            "KXNCAAWBGAME", "KXATPCHALLENGERMATCH", "KXCS2MAP",
-            "KXNASDAQ100U", "KXMLBTB", "KXCS2GAME", "KXINXU",
-        ]
+        # Dynamically discover series with unresolved outcomes instead of
+        # a hardcoded list. Sorted by count DESC so the biggest gaps get
+        # scanned first within the time budget.
+        async with get_task_session() as _ds:
+            _sr = await _ds.execute(text("""
+                SELECT REGEXP_REPLACE(fm.external_id, '-.*', '') AS series,
+                       COUNT(*) AS n
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.status = 'resolved'
+                  AND fm.external_id ~ '^KX'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM futures_outcomes fo2
+                      WHERE fo2.market_id = fo.market_id AND fo2.is_winner = true
+                  )
+                GROUP BY 1
+                HAVING COUNT(*) >= 10
+                ORDER BY 2 DESC
+                LIMIT 50
+            """))
+            _top_series = [r[0] for r in _sr.all()]
+        logger.info("resolve_winners: discovered %d series with unresolved outcomes", len(_top_series))
         settled_stats = {"pages": 0, "resolved": 0}
         service2 = KalshiAPIService()
         try:
@@ -3411,8 +3754,12 @@ async def _resolve_winners_only(limit: int = 2000):
                 for _ in range(100):
                     try:
                         events, cursor = await service2.get_events(
-                            status="settled", series_ticker=series,
-                            with_nested_markets=True, limit=200, cursor=cursor)
+                            status="settled",
+                            series_ticker=series,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=cursor,
+                        )
                     except Exception:
                         break
                     settled_stats["pages"] += 1
@@ -3420,7 +3767,7 @@ async def _resolve_winners_only(limit: int = 2000):
                         break
                     yes_t, no_t = [], []
                     for ev in events:
-                        for mkt in (ev.get("markets") or []):
+                        for mkt in ev.get("markets") or []:
                             tk = mkt.get("ticker", "")
                             rs = mkt.get("result")
                             if tk and rs is not None:
@@ -3428,16 +3775,22 @@ async def _resolve_winners_only(limit: int = 2000):
                     page_resolved = 0
                     async with get_task_session() as sess:
                         if yes_t:
-                            r = await sess.execute(text("""
+                            r = await sess.execute(
+                                text("""
                                 UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement'
                                 WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
-                            """), {"t": yes_t})
+                            """),
+                                {"t": yes_t},
+                            )
                             page_resolved += r.rowcount
                         if no_t:
-                            r = await sess.execute(text("""
+                            r = await sess.execute(
+                                text("""
                                 UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement'
                                 WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
-                            """), {"t": no_t})
+                            """),
+                                {"t": no_t},
+                            )
                             page_resolved += r.rowcount
                         await sess.commit()
                     settled_stats["resolved"] += page_resolved
@@ -3481,8 +3834,7 @@ async def _resolve_winners_only(limit: int = 2000):
     # resolution (game_score, api_settlement).
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'clean_resolution'
                     FROM futures_markets fm
@@ -3491,8 +3843,7 @@ async def _resolve_winners_only(limit: int = 2000):
                       AND fo.resolution_source = 'pass2_guess'
                       AND fo.is_winner = false
                       AND fo.current_probability <= 0.05
-                """)
-            )
+                """))
             stats["guess_upgraded"] = r.rowcount
             await session.commit()
     except Exception as e:
@@ -3505,6 +3856,7 @@ async def _resolve_winners_only(limit: int = 2000):
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     import time as _t
+
     _phase_times = {}
 
     def _start_phase(name):
@@ -3522,17 +3874,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # ended up as hockey, adding 3K+ golf outcomes to hockey calibration).
     try:
         async with get_task_session() as session:
-            fix_cat = await session.execute(
-                text("""
+            fix_cat = await session.execute(text("""
                     UPDATE futures_markets
                     SET llm_sport_category = 'golf'
                     WHERE source = 'datagolf'
                       AND llm_sport_category != 'golf'
-                """)
-            )
+                """))
             if fix_cat.rowcount > 0:
                 await session.commit()
-                logger.info("Fixed %d DataGolf markets to golf category", fix_cat.rowcount)
+                logger.info(
+                    "Fixed %d DataGolf markets to golf category", fix_cat.rowcount
+                )
     except Exception as e:
         logger.warning("DataGolf category fix failed: %s", e)
 
@@ -3546,6 +3898,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     link_props_stats = {"total_linked": 0, "errors": []}
     try:
         from app.tasks.kalshi import _link_sports_props_to_events
+
         link_props_stats = await _link_sports_props_to_events()
     except Exception as e:
         link_props_stats["errors"].append(str(e))
@@ -3556,6 +3909,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     candlestick_stats = {"snapshots_created": 0, "errors": []}
     try:
         from app.tasks.kalshi import _backfill_candlestick_snapshots
+
         candlestick_stats = await _backfill_candlestick_snapshots(limit=500)
     except Exception as e:
         candlestick_stats["errors"].append(str(e))
@@ -3567,7 +3921,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     trade_stats = {"snapshots_created": 0, "errors": []}
     try:
         from app.tasks.kalshi import _backfill_trade_history
-        trade_stats = await _backfill_trade_history(limit=500)
+
+        trade_stats = await _backfill_trade_history(limit=2000)
     except Exception as e:
         trade_stats["errors"].append(str(e))
         logger.warning("Trade history backfill failed: %s", e)
@@ -3576,6 +3931,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Must run BEFORE calibration price computation so closing lines use correct dates.
     commence_stats = {"golf": 0, "hockey": 0, "golf_error": None, "hockey_error": None}
     from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
+
     try:
         commence_stats["golf"] = await _fix_golf_commence_times()
     except Exception as e:
@@ -3597,7 +3953,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # on outcomes the backfill pipeline is trying to recover, causing calibration
     # to regress every run (bugs #7, #8, #12). One-time cleanup that became an
     # ongoing regression source.
-    no_snap_stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "nulled_no_movement": 0}
+    no_snap_stats = {
+        "nulled_zero_snap": 0,
+        "nulled_low_snap": 0,
+        "nulled_no_movement": 0,
+    }
 
     # Phase 0c-repair: Restore opening_probability from first snapshot for
     # outcomes with null opening but real snapshot data. Uses DISTINCT ON
@@ -3606,8 +3966,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(
-                    text("""
+                r = await session.execute(text("""
                         WITH first_snaps AS (
                             SELECT fo2.id AS outcome_id, snap.probability
                             FROM futures_outcomes fo2
@@ -3629,8 +3988,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                             opening_source = 'first_snapshot'
                         FROM first_snaps fs
                         WHERE fo.id = fs.outcome_id
-                    """)
-                )
+                    """))
                 await session.commit()
                 if r.rowcount == 0:
                     break
@@ -3644,8 +4002,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(
-                    text("""
+                r = await session.execute(text("""
                         UPDATE futures_outcomes fo
                         SET resolution_source = 'clean_resolution'
                         WHERE fo.id IN (
@@ -3658,8 +4015,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                                    OR fo2.current_probability <= 0.05)
                             LIMIT 50000
                         )
-                    """)
-                )
+                    """))
                 await session.commit()
                 if r.rowcount == 0:
                     break
@@ -3679,8 +4035,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         for _ in range(3):
             async with get_task_session() as session:
-                r = await session.execute(
-                    text("""
+                r = await session.execute(text("""
                         UPDATE futures_outcomes fo
                         SET resolution_source = 'pass2_guess'
                         WHERE fo.id IN (
@@ -3694,8 +4049,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                                        AND fo2.current_probability < 0.95))
                             LIMIT 50000
                         )
-                    """)
-                )
+                    """))
                 await session.commit()
                 if r.rowcount == 0:
                     break
@@ -3705,8 +4059,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         # Tag NULL-source losers so they stop being scanned
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(
-                    text("""
+                r = await session.execute(text("""
                         UPDATE futures_outcomes fo
                         SET resolution_source = 'pass2_loser'
                         WHERE fo.id IN (
@@ -3717,8 +4070,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                               AND fo2.is_winner = false
                             LIMIT 100000
                         )
-                    """)
-                )
+                    """))
                 await session.commit()
                 if r.rowcount == 0:
                     break
@@ -3758,8 +4110,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     dg_makecut_fix_stats = {"nulled": 0, "errors": []}
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET is_winner = NULL, resolution_source = NULL
                     FROM futures_markets fm
@@ -3772,12 +4123,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND jsonb_array_length(
                           COALESCE(fm.market_metadata->'leaderboard', '[]'::jsonb)
                       ) < 100
-                """)
-            )
+                """))
             dg_makecut_fix_stats["nulled"] = r.rowcount
             await session.commit()
             if r.rowcount > 0:
-                logger.info("Golf make_cut fix: nulled %d wrongly-resolved outcomes", r.rowcount)
+                logger.info(
+                    "Golf make_cut fix: nulled %d wrongly-resolved outcomes", r.rowcount
+                )
     except Exception as e:
         dg_makecut_fix_stats["errors"].append(str(e))
 
@@ -3786,8 +4138,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # is_winner=false is correct but they shouldn't be in calibration.
     try:
         async with get_task_session() as session:
-            retag = await session.execute(
-                text("""
+            retag = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'did_not_play'
                     FROM futures_markets fm
@@ -3804,11 +4155,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                           FROM jsonb_array_elements(fm.market_metadata->'leaderboard') AS lb
                           WHERE lb->>'dg_id' = SUBSTRING(fo.external_id FROM 4)
                       )
-                """)
-            )
+                """))
             if retag.rowcount > 0:
                 await session.commit()
-                logger.info("DataGolf retag: %d outcomes → did_not_play", retag.rowcount)
+                logger.info(
+                    "DataGolf retag: %d outcomes → did_not_play", retag.rowcount
+                )
     except Exception as e:
         logger.warning("DataGolf retag failed: %s", e)
 
@@ -3818,8 +4170,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # and 'pass2_loser' are guesses — not verified against results.
     try:
         async with get_task_session() as session:
-            retag2 = await session.execute(
-                text("""
+            retag2 = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'did_not_play'
                     FROM futures_markets fm
@@ -3828,11 +4179,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fm.status = 'resolved'
                       AND fo.is_winner = false
                       AND fo.resolution_source IN ('all_losers', 'pass2_loser')
-                """)
-            )
+                """))
             if retag2.rowcount > 0:
                 await session.commit()
-                logger.info("DataGolf retag2: %d non-authoritative losers → did_not_play", retag2.rowcount)
+                logger.info(
+                    "DataGolf retag2: %d non-authoritative losers → did_not_play",
+                    retag2.rowcount,
+                )
     except Exception as e:
         logger.warning("DataGolf retag2 failed: %s", e)
 
@@ -3845,8 +4198,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     #           (c) cal_prob = extreme opening (Part A couldn't find pre-game data)
     try:
         async with get_task_session() as session:
-            npt = await session.execute(
-                text("""
+            npt = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'no_pregame_trading'
                     FROM futures_markets fm
@@ -3869,8 +4221,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                           WHERE fos.outcome_id = fo.id
                             AND fos.captured_at < COALESCE(e.commence_time, fm.commence_time)
                       )
-                """)
-            )
+                """))
             if npt.rowcount > 0:
                 await session.commit()
                 logger.info("No-pregame-trading: %d outcomes tagged", npt.rowcount)
@@ -3899,8 +4250,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     golf_sync_stats = {"synced": 0, "errors": []}
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET is_winner = (fo.current_probability >= 0.95), resolution_source = 'settlement_sync'
                     FROM futures_markets fm
@@ -3911,8 +4261,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fo.current_probability IS NOT NULL
                       AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
                       AND fo.is_winner != (fo.current_probability >= 0.95)
-                """)
-            )
+                """))
             golf_sync_stats["synced"] = r.rowcount
             await session.commit()
     except Exception as e:
@@ -3927,8 +4276,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     ml_repair_stats = {"nulled": 0, "errors": []}
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET is_winner = NULL, resolution_source = NULL
                     FROM futures_markets fm
@@ -3936,12 +4284,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fm.source = 'kalshi'
                       AND fo.resolution_source = 'game_score'
                       AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
-                """)
-            )
+                """))
             ml_repair_stats["nulled"] = r.rowcount
             await session.commit()
             if r.rowcount > 0:
-                logger.info("Moneyline misresolution repair: nulled %d outcomes", r.rowcount)
+                logger.info(
+                    "Moneyline misresolution repair: nulled %d outcomes", r.rowcount
+                )
     except Exception as e:
         ml_repair_stats["errors"].append(str(e))
 
@@ -3980,8 +4329,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     guess_upgrade_stats = {"upgraded": 0, "errors": []}
     try:
         async with get_task_session() as session:
-            r = await session.execute(
-                text("""
+            r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'clean_resolution'
                     FROM futures_markets fm
@@ -3990,12 +4338,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fo.resolution_source = 'pass2_guess'
                       AND fo.is_winner = false
                       AND fo.current_probability <= 0.05
-                """)
-            )
+                """))
             guess_upgrade_stats["upgraded"] = r.rowcount
             await session.commit()
             if r.rowcount > 0:
-                logger.info("pass2_guess upgrade: %d outcomes → clean_resolution", r.rowcount)
+                logger.info(
+                    "pass2_guess upgrade: %d outcomes → clean_resolution", r.rowcount
+                )
     except Exception as e:
         guess_upgrade_stats["errors"].append(str(e))
 
@@ -4051,8 +4400,7 @@ async def _precompute_bookmaker_calibration():
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     WITH eligible_events AS (
                         SELECT e.id, e.commence_time, e.home_score, e.away_score,
                                s.key AS category
@@ -4105,23 +4453,24 @@ async def _precompute_bookmaker_calibration():
                     WHERE prob > 0.01 AND prob < 0.99
                     GROUP BY bucket_idx, category
                     ORDER BY bucket_idx, category
-                """)
-            )
+                """))
             rows = result.all()
 
             buckets = []
             for r in rows:
-                buckets.append({
-                    "bucket_idx": r.bucket_idx,
-                    "source": "odds_api_bookmaker",
-                    "category": r.category,
-                    "price_moved": None,
-                    "n": r.n,
-                    "winners": r.winners,
-                    "avg_prob": float(r.avg_prob),
-                    "sum_prob": float(r.sum_prob),
-                    "sum_sq_err": float(r.sum_sq_err),
-                })
+                buckets.append(
+                    {
+                        "bucket_idx": r.bucket_idx,
+                        "source": "odds_api_bookmaker",
+                        "category": r.category,
+                        "price_moved": None,
+                        "n": r.n,
+                        "winners": r.winners,
+                        "avg_prob": float(r.avg_prob),
+                        "sum_prob": float(r.sum_prob),
+                        "sum_sq_err": float(r.sum_sq_err),
+                    }
+                )
                 stats["data_points"] += r.n
 
             # Store in Redis (expires in 24h, refreshed every 6h)
@@ -4142,7 +4491,9 @@ async def _precompute_bookmaker_calibration():
 
     logger.info(
         "Bookmaker calibration: %d data points across %d sports, %d errors",
-        stats["data_points"], stats["bookmakers"], len(stats["errors"]),
+        stats["data_points"],
+        stats["bookmakers"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -4171,7 +4522,13 @@ async def _compute_calibration_prices():
 
     Uses compound index (outcome_id, captured_at) for fast DISTINCT ON.
     """
-    stats = {"reset": 0, "with_commence": 0, "without_commence": 0, "rescued": 0, "errors": []}
+    stats = {
+        "reset": 0,
+        "with_commence": 0,
+        "without_commence": 0,
+        "rescued": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
@@ -4184,9 +4541,9 @@ async def _compute_calibration_prices():
             # as closing lines. The sanity check (Part A-sanity below) will
             # prevent the same problem from recurring.
             from datetime import date
+
             if date.today() <= date(2026, 6, 12):
-                reset_gh = await session.execute(
-                    text("""
+                reset_gh = await session.execute(text("""
                         UPDATE futures_outcomes fo
                         SET calibration_probability = NULL
                         FROM futures_markets fm
@@ -4195,8 +4552,7 @@ async def _compute_calibration_prices():
                           AND fm.status = 'resolved'
                           AND fm.llm_sport_category IN ('golf', 'hockey')
                           AND fo.calibration_probability IS NOT NULL
-                    """)
-                )
+                    """))
                 stats["reset_golf_hockey"] = reset_gh.rowcount
                 if reset_gh.rowcount > 0:
                     await session.commit()
@@ -4215,8 +4571,7 @@ async def _compute_calibration_prices():
             # ORDER BY commence_time DESC so recent games are processed first.
             part_a_total = 0
             for _ in range(20):
-                result_a = await session.execute(
-                    text("""
+                result_a = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
                                    fo.opening_probability
@@ -4245,13 +4600,16 @@ async def _compute_calibration_prices():
                         ) closing ON true
                         WHERE fo.id = nc.outcome_id
                           AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
-                    """)
-                )
+                    """))
                 await session.commit()
                 part_a_total += result_a.rowcount
                 if result_a.rowcount == 0:
                     break
-                logger.info("Calibration Part A: batch processed %d (total %d)", result_a.rowcount, part_a_total)
+                logger.info(
+                    "Calibration Part A: batch processed %d (total %d)",
+                    result_a.rowcount,
+                    part_a_total,
+                )
             stats["with_commence"] = part_a_total
 
             # Part A2: Non-event markets with commence_time on the market itself.
@@ -4268,8 +4626,7 @@ async def _compute_calibration_prices():
             # One-time reset: null calibration_probability on outcomes that
             # were previously set by Part B (stale opening-day price) so
             # Part A2 can recompute with the proper closing line.
-            reset_a2 = await session.execute(
-                text("""
+            reset_a2 = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
                     FROM futures_markets fm
@@ -4280,8 +4637,7 @@ async def _compute_calibration_prices():
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.calibration_probability = fo.opening_probability
                       AND fo.opening_probability IS NOT NULL
-                """)
-            )
+                """))
             await session.commit()
             stats["reset_a2"] = reset_a2.rowcount
             if reset_a2.rowcount > 0:
@@ -4289,8 +4645,7 @@ async def _compute_calibration_prices():
 
             part_a2_total = 0
             for _ in range(20):
-                result_a2 = await session.execute(
-                    text("""
+                result_a2 = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fm.commence_time,
                                    fo.opening_probability
@@ -4319,13 +4674,16 @@ async def _compute_calibration_prices():
                         ) closing ON true
                         WHERE fo.id = nc.outcome_id
                           AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
-                    """)
-                )
+                    """))
                 await session.commit()
                 part_a2_total += result_a2.rowcount
                 if result_a2.rowcount == 0:
                     break
-                logger.info("Calibration Part A2: batch processed %d (total %d)", result_a2.rowcount, part_a2_total)
+                logger.info(
+                    "Calibration Part A2: batch processed %d (total %d)",
+                    result_a2.rowcount,
+                    part_a2_total,
+                )
             stats["with_market_commence"] = part_a2_total
 
             # Part A-sanity: Revert calibration_probability to opening_probability
@@ -4347,8 +4705,7 @@ async def _compute_calibration_prices():
             # Batched at 100K. LATERAL subquery for efficient index seeks.
             part_b_total = 0
             for _ in range(20):
-                result_b = await session.execute(
-                    text("""
+                result_b = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fo.opening_captured_at,
                                    fo.opening_probability
@@ -4377,13 +4734,16 @@ async def _compute_calibration_prices():
                         ) settled ON true
                         WHERE fo.id = nc.outcome_id
                           AND COALESCE(settled.probability, nc.opening_probability) IS NOT NULL
-                    """)
-                )
+                    """))
                 await session.commit()
                 part_b_total += result_b.rowcount
                 if result_b.rowcount == 0:
                     break
-                logger.info("Calibration Part B: batch processed %d (total %d)", result_b.rowcount, part_b_total)
+                logger.info(
+                    "Calibration Part B: batch processed %d (total %d)",
+                    result_b.rowcount,
+                    part_b_total,
+                )
             stats["without_commence"] = part_b_total
 
             # Part C: Rescue EVENT-LINKED outcomes where Part A fell back to
@@ -4393,8 +4753,7 @@ async def _compute_calibration_prices():
             # opening_probability is the correct calibration price.
             rescued_total = 0
             for _ in range(100):
-                result_c = await session.execute(
-                    text("""
+                result_c = await session.execute(text("""
                         WITH stuck AS (
                             SELECT fo.id AS outcome_id, fo.opening_probability,
                                    e.commence_time
@@ -4424,8 +4783,7 @@ async def _compute_calibration_prices():
                         WHERE fo.id = s.outcome_id
                           AND ls.probability IS NOT NULL
                           AND ls.probability != s.opening_probability
-                    """)
-                )
+                    """))
                 await session.commit()
                 if result_c.rowcount == 0:
                     break
@@ -4438,8 +4796,7 @@ async def _compute_calibration_prices():
             # Outcomes with ≤2 snapshots at extreme prices (≥0.95 or ≤0.05)
             # where calibration fell back to opening are illiquid threshold
             # tails (e.g. "Player: 3+ Goals" at 0.99 with 1 snapshot).
-            illiquid_result = await session.execute(
-                text("""
+            illiquid_result = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
                     FROM futures_markets fm
@@ -4454,8 +4811,7 @@ async def _compute_calibration_prices():
                           WHERE fos.outcome_id = fo.id
                           LIMIT 3 OFFSET 2
                       )
-                """)
-            )
+                """))
             stats["illiquid_tails_nulled"] = illiquid_result.rowcount
             if illiquid_result.rowcount > 0:
                 await session.commit()
@@ -4471,9 +4827,12 @@ async def _compute_calibration_prices():
     logger.info(
         "Calibration prices: reset=%d, reset_golf_hockey=%d, event_linked=%d, "
         "non_event=%d, rescued=%d, sanity_reverted=%d, illiquid=%d, errors=%d",
-        stats["reset"], stats.get("reset_golf_hockey", 0),
-        stats["with_commence"], stats["without_commence"],
-        stats["rescued"], stats.get("sanity_reverted", 0),
+        stats["reset"],
+        stats.get("reset_golf_hockey", 0),
+        stats["with_commence"],
+        stats["without_commence"],
+        stats["rescued"],
+        stats.get("sanity_reverted", 0),
         stats.get("illiquid_tails_nulled", 0),
         len(stats["errors"]),
     )
@@ -4493,8 +4852,7 @@ async def _backfill_closing_lines():
         async with get_task_session() as session:
             # Only process events that don't already have closing_home_probability
             # and have both commence_time and scores. Process in batches of 5000.
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     WITH events_needing_closing AS (
                         SELECT e.id, e.commence_time
                         FROM events e
@@ -4522,15 +4880,13 @@ async def _backfill_closing_lines():
                     ) cl ON true
                     WHERE e.id = enc.id
                       AND cl.home_win_probability IS NOT NULL
-                """)
-            )
+                """))
             stats["updated"] = result.rowcount
             await session.commit()
 
             # Backfill closing spreads — last snapshot before commence_time
             # with a non-null home_spread.
-            spread_result = await session.execute(
-                text("""
+            spread_result = await session.execute(text("""
                     WITH events_needing_spread AS (
                         SELECT e.id, e.commence_time
                         FROM events e
@@ -4557,15 +4913,13 @@ async def _backfill_closing_lines():
                     ) cs ON true
                     WHERE e.id = ens.id
                       AND cs.home_spread IS NOT NULL
-                """)
-            )
+                """))
             stats["closing_spreads"] = spread_result.rowcount
             await session.commit()
 
             # Backfill closing totals — last snapshot before commence_time
             # with a non-null over_under.
-            totals_result = await session.execute(
-                text("""
+            totals_result = await session.execute(text("""
                     WITH events_needing_totals AS (
                         SELECT e.id, e.commence_time
                         FROM events e
@@ -4591,8 +4945,7 @@ async def _backfill_closing_lines():
                     ) ct ON true
                     WHERE e.id = ent.id
                       AND ct.over_under IS NOT NULL
-                """)
-            )
+                """))
             stats["closing_totals"] = totals_result.rowcount
             await session.commit()
 
@@ -4602,7 +4955,9 @@ async def _backfill_closing_lines():
 
     logger.info(
         "Closing line backfill: %d probabilities, %d spreads, %d totals updated, %d errors",
-        stats["updated"], stats["closing_spreads"], stats["closing_totals"],
+        stats["updated"],
+        stats["closing_spreads"],
+        stats["closing_totals"],
         len(stats["errors"]),
     )
     return stats
