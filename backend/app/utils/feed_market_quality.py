@@ -567,6 +567,7 @@ def classify_market_quality(
     sport_category: str | None = None,
     outcome_names: list[str] | None = None,
     external_id: str | None = None,
+    persisted_story_key: str | None = None,
 ) -> MarketQuality:
     """Classify whether a futures market is good generic Discover material."""
     name = market_name or ""
@@ -687,7 +688,7 @@ def classify_market_quality(
         family_key = re.sub(r"<num>", "<num>", family_key)
     if not family_key:
         family_key = "unknown"
-    story_key = _story_key(name, category)
+    story_key = persisted_story_key or _story_key(name, category)
 
     return MarketQuality(
         quality_class=quality,

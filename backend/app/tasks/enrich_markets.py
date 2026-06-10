@@ -679,10 +679,21 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                 metadata = _sanitize_discover_llm_metadata(raw, now=now)
                 next_metadata = dict(market.market_metadata or {})
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = metadata
+
+                # Persist story_key alongside LLM metadata
+                from app.utils.feed_market_quality import _story_key
+                computed_story_key = _story_key(
+                    market.name or "",
+                    market.llm_sport_category or market.category or "other",
+                )
+
                 await session.execute(
                     update(FuturesMarket)
                     .where(FuturesMarket.id == market.id)
-                    .values(market_metadata=next_metadata)
+                    .values(
+                        market_metadata=next_metadata,
+                        story_key=computed_story_key,
+                    )
                 )
                 usage = getattr(response, "usage", None)
                 if usage:

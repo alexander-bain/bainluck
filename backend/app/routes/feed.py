@@ -2540,6 +2540,7 @@ def _score_market_trace(
         sport_category=market.llm_sport_category,
         outcome_names=[outcome.name for outcome in market.outcomes if outcome.name],
         external_id=market.external_id,
+        persisted_story_key=market.__dict__.get("story_key"),
     )
     quality_score = apply_quality_score(highlight_result.score, quality)
     explanation_score = apply_explanation_quality_score(
