@@ -1587,11 +1587,11 @@ class TestLivePollImports:
         task_names = [t for t in celery_app.tasks if "poll_live_prediction_markets" in t]
         assert len(task_names) == 1
 
-    def test_beat_schedule_disabled(self):
-        """Beat schedule entry removed — replaced by worker-ws WebSocket (#844)."""
+    def test_beat_schedule_enabled(self):
+        """Beat schedule entry restored — WS not yet deployed, REST polling needed."""
         from app.tasks import celery_app
         schedule = celery_app.conf.beat_schedule
-        assert "poll-live-prediction-markets" not in schedule
+        assert "poll-live-prediction-markets" in schedule
 
 
 # =============================================================================
