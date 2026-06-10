@@ -19,6 +19,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentChart from "@/components/TournamentChart";
@@ -229,6 +230,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     market ? ["futures-history", marketId, historyHours] : null,
     () => fetchFuturesHistory(marketId, historyHours)
   );
+  const historyOutcomes = Array.isArray(historyData?.outcomes)
+    ? historyData.outcomes
+    : [];
 
   // Track futures detail view once data loads
   const hasTrackedFutures = useRef(false);
@@ -270,7 +274,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchProgression(marketId, 40),
     { revalidateOnFocus: false, refreshInterval: 120_000 }
   );
-  const hasProgression = !!(progressionData && progressionData.stages.length >= 2);
+  const progressionStages = Array.isArray(progressionData?.stages)
+    ? progressionData.stages
+    : [];
+  const hasProgression = progressionStages.length >= 2;
 
   // Market group (cross-source comparison + threshold variants)
   const { data: groupData } = useSWR(
@@ -278,17 +285,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchFuturesGroup(market!.group_id!),
     { revalidateOnFocus: false }
   );
-  const hasMultipleSources = !!(groupData && groupData.sources.length >= 2);
-  const thresholdEntries = groupData
-    ? Object.entries(groupData.threshold_groups).filter(([, outcomes]) => outcomes.length >= 2)
-    : [];
+  const groupSources = Array.isArray(groupData?.sources) ? groupData.sources : [];
+  const groupMarkets = Array.isArray(groupData?.markets) ? groupData.markets : [];
+  const thresholdGroups = groupData?.threshold_groups ?? {};
+  const hasMultipleSources = groupSources.length >= 2;
+  const thresholdEntries = Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
   // Progression-ordered markets (e.g., playoff rounds)
-  const progressionMarkets = groupData
-    ? groupData.markets
-        .filter((m) => m.group_position !== null && m.group_position !== undefined)
-        .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0))
-    : [];
+  const progressionMarkets = groupMarkets
+    .filter((m) => m.group_position !== null && m.group_position !== undefined)
+    .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
   const hasGroupProgression = progressionMarkets.length >= 2;
+  const relatedEvents = Array.isArray(relatedEventsData?.events)
+    ? relatedEventsData.events
+    : [];
 
   // Sort outcomes
   const sortedOutcomes = useMemo(() => {
@@ -378,7 +387,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     );
   }
 
-  if (marketError || !market) {
+  if (
+    marketError ||
+    !market ||
+    typeof market.name !== "string" ||
+    !Array.isArray(market.outcomes)
+  ) {
     return (
       <div className="space-y-6">
         {backLink}
@@ -426,21 +440,42 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Visual Hero Section */}
-      <HeroSection
-        market={market}
-        leader={leader}
-        isResolved={isResolved}
-        marketIsPinned={marketIsPinned}
-        isMaxReached={isMaxReached}
-        togglePin={() => togglePin(marketId)}
+      {/* Probability Hero — design spec FD-1 */}
+      <FuturesHero
+        name={market.name}
+        probability={leader?.probability ?? null}
+        outcomeName={leader ? (isGenericOutcomeName(leader.name) ? "Yes" : leader.name) : undefined}
+        movement={leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        sourceCount={market.source_count ?? undefined}
+        resolveDate={market.resolution_date ? `Resolves ${new Date(market.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : undefined}
+        categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
+        categoryLabel={market.sport_name || market.llm_sport_category || undefined}
+        isMultiOutcome={(market.outcome_count ?? 0) > 2}
       />
+
+      {/* Context line (auto-upgrades when #870 ships) */}
+      {market.hook_description && (
+        <p className="text-[13px] leading-relaxed text-text-secondary mb-4 max-w-2xl">{market.hook_description}</p>
+      )}
+
+      {/* Legacy hero kept for share/pin actions */}
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          onClick={() => togglePin(marketId)}
+          disabled={isMaxReached && !marketIsPinned}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+            marketIsPinned ? "bg-amber-500/10 text-amber-600" : "bg-surface-elevated text-text-secondary hover:text-text-primary"
+          } ${isMaxReached && !marketIsPinned ? "cursor-not-allowed opacity-30" : ""}`}
+        >
+          {marketIsPinned ? "Pinned" : "Pin"}
+        </button>
+      </div>
 
       {/* Cross-Source Comparison (when market is tracked by multiple sources) */}
       {hasMultipleSources && groupData && (
         <CombinedMarketCard
           title={groupData.group_title}
-          markets={groupData.markets.map((m) => ({
+          markets={groupMarkets.map((m) => ({
             id: m.id,
             name: m.name,
             source: m.source,
@@ -495,14 +530,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       )}
 
       {/* Games This Week */}
-      {relatedEventsData && relatedEventsData.events.length > 0 && (
+      {relatedEvents.length > 0 && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
           <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
             <span>📅</span>
             Games This Week
           </h2>
           <div className="space-y-2">
-            {relatedEventsData.events.map((event) => (
+            {relatedEvents.map((event) => (
               <RelatedEventRow key={event.event_id} event={event} />
             ))}
           </div>
@@ -538,7 +573,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
         </div>
       )}
-      {historyData && historyData.outcomes.length > 0 && (
+      {historyOutcomes.length > 0 && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -601,7 +636,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             />
           ) : (
             <FuturesChart
-              historyData={historyData.outcomes}
+              historyData={historyOutcomes}
               selectedOutcomes={selectedOutcomes}
               onToggleOutcome={toggleOutcomeSelection}
               stepInterpolation={historyData.sparse}
@@ -664,9 +699,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               isLeader={outcome.id === leader?.id}
               isSelected={selectedOutcomes.has(outcome.id)}
               onToggleSelect={() => toggleOutcomeSelection(outcome.id)}
-              hasHistory={historyData?.outcomes.some(
+              hasHistory={historyOutcomes.some(
                 (h) => h.outcome_id === outcome.id
-              ) ?? false}
+              )}
               marketCategory={market?.llm_sport_category}
               marketName={market?.name}
               isResolved={isResolved}
