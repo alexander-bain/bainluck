@@ -222,8 +222,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  // A/B variant: deterministic bucket by market ID hash
-  const variantB = (data.id % 2 === 0);
+  // A/B variant: exposure-level assignment — hash(session + market) so each
+  // market serves both variants across sessions and each session sees both.
+  const _abSeed = `${typeof window !== "undefined" ? (localStorage.getItem("bainluck_session_id") || "anon") : "ssr"}_${data.id}`;
+  const _abHash = Array.from(_abSeed).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+  const variantB = (Math.abs(_abHash) % 2 === 0);
   const pctDisplay = prob != null ? `${Math.round(prob * 100)}%` : null;
   const movementVal = leader?.movement;
   const movementUp = movementVal != null && movementVal > 0;
