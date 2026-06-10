@@ -88,7 +88,7 @@ def test_polymarket_link_rate_uses_matcher_game_level_predicate():
         "World Championships: Czechia vs. Italy",
         "championship",
         "490611",
-    ) is False
+    ) is True  # "X vs. Y" is a game-level market
 
 
 # -- Category-based denominator exclusion ----------------------------------
