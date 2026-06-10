@@ -1127,11 +1127,24 @@ async def _backfill_volume_only():
             )
             all_series = [r[0] for r in sr.fetchall()]
 
+        # Priority sports series first, then alphabetical
+        priority = [
+            "KXNHLGOAL", "KXNHLPTS", "KXNHLAST", "KXNHLFIRSTGOAL",
+            "KXNHLSAVES", "KXNHLANYGOAL", "KXNHLGAME",
+            "KXNBAPTS", "KXNBAGAME", "KXNBAREB", "KXNBAAST",
+            "KXMLBTB", "KXMLBHIT", "KXMLBHR", "KXMLBKS",
+            "KXMLBHRR", "KXMLBSTGAME",
+            "KXNFLGAME",
+        ]
+        prio_in = [s for s in priority if s in all_series]
+        rest = [s for s in all_series if s not in priority]
+        ordered = prio_in + rest
+
         cursor_key = "bainluck:volume_backfill_cursor"
         pos = int(_rc.get(cursor_key) or 0)
-        BATCH = 3
-        series_batch = all_series[pos:pos + BATCH]
-        next_pos = (pos + BATCH) % max(len(all_series), 1)
+        BATCH = 5
+        series_batch = ordered[pos:pos + BATCH]
+        next_pos = (pos + BATCH) % max(len(ordered), 1)
         _rc.setex(cursor_key, 86400 * 7, str(next_pos))
 
         logger.info("Volume backfill: processing %d series (pos %d/%d): %s",
