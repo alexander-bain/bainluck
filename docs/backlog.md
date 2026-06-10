@@ -22,6 +22,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [shipped] Discover native market cards: threshold heatmaps and card archetypes. Issue: [#820](https://github.com/alexander-bain/bainluck/issues/820)
 - [shipped] Discover native market cards: multi-outcome distribution cards. Issue: [#822](https://github.com/alexander-bain/bainluck/issues/822)
 - [active] Discover native market cards: comparison bundles for related markets. Issue: [#823](https://github.com/alexander-bain/bainluck/issues/823)
+- [active] Native + web category pages rescue: hide before fix (P1). Issue: [#884](https://github.com/alexander-bain/bainluck/issues/884)
 - [ready] iOS Discover: render native card archetypes from discover_card. Issue: [#829](https://github.com/alexander-bain/bainluck/issues/829)
 - [ready] Discover audit: add native-card format and degenerate-card ratchets. Issue: [#830](https://github.com/alexander-bain/bainluck/issues/830)
 - [shipped] Daily Kalshi/Polymarket front-page ground-truth capture. Issue: [#436](https://github.com/alexander-bain/bainluck/issues/436)
