@@ -1355,10 +1355,13 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="5,20,35,50"),  # Every 15 min — link new markets ASAP
         "kwargs": {"limit": 500},
     },
-    "poll-live-prediction-markets": {
-        "task": "app.tasks.poll_live_prediction_markets",
-        "schedule": 120.0,  # Every 2 minutes — only targets linked live game markets
-    },
+    # DISABLED: replaced by worker-ws WebSocket consumer (#836/#837).
+    # WS streams prices in real-time instead of 2-min REST polling.
+    # Kept as code for fallback; re-enable by uncommenting.
+    # "poll-live-prediction-markets": {
+    #     "task": "app.tasks.poll_live_prediction_markets",
+    #     "schedule": 120.0,
+    # },
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",
         "schedule": 120.0,  # Every 2 minutes during MLB season
@@ -1550,10 +1553,6 @@ celery_app.conf.beat_schedule = {
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
         "schedule": crontab(minute=15, hour="2,8,14,20"),  # Every 6 hours — keeps resolved futures from cluttering feed (was daily)
-    },
-    "check-snapshot-sparsity-daily": {
-        "task": "app.tasks.check_snapshot_sparsity",
-        "schedule": crontab(minute=15, hour=8),  # Daily at 8:15 AM UTC
     },
     "backfill-winners": {
         "task": "app.tasks.backfill_winners",

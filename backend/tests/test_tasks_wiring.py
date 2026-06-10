@@ -166,7 +166,7 @@ class TestBeatScheduleCompleteness:
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
-        "poll-live-prediction-markets",
+        # "poll-live-prediction-markets",  # disabled: replaced by worker-ws WebSocket
         "heartbeat",
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",
@@ -190,7 +190,6 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",
-        "check-snapshot-sparsity-daily",
         # "sync-mm-bracket",  # Disabled — March Madness is over
         "matching-metrics-daily",
         "check-data-quality-daily",
@@ -249,3 +248,15 @@ class TestBeatScheduleCompleteness:
             f"Unexpected beat schedule entries: {unexpected}. "
             f"If these are intentional, add them to EXPECTED_ENTRIES in this test."
         )
+
+    def test_no_odds_api_historical_backfill_in_beat(self):
+        """The Odds API historical endpoint is expensive and must stay manual."""
+        historical_tasks = {
+            "app.tasks.check_snapshot_sparsity",
+            "app.tasks.backfill_historical_odds",
+            "app.tasks.lookup_and_backfill_extids",
+        }
+        scheduled = {
+            entry["task"] for entry in celery_app.conf.beat_schedule.values()
+        }
+        assert historical_tasks.isdisjoint(scheduled)
