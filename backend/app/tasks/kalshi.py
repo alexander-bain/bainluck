@@ -1111,8 +1111,7 @@ async def _backfill_volume_only():
     stats = {"series": 0, "pages": 0, "tickers": 0, "rows_updated": 0, "errors": []}
 
     try:
-        from app.services.kalshi_api import KalshiAPIService
-        service = KalshiAPIService()
+        import gc
         _start = _time.monotonic()
 
         # Discover all Kalshi series with resolved markets
@@ -1133,11 +1132,15 @@ async def _backfill_volume_only():
             if (_time.monotonic() - _start) > 540:
                 break
             stats["series"] += 1
+
+            # Fresh client per series to prevent memory accumulation
+            from app.services.kalshi_api import KalshiAPIService
+            svc = KalshiAPIService()
             cursor = None
 
             for page in range(50):
                 try:
-                    events, cursor = await service.get_events(
+                    events, cursor = await svc.get_events(
                         status="settled", series_ticker=series,
                         with_nested_markets=True, limit=200, cursor=cursor,
                     )
@@ -1184,7 +1187,9 @@ async def _backfill_volume_only():
                     break
                 await asyncio.sleep(0.1)
 
-        await service.close()
+            await svc.close()
+            del svc, events
+            gc.collect()
 
     except Exception as e:
         stats["errors"].append(str(e))
