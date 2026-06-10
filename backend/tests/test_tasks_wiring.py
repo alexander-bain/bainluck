@@ -166,7 +166,7 @@ class TestBeatScheduleCompleteness:
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
-        # "poll-live-prediction-markets",  # disabled: replaced by worker-ws WebSocket
+        "poll-live-prediction-markets",  # restored: WS not yet deployed, REST polling needed for pre-game snapshots
         "heartbeat",
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",

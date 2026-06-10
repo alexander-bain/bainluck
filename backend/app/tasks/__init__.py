@@ -1356,12 +1356,10 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 500},
     },
     # DISABLED: replaced by worker-ws WebSocket consumer (#836/#837).
-    # WS streams prices in real-time instead of 2-min REST polling.
-    # Kept as code for fallback; re-enable by uncommenting.
-    # "poll-live-prediction-markets": {
-    #     "task": "app.tasks.poll_live_prediction_markets",
-    #     "schedule": 120.0,
-    # },
+    "poll-live-prediction-markets": {
+        "task": "app.tasks.poll_live_prediction_markets",
+        "schedule": 120.0,  # Every 2 minutes — covers live + upcoming (3h) games
+    },
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",
         "schedule": 120.0,  # Every 2 minutes during MLB season
