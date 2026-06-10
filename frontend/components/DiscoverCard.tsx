@@ -3,12 +3,13 @@
 import { useState, useCallback } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
+import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
 import { isTrending } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
 import { EventCard } from "./discover/EventCard";
 import { FuturesCard } from "./discover/FuturesCard";
+import { ComparisonCard } from "./discover/ComparisonCard";
 import { TournamentCard } from "./discover/TournamentCard";
 import { GroupCard } from "./discover/GroupCard";
 
@@ -30,7 +31,15 @@ interface DiscoverCardProps {
 
 export default function DiscoverCard({ groupedItem, onDismiss, positionIndex }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
-    return <GroupCard items={groupedItem.items} title={groupedItem.groupTitle || ""} positionIndex={positionIndex} />;
+    return (
+      <GroupCard
+        items={groupedItem.items}
+        title={groupedItem.groupTitle || ""}
+        kind={groupedItem.groupKind}
+        theme={groupedItem.groupTheme}
+        positionIndex={positionIndex}
+      />
+    );
   }
   const item = groupedItem.item!;
   return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} />;
@@ -91,8 +100,21 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
 
       <div style={cardStyle}>
         {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
-        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
+        {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
+          <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
+        ) : item.type === "futures" ? (
+          <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
+        ) : null}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {item.type === "bundle" && (
+          <GroupCard
+            items={(item.data as FeedBundleData).items}
+            title={(item.data as FeedBundleData).title}
+            kind={(item.data as FeedBundleData).kind}
+            theme={(item.data as FeedBundleData).comparison_theme}
+            positionIndex={positionIndex}
+          />
+        )}
       </div>
     </div>
   );
