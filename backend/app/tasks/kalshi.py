@@ -1199,7 +1199,7 @@ async def _backfill_volume_only():
                             text("""
                                 UPDATE futures_outcomes fo
                                 SET volume = v.vol
-                                FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                                FROM unnest(CAST(:tickers AS text[]), CAST(:volumes AS int[])) AS v(tk, vol)
                                 WHERE fo.external_id = v.tk
                             """),
                             {"tickers": vol_tickers, "volumes": vol_values},
@@ -1776,7 +1776,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 text("""
                                     UPDATE futures_outcomes fo
                                     SET volume = v.vol
-                                    FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                                    FROM unnest(CAST(:tickers AS text[]), CAST(:volumes AS int[])) AS v(tk, vol)
                                     WHERE fo.external_id = v.tk
                                 """),
                                 {"tickers": vol_tickers, "volumes": vol_values},

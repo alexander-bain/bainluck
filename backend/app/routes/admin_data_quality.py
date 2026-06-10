@@ -1789,7 +1789,7 @@ async def backfill_volume_direct(
             r = await db.execute(text("""
                 UPDATE futures_outcomes fo
                 SET volume = v.vol
-                FROM unnest(:tickers::text[], :volumes::int[]) AS v(tk, vol)
+                FROM unnest(CAST(:tickers AS text[]), CAST(:volumes AS int[])) AS v(tk, vol)
                 WHERE fo.external_id = v.tk
             """), {"tickers": tickers, "volumes": volumes})
             await db.commit()
