@@ -2400,3 +2400,130 @@ class TestSportAbbrevSuffix:
     def test_nfl_props_have_suffix(self):
         assert _SPORT_ABBREV_SUFFIX.get("kxnflpasstds") == "_nfl"
         assert _SPORT_ABBREV_SUFFIX.get("kxnflanytd") == "_nfl"
+
+
+# =============================================================================
+# Tennis tournament prefix stripping (ITF, Challenger, generic Open/Classic)
+# =============================================================================
+
+class TestTennisTournamentPrefixStripping:
+    """Tests for tennis tournament name stripping from Polymarket market names.
+
+    Fixes #825: Polymarket tennis markets use tournament-name prefixes
+    (e.g., "ITF Messina:", "Challenger Parma:", "Stuttgart Open:") that
+    weren't recognized as category prefixes, preventing matchup extraction.
+    """
+
+    def test_itf_tournament(self):
+        assert _strip_category_prefix("ITF Messina: Leonardo Primucci vs Jim Hendrikx") == "Leonardo Primucci vs Jim Hendrikx"
+
+    def test_itf_with_gender(self):
+        assert _strip_category_prefix("ITF Men Messina: Completed Match: Marcel Zielinski vs Jacopo Antonelli") == "Completed Match: Marcel Zielinski vs Jacopo Antonelli"
+
+    def test_itf_with_level(self):
+        assert _strip_category_prefix("ITF W100 Surbiton: Player A vs Player B") == "Player A vs Player B"
+
+    def test_itf_brasilia(self):
+        assert _strip_category_prefix("ITF Brasilia: Juan Sebastian Osorio vs Gabriel Schenekenberg") == "Juan Sebastian Osorio vs Gabriel Schenekenberg"
+
+    def test_challenger_tournament(self):
+        assert _strip_category_prefix("Challenger Parma: Player A vs Player B") == "Player A vs Player B"
+
+    def test_city_open(self):
+        assert _strip_category_prefix("Stuttgart Open: Player A vs Player B") == "Player A vs Player B"
+
+    def test_halle_open(self):
+        assert _strip_category_prefix("Halle Open: Player A vs Player B") == "Player A vs Player B"
+
+    def test_cincinnati_open(self):
+        assert _strip_category_prefix("Cincinnati Open: Player A vs Player B") == "Player A vs Player B"
+
+    def test_city_masters(self):
+        assert _strip_category_prefix("Shanghai Masters: Player A vs Player B") == "Player A vs Player B"
+
+    def test_city_classic(self):
+        assert _strip_category_prefix("Birmingham Classic: Player A vs Player B") == "Player A vs Player B"
+
+    def test_city_championships(self):
+        assert _strip_category_prefix("Dubai Championships: Player A vs Player B") == "Player A vs Player B"
+
+    def test_city_international(self):
+        assert _strip_category_prefix("Adelaide International: Player A vs Player B") == "Player A vs Player B"
+
+    def test_roland_garros(self):
+        assert _strip_category_prefix("Roland Garros: Player A vs Player B") == "Player A vs Player B"
+
+    def test_existing_atp_still_works(self):
+        assert _strip_category_prefix("ATP French Open: Rafael Nadal vs Novak Djokovic") == "Rafael Nadal vs Novak Djokovic"
+
+    def test_existing_wta_still_works(self):
+        assert _strip_category_prefix("WTA Madrid Open: Iga Swiatek vs Aryna Sabalenka") == "Iga Swiatek vs Aryna Sabalenka"
+
+    def test_existing_wimbledon_still_works(self):
+        assert _strip_category_prefix("Wimbledon: Player A vs Player B") == "Player A vs Player B"
+
+
+class TestTennisGameLevelDetection:
+    """Tests that tennis markets with tournament prefixes are detected as game-level."""
+
+    def test_itf_match_is_game_level(self):
+        assert is_game_level_market("ITF Messina: Leonardo Primucci vs Jim Hendrikx")
+
+    def test_itf_with_gender_and_completed_match(self):
+        assert is_game_level_market("ITF Men Messina: Completed Match: Marcel Zielinski vs Jacopo Antonelli")
+
+    def test_challenger_match_is_game_level(self):
+        assert is_game_level_market("Challenger Parma: Player A vs Player B")
+
+    def test_city_open_match_is_game_level(self):
+        assert is_game_level_market("Stuttgart Open: Player A vs Player B")
+
+    def test_completed_match_prefix_stripped(self):
+        """'Completed Match:' sub-prefix should be stripped after tournament prefix."""
+        assert is_game_level_market("Stuttgart Open: Completed Match: Player A vs Player B")
+
+
+class TestTennisMatchupExtraction:
+    """Tests that matchup extraction works for tennis market names."""
+
+    def test_itf_extracts_players(self):
+        m = extract_matchup("ITF Messina: Leonardo Primucci vs Jim Hendrikx")
+        assert m is not None
+        assert m.team_a == "Leonardo Primucci"
+        assert m.team_b == "Jim Hendrikx"
+
+    def test_challenger_extracts_players(self):
+        m = extract_matchup("Challenger Parma: Player A vs Player B")
+        assert m is not None
+        assert m.team_a == "Player A"
+        assert m.team_b == "Player B"
+
+    def test_completed_match_extracts_players(self):
+        m = extract_matchup("ITF Men Messina: Completed Match: Marcel Zielinski vs Jacopo Antonelli")
+        assert m is not None
+        assert m.team_a == "Marcel Zielinski"
+        assert m.team_b == "Jacopo Antonelli"
+
+    def test_doubles_with_slash(self):
+        m = extract_matchup("Schnaitter/Wallner vs Glinka/Sakellaridis")
+        assert m is not None
+        assert m.team_a == "Schnaitter/Wallner"
+        assert m.team_b == "Glinka/Sakellaridis"
+
+    def test_completed_match_doubles(self):
+        m = extract_matchup("Stuttgart Open: Completed Match: Schnaitter/Wallner vs Glinka/Sakellaridis")
+        assert m is not None
+        assert m.team_a == "Schnaitter/Wallner"
+        assert m.team_b == "Glinka/Sakellaridis"
+
+    def test_city_open_extracts_players(self):
+        m = extract_matchup("Halle Open: Player A vs Player B")
+        assert m is not None
+        assert m.team_a == "Player A"
+        assert m.team_b == "Player B"
+
+    def test_roland_garros_extracts_players(self):
+        m = extract_matchup("Roland Garros: Player A vs Player B")
+        assert m is not None
+        assert m.team_a == "Player A"
+        assert m.team_b == "Player B"

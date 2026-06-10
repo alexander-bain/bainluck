@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 # "Team A at/vs/v/@ Team B" (bare matchup without stat — no colon separator)
 # Case-insensitive to handle various capitalizations
+# Includes / for doubles tennis (e.g., "Schnaitter/Wallner vs Glinka/Sakellaridis")
 _BARE_MATCHUP_RE = re.compile(
-    r'^([\w][\w\s.\'\-()]+?)\s+(?:at|vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()]+?)$',
+    r'^([\w][\w\s.\'\-()/]+?)\s+(?:at|vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()/]+?)$',
     re.IGNORECASE,
 )
 
@@ -118,6 +119,9 @@ _CATEGORY_PREFIX_RE = re.compile(
     r'|UFC\s*\d*|Bellator\s*\d*|PFL\s*\d*|ONE\s*\d*'
     r'|(?:ATP|WTA)\s+[\w\s\-\.]+?(?=\s*:)'  # "ATP French Open:", "WTA Madrid Open:", etc.
     r'|ATP|WTA|Grand Slam|Australian Open|French Open|Wimbledon|US Open'
+    r'|(?:ITF|Challenger)\s+[\w\s\-\.]+?(?=\s*:)'  # "ITF Messina:", "Challenger Parma:", etc.
+    r'|Roland Garros'
+    r'|[\w][\w\s\-\.]*?\s+(?:Open|Classic|Masters|Championships?|International|Invitational)(?=\s*:)'  # "Stuttgart Open:", "Cincinnati Masters:", etc.
     r'|PGA|LIV Golf|DP World Tour'
     r'|Formula\s*1|F1|NASCAR|IndyCar'
     r'|Cricket|IPL|Big Bash|The Ashes'
@@ -144,6 +148,10 @@ _MORE_MARKETS_RE = re.compile(r'\s*-\s*More Markets\s*$', re.IGNORECASE)
 
 # "Game N:" prefix on playoff series markets (e.g., "Game 2: Minnesota at Dallas: Total Points")
 _GAME_NUMBER_PREFIX_RE = re.compile(r'^Game\s+\d+\s*:\s*', re.IGNORECASE)
+
+# "Completed Match:" prefix on settled Polymarket tennis markets
+# (e.g., "Stuttgart Open: Completed Match: Player A vs Player B")
+_COMPLETED_MATCH_PREFIX_RE = re.compile(r'^Completed\s+Match\s*:\s*', re.IGNORECASE)
 
 # Trailing parenthetical context like "(Lightweight, Main Card)" or "(Round 5)"
 # Common in Polymarket fight/UFC markets.
@@ -400,6 +408,10 @@ def _normalize_variants(market_name: str) -> list:
     # Start with the cleaner base if different, then fall back to raw
     variants = [base] if base != market_name else [market_name]
     stripped_prefix = _strip_category_prefix(base)
+    # After stripping the tournament prefix, strip "Completed Match:" sub-prefix
+    # (e.g., "Stuttgart Open: Completed Match: Player A vs Player B"
+    #  → "Completed Match: Player A vs Player B" → "Player A vs Player B")
+    stripped_prefix_completed = _COMPLETED_MATCH_PREFIX_RE.sub("", stripped_prefix).strip()
     stripped_sport = _strip_sport_name_prefix(base)
     stripped_paren = _strip_trailing_paren(base)
     stripped_champ = _strip_championship_suffix(base)
@@ -412,7 +424,7 @@ def _normalize_variants(market_name: str) -> list:
         base,  # " - More Markets" stripped
         stripped_sport_both, stripped_sport_champ, stripped_sport_paren,
         stripped_sport, stripped_all, stripped_prefix_champ,
-        stripped_prefix, stripped_paren, stripped_champ,
+        stripped_prefix_completed, stripped_prefix, stripped_paren, stripped_champ,
     ):
         if v and v != market_name and v not in variants:
             variants.append(v)
