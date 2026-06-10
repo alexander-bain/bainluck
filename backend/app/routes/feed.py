@@ -2535,6 +2535,17 @@ def _score_market_trace(
         source_count=source_count,
     )
 
+    # Snippet v2: prefer cached angle-based snippet when flag is on
+    _snippet_v2 = (market.market_metadata or {}).get("snippet_v2") if market.__dict__.get("market_metadata") else None
+    if _snippet_v2 and isinstance(_snippet_v2, dict) and _snippet_v2.get("snippet_text"):
+        from app.tasks.redis_state import get_redis_client as _rc
+        try:
+            _flag = _rc().get("snippet_v2:enabled")
+            if _flag and _flag.decode().lower() in ("true", "1", "yes"):
+                context_summary = _snippet_v2["snippet_text"]
+        except Exception:
+            pass
+
     quality = classify_market_quality(
         market_name=market.name,
         sport_category=market.llm_sport_category,
