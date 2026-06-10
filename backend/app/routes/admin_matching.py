@@ -3924,4 +3924,21 @@ async def game_market_counts(
     )
     row = r7.one()
     results["mlb_7day"] = {"total_events": row[0], "kalshi_game_covered": row[1]}
+    # Unlinked KXMLBGAME markets with recent commence_time
+    unlinked = await db.execute(
+        text("""
+            SELECT external_id, name, commence_time, status
+            FROM futures_markets
+            WHERE source = 'kalshi'
+              AND external_id LIKE 'KXMLBGAME%'
+              AND event_id IS NULL
+              AND commence_time >= NOW() - INTERVAL '7 days'
+            ORDER BY commence_time DESC
+            LIMIT 10
+        """)
+    )
+    results["recent_unlinked_mlb"] = [
+        {"ticker": r[0], "name": str(r[1])[:50], "time": str(r[2])[:16], "status": r[3]}
+        for r in unlinked.all()
+    ]
     return results
