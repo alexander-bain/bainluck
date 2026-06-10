@@ -35,11 +35,32 @@ export function feedContextSnippet(item: FeedItem): string {
 }
 
 export function feedExpandedContext(item: FeedItem): string {
+  const snippet = feedContextSnippet(item);
+  const candidates: string[] = [];
+
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
-    return data.hook_description || item.reason || feedContextSnippet(item);
+    if (data.hook_description) candidates.push(data.hook_description);
   }
-  return item.reason || feedContextSnippet(item);
+  if (item.reason) candidates.push(item.reason);
+
+  // Expanded must be a superset: start with the full snippet text,
+  // then append any distinct additional context that isn't already
+  // contained within the snippet (near-duplicate check via word overlap).
+  const snippetWords = new Set(snippet.trim().replace(/\s+/g, " ").toLowerCase().split(/\s+/));
+  const extras = candidates.filter((c) => {
+    const norm = c.trim().replace(/\s+/g, " ").toLowerCase();
+    if (norm.length <= 10) return false;
+    const candidateWords = norm.split(/\s+/);
+    const overlap = candidateWords.filter((w) => snippetWords.has(w)).length;
+    const ratio = overlap / Math.max(candidateWords.length, 1);
+    return ratio < 0.7; // less than 70% word overlap = genuinely distinct
+  });
+
+  if (extras.length > 0) {
+    return snippet + " — " + extras[0];
+  }
+  return snippet;
 }
 
 const CONTEXT_PREVIEW_CHARS = 145;
