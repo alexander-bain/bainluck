@@ -136,6 +136,7 @@ class PolymarketAPIService:
         active: Optional[bool] = True,
         closed: Optional[bool] = False,
         tag_id: Optional[str] = None,
+        tag_slug: Optional[str] = None,
         series_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
@@ -149,6 +150,7 @@ class PolymarketAPIService:
             active: Filter active events
             closed: Filter closed events
             tag_id: Filter by tag ID
+            tag_slug: Filter by tag slug (e.g., "baseball", "basketball")
             series_id: Filter by series/league ID
             limit: Max results per page
             offset: Pagination offset
@@ -165,6 +167,8 @@ class PolymarketAPIService:
             params["closed"] = str(closed).lower()
         if tag_id:
             params["tag_id"] = tag_id
+        if tag_slug:
+            params["tag_slug"] = tag_slug
         if series_id:
             params["series_id"] = series_id
         if order:

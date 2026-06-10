@@ -296,7 +296,7 @@ async def _poll_polymarket_markets():
 
             try:
                 events_data = await service.get_events(
-                    active=None, closed=None, limit=100, offset=page * 100,
+                    active=True, closed=False, limit=100, offset=page * 100,
                 )
             except Exception as e:
                 logger.warning("Error fetching Polymarket page %d: %s", page, e)
@@ -351,6 +351,53 @@ async def _poll_polymarket_markets():
         stats["pages_fetched"] = pages_fetched
         stats["unique_events_seen"] = len(seen_ids)
         stats["hit_page_cap"] = pages_fetched >= max_pages
+
+        # Supplementary pass: fetch settled sports game events by tag.
+        # The main scan (active=True, closed=False) only gets open events.
+        # Settled game events are needed for source coverage + calibration.
+        _SPORTS_TAG_SLUGS = ["baseball", "basketball", "hockey", "football"]
+        supplemented = 0
+        for tag_slug in _SPORTS_TAG_SLUGS:
+            tag_offset = 0
+            max_tag_pages = 20
+            for _tp in range(max_tag_pages):
+                try:
+                    await asyncio.sleep(0.3)
+                    tag_events = await service.get_events(
+                        active=None,
+                        closed=True,
+                        tag_slug=tag_slug,
+                        limit=100,
+                        offset=tag_offset,
+                        order="startDate",
+                        ascending=False,
+                    )
+                    if not tag_events:
+                        break
+                    for event_data in tag_events:
+                        eid = str(event_data.get("id", ""))
+                        if eid in seen_ids:
+                            continue
+                        seen_ids.add(eid)
+                        parsed = service._parse_event(event_data)
+                        if parsed and parsed.markets:
+                            batch.append(parsed)
+                            supplemented += 1
+                    if batch:
+                        await _process_event_batch(
+                            batch, stats, FuturesMarket, FuturesOutcome,
+                            FuturesOddsSnapshot, pg_insert, probability_to_american,
+                            compute_market_tier,
+                        )
+                        batch.clear()
+                    tag_offset += 100
+                    if len(tag_events) < 100:
+                        break
+                except Exception as e:
+                    logger.debug("Polymarket supplementary %s page %d: %s", tag_slug, _tp, e)
+                    break
+        if supplemented:
+            logger.info("Polymarket supplementary sports fetch added %d events", supplemented)
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
