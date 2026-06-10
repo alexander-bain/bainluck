@@ -1772,7 +1772,7 @@ async def backfill_volume_direct(
     total_tickers = 0
     total_updated = 0
     cursor = None
-    for page in range(50):
+    for page in range(2):
         events, cursor = await svc.get_events(
             status="settled", series_ticker=series,
             with_nested_markets=True, limit=200, cursor=cursor,
