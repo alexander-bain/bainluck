@@ -3932,7 +3932,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         from app.tasks.kalshi import _backfill_trade_history
 
-        trade_stats = await _backfill_trade_history(limit=2000)
+        trade_stats = await _backfill_trade_history(limit=500)
     except Exception as e:
         trade_stats["errors"].append(str(e))
         logger.warning("Trade history backfill failed: %s", e)

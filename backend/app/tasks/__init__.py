@@ -1610,6 +1610,12 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 5000},
         "options": {"queue": "background"},
     },
+    "backfill-kalshi-trade-history": {
+        "task": "app.tasks.backfill_kalshi_trades",
+        "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, 15min after settled
+        "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
     "sync-polymarket-resolved-status": {
         "task": "app.tasks.sync_polymarket_resolved",
         "schedule": crontab(minute=30, hour="5,11,17,23"),  # Every 6h, 30min after Kalshi settled

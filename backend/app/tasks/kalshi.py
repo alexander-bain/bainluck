@@ -20,8 +20,12 @@ logger = logging.getLogger(__name__)
 
 # Map Kalshi game ticker prefixes to sport labels.
 # Used to detect game-level events and construct better market names.
-from app.utils.sport_keys import KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS  # noqa: E402
-from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall  # noqa: E402
+from app.utils.sport_keys import (
+    KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS,
+)  # noqa: E402
+from app.utils.editorial_patterns import (
+    matches_editorial_recall as _matches_editorial_recall,
+)  # noqa: E402
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -61,7 +65,10 @@ def _build_game_market_name(
     3. Individual market title if different from event title
     4. Original event title (fallback)
     """
-    from app.utils.prediction_market_matching import _check_game_level, _strip_category_prefix
+    from app.utils.prediction_market_matching import (
+        _check_game_level,
+        _strip_category_prefix,
+    )
 
     # Check if event title already has a usable matchup
     stripped = _strip_category_prefix(event_title)
@@ -103,19 +110,19 @@ import re as _re
 
 _GENERIC_OUTCOME_PATTERNS = _re.compile(
     r"^(?:"
-    r"Ticker [A-Z]"           # "Ticker D", "Ticker H"
-    r"|Option [A-Z0-9]+"      # "Option 1", "Option A"
-    r"|Choice [A-Z0-9]+"      # "Choice 1"
-    r"|Person [A-Z0-9]+"       # "Person B", "Person G"
-    r"|Team [A-Z0-9]+"         # "Team 1", "Team A"
-    r"|Player [A-Z0-9]+"       # "Player 1"
-    r"|Candidate [A-Z0-9]+"   # "Candidate 1"
-    r"|App [A-Z]"              # "App H", "App C"
-    r"|Song [A-Z0-9]+"         # "Song A", "Song 1"
-    r"|Movie [A-Z]"            # "Movie B"
-    r"|Show [A-Z]"             # "Show C"
-    r"|[A-Z]$"                # Single letters only (not "Yes"/"No")
-    r"|[0-9]+$"               # Pure numbers
+    r"Ticker [A-Z]"  # "Ticker D", "Ticker H"
+    r"|Option [A-Z0-9]+"  # "Option 1", "Option A"
+    r"|Choice [A-Z0-9]+"  # "Choice 1"
+    r"|Person [A-Z0-9]+"  # "Person B", "Person G"
+    r"|Team [A-Z0-9]+"  # "Team 1", "Team A"
+    r"|Player [A-Z0-9]+"  # "Player 1"
+    r"|Candidate [A-Z0-9]+"  # "Candidate 1"
+    r"|App [A-Z]"  # "App H", "App C"
+    r"|Song [A-Z0-9]+"  # "Song A", "Song 1"
+    r"|Movie [A-Z]"  # "Movie B"
+    r"|Show [A-Z]"  # "Show C"
+    r"|[A-Z]$"  # Single letters only (not "Yes"/"No")
+    r"|[0-9]+$"  # Pure numbers
     r")$",
     _re.IGNORECASE,
 )
@@ -140,7 +147,19 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     category_lower = kalshi_category.lower()
 
     # Sports categories
-    if any(s in category_lower for s in ["sports", "golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis"]):
+    if any(
+        s in category_lower
+        for s in [
+            "sports",
+            "golf",
+            "football",
+            "basketball",
+            "baseball",
+            "hockey",
+            "soccer",
+            "tennis",
+        ]
+    ):
         return "championship"
 
     # Olympics
@@ -150,9 +169,17 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     # Other categories
     if "politic" in category_lower or "election" in category_lower:
         return "politics"
-    if "econom" in category_lower or "fed" in category_lower or "inflation" in category_lower:
+    if (
+        "econom" in category_lower
+        or "fed" in category_lower
+        or "inflation" in category_lower
+    ):
         return "economics"
-    if "entertainment" in category_lower or "movie" in category_lower or "award" in category_lower:
+    if (
+        "entertainment" in category_lower
+        or "movie" in category_lower
+        or "award" in category_lower
+    ):
         return "entertainment"
     if "crypto" in category_lower:
         return "crypto"
@@ -172,7 +199,9 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
-def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str], event_ticker: Optional[str] = None) -> str:
+def _categorize_kalshi_market(
+    market_name: str, kalshi_category: Optional[str], event_ticker: Optional[str] = None
+) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
 
@@ -185,18 +214,26 @@ def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str], 
 
     Always returns a category (never None) — defaults to "other".
     """
-    from app.utils.futures_categorization import categorize_by_rules, detect_league, infer_sport_from_league
+    from app.utils.futures_categorization import (
+        categorize_by_rules,
+        detect_league,
+        infer_sport_from_league,
+    )
 
     # 0. IPO check — must come BEFORE ticker prefix so "Kraken IPO" is
     # classified as economics, not hockey (Kraken = NHL team AND crypto exchange)
-    if market_name and _re.search(r'\bIPO\b', market_name, _re.IGNORECASE):
+    if market_name and _re.search(r"\bIPO\b", market_name, _re.IGNORECASE):
         return "economics"
 
     # 1. Ticker prefix → sport category (AUTHORITATIVE — ticker never lies.
     # Must come first because ambiguous names like "Eastern Conference" match
     # multiple sports but the ticker disambiguates: KXNHLEAST = hockey)
     if event_ticker:
-        from app.utils.sport_keys import get_sport_key_from_ticker, SPORT_PREFIX_TO_LLM_CATEGORY
+        from app.utils.sport_keys import (
+            get_sport_key_from_ticker,
+            SPORT_PREFIX_TO_LLM_CATEGORY,
+        )
+
         sport_key = get_sport_key_from_ticker(event_ticker)
         if sport_key:
             prefix = sport_key.split("_")[0] if sport_key else None
@@ -297,9 +334,7 @@ async def _poll_kalshi_markets():
             orphan_sub = select(FuturesOutcome.id).where(
                 FuturesOutcome.external_id.is_(None),
                 FuturesOutcome.market_id.in_(
-                    select(FuturesMarket.id).where(
-                        FuturesMarket.source == "kalshi"
-                    )
+                    select(FuturesMarket.id).where(FuturesMarket.source == "kalshi")
                 ),
             )
             orphan_ids = (await session.execute(orphan_sub)).scalars().all()
@@ -314,9 +349,7 @@ async def _poll_kalshi_markets():
                     )
                 )
                 await session.execute(
-                    sa_delete(FuturesOutcome).where(
-                        FuturesOutcome.id.in_(orphan_ids)
-                    )
+                    sa_delete(FuturesOutcome).where(FuturesOutcome.id.in_(orphan_ids))
                 )
                 await session.commit()
                 logger.info("Bulk orphan cleanup complete")
@@ -332,14 +365,18 @@ async def _poll_kalshi_markets():
 
                     # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
-                    sport_category = _categorize_kalshi_market(event.title, event.category, event.event_ticker)
+                    sport_category = _categorize_kalshi_market(
+                        event.title, event.category, event.event_ticker
+                    )
 
                     # Skip crypto markets entirely — they consume DB space
                     # without providing value to users
                     if sport_category == "crypto" or category == "crypto":
                         stats["crypto_skipped"] += 1
                         continue
-                    stats["by_category"][sport_category] = stats["by_category"].get(sport_category, 0) + 1
+                    stats["by_category"][sport_category] = (
+                        stats["by_category"].get(sport_category, 0) + 1
+                    )
 
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
@@ -367,28 +404,39 @@ async def _poll_kalshi_markets():
                     else:
                         market_name = event.title
                         # Use earliest close time from all markets
-                        close_times = [m.close_time for m in event.markets if m.close_time]
+                        close_times = [
+                            m.close_time for m in event.markets if m.close_time
+                        ]
                         commence_time = min(close_times) if close_times else None
-                        expiration_times = [m.expiration_time for m in event.markets if m.expiration_time]
-                        expiration_time = max(expiration_times) if expiration_times else None
+                        expiration_times = [
+                            m.expiration_time
+                            for m in event.markets
+                            if m.expiration_time
+                        ]
+                        expiration_time = (
+                            max(expiration_times) if expiration_times else None
+                        )
 
                     # Compute market tier for relevance ranking
                     from app.utils.market_label_normalization import compute_market_tier
                     from app.utils.futures_categorization import (
-                        detect_league, detect_season,
+                        detect_league,
+                        detect_season,
                         compute_canonical_market_key,
                         detect_market_type,
                         extract_olympic_discipline,
                         generate_category_tags,
                         is_game_prop,
                     )
+
                     # Check for game props BEFORE computing tier —
                     # game props must be tier 5, not inherit from category
                     if is_game_prop(market_name):
                         category = "game_prop"
 
                     market_tier = compute_market_tier(
-                        market_name, category,
+                        market_name,
+                        category,
                         sport_category=sport_category,
                     )
                     # Force tier 5 for game props regardless of name patterns
@@ -398,7 +446,9 @@ async def _poll_kalshi_markets():
                     # Detect league and season for cross-source matching
                     league = detect_league(market_name, sport_category=sport_category)
                     season = detect_season(
-                        market_name, league, expiration_time,
+                        market_name,
+                        league,
+                        expiration_time,
                     )
                     canon_category = detect_market_type(market_name)
                     if sport_category == "olympics":
@@ -406,12 +456,18 @@ async def _poll_kalshi_markets():
                         if discipline:
                             canon_category = discipline
                     canonical_key = compute_canonical_market_key(
-                        sport_category, league, canon_category, season,
+                        sport_category,
+                        league,
+                        canon_category,
+                        season,
                     )
 
                     # Generate category tags
                     tags = generate_category_tags(
-                        market_name, sport_category, league, category,
+                        market_name,
+                        sport_category,
+                        league,
+                        category,
                     )
 
                     # Always assign group_id for calibration, feed dedup, and
@@ -433,16 +489,19 @@ async def _poll_kalshi_markets():
 
                     # Aggregate volume across all markets in this event
                     total_volume = sum(m.volume or 0 for m in event.markets) or None
-                    total_volume_24h = sum(m.volume_24h or 0 for m in event.markets) or None
-                    total_open_interest = sum(m.open_interest or 0 for m in event.markets) or None
+                    total_volume_24h = (
+                        sum(m.volume_24h or 0 for m in event.markets) or None
+                    )
+                    total_open_interest = (
+                        sum(m.open_interest or 0 for m in event.markets) or None
+                    )
 
                     # Derive market status from Kalshi API data.
                     # A market is "resolved" only when ALL sub-markets in the
                     # event are closed or settled. This unblocks backfill_winners
                     # which only processes status='resolved' rows.
                     all_settled = all(
-                        m.status in ("closed", "settled")
-                        for m in event.markets
+                        m.status in ("closed", "settled") for m in event.markets
                     )
                     market_status = "resolved" if all_settled else "open"
 
@@ -501,12 +560,15 @@ async def _poll_kalshi_markets():
                         upsert_values["canonical_market_key"] = canonical_key
                         update_set["canonical_market_key"] = canonical_key
 
-                    market_stmt = pg_insert(FuturesMarket).values(
-                        **upsert_values
-                    ).on_conflict_do_update(
-                        index_elements=["source", "external_id"],
-                        set_=update_set,
-                    ).returning(FuturesMarket.id)
+                    market_stmt = (
+                        pg_insert(FuturesMarket)
+                        .values(**upsert_values)
+                        .on_conflict_do_update(
+                            index_elements=["source", "external_id"],
+                            set_=update_set,
+                        )
+                        .returning(FuturesMarket.id)
+                    )
 
                     result = await session.execute(market_stmt)
                     futures_market_id = result.scalar_one()
@@ -519,18 +581,28 @@ async def _poll_kalshi_markets():
                         # When yes_bid is 0 (no one bidding), prefer last_price
                         # over the midpoint — last_price better reflects actual
                         # market consensus for illiquid outcomes.
-                        if (market.yes_bid is not None and market.yes_bid > 0
-                                and market.yes_ask is not None and market.yes_ask > 0):
+                        if (
+                            market.yes_bid is not None
+                            and market.yes_bid > 0
+                            and market.yes_ask is not None
+                            and market.yes_ask > 0
+                        ):
                             prob = (market.yes_bid + market.yes_ask) / 2
                         elif market.last_price is not None and market.last_price > 0:
                             prob = market.last_price
-                        elif (market.yes_bid is not None and market.yes_ask is not None
-                              and market.yes_ask > 0 and market.yes_ask <= 0.50):
+                        elif (
+                            market.yes_bid is not None
+                            and market.yes_ask is not None
+                            and market.yes_ask > 0
+                            and market.yes_ask <= 0.50
+                        ):
                             prob = market.yes_ask
                         else:
                             continue  # Skip markets without any pricing
 
-                        american = probability_to_american(prob) if prob and prob > 0 else None
+                        american = (
+                            probability_to_american(prob) if prob and prob > 0 else None
+                        )
 
                         # For single-market events, use "Yes" as outcome name
                         # For multi-market events, prefer yes_sub_title (player/team name),
@@ -543,19 +615,23 @@ async def _poll_kalshi_markets():
                             sub = market.yes_sub_title
                             if sub and not _is_generic_outcome_name(sub):
                                 outcome_name = sub
-                            elif market.subtitle and not _is_generic_outcome_name(market.subtitle):
+                            elif market.subtitle and not _is_generic_outcome_name(
+                                market.subtitle
+                            ):
                                 outcome_name = market.subtitle
                             elif market.title and market.title != event.title:
                                 outcome_name = market.title
                             else:
                                 outcome_name = _parse_kalshi_ticker_name(market.ticker)
 
-                        outcome_data.append({
-                            "market": market,
-                            "prob": prob,
-                            "american": american,
-                            "outcome_name": outcome_name,
-                        })
+                        outcome_data.append(
+                            {
+                                "market": market,
+                                "prob": prob,
+                                "american": american,
+                                "outcome_name": outcome_name,
+                            }
+                        )
 
                     # Null out stale outcomes: if an outcome exists in the DB but
                     # Kalshi returns no pricing (bid/ask/last all NULL), its probability
@@ -618,7 +694,8 @@ async def _poll_kalshi_markets():
                             "current_yes_bid": market.yes_bid,
                             "current_yes_ask": market.yes_ask,
                             "rank": rank,
-                            "probability_change_24h": prob - FuturesOutcome.current_probability,
+                            "probability_change_24h": prob
+                            - FuturesOutcome.current_probability,
                             "rank_change_24h": FuturesOutcome.rank - rank,
                             "last_updated": func.now(),
                         }
@@ -641,22 +718,27 @@ async def _poll_kalshi_markets():
                                 FuturesOutcome.opening_source, "bid_ask_midpoint"
                             )
 
-                        outcome_stmt = pg_insert(FuturesOutcome).values(
-                            market_id=futures_market_id,
-                            external_id=market.ticker,
-                            name=outcome_name,
-                            current_probability=prob,
-                            current_american_odds=american,
-                            current_yes_bid=market.yes_bid,
-                            current_yes_ask=market.yes_ask,
-                            opening_probability=opening_prob,
-                            opening_american_odds=opening_american,
-                            opening_captured_at=opening_at,
-                            rank=rank,
-                        ).on_conflict_do_update(
-                            index_elements=["market_id", "external_id"],
-                            set_=update_set,
-                        ).returning(FuturesOutcome.id)
+                        outcome_stmt = (
+                            pg_insert(FuturesOutcome)
+                            .values(
+                                market_id=futures_market_id,
+                                external_id=market.ticker,
+                                name=outcome_name,
+                                current_probability=prob,
+                                current_american_odds=american,
+                                current_yes_bid=market.yes_bid,
+                                current_yes_ask=market.yes_ask,
+                                opening_probability=opening_prob,
+                                opening_american_odds=opening_american,
+                                opening_captured_at=opening_at,
+                                rank=rank,
+                            )
+                            .on_conflict_do_update(
+                                index_elements=["market_id", "external_id"],
+                                set_=update_set,
+                            )
+                            .returning(FuturesOutcome.id)
+                        )
 
                         result = await session.execute(outcome_stmt)
                         outcome_id = result.scalar_one()
@@ -718,9 +800,14 @@ async def _poll_kalshi_markets():
 
     logger.info(
         "Kalshi poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
-        stats["total_api_events"], stats["events_processed"], stats["markets_processed"],
-        stats["outcomes_updated"], stats["snapshots_created"], stats["crypto_skipped"],
-        len(stats["errors"]), stats["by_category"],
+        stats["total_api_events"],
+        stats["events_processed"],
+        stats["markets_processed"],
+        stats["outcomes_updated"],
+        stats["snapshots_created"],
+        stats["crypto_skipped"],
+        len(stats["errors"]),
+        stats["by_category"],
     )
     return stats
 
@@ -751,16 +838,14 @@ async def _fix_golf_commence_times() -> int:
     dg_commence_by_key: dict[str, datetime] = {}
 
     async with get_task_session() as session:
-        dg_result = await session.execute(
-            text("""
+        dg_result = await session.execute(text("""
                 SELECT name, commence_time
                 FROM futures_markets
                 WHERE source = 'datagolf'
                   AND llm_sport_category = 'golf'
                   AND commence_time IS NOT NULL
                   AND external_id LIKE '%:win'
-            """)
-        )
+            """))
         for row in dg_result.fetchall():
             key = _normalize_tournament(row.name)
             if key != "other" and row.commence_time:
@@ -778,6 +863,7 @@ async def _fix_golf_commence_times() -> int:
     # ── Tier 2: DataGolf live schedule (current season, cached) ─────────────
     try:
         from app.routes.golf import _get_golf_schedule
+
         schedule = await _get_golf_schedule()
     except Exception:
         schedule = None
@@ -790,21 +876,20 @@ async def _fix_golf_commence_times() -> int:
 
     # ── Fix Kalshi golf markets ─────────────────────────────────────────────
     async with get_task_session() as session:
-        result = await session.execute(
-            text("""
+        result = await session.execute(text("""
                 SELECT id, name, commence_time
                 FROM futures_markets
                 WHERE source = 'kalshi'
                   AND llm_sport_category = 'golf'
                   AND commence_time IS NOT NULL
                   AND status = 'resolved'
-            """)
-        )
+            """))
         markets = result.fetchall()
         logger.info(
             "Golf commence_time fix: %d resolved Kalshi golf markets, "
             "%d DataGolf DB keys, schedule=%s",
-            len(markets), len(dg_commence_by_key),
+            len(markets),
+            len(dg_commence_by_key),
             "available" if schedule else "UNAVAILABLE",
         )
 
@@ -828,7 +913,11 @@ async def _fix_golf_commence_times() -> int:
                 source_counts["datagolf_db"] += 1
 
             # Tier 2: DataGolf live schedule (current season)
-            if target_dt is None and tourn_key != "other" and tourn_key in schedule_by_key:
+            if (
+                target_dt is None
+                and tourn_key != "other"
+                and tourn_key in schedule_by_key
+            ):
                 try:
                     target_dt = datetime.fromisoformat(
                         schedule_by_key[tourn_key]
@@ -842,11 +931,15 @@ async def _fix_golf_commence_times() -> int:
                 target_dt = m.commence_time - timedelta(days=4, hours=12)
                 source_counts["heuristic"] += 1
 
-            if target_dt and m.commence_time and abs(
-                (m.commence_time - target_dt).total_seconds()
-            ) > 3600:
+            if (
+                target_dt
+                and m.commence_time
+                and abs((m.commence_time - target_dt).total_seconds()) > 3600
+            ):
                 await session.execute(
-                    text("UPDATE futures_markets SET commence_time = :start WHERE id = :id"),
+                    text(
+                        "UPDATE futures_markets SET commence_time = :start WHERE id = :id"
+                    ),
                     {"start": target_dt, "id": m.id},
                 )
                 fixed += 1
@@ -866,7 +959,9 @@ async def _fix_golf_commence_times() -> int:
             logger.info(
                 "Fixed commence_time for %d Kalshi golf markets "
                 "(sources: %s, reset cal_probs on %d markets)",
-                fixed, source_counts, len(fixed_ids),
+                fixed,
+                source_counts,
+                len(fixed_ids),
             )
 
         return fixed
@@ -884,8 +979,7 @@ async def _fix_hockey_commence_times() -> int:
 
     async with get_task_session() as session:
         # Pass 1: Markets linked to an Event — copy Event.commence_time
-        result1 = await session.execute(
-            text("""
+        result1 = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET commence_time = e.commence_time
                 FROM events e
@@ -897,14 +991,12 @@ async def _fix_hockey_commence_times() -> int:
                   AND (fm.commence_time IS NULL
                        OR ABS(EXTRACT(EPOCH FROM fm.commence_time - e.commence_time)) > 1800)
                 RETURNING fm.id
-            """)
-        )
+            """))
         linked_ids = [r[0] for r in result1.fetchall()]
         linked_fixed = len(linked_ids)
 
         # Pass 2: Unlinked markets — derive from ticker
-        result2 = await session.execute(
-            text("""
+        result2 = await session.execute(text("""
                 SELECT id, name, commence_time,
                        market_metadata->>'ticker' AS ticker,
                        external_id
@@ -914,8 +1006,7 @@ async def _fix_hockey_commence_times() -> int:
                   AND external_id LIKE 'KXNHL%%'
                   AND event_id IS NULL
                   AND commence_time IS NOT NULL
-            """)
-        )
+            """))
         unlinked = result2.fetchall()
         ticker_fixed = 0
         ticker_ids = []
@@ -925,7 +1016,9 @@ async def _fix_hockey_commence_times() -> int:
             if game_date and m.commence_time:
                 if abs((m.commence_time - game_date).total_seconds()) > 1800:
                     await session.execute(
-                        text("UPDATE futures_markets SET commence_time = :dt WHERE id = :id"),
+                        text(
+                            "UPDATE futures_markets SET commence_time = :dt WHERE id = :id"
+                        ),
                         {"dt": game_date, "id": m.id},
                     )
                     ticker_fixed += 1
@@ -946,7 +1039,10 @@ async def _fix_hockey_commence_times() -> int:
             logger.info(
                 "Fixed commence_time for %d Kalshi hockey markets "
                 "(linked=%d, ticker=%d, reset %d market cal_probs)",
-                len(fixed_ids), linked_fixed, ticker_fixed, len(fixed_ids),
+                len(fixed_ids),
+                linked_fixed,
+                ticker_fixed,
+                len(fixed_ids),
             )
 
         return linked_fixed + ticker_fixed
@@ -1002,16 +1098,14 @@ async def _link_sports_props_to_events() -> dict:
     try:
         async with get_task_session() as session:
             # Find all resolved Kalshi prop markets with no event_id
-            result = await session.execute(
-                text("""
+            result = await session.execute(text("""
                     SELECT id, external_id
                     FROM futures_markets
                     WHERE source = 'kalshi'
                       AND event_id IS NULL
                       AND status = 'resolved'
                       AND external_id ~ '^KX(NHL|NBA)'
-                """)
-            )
+                """))
             unlinked = result.fetchall()
 
             if not unlinked:
@@ -1028,7 +1122,7 @@ async def _link_sports_props_to_events() -> dict:
                     continue  # Non-standard format, skip
 
                 prefix = ext_id[:dash_idx]
-                suffix = ext_id[dash_idx + 1:]  # e.g., "26MAR31CARCBJ"
+                suffix = ext_id[dash_idx + 1 :]  # e.g., "26MAR31CARCBJ"
 
                 if not suffix:
                     continue
@@ -1088,7 +1182,9 @@ async def _link_sports_props_to_events() -> dict:
             stats["by_sport"] = sport_stats
             logger.info(
                 "Link sports props: %d markets linked (%s), %d cal_probs reset",
-                stats["total_linked"], sport_stats, stats["cal_prob_reset"],
+                stats["total_linked"],
+                sport_stats,
+                stats["cal_prob_reset"],
             )
 
     except Exception as e:
@@ -1113,27 +1209,38 @@ async def _backfill_volume_only():
 
     try:
         from app.tasks.redis_state import get_redis_client
+
         _rc = get_redis_client()
         _start = _time.monotonic()
 
         async with get_task_session() as session:
-            sr = await session.execute(
-                text("""
+            sr = await session.execute(text("""
                     SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS prefix
                     FROM futures_markets
                     WHERE source = 'kalshi' AND status = 'resolved' AND external_id ~ '^KX'
                     ORDER BY 1
-                """)
-            )
+                """))
             all_series = [r[0] for r in sr.fetchall()]
 
         # Priority sports series first, then alphabetical
         priority = [
-            "KXNHLGOAL", "KXNHLPTS", "KXNHLAST", "KXNHLFIRSTGOAL",
-            "KXNHLSAVES", "KXNHLANYGOAL", "KXNHLGAME",
-            "KXNBAPTS", "KXNBAGAME", "KXNBAREB", "KXNBAAST",
-            "KXMLBTB", "KXMLBHIT", "KXMLBHR", "KXMLBKS",
-            "KXMLBHRR", "KXMLBSTGAME",
+            "KXNHLGOAL",
+            "KXNHLPTS",
+            "KXNHLAST",
+            "KXNHLFIRSTGOAL",
+            "KXNHLSAVES",
+            "KXNHLANYGOAL",
+            "KXNHLGAME",
+            "KXNBAPTS",
+            "KXNBAGAME",
+            "KXNBAREB",
+            "KXNBAAST",
+            "KXMLBTB",
+            "KXMLBHIT",
+            "KXMLBHR",
+            "KXMLBKS",
+            "KXMLBHRR",
+            "KXMLBSTGAME",
             "KXNFLGAME",
         ]
         prio_in = [s for s in priority if s in all_series]
@@ -1143,12 +1250,17 @@ async def _backfill_volume_only():
         cursor_key = "bainluck:volume_backfill_v2"
         pos = int(_rc.get(cursor_key) or 0)
         BATCH = 5
-        series_batch = ordered[pos:pos + BATCH]
+        series_batch = ordered[pos : pos + BATCH]
         next_pos = (pos + BATCH) % max(len(ordered), 1)
         _rc.setex(cursor_key, 86400 * 7, str(next_pos))
 
-        logger.info("Volume backfill: processing %d series (pos %d/%d): %s",
-                     len(series_batch), pos, len(all_series), series_batch)
+        logger.info(
+            "Volume backfill: processing %d series (pos %d/%d): %s",
+            len(series_batch),
+            pos,
+            len(all_series),
+            series_batch,
+        )
 
         for series in series_batch:
             if (_time.monotonic() - _start) > 480:
@@ -1156,14 +1268,18 @@ async def _backfill_volume_only():
             stats["series"] += 1
 
             from app.services.kalshi_api import KalshiAPIService
+
             svc = KalshiAPIService()
             cursor = None
 
             for page in range(50):
                 try:
                     events, cursor = await svc.get_events(
-                        status="settled", series_ticker=series,
-                        with_nested_markets=True, limit=200, cursor=cursor,
+                        status="settled",
+                        series_ticker=series,
+                        with_nested_markets=True,
+                        limit=200,
+                        cursor=cursor,
                     )
                 except Exception as e:
                     if "429" in str(e):
@@ -1179,7 +1295,7 @@ async def _backfill_volume_only():
                 vol_tickers = []
                 vol_values = []
                 for ev in events:
-                    for mkt in (ev.get("markets") or []):
+                    for mkt in ev.get("markets") or []:
                         ticker = mkt.get("ticker", "")
                         vol_raw = mkt.get("volume_fp")
                         if ticker and vol_raw is not None:
@@ -1192,8 +1308,13 @@ async def _backfill_volume_only():
                 if vol_tickers:
                     stats["tickers"] += len(vol_tickers)
                     if stats["pages"] <= 2:
-                        logger.info("Volume: %s page %d: %d tickers (sample: %s)",
-                                    series, page, len(vol_tickers), vol_tickers[:2])
+                        logger.info(
+                            "Volume: %s page %d: %d tickers (sample: %s)",
+                            series,
+                            page,
+                            len(vol_tickers),
+                            vol_tickers[:2],
+                        )
                     async with get_task_session() as session:
                         vr = await session.execute(
                             text("""
@@ -1206,7 +1327,12 @@ async def _backfill_volume_only():
                         )
                         stats["rows_updated"] += vr.rowcount
                         if vr.rowcount > 0:
-                            logger.info("Volume: %s page %d: %d rows updated", series, page, vr.rowcount)
+                            logger.info(
+                                "Volume: %s page %d: %d rows updated",
+                                series,
+                                page,
+                                vr.rowcount,
+                            )
                         await session.commit()
 
                 del events
@@ -1224,32 +1350,89 @@ async def _backfill_volume_only():
 
     logger.info(
         "Volume backfill: %d series, %d pages, %d tickers, %d rows updated, %d errors",
-        stats["series"], stats["pages"], stats["tickers"],
-        stats["rows_updated"], len(stats["errors"]),
+        stats["series"],
+        stats["pages"],
+        stats["tickers"],
+        stats["rows_updated"],
+        len(stats["errors"]),
     )
     return stats
+
+
+async def _fetch_kalshi_trade_pages(
+    service,
+    ticker: str,
+    *,
+    per_page: int = 100,
+    max_pages: int = 10,
+) -> list[dict]:
+    """Fetch paginated Kalshi trade history for a market ticker."""
+    trades: list[dict] = []
+    cursor = None
+    for _ in range(max_pages):
+        page, cursor = await service.get_market_trades(
+            ticker,
+            limit=per_page,
+            cursor=cursor,
+        )
+        trades.extend(page)
+        if not cursor or not page:
+            break
+    return trades
+
+
+def _split_kalshi_trades_by_commence(
+    outcome_id: int,
+    trades: list[dict],
+    commence,
+) -> tuple[list[tuple[int, float, object]], bool, bool]:
+    """Return valid pregame snapshots plus trade/commence availability flags."""
+    from dateutil.parser import parse as _dt_parse
+
+    pregame = []
+    has_any_trade = False
+    has_commence = commence is not None
+
+    for trade in trades:
+        has_any_trade = True
+        try:
+            price = float(trade.get("yes_price_dollars", 0))
+            ts = _dt_parse(trade["created_time"])
+        except Exception:
+            continue
+        if price <= 0 or price >= 1:
+            continue
+        if has_commence and ts < commence:
+            pregame.append((outcome_id, price, ts))
+
+    return pregame, has_any_trade, has_commence
 
 
 async def _backfill_trade_history(limit: int = 100):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
-    For each outcome where cal_prob is missing or fell back to extreme opening:
-    1. Fetch trades from Kalshi API using the sub-market ticker
-    2. If pre-game trades exist: create snapshots → Part A gets real prices
-    3. If trades exist but ALL are post-game: tag 'no_pregame_trading'
-    4. If API returns empty (purged): leave as-is (can't prove anything)
-
-    Processes in batches of 25 with a fresh HTTP client per batch to stay
-    within the 200MB worker memory limit.
+    Uses a Redis cursor to resume across runs, so successive 6h runs clear the
+    329K backlog incrementally instead of restarting from scratch each time.
     """
     import asyncio
-    from dateutil.parser import parse as _dt_parse
+    from app.tasks.redis_state import get_redis_client
 
-    stats = {"candidates": 0, "fetched": 0, "pregame_snaps": 0,
-             "no_pregame": 0, "api_empty": 0, "errors": []}
+    stats = {
+        "candidates": 0,
+        "fetched": 0,
+        "pregame_snaps": 0,
+        "no_pregame": 0,
+        "api_empty": 0,
+        "missing_commence": 0,
+        "trade_pages": 0,
+        "errors": [],
+    }
+
+    _rc = get_redis_client()
+    _cursor_key = "bainluck:trade_backfill_cursor"
+    _last_id = int(_rc.get(_cursor_key) or 0)
 
     try:
-        # Load candidates into plain tuples to release DB result set
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
@@ -1260,50 +1443,68 @@ async def _backfill_trade_history(limit: int = 100):
                     LEFT JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
                       AND fm.source = 'kalshi'
-                      AND fo.opening_probability IS NOT NULL
                       AND fo.external_id LIKE 'KX%%-%%-%%'
+                      AND fo.id > :last_id
                       AND COALESCE(fo.resolution_source, '') NOT IN
                           ('no_pregame_trading', 'did_not_play', 'withdrew')
-                      AND (fo.calibration_probability IS NULL
+                      AND (
+                           NOT EXISTS (
+                               SELECT 1 FROM futures_odds_snapshots fos
+                               WHERE fos.outcome_id = fo.id
+                           )
+                           OR fo.opening_probability IS NULL
+                           OR fo.calibration_probability IS NULL
                            OR (fo.calibration_probability = fo.opening_probability
                                AND (fo.opening_probability >= 0.90
                                     OR fo.opening_probability <= 0.10)))
-                    ORDER BY fm.commence_time DESC NULLS LAST
+                    ORDER BY fo.id ASC
                     LIMIT :lim
                 """),
-                {"lim": limit},
+                {"lim": limit, "last_id": _last_id},
             )
             candidates = [(r[0], r[1], r[2]) for r in result.fetchall()]
 
         stats["candidates"] = len(candidates)
         if not candidates:
+            _rc.delete(_cursor_key)
+            logger.info("Trade backfill: wrapped around, reset cursor")
             return stats
 
-        logger.info("Trade backfill: %d candidates", len(candidates))
+        # Save cursor for next run (highest outcome ID in this batch)
+        max_oid = max(c[0] for c in candidates)
+        _rc.setex(_cursor_key, 86400 * 7, str(max_oid))
+
+        logger.info("Trade backfill: %d candidates (cursor %d→%d)", len(candidates), _last_id, max_oid)
 
         import gc
         import time as _time
+
         _start = _time.monotonic()
         BATCH = 10
 
         for batch_start in range(0, len(candidates), BATCH):
             if (_time.monotonic() - _start) > 480:
-                logger.info("Trade backfill: time budget at %d/%d",
-                            stats["fetched"], len(candidates))
+                logger.info(
+                    "Trade backfill: time budget at %d/%d",
+                    stats["fetched"],
+                    len(candidates),
+                )
                 break
 
-            batch = candidates[batch_start:batch_start + BATCH]
+            batch = candidates[batch_start : batch_start + BATCH]
 
             # Fresh HTTP client per batch — prevents memory accumulation
             from app.services.kalshi_api import KalshiAPIService
+
             svc = KalshiAPIService()
             pregame_ids: list[int] = []
             no_pregame_ids: list[int] = []
 
             for oid, ticker, commence in batch:
                 try:
-                    trades, _ = await svc.get_market_trades(ticker, limit=100)
+                    trades = await _fetch_kalshi_trade_pages(svc, ticker)
                     stats["fetched"] += 1
+                    stats["trade_pages"] += max(1, (len(trades) + 99) // 100)
                 except Exception as e:
                     if "429" in str(e):
                         await asyncio.sleep(5)
@@ -1314,19 +1515,11 @@ async def _backfill_trade_history(limit: int = 100):
                     stats["api_empty"] += 1
                     continue
 
-                pregame = []
-                has_any = False
-                for trade in trades:
-                    has_any = True
-                    try:
-                        price = float(trade.get("yes_price_dollars", 0))
-                        ts = _dt_parse(trade["created_time"])
-                    except Exception:
-                        continue
-                    if price <= 0 or price >= 1:
-                        continue
-                    if commence and ts < commence:
-                        pregame.append((oid, price, ts))
+                pregame, has_any, has_commence = _split_kalshi_trades_by_commence(
+                    oid,
+                    trades,
+                    commence,
+                )
 
                 if pregame:
                     pregame_ids.append(oid)
@@ -1339,15 +1532,21 @@ async def _backfill_trade_history(limit: int = 100):
                                     VALUES (:oid, 'kalshi', :prob, :price, :ts)
                                     ON CONFLICT DO NOTHING
                                 """),
-                                {"oid": snap_oid, "prob": round(price, 6),
-                                 "price": round(price, 4), "ts": ts},
+                                {
+                                    "oid": snap_oid,
+                                    "prob": round(price, 6),
+                                    "price": round(price, 4),
+                                    "ts": ts,
+                                },
                             )
                         await session.commit()
                     stats["pregame_snaps"] += len(pregame)
 
-                elif has_any:
+                elif has_any and has_commence:
                     no_pregame_ids.append(oid)
                     stats["no_pregame"] += 1
+                elif has_any:
+                    stats["missing_commence"] += 1
 
             await svc.close()
             del svc
@@ -1366,7 +1565,9 @@ async def _backfill_trade_history(limit: int = 100):
                         )
                     if pregame_ids:
                         await session.execute(
-                            text("UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"),
+                            text(
+                                "UPDATE futures_outcomes SET calibration_probability = NULL WHERE id = ANY(:ids)"
+                            ),
                             {"ids": pregame_ids},
                         )
                     await session.commit()
@@ -1379,10 +1580,17 @@ async def _backfill_trade_history(limit: int = 100):
         logger.error("Trade backfill error: %s", e)
 
     logger.info(
-        "Trade backfill: %d candidates, %d fetched, %d pregame_snaps, "
-        "%d no_pregame, %d api_empty, %d errors",
-        stats["candidates"], stats["fetched"], stats["pregame_snaps"],
-        stats["no_pregame"], stats["api_empty"], len(stats["errors"]),
+        "Trade backfill: %d candidates, %d fetched, %d pages, "
+        "%d pregame_snaps, %d no_pregame, %d missing_commence, "
+        "%d api_empty, %d errors",
+        stats["candidates"],
+        stats["fetched"],
+        stats["trade_pages"],
+        stats["pregame_snaps"],
+        stats["no_pregame"],
+        stats["missing_commence"],
+        stats["api_empty"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1402,12 +1610,12 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
 
     try:
         from app.services.kalshi_api import KalshiAPIService
+
         service = KalshiAPIService()
 
         async with get_task_session() as session:
             # Find series that still have outcomes needing better calibration
-            sr = await session.execute(
-                text("""
+            sr = await session.execute(text("""
                     SELECT DISTINCT regexp_replace(fm.external_id, '-.*', '') AS prefix
                     FROM futures_markets fm
                     JOIN futures_outcomes fo ON fo.market_id = fm.id
@@ -1418,27 +1626,35 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
                            OR fo.calibration_probability = fo.opening_probability)
                       AND fo.opening_probability IS NOT NULL
                     ORDER BY 1
-                """)
-            )
+                """))
             series_list = [r[0] for r in sr.fetchall()]
             stats["series"] = len(series_list)
-            logger.info("Previous-price backfill: %d series to process", len(series_list))
+            logger.info(
+                "Previous-price backfill: %d series to process", len(series_list)
+            )
 
             from dateutil.parser import parse as _dt_parse
             import time as _time
+
             _start = _time.monotonic()
 
             for series in series_list:
                 if (_time.monotonic() - _start) > 540:
-                    logger.info("Previous-price backfill: time budget after %d series", series_list.index(series))
+                    logger.info(
+                        "Previous-price backfill: time budget after %d series",
+                        series_list.index(series),
+                    )
                     break
 
                 cursor = None
                 for page in range(50):
                     try:
                         events, cursor = await service.get_events(
-                            status="settled", series_ticker=series,
-                            with_nested_markets=True, limit=200, cursor=cursor,
+                            status="settled",
+                            series_ticker=series,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=cursor,
                         )
                     except Exception as e:
                         if "429" in str(e):
@@ -1452,7 +1668,7 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
 
                     for ev in events:
                         stats["events"] += 1
-                        for mkt in (ev.get("markets") or []):
+                        for mkt in ev.get("markets") or []:
                             ticker = mkt.get("ticker", "")
                             result_val = mkt.get("result")
                             prev_str = mkt.get("previous_price_dollars")
@@ -1485,7 +1701,9 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
                             if prev_p <= 0 or prev_p >= 1:
                                 continue
                             try:
-                                snap_t = _dt_parse(open_time_str) if open_time_str else None
+                                snap_t = (
+                                    _dt_parse(open_time_str) if open_time_str else None
+                                )
                             except Exception:
                                 snap_t = None
                             if not snap_t:
@@ -1500,8 +1718,12 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
                                     WHERE fo.external_id = :ticker
                                     ON CONFLICT DO NOTHING
                                 """),
-                                {"prob": round(prev_p, 6), "price": round(prev_p, 4),
-                                 "ts": snap_t, "ticker": ticker},
+                                {
+                                    "prob": round(prev_p, 6),
+                                    "price": round(prev_p, 4),
+                                    "ts": snap_t,
+                                    "ticker": ticker,
+                                },
                             )
                             stats["snaps"] += 1
 
@@ -1512,8 +1734,7 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
                     await asyncio.sleep(0.5)
 
             # Reset cal_prob for outcomes that got new data
-            await session.execute(
-                text("""
+            await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
                     FROM futures_markets fm
@@ -1522,8 +1743,7 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
                       AND fm.status = 'resolved'
                       AND fo.calibration_probability = fo.opening_probability
                       AND fo.opening_probability IS NOT NULL
-                """)
-            )
+                """))
             await session.commit()
 
     except Exception as e:
@@ -1532,7 +1752,11 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
 
     logger.info(
         "Previous-price backfill: %d series, %d events, %d snaps, %d winners, %d errors",
-        stats["series"], stats["events"], stats["snaps"], stats["winners"], len(stats["errors"]),
+        stats["series"],
+        stats["events"],
+        stats["snaps"],
+        stats["winners"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1553,25 +1777,27 @@ async def _backfill_from_settled_events(limit: int = 5000):
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
 
     stats = {
-        "events_scanned": 0, "markets_matched": 0,
-        "snapshots_created": 0, "opening_set": 0,
+        "events_scanned": 0,
+        "markets_matched": 0,
+        "snapshots_created": 0,
+        "opening_set": 0,
         "markets_resolved": 0,
-        "api_pages": 0, "api_empty": 0, "errors": [],
+        "api_pages": 0,
+        "api_empty": 0,
+        "errors": [],
     }
 
     # Dynamically discover all Kalshi series with unresolved markets
     # instead of a hardcoded list that misses esports, baseball HR, soccer BTTS, etc.
     async with get_task_session() as session:
-        series_result = await session.execute(
-            text("""
+        series_result = await session.execute(text("""
                 SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
                 FROM futures_markets
                 WHERE source = 'kalshi'
                   AND status IN ('open', 'resolved')
                   AND external_id ~ '^KX'
                 ORDER BY 1
-            """)
-        )
+            """))
         SERIES_PREFIXES = [r[0] for r in series_result.all()]
     logger.info("Settled events: discovered %d series prefixes", len(SERIES_PREFIXES))
 
@@ -1587,28 +1813,57 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 # Process priority series first, then rotate through all others
                 # using a Redis-persisted cursor (full coverage every ~38 runs).
                 import time as _time
+
                 _start_time = _time.monotonic()
                 _MAX_SECONDS = 720
 
                 from app.tasks.redis_state import get_redis_client
+
                 _rc = get_redis_client()
 
                 _PRIORITY_SERIES = [
                     # Ordered by remaining pass2_guess count (June 3)
-                    "KXNCAAMBTOTAL", "KXNCAAMBSPREAD", "KXNCAABBGAME",
-                    "KXNBATEAMTOTAL", "KXNBAREB", "KXNBAPTS", "KXNBAAST",
-                    "KXNBATOTAL", "KXMLBHRR", "KXMLBTB",
-                    "KXNBAGAME", "KXNBASPREAD", "KXNBA3PT", "KXNBA2HWINNER",
-                    "KXNHLPTS", "KXNHLGOAL", "KXNHLAST", "KXNHLGAME",
-                    "KXMLBSTGAME", "KXMLBSTSPREAD", "KXMLBSTTOTAL",
-                    "KXMLBHIT", "KXMLBHR", "KXMLBKS",
-                    "KXNCAAMBGAME", "KXNCAAMB1HTOTAL", "KXNCAAMB1HWINNER",
-                    "KXNCAAMB1HSPREAD", "KXNCAAWBGAME",
-                    "KXNHLSAVES", "KXNHLANYGOAL", "KXNHLFIRSTGOAL",
-                    "KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL",
-                    "KXATPCHALLENGERMATCH", "KXATPSETWINNER",
-                    "KXCS2MAP", "KXCS2GAME",
-                    "KXNASDAQ100U", "KXINXU",
+                    "KXNCAAMBTOTAL",
+                    "KXNCAAMBSPREAD",
+                    "KXNCAABBGAME",
+                    "KXNBATEAMTOTAL",
+                    "KXNBAREB",
+                    "KXNBAPTS",
+                    "KXNBAAST",
+                    "KXNBATOTAL",
+                    "KXMLBHRR",
+                    "KXMLBTB",
+                    "KXNBAGAME",
+                    "KXNBASPREAD",
+                    "KXNBA3PT",
+                    "KXNBA2HWINNER",
+                    "KXNHLPTS",
+                    "KXNHLGOAL",
+                    "KXNHLAST",
+                    "KXNHLGAME",
+                    "KXMLBSTGAME",
+                    "KXMLBSTSPREAD",
+                    "KXMLBSTTOTAL",
+                    "KXMLBHIT",
+                    "KXMLBHR",
+                    "KXMLBKS",
+                    "KXNCAAMBGAME",
+                    "KXNCAAMB1HTOTAL",
+                    "KXNCAAMB1HWINNER",
+                    "KXNCAAMB1HSPREAD",
+                    "KXNCAAWBGAME",
+                    "KXNHLSAVES",
+                    "KXNHLANYGOAL",
+                    "KXNHLFIRSTGOAL",
+                    "KXNFLGAME",
+                    "KXNFLSPREAD",
+                    "KXNFLTOTAL",
+                    "KXATPCHALLENGERMATCH",
+                    "KXATPSETWINNER",
+                    "KXCS2MAP",
+                    "KXCS2GAME",
+                    "KXNASDAQ100U",
+                    "KXINXU",
                 ]
 
                 _series_cursor_key = "bainluck:settled_series_cursor"
@@ -1626,8 +1881,10 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                 logger.info(
                     "Settled events: %d series need work (checked %d of %d): %s",
-                    len(series_needing_work), len(check_list),
-                    len(SERIES_PREFIXES), series_needing_work[:5],
+                    len(series_needing_work),
+                    len(check_list),
+                    len(SERIES_PREFIXES),
+                    series_needing_work[:5],
                 )
 
                 if not series_needing_work:
@@ -1637,15 +1894,19 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                 for series in series_needing_work:
                     if (_time.monotonic() - _start_time) > _MAX_SECONDS:
-                        logger.info("Settled events: time budget exhausted after %d series",
-                                    series_needing_work.index(series))
+                        logger.info(
+                            "Settled events: time budget exhausted after %d series",
+                            series_needing_work.index(series),
+                        )
                         break
 
                     # Resume pagination from where last run left off
                     _cursor_key = f"bainluck:settled_cursor:{series}"
                     cursor = _rc.get(_cursor_key)
                     if cursor:
-                        cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
+                        cursor = (
+                            cursor.decode() if isinstance(cursor, bytes) else cursor
+                        )
                     series_resolved = 0
                     series_snapshots = 0
                     _empty_pages = 0
@@ -1674,7 +1935,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         page_tickers = []
                         for event_data in events:
                             stats["events_scanned"] += 1
-                            for mkt in (event_data.get("markets") or []):
+                            for mkt in event_data.get("markets") or []:
                                 ticker = mkt.get("ticker", "")
                                 if ticker:
                                     page_tickers.append(ticker)
@@ -1707,7 +1968,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         yes_tickers = []
                         no_tickers = []
                         for event_data in events:
-                            for mkt in (event_data.get("markets") or []):
+                            for mkt in event_data.get("markets") or []:
                                 ticker = mkt.get("ticker", "")
                                 result_val = mkt.get("result")
                                 if not ticker or result_val is None:
@@ -1754,13 +2015,15 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             )
                             page_resolved += r_no.rowcount
 
-                        stats["is_winner_resolved"] = stats.get("is_winner_resolved", 0) + page_resolved
+                        stats["is_winner_resolved"] = (
+                            stats.get("is_winner_resolved", 0) + page_resolved
+                        )
                         # --- Phase 1.6: Store per-outcome volume ---
                         vol_tickers = []
                         vol_values = []
                         vol_rows = 0
                         for event_data in events:
-                            for mkt in (event_data.get("markets") or []):
+                            for mkt in event_data.get("markets") or []:
                                 ticker = mkt.get("ticker", "")
                                 vol_raw = mkt.get("volume_fp")
                                 if ticker and vol_raw is not None:
@@ -1785,8 +2048,11 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             await session.commit()
                             stats["volume_set"] = stats.get("volume_set", 0) + vol_rows
                             if vol_rows > 0 and stats.get("volume_set", 0) <= vol_rows:
-                                logger.info("Phase 1.6: set volume on %d outcomes (attempted %d tickers)",
-                                            vol_rows, len(vol_tickers))
+                                logger.info(
+                                    "Phase 1.6: set volume on %d outcomes (attempted %d tickers)",
+                                    vol_rows,
+                                    len(vol_tickers),
+                                )
 
                         # --- Phase 2: Snapshot backfill (respects limit) ---
                         if total_snapshots < limit:
@@ -1809,16 +2075,15 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             needs_snap = {r.external_id: r for r in matched.fetchall()}
 
                             for event_data in events:
-                                for mkt in (event_data.get("markets") or []):
+                                for mkt in event_data.get("markets") or []:
                                     ticker = mkt.get("ticker", "")
                                     if ticker not in needs_snap:
                                         continue
 
                                     row = needs_snap[ticker]
                                     last_price_str = mkt.get("last_price_dollars")
-                                    close_time_str = (
-                                        mkt.get("close_time")
-                                        or mkt.get("expiration_time")
+                                    close_time_str = mkt.get("close_time") or mkt.get(
+                                        "expiration_time"
                                     )
 
                                     if not last_price_str:
@@ -1835,6 +2100,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                                     try:
                                         from dateutil.parser import parse as dt_parse
+
                                         captured = (
                                             dt_parse(close_time_str)
                                             if close_time_str
@@ -1843,13 +2109,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     except Exception:
                                         captured = datetime.now(timezone.utc)
 
-                                    stmt = pg_insert(FuturesOddsSnapshot).values(
-                                        outcome_id=row.id,
-                                        bookmaker="kalshi",
-                                        probability=round(price, 6),
-                                        last_price=round(price, 4),
-                                        captured_at=captured,
-                                    ).on_conflict_do_nothing()
+                                    stmt = (
+                                        pg_insert(FuturesOddsSnapshot)
+                                        .values(
+                                            outcome_id=row.id,
+                                            bookmaker="kalshi",
+                                            probability=round(price, 6),
+                                            last_price=round(price, 4),
+                                            captured_at=captured,
+                                        )
+                                        .on_conflict_do_nothing()
+                                    )
                                     await session.execute(stmt)
                                     stats["snapshots_created"] += 1
                                     series_snapshots += 1
@@ -1864,7 +2134,11 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                                 WHERE id = :id
                                                   AND opening_probability IS NULL
                                             """),
-                                            {"price": price, "ts": captured, "id": row.id},
+                                            {
+                                                "price": price,
+                                                "ts": captured,
+                                                "id": row.id,
+                                            },
                                         )
                                         stats["opening_set"] += 1
 
@@ -1875,7 +2149,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         # Timestamp at open_time so it sorts before game start.
                         prev_inserts = []
                         for event_data in events:
-                            for mkt in (event_data.get("markets") or []):
+                            for mkt in event_data.get("markets") or []:
                                 ticker = mkt.get("ticker", "")
                                 prev_str = mkt.get("previous_price_dollars")
                                 open_time_str = mkt.get("open_time")
@@ -1892,6 +2166,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
 
                         if prev_inserts:
                             from dateutil.parser import parse as _dt_parse
+
                             for ticker, prev_p, ot_str in prev_inserts:
                                 try:
                                     snap_t = _dt_parse(ot_str) if ot_str else None
@@ -1909,13 +2184,16 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                         WHERE fo.external_id = :ticker
                                         ON CONFLICT DO NOTHING
                                     """),
-                                    {"prob": round(prev_p, 6),
-                                     "price": round(prev_p, 4),
-                                     "ts": snap_t, "ticker": ticker},
+                                    {
+                                        "prob": round(prev_p, 6),
+                                        "price": round(prev_p, 4),
+                                        "ts": snap_t,
+                                        "ticker": ticker,
+                                    },
                                 )
-                            stats["prev_price_snaps"] = (
-                                stats.get("prev_price_snaps", 0) + len(prev_inserts)
-                            )
+                            stats["prev_price_snaps"] = stats.get(
+                                "prev_price_snaps", 0
+                            ) + len(prev_inserts)
                             # Reset cal_prob so Part A recomputes with new data
                             prev_tickers = [t for t, _, _ in prev_inserts]
                             await session.execute(
@@ -1952,16 +2230,27 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             break
                         # Early exit: 5 consecutive pages with 0 results
                         if _empty_pages >= 5:
-                            logger.info("Settled events: %s early exit after %d empty pages at page %d", series, _empty_pages, page_num)
+                            logger.info(
+                                "Settled events: %s early exit after %d empty pages at page %d",
+                                series,
+                                _empty_pages,
+                                page_num,
+                            )
                             _rc.setex(_cursor_key, 86400 * 7, cursor)
                             break
                         _rc.setex(_cursor_key, 86400 * 7, cursor)
                         await asyncio.sleep(0.1)
 
-                    if series_resolved > 0 or series_snapshots > 0 or stats.get("winners_resolved", 0) > 0:
+                    if (
+                        series_resolved > 0
+                        or series_snapshots > 0
+                        or stats.get("winners_resolved", 0) > 0
+                    ):
                         logger.info(
                             "Settled events: series=%s resolved=%d snapshots=%d winners=%d",
-                            series, series_resolved, series_snapshots,
+                            series,
+                            series_resolved,
+                            series_snapshots,
                             stats.get("winners_resolved", 0),
                         )
 
@@ -1995,8 +2284,11 @@ async def _backfill_kalshi_price_history(
 
     stats = {
         "mode": mode,
-        "outcomes_processed": 0, "outcomes_skipped": 0,
-        "snapshots_created": 0, "api_empty": 0, "errors": [],
+        "outcomes_processed": 0,
+        "outcomes_skipped": 0,
+        "snapshots_created": 0,
+        "api_empty": 0,
+        "errors": [],
     }
 
     try:
@@ -2059,7 +2351,8 @@ async def _backfill_kalshi_price_history(
                 for row in outcomes:
                     try:
                         candles = await service.get_market_candlesticks(
-                            ticker=row.ticker, period_interval=60,
+                            ticker=row.ticker,
+                            period_interval=60,
                         )
                     except Exception as e:
                         stats["errors"].append(f"{row.ticker}: {str(e)[:80]}")
@@ -2079,17 +2372,21 @@ async def _backfill_kalshi_price_history(
                         if prob <= 0 or prob >= 1:
                             continue
                         captured = datetime.fromtimestamp(ts, tz=timezone.utc)
-                        batch_values.append({
-                            "outcome_id": row.outcome_id,
-                            "bookmaker": "kalshi",
-                            "probability": round(prob, 6),
-                            "last_price": round(prob, 4),
-                            "captured_at": captured,
-                        })
+                        batch_values.append(
+                            {
+                                "outcome_id": row.outcome_id,
+                                "bookmaker": "kalshi",
+                                "probability": round(prob, 6),
+                                "last_price": round(prob, 4),
+                                "captured_at": captured,
+                            }
+                        )
 
                     if batch_values:
                         for i in range(0, len(batch_values), 100):
-                            stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                            stmt = pg_insert(FuturesOddsSnapshot).values(
+                                batch_values[i : i + 100]
+                            )
                             await session.execute(stmt.on_conflict_do_nothing())
                         stats["snapshots_created"] += len(batch_values)
 
@@ -2102,15 +2399,23 @@ async def _backfill_kalshi_price_history(
                                     opening_captured_at = :ts
                                 WHERE id = :id AND opening_probability IS NULL
                             """),
-                            {"prob": earliest["probability"], "ts": earliest["captured_at"], "id": row.outcome_id},
+                            {
+                                "prob": earliest["probability"],
+                                "ts": earliest["captured_at"],
+                                "id": row.outcome_id,
+                            },
                         )
 
                     stats["outcomes_processed"] += 1
                     if stats["outcomes_processed"] % 50 == 0:
                         await session.commit()
-                        logger.info("Kalshi history: %d/%d outcomes, %d snapshots, %d empty",
-                                    stats["outcomes_processed"], len(outcomes),
-                                    stats["snapshots_created"], stats["api_empty"])
+                        logger.info(
+                            "Kalshi history: %d/%d outcomes, %d snapshots, %d empty",
+                            stats["outcomes_processed"],
+                            len(outcomes),
+                            stats["snapshots_created"],
+                            stats["api_empty"],
+                        )
                     await asyncio.sleep(0.05)
 
                 await session.commit()
