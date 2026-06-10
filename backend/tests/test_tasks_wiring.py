@@ -227,6 +227,7 @@ class TestBeatScheduleCompleteness:
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
         "precompute-category-pages",
+        "precompute-backfill-winners-status",
         "data-quality-watchdog",
         "backfill-kalshi-settled-events",
         "sync-polymarket-resolved-status",

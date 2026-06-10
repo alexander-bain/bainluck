@@ -3266,173 +3266,44 @@ async def trigger_datagolf_leaderboard_backfill(
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
-    bust: bool = Query(False, description="Bypass cache"),
-    db: AsyncSession = Depends(get_db),
+    bust: bool = Query(False, description="Bypass cache and trigger async recompute"),
 ):
-    """Check how many markets still need is_winner backfill."""
+    """Check how many markets still need is_winner backfill.
+
+    Returns a precomputed response from Redis (refreshed every hour by the
+    precompute_backfill_winners_status Celery task).  Pass bust=true to
+    trigger an immediate async recompute and return the current cache.
+    """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     import json as _json
     from app.tasks.redis_state import get_redis_client
+
     _cache_key = "bainluck:backfill_winners_status"
-    if not bust:
-        try:
-            _rc = get_redis_client()
-            _cached = _rc.get(_cache_key)
-            if _cached:
-                return _json.loads(_cached)
-        except Exception:
-            pass
 
-    result = await db.execute(text("""
-        WITH market_status AS (
-            SELECT fm.id, fm.source,
-                BOOL_OR(fo.is_winner) AS has_winner,
-                MAX(fo.current_probability) AS max_prob,
-                BOOL_AND(fo.calibration_probability IS NULL
-                         AND fo.opening_probability IS NULL) AS all_cal_null
-            FROM futures_markets fm
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            WHERE fm.status = 'resolved'
-            GROUP BY fm.id, fm.source
+    if bust:
+        # Queue an immediate recompute on the background worker
+        from app.tasks import celery_app
+        celery_app.send_task(
+            "app.tasks.precompute_backfill_winners_status",
+            queue="background",
         )
-        SELECT source,
-            COUNT(*) AS resolved_markets,
-            COUNT(*) FILTER (
-                WHERE (has_winner OR (max_prob IS NOT NULL AND max_prob <= 0.10))
-                  AND NOT (all_cal_null AND source != 'datagolf')
-            ) AS has_winner,
-            COUNT(*) FILTER (
-                WHERE NOT has_winner
-                  AND NOT (all_cal_null AND source != 'datagolf')
-                  AND (max_prob IS NULL OR max_prob > 0.10)
-            ) AS needs_backfill,
-            COUNT(*) FILTER (
-                WHERE all_cal_null AND source != 'datagolf'
-            ) AS untradeable_excluded
-        FROM market_status
-        GROUP BY source
-    """))
-    # Sample Polymarket soccer outcomes in the 40-50% bucket that LOST
-    sample_diag = await db.execute(text("""
-        SELECT fo.id, fo.opening_probability, fo.name AS outcome_name,
-            fm.name AS market_name, fo.current_probability,
-            fo.opening_captured_at,
-            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
-            (SELECT probability FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
-             ORDER BY captured_at DESC LIMIT 1) AS last_snap_prob
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
-          AND fm.llm_sport_category = 'soccer'
-          AND fo.opening_probability > 0.35 AND fo.opening_probability < 0.55
-          AND fo.current_probability <= 0.05
-        ORDER BY RANDOM()
-        LIMIT 15
-    """))
-    opening_diag = await db.execute(text("SELECT 1 AS cat"))
 
-    cal_result = await db.execute(text("""
-        SELECT
-            COUNT(*) AS total_resolved,
-            COUNT(fo.calibration_probability) AS has_cal_prob,
-            COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL
-                             AND fm.commence_time IS NOT NULL) AS needs_cal_with_commence,
-            COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL
-                             AND fm.commence_time IS NULL) AS needs_cal_without_commence,
-            AVG(ABS(fo.calibration_probability - fo.opening_probability))
-                FILTER (WHERE fo.calibration_probability IS NOT NULL) AS avg_price_shift
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fm.status = 'resolved'
-          AND fo.opening_probability IS NOT NULL
-          AND fo.opening_probability > 0 AND fo.opening_probability < 1
-    """))
-    cal_row = cal_result.one()
-
-    group_result = await db.execute(text("""
-        WITH poly_groups AS (
-            SELECT fm.group_id, COUNT(*) AS group_size
-            FROM futures_markets fm
-            WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
-              AND fm.group_id IS NOT NULL
-            GROUP BY fm.group_id
-        )
-        SELECT
-            COUNT(*) FILTER (WHERE fm.group_id IS NULL) AS null_group_id,
-            COUNT(*) FILTER (WHERE pg.group_size = 1) AS orphan_group_id,
-            COUNT(*) FILTER (WHERE pg.group_size = 2) AS pair_group_id,
-            COUNT(*) FILTER (WHERE pg.group_size >= 3) AS proper_group_id,
-            COUNT(*) AS total_resolved_poly
-        FROM futures_markets fm
-        LEFT JOIN poly_groups pg ON pg.group_id = fm.group_id
-        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
-    """))
-    group_row = group_result.one()
-
-    _response = {
-        "sources": [
-            {"source": r.source, "resolved": r.resolved_markets,
-             "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
-             "untradeable_excluded": r.untradeable_excluded}
-            for r in result.all()
-        ],
-        "calibration_probability_coverage": {
-            "total_resolved_outcomes": cal_row.total_resolved,
-            "has_calibration_probability": cal_row.has_cal_prob,
-            "needs_cal_with_commence": cal_row.needs_cal_with_commence,
-            "needs_cal_without_commence": cal_row.needs_cal_without_commence,
-            "pct_covered": round(100 * cal_row.has_cal_prob / max(cal_row.total_resolved, 1), 1),
-            "avg_price_shift": round(float(cal_row.avg_price_shift or 0), 4),
-        },
-        "polymarket_group_id_health": {
-            "total_resolved": group_row.total_resolved_poly,
-            "null_group_id": group_row.null_group_id,
-            "orphan_size_1": group_row.orphan_group_id,
-            "pair_size_2": group_row.pair_group_id,
-            "proper_size_3_plus": group_row.proper_group_id,
-        },
-        "orphan_samples": [
-            {"id": r.id, "name": r.name, "category": r.cat,
-             "group_id": r.group_id, "group_type": r.group_type,
-             "external_id": r.external_id, "outcomes": r.outcome_count,
-             "poly_event_id": r.poly_event_id}
-            for r in (await db.execute(text("""
-                WITH orphan_groups AS (
-                    SELECT group_id FROM futures_markets
-                    WHERE source = 'polymarket' AND status = 'resolved'
-                      AND group_id IS NOT NULL
-                    GROUP BY group_id HAVING COUNT(*) = 1
-                )
-                SELECT fm.id, fm.name,
-                    COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
-                    fm.group_id, fm.group_type, fm.external_id,
-                    fm.market_metadata->>'polymarket_event_id' AS poly_event_id,
-                    (SELECT COUNT(*) FROM futures_outcomes fo WHERE fo.market_id = fm.id) AS outcome_count
-                FROM futures_markets fm
-                JOIN orphan_groups og ON og.group_id = fm.group_id
-                WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
-                ORDER BY RANDOM() LIMIT 15
-            """))).all()
-        ],
-        "soccer_samples": [
-            {"id": r.id, "opening": float(r.opening_probability),
-             "outcome": r.outcome_name, "market": r.market_name,
-             "current": float(r.current_probability),
-             "captured_at": str(r.opening_captured_at) if r.opening_captured_at else None,
-             "snaps": r.snap_count,
-             "last_snap": float(r.last_snap_prob) if r.last_snap_prob else None}
-            for r in sample_diag.all()
-        ],
-        "stuck_diagnosis": await _diagnose_stuck_winners(db),
-    }
     try:
         _rc = get_redis_client()
-        _rc.setex(_cache_key, 1800, _json.dumps(_response, default=str))
+        _cached = _rc.get(_cache_key)
+        if _cached:
+            return _json.loads(_cached)
     except Exception:
         pass
-    return _response
+
+    raise HTTPException(
+        status_code=202,
+        detail="No cached result yet. The precompute_backfill_winners_status task "
+               "runs every hour, or use bust=true to trigger an immediate recompute. "
+               "Retry in a few minutes.",
+    )
 
 
 async def _diagnose_stuck_winners(db: AsyncSession) -> dict:

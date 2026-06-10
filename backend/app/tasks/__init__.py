@@ -1256,6 +1256,13 @@ def precompute_category_pages(self):
     return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_backfill_winners_status")
+def precompute_backfill_winners_status(self):
+    """Precompute backfill-winners/status response and cache in Redis (every 1h)."""
+    from app.tasks.precompute_backfill_winners_status import _precompute_backfill_winners_status
+    return _tracked_run("precompute_backfill_winners_status", _precompute_backfill_winners_status())
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -1494,6 +1501,11 @@ celery_app.conf.beat_schedule = {
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
         "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        "options": {"queue": "background"},
+    },
+    "precompute-backfill-winners-status": {
+        "task": "app.tasks.precompute_backfill_winners_status",
+        "schedule": crontab(minute=35),  # Every hour at :35 — cache expensive backfill status queries
         "options": {"queue": "background"},
     },
     "check-aggregation-quality": {
