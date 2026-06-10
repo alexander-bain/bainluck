@@ -3957,7 +3957,7 @@ async def game_market_counts(
                     SELECT external_id, name, commence_time, event_id
                     FROM futures_markets
                     WHERE source = 'kalshi'
-                      AND external_id LIKE 'KXMLBGAME%%'
+                      AND external_id LIKE 'KXMLBGAME%'
                       AND commence_time BETWEEN :t - INTERVAL '6 hours'
                         AND :t + INTERVAL '6 hours'
                     ORDER BY commence_time
