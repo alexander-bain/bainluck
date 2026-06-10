@@ -12,6 +12,10 @@ alembic>=1.13.1
 # HTTP Client (for odds API)
 httpx>=0.26.0
 
+# Kalshi WebSocket (real-time prices + settlement push)
+websockets>=13.0
+cryptography>=42.0.0
+
 # Background Tasks
 celery>=5.6.3
 redis>=5.0.1
