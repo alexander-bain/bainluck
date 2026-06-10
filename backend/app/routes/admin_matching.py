@@ -3880,3 +3880,28 @@ async def backfill_win_probability_sources(
 
     await db.commit()
     return stats
+
+
+@router.get("/prediction-markets/game-market-counts")
+async def game_market_counts(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug: count game-winner markets by series prefix."""
+    _check_admin_secret(secret)
+    results = {}
+    for prefix in ["KXMLBGAME", "KXNBAGAME", "KXNHLGAME", "KXNFLGAME"]:
+        r = await db.execute(
+            text(
+                "SELECT COUNT(*), COUNT(event_id) FROM futures_markets "
+                "WHERE source='kalshi' AND external_id LIKE :p"
+            ),
+            {"p": f"{prefix}%"},
+        )
+        total, linked = r.one()
+        results[prefix] = {"total": total, "linked": linked}
+    r = await db.execute(
+        text("SELECT COUNT(*) FROM futures_markets WHERE source='kalshi'")
+    )
+    results["total_kalshi"] = r.scalar()
+    return results
