@@ -807,15 +807,28 @@ async def enrich_cu_v2_profiles(limit: int = 125):
         )
         candidates = result.scalars().all()
 
-        for market in candidates:
+        # Copy all ORM attributes to scalars before the loop to survive
+        # rollback boundaries (gotcha #6).
+        market_refs = []
+        for m in candidates:
+            market_refs.append({
+                "id": m.id,
+                "name": m.name,
+                "source": m.source,
+                "status": m.status,
+                "category": m.llm_sport_category or m.category or "other",
+                "resolution_date": m.resolution_date.isoformat() if m.resolution_date else "unknown",
+                "metadata": dict(m.__dict__.get("market_metadata") or {}),
+            })
+
+        for mref in market_refs:
             if stats["processed"] >= limit:
                 break
             if stats["estimated_cost_usd"] >= COST_CAP_USD:
                 logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
                 break
 
-            raw_meta = market.__dict__.get("market_metadata") or {}
-            existing = raw_meta.get(DISCOVER_LLM_METADATA_KEY)
+            existing = mref["metadata"].get(DISCOVER_LLM_METADATA_KEY)
             if existing and isinstance(existing, dict) and existing.get("schema_version") == 2:
                 ts = existing.get("generated_at", "")
                 if ts:
@@ -827,9 +840,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     except (ValueError, TypeError):
                         pass
 
+            market_id = mref["id"]
             outcome_result = await session.execute(
                 select(FuturesOutcome.name, FuturesOutcome.current_probability, FuturesOutcome.probability_change_24h)
-                .where(FuturesOutcome.market_id == market.id)
+                .where(FuturesOutcome.market_id == market_id)
                 .order_by(FuturesOutcome.rank.asc().nullslast())
                 .limit(8)
             )
@@ -845,10 +859,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 outcome_lines.append(f"- {o.name}: {int(prob * 100)}%{move_text}")
 
             prompt = _CU_V2_PROMPT.format(
-                name=market.name or "",
-                category=market.llm_sport_category or market.category or "other",
-                source=market.source or "",
-                resolution_date=market.resolution_date.isoformat() if market.resolution_date else "unknown",
+                name=mref["name"] or "",
+                category=mref["category"],
+                source=mref["source"] or "",
+                resolution_date=mref["resolution_date"],
                 outcomes="\n".join(outcome_lines) if outcome_lines else "- unknown",
             )
 
@@ -871,7 +885,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     stats["output_tokens"] += out
                     stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
 
-                liveness = _compute_liveness(leader_prob, market.status)
+                liveness = _compute_liveness(leader_prob, mref["status"])
                 profile = {
                     "schema_version": 2,
                     "model": DISCOVER_LLM_MODEL,
@@ -895,14 +909,14 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "liveness": liveness,
                 }
 
-                next_metadata = dict(market.__dict__.get("market_metadata") or {})
+                next_metadata = dict(mref["metadata"])
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
 
                 story_key = raw.get("story_key")
 
                 await session.execute(
                     update(FuturesMarket)
-                    .where(FuturesMarket.id == market.id)
+                    .where(FuturesMarket.id == market_id)
                     .values(
                         market_metadata=next_metadata,
                         **({"story_key": story_key} if story_key else {}),
@@ -910,7 +924,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 )
                 stats["generated"] += 1
             except Exception as exc:
-                logger.warning("CU v2 failed for market %s: %s", market.id, exc)
+                logger.warning("CU v2 failed for market %s: %s", market_id, exc)
                 stats["errors"] += 1
                 try:
                     await session.rollback()
