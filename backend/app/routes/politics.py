@@ -27,6 +27,7 @@ from app.utils.cross_source_matching import (
     is_resolved as _is_resolved,
     source as _source,
 )
+from app.utils.market_staleness import should_exclude_from_featured
 
 logger = logging.getLogger(__name__)
 
@@ -541,10 +542,20 @@ async def get_politics(db: AsyncSession):
     # representative market with merged outcomes (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
 
+    def _leader_prob(m):
+        outcomes = sorted(
+            (m.outcomes or []),
+            key=lambda o: float(o.current_probability or 0),
+            reverse=True,
+        )
+        return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
+
     stale_cutoff = now - timedelta(days=7)
     themed: dict[str, list] = defaultdict(list)
     for m in all_markets:
-        if _is_resolved(m):
+        if should_exclude_from_featured(
+            m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
+        ):
             continue
         if _is_non_politics(m):
             continue

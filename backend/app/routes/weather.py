@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.market_staleness import should_exclude_from_featured
 
 logger = logging.getLogger(__name__)
 
@@ -323,11 +324,18 @@ def _clean_outcomes(outcomes: list) -> list:
 
 
 def _is_resolved(market: FuturesMarket) -> bool:
-    """A market is effectively resolved if the top outcome is >= 99%."""
-    for o in market.outcomes:
-        if float(o.current_probability or 0) >= 0.99:
-            return True
-    return False
+    """A market is effectively resolved if excluded by staleness/extremes."""
+    from datetime import datetime, timezone as _tz
+    outcomes = sorted(
+        (market.outcomes or []),
+        key=lambda o: float(o.current_probability or 0),
+        reverse=True,
+    )
+    leader_prob = float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
+    return bool(should_exclude_from_featured(
+        market.name, market.llm_sport_category, market.status,
+        leader_prob, datetime.now(_tz.utc),
+    ))
 
 
 def _normalize_q(q: str) -> str:
