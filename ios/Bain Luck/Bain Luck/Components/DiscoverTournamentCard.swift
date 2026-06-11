@@ -108,7 +108,7 @@ struct NativeTournamentDiscoverCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
         .onTapGesture {
-            navigationPath.append(NavigationDestination.sport("golf"))
+            navigationPath.append(Route.sportCategory(key: "golf", name: "Golf"))
         }
     }
 }
