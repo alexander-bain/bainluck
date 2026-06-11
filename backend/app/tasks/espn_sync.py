@@ -839,6 +839,9 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
     player prop markets needing is_winner resolution. This ensures the
     first box scores backfilled are the ones that directly improve
     calibration accuracy.
+
+    Also backfills game scores (home_score/away_score) from the same
+    ESPN summary response when they are missing.
     """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport
@@ -849,6 +852,7 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
         "fetched": 0,
         "errors": 0,
         "skipped_no_data": 0,
+        "scores_backfilled": 0,
     }
 
     try:
@@ -861,7 +865,10 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                     .where(
                         Event.status.in_(["completed", "closed"]),
                         Event.espn_id.isnot(None),
-                        Event.box_score_data.is_(None),
+                        or_(
+                            Event.box_score_data.is_(None),
+                            Event.home_score.is_(None),
+                        ),
                         Event.id.in_(
                             select(FuturesMarket.event_id).where(
                                 FuturesMarket.source == "kalshi",
@@ -910,24 +917,28 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                         context = await espn.get_event_context(sport_key, event.espn_id)
                         box_score = context.get("box_score", {})
                         scoring_plays = context.get("scoring_plays", [])
+                        scores = context.get("scores", {})
 
                         now_str = datetime.now(timezone.utc).isoformat()
 
+                        if event.home_score is None and scores.get("home_score") is not None:
+                            event.home_score = scores["home_score"]
+                            event.away_score = scores.get("away_score")
+                            stats["scores_backfilled"] += 1
+
                         if box_score or scoring_plays:
-                            event.box_score_data = {
+                            box_data = {
                                 "source": "espn",
                                 "fetched_at": now_str,
                                 "players": box_score,
                                 "scoring_plays": scoring_plays,
                             }
+                            if scores.get("home_period_scores"):
+                                box_data["home_period_scores"] = scores["home_period_scores"]
+                                box_data["away_period_scores"] = scores.get("away_period_scores", [])
+                            event.box_score_data = box_data
                             stats["fetched"] += 1
-                            logger.info(
-                                f"Box score fetched for event {event.id} "
-                                f"({event.home_team_name} vs {event.away_team_name}): "
-                                f"{len(box_score)} players"
-                            )
-                        else:
-                            # Mark as unavailable to avoid infinite retries
+                        elif event.box_score_data is None:
                             event.box_score_data = {
                                 "source": "espn",
                                 "error": "not_available",

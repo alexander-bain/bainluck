@@ -1690,7 +1690,7 @@ async def _resolve_kalshi_spread_total_from_scores():
 
 
 async def _get_halftime_score(session, event_id: int):
-    """Reconstruct halftime score from scoring_plays."""
+    """Reconstruct halftime score from scoring_plays or box_score_data period scores."""
     result = await session.execute(
         text("""
             SELECT home_score, away_score
@@ -1705,6 +1705,18 @@ async def _get_halftime_score(session, event_id: int):
     row = result.first()
     if row:
         return (row.home_score, row.away_score)
+
+    from app.models.models import Event as _Evt
+    evt_result = await session.execute(
+        select(_Evt.box_score_data).where(_Evt.id == event_id)
+    )
+    box = evt_result.scalar_one_or_none()
+    if box and isinstance(box, dict):
+        h_periods = box.get("home_period_scores", [])
+        a_periods = box.get("away_period_scores", [])
+        if h_periods and a_periods:
+            return (h_periods[0], a_periods[0])
+
     return None
 
 

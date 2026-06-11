@@ -521,12 +521,51 @@ class ESPNAPIService:
         box_score = self._parse_boxscore(data)
         scoring_plays = self._parse_scoring_plays(data)
 
+        scores = self._parse_header_scores(data)
+
         return {
             "injuries": injuries,
             "news": news,
             "box_score": box_score,
             "scoring_plays": scoring_plays,
+            "scores": scores,
         }
+
+    @staticmethod
+    def _parse_header_scores(data: dict) -> dict:
+        """Extract home/away scores and period scores from the summary header.
+
+        Returns ``{"home_score": int, "away_score": int,
+        "home_period_scores": [int, ...], "away_period_scores": [int, ...]}``.
+        """
+        header = data.get("header", {})
+        competitions = header.get("competitions", [])
+        if not competitions:
+            return {}
+        result: dict = {}
+        for comp in competitions[0].get("competitors", []):
+            raw = comp.get("score")
+            try:
+                score = int(raw) if raw is not None else None
+            except (ValueError, TypeError):
+                score = None
+
+            period_scores = []
+            for ls in comp.get("linescores", []):
+                try:
+                    period_scores.append(int(ls.get("displayValue", 0)))
+                except (ValueError, TypeError):
+                    period_scores.append(0)
+
+            if comp.get("homeAway") == "home":
+                result["home_score"] = score
+                if period_scores:
+                    result["home_period_scores"] = period_scores
+            else:
+                result["away_score"] = score
+                if period_scores:
+                    result["away_period_scores"] = period_scores
+        return result
 
     def _parse_injuries(self, summary_data: dict) -> list[ESPNInjury]:
         """Parse injury data from ESPN summary response."""
