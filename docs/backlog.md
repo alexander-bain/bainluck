@@ -9,7 +9,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)
 - [ready] Migrate Kalshi live prices to WebSocket; evaluate lifecycle channel for settlement push. Issue: [#836](https://github.com/alexander-bain/bainluck/issues/836)
 - [ready] Polymarket: CLOB market WebSocket + batch REST for live prices. Issue: [#837](https://github.com/alexander-bain/bainluck/issues/837)
-- [ready] StatPal ($99/mo) cost-benefit: migrate US majors to ESPN or commit deliberately. Issue: [#838](https://github.com/alexander-bain/bainluck/issues/838)
+- [done] StatPal cost-benefit: decided cancel (2026-06-11). Exit epic: [#886](https://github.com/alexander-bain/bainluck/issues/886). Original: [#838](https://github.com/alexander-bain/bainluck/issues/838)
 - [ready] Add Firebase Crashlytics to iOS app (zero crash reporting today). Issue: [#839](https://github.com/alexander-bain/bainluck/issues/839)
 - [ready] GitHub repo hardening: CodeQL, secret scanning, master ruleset requiring green CI. Issue: [#840](https://github.com/alexander-bain/bainluck/issues/840)
 - [active] Manus closed-loop QA program: high-frequency sweeps, digest intake, fix verification. Issue: [#872](https://github.com/alexander-bain/bainluck/issues/872)
