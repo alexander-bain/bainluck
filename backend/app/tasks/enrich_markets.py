@@ -918,16 +918,20 @@ async def enrich_cu_v2_profiles(limit: int = 125):
 
                 next_metadata = dict(item["metadata"])
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
-                story_key = raw.get("story_key")
 
                 await write_session.execute(
                     update(FuturesMarket)
                     .where(FuturesMarket.id == item["id"])
-                    .values(
-                        market_metadata=next_metadata,
-                        **({"story_key": story_key} if story_key else {}),
-                    )
+                    .values(market_metadata=next_metadata)
                 )
+
+                story_key = raw.get("story_key")
+                if story_key:
+                    from sqlalchemy import text as _text
+                    await write_session.execute(
+                        _text("UPDATE futures_markets SET story_key = :sk WHERE id = :mid"),
+                        {"sk": story_key, "mid": item["id"]},
+                    )
                 stats["generated"] += 1
             except Exception as exc:
                 logger.warning("CU v2 failed for market %s: %s", item["id"], exc)
