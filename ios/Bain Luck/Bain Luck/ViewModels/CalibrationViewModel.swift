@@ -21,7 +21,7 @@ final class CalibrationViewModel: ObservableObject {
     var movedBuckets: [CalibrationChartPoint] { makePoints(from: (data?.buckets ?? []).filter { $0.priceMoved == true }) }
     var unchangedBuckets: [CalibrationChartPoint] { makePoints(from: (data?.buckets ?? []).filter { $0.priceMoved == false }) }
 
-    var mce: Double { computeMCE(chartPoints) }
+    var mce: Double { (data?.mceClosingLine).map { $0 / 100.0 } ?? computeMCE(chartPoints) }
     var mceColor: Color { let v = mce * 100; return v < 4 ? .green : v < 8 ? .blue : .orange }
     var mceQualityLabel: String { let v = mce * 100; return v < 3 ? "Excellent" : v < 5 ? "Very Good" : v < 8 ? "Good" : "Fair" }
     var cohortColor: Color { .blue }
