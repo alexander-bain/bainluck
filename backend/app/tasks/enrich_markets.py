@@ -814,7 +814,8 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
                 break
 
-            existing = (market.market_metadata or {}).get(DISCOVER_LLM_METADATA_KEY)
+            raw_meta = market.__dict__.get("market_metadata") or {}
+            existing = raw_meta.get(DISCOVER_LLM_METADATA_KEY)
             if existing and isinstance(existing, dict) and existing.get("schema_version") == 2:
                 ts = existing.get("generated_at", "")
                 if ts:
@@ -894,7 +895,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "liveness": liveness,
                 }
 
-                next_metadata = dict(market.market_metadata or {})
+                next_metadata = dict(market.__dict__.get("market_metadata") or {})
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
 
                 story_key = raw.get("story_key")
