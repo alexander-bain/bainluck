@@ -89,11 +89,11 @@ function teamsToProgression(
     const status: Record<string, "clinched" | "eliminated" | null> = {};
     const sources_data: Record<string, { source: string; probability: number }[]> = {};
 
-    for (const [colKey, cell] of Object.entries(t.cells)) {
-      probabilities[colKey] = cell.merged_probability;
-      changes_24h[colKey] = cell.trend_24h;
+    for (const [colKey, cell] of Object.entries(t.cells || {})) {
+      probabilities[colKey] = cell?.merged_probability ?? null;
+      changes_24h[colKey] = cell?.trend_24h ?? null;
       status[colKey] = null;
-      if (cell.sources) {
+      if (cell?.sources) {
         sources_data[colKey] = cell.sources;
       }
     }
@@ -136,7 +136,7 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
       </h2>
       <div className="flex flex-wrap gap-2">
         {movers.map((m) => {
-          const pct = Math.abs(m.change_24h * 100);
+          const pct = Math.abs((m.change_24h ?? 0) * 100);
           const isUp = m.direction === "up";
           return (
             <div

@@ -17,8 +17,10 @@ export default function MoversRibbon({ movers, gridHref }: MoversRibbonProps) {
   if (!movers || movers.length === 0) return null;
 
   // Show up to 6 movers, sorted by absolute change descending
+  // Filter out zero/null movers and guard against NaN from null change_24h
   const sorted = [...movers]
-    .sort((a, b) => Math.abs(b.change_24h) - Math.abs(a.change_24h))
+    .filter((m) => m.change_24h != null && Math.abs(m.change_24h) >= 0.001)
+    .sort((a, b) => Math.abs(b.change_24h ?? 0) - Math.abs(a.change_24h ?? 0))
     .slice(0, 6);
 
   return (

@@ -51,7 +51,7 @@ const SECTION_META: Record<string, { label: string; order: number }> = {
 
 /** Convert ChampionshipGridResponse -> ProgressionResponse for TournamentProgressionTable */
 function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse {
-  const stages: ProgressionStage[] = grid.columns.map((c) => ({
+  const stages: ProgressionStage[] = (grid.columns || []).map((c) => ({
     key: c.key,
     label: c.label,
     order: c.order,
@@ -59,21 +59,21 @@ function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse 
     market_name: null,
   }));
 
-  const participants: ProgressionParticipant[] = grid.teams.map((t) => {
+  const participants: ProgressionParticipant[] = (grid.teams || []).map((t) => {
     const probabilities: Record<string, number | null> = {};
     const changes_24h: Record<string, number | null> = {};
     const status: Record<string, "clinched" | "eliminated" | null> = {};
     const sources_data: Record<string, { source: string; probability: number }[]> = {};
     const minimum_ticks: Record<string, boolean> = {};
 
-    for (const [colKey, cell] of Object.entries(t.cells)) {
-      probabilities[colKey] = cell.merged_probability;
-      changes_24h[colKey] = cell.trend_24h;
+    for (const [colKey, cell] of Object.entries(t.cells || {})) {
+      probabilities[colKey] = cell?.merged_probability ?? null;
+      changes_24h[colKey] = cell?.trend_24h ?? null;
       status[colKey] = null;
-      if (cell.sources) {
+      if (cell?.sources) {
         sources_data[colKey] = cell.sources;
       }
-      if (cell.is_minimum_tick) {
+      if (cell?.is_minimum_tick) {
         minimum_ticks[colKey] = true;
       }
     }
