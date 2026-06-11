@@ -10,6 +10,7 @@
 		A70F40122FA6C20000170BF2 /* BainLuckWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E392F525C6D000542D3 /* GoogleSignIn */; };
 		A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */; };
+		A7C839010001000000000001 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7C839020001000000000001 /* FirebaseCrashlytics */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +95,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */,
+				A7C839010001000000000001 /* FirebaseCrashlytics in Frameworks */,
 				A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -183,6 +185,7 @@
 			packageProductDependencies = (
 				A7869E392F525C6D000542D3 /* GoogleSignIn */,
 				A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */,
+				A7C839020001000000000001 /* FirebaseCrashlytics */,
 			);
 			productName = "Bain Luck";
 			productReference = A7869E2A2F525C6A000542D3 /* Bain Luck.app */;
@@ -674,6 +677,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAnalytics;
+		};
+		A7C839020001000000000001 /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

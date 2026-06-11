@@ -719,6 +719,13 @@ async def enrich_discover_llm_metadata(limit: int = 100):
 
 def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
     data = item.get("data") or {}
+    top = data.get("top_outcomes") or []
+    leader_prob = top[0].get("probability") if top else None
+
+    is_extreme = False
+    if leader_prob is not None:
+        is_extreme = leader_prob < 0.02 or leader_prob > 0.98
+
     return {
         "id": data.get("id"),
         "name": data.get("name"),
@@ -726,7 +733,11 @@ def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
         "score": item.get("score"),
         "headline": item.get("headline"),
         "context_summary": item.get("context_summary"),
-        "top_outcomes": data.get("top_outcomes") or [],
+        "top_outcomes": top,
+        "status": data.get("status"),
+        "leader_probability": round(leader_prob, 3) if leader_prob is not None else None,
+        "probability_extreme": is_extreme,
+        "resolution_date": data.get("resolution_date"),
     }
 
 
@@ -883,13 +894,33 @@ async def evaluate_discover_with_llm(limit: int = 50):
         email_misses = find_missing_ground_truth_items(diagnosed, email_items, limit=20)
         stats["email_misses"] = len(email_misses)
 
+        date_str = now.strftime("%B %d, %Y")
         prompt = (
-            "You are reviewing the top Discover prediction-market cards. "
-            "Grade each card for a casual user's feed quality. Return JSON only: "
+            f"Today is {date_str}. You are reviewing the top Discover prediction-market cards "
+            "for a casual audience's feed quality.\n\n"
+            "CONTEXT: Sports seasons currently active may include NHL Stanley Cup Finals, "
+            "MLB regular season, PGA Tour events, UFC cards, MLS, and international soccer. "
+            "Markets about LIVE or IMMINENT major sports events (playoffs, finals, championship "
+            "rounds happening THIS WEEK) are high-value — do NOT downrank them.\n\n"
+            "RULES:\n"
+            "- Cards with probability_extreme=true (leader <2% or >98%) are DEAD content. "
+            "Always downrank — a resolved-in-all-but-name market has zero discovery value.\n"
+            "- Cards with status='resolved' or past resolution_date are stale. Downrank.\n"
+            "- LIVE major-sport playoff/championship/finals markets are high-value. Keep or promote.\n"
+            "- Downrank: minor local elections, narrow commodity/index ladders, repetitive threshold buckets, "
+            "low-tier sports with no active season.\n"
+            "- Promote: broad public interest, surprising questions, timely cultural moments, "
+            "geopolitical developments, cross-category oddities.\n\n"
+            "FEW-SHOT EXAMPLES (from human reviewer):\n"
+            "- 'NHL Stanley Cup Champion' during Finals week → keep (live major sport)\n"
+            "- 'Will Nathalie Arthaud run for French president?' at 78% → downrank (obscure foreign election)\n"
+            "- 'Emmy nominations: Outstanding Television Movie' → keep (broad entertainment)\n"
+            "- 'Tudor Black Bay watch price Up or Down: June' → downrank (narrow commodity)\n"
+            "- 'US-Iran nuclear deal by June 30?' → promote (major geopolitical)\n"
+            "- Market at 99.2% → downrank (dead probability, resolved in practice)\n\n"
+            "Return JSON only: "
             "{\"reviews\":[{\"id\":123,\"grade\":1-5,\"action\":\"keep|promote|downrank|investigate\","
-            "\"reason\":\"short reason\"}]}. "
-            "Downrank boring low-tier sports, local elections, repetitive buckets, and narrow commodity ladders. "
-            "Promote broad, surprising, timely, culturally interesting, or cross-category cards.\n\n"
+            "\"reason\":\"short reason\"}]}\n\n"
             f"Top cards:\n{json.dumps(compact, separators=(',', ':'))}\n\n"
             f"Polymarket email highlights missing from top feed:\n{json.dumps(email_misses[:10], separators=(',', ':'))}"
         )

@@ -6,6 +6,7 @@
 //
 
 import FirebaseCore
+import FirebaseCrashlytics
 import GoogleSignIn
 import SwiftUI
 #if canImport(UIKit)
@@ -80,6 +81,7 @@ struct Bain_LuckApp: App {
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
                     pinManager.setAuthenticated(isAuth)
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
+                    Crashlytics.crashlytics().setUserID(isAuth ? authManager.user?.id ?? "" : "")
                     Task {
                         if isAuth {
                             await pinManager.syncLocalToServer()
@@ -95,6 +97,7 @@ struct Bain_LuckApp: App {
                     NotificationManager.shared.requestPermissionAfterDelay()
                     if let userId = authManager.user?.id {
                         NotificationManager.shared.setUser(id: userId)
+                        Crashlytics.crashlytics().setUserID(userId)
                     }
                 }
                 #if os(iOS)

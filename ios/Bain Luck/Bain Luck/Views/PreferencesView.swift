@@ -556,6 +556,38 @@ struct PreferencesView: View {
                 .buttonStyle(.plain)
             }
 
+            #if DEBUG
+            Button {
+                fatalError("Crashlytics test crash")
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "ant.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Test Crash")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        Text("Trigger a test crash for Crashlytics")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.orange.opacity(0.12), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+            #endif
+
             Button {
                 authManager.signOut()
                 dismiss()
