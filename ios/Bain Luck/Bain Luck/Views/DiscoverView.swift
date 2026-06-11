@@ -660,6 +660,8 @@ struct DiscoverView: View {
                                 case .single(let item):
                                     if isGuessSlot, item.type == "futures", let f = item.futures,
                                        f.discoverCard?.suggestedFormat != "threshold_heatmap",
+                                       f.discoverCard?.suggestedFormat != "outcome_distribution",
+                                       f.discoverCard?.suggestedFormat != "cross_source_comparison",
                                        f.status != "closed", f.status != "resolved",
                                        let leaderProbability = f.topOutcomes?.first?.probability,
                                        leaderProbability < 0.95 {
@@ -723,6 +725,42 @@ struct DiscoverView: View {
                                             }
                                         ) {
                                             HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                            })
+                                        }
+                                        .contextMenu { discoverCardMenu(item) }
+                                    } else if item.type == "futures", let f = item.futures,
+                                              f.discoverCard?.suggestedFormat == "outcome_distribution",
+                                              (f.discoverCard?.distributionOutcomes ?? []).filter({ $0.probability != nil }).count >= 4 {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            }
+                                        ) {
+                                            DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                            })
+                                        }
+                                        .contextMenu { discoverCardMenu(item) }
+                                    } else if item.type == "futures", let f = item.futures,
+                                              (f.discoverCard?.suggestedFormat == "cross_source_comparison"
+                                               || (f.topOutcomes?.count ?? 0) >= 4) {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            }
+                                        ) {
+                                            ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }

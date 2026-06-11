@@ -185,6 +185,40 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let imageUrl: String?
     let hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
+    let discoverCard: FeedDiscoverCard?
+}
+
+// MARK: - Discover Card Archetype
+
+/// Structured card archetype attached to futures items in the Discover feed.
+nonisolated struct FeedDiscoverCard: Decodable, Sendable {
+    let suggestedFormat: String?
+    let bundleCandidate: Bool?
+    let comparisonTheme: String?
+    let thresholdPoints: [FeedDiscoverThresholdPoint]?
+    let distributionOutcomes: [FeedDiscoverDistributionOutcome]?
+    let remainingOutcomeCount: Int?
+    let qaSignals: [String]?
+    let publicSourceDisagreement: Bool?
+    let reasons: [String]?
+}
+
+/// Single threshold point for heatmap-style cards.
+nonisolated struct FeedDiscoverThresholdPoint: Decodable, Sendable {
+    let source: String?
+    let label: String
+    let value: Double?
+    let unit: String?
+    let direction: String?
+    let probability: Double?
+    let needsSiblingMarkets: Bool?
+}
+
+/// Single outcome row for distribution-style cards.
+nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
+    let label: String
+    let probability: Double?
+    let movement: Double?
 }
 
 // MARK: - Feed Tournament Data
