@@ -2,9 +2,8 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import type { DebugItem } from "./types";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // --- Types ---
 
@@ -262,8 +261,9 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
         resetReviewFields();
         return;
       }
-      const res = await fetch(
-        `${API_URL}/api/admin/pairwise/next?secret=${encodeURIComponent(submittedSecret)}`
+      const res = await adminFetch(
+        "/api/admin/pairwise/next",
+        submittedSecret
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -284,8 +284,9 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
   const fetchStats = useCallback(async () => {
     if (!submittedSecret) return;
     try {
-      const res = await fetch(
-        `${API_URL}/api/admin/pairwise/stats?secret=${encodeURIComponent(submittedSecret)}`
+      const res = await adminFetch(
+        "/api/admin/pairwise/stats",
+        submittedSecret
       );
       if (res.ok) {
         setStats(await res.json());
@@ -310,8 +311,9 @@ export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugIte
     setError(null);
     setLastSubmitted(null);
     try {
-      const res = await fetch(
-        `${API_URL}/api/admin/pairwise/label?secret=${encodeURIComponent(submittedSecret)}`,
+      const res = await adminFetch(
+        "/api/admin/pairwise/label",
+        submittedSecret,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

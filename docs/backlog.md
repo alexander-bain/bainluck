@@ -186,7 +186,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 3. Fix any remaining taxonomy rules where the market itself is misclassified, not just filtered from health metrics
 4. Use the corrected rate to target real matching bugs
 
-**Audit endpoint:** `GET /api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN`
+**Audit endpoint:** `GET /api/admin/prediction-markets/link-rate`
 
 **Files:** `backend/app/routes/admin_matching.py` (link rate endpoint), `backend/app/utils/league_classification.py`, `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
@@ -731,9 +731,9 @@ Burndown chart, category tagging, resolution time tracking, auto-categorization 
 **Deployed:** `GET /api/admin/snapshots/distribution` (reads from Redis cache, computed by Celery task).
 
 **Steps:**
-1. Trigger: `POST /api/admin/snapshots/distribution?secret=$ADMIN_TOKEN`
+1. Trigger: `POST /api/admin/snapshots/distribution`
 2. Wait 2-5 min for Celery to finish
-3. Read: `GET /api/admin/snapshots/distribution?secret=$ADMIN_TOKEN`
+3. Read: `GET /api/admin/snapshots/distribution`
 
 **What to look for:** `sparse_pct` (outcomes with 0-5 snapshots) and `median_snapshots` per source. If Polymarket or Kalshi median < 20, the "flat line" chart problem is widespread and the history backfill tasks need their limits raised or cadence increased. If sparse_pct > 30% on any source, investigate whether the backfill is targeting the right outcomes.
 
@@ -747,7 +747,7 @@ Burndown chart, category tagging, resolution time tracking, auto-categorization 
 
 **Goal:** Every resolved outcome has correct `is_winner`. Without this, the calibration curve is built on a biased subset.
 
-**Monitor:** `GET /api/admin/backfill-winners/status?secret=$ADMIN_TOKEN` → check `sources` array + `stuck_diagnosis`.
+**Monitor:** `GET /api/admin/backfill-winners/status` → check `sources` array + `stuck_diagnosis`.
 
 **Current state (May 19, 2026):**
 | Source | Resolved | has_winner | Tradeable | Coverage | Target |
@@ -788,7 +788,7 @@ Coverage now excludes untradeable ghost markets (42K total) from the denominator
 
 **Goal:** Every past-game Kalshi market linked to its event, so event detail pages show complete Kalshi data even for historical games.
 
-**Monitor:** `GET /api/admin/prediction-markets/backfill-link-status?secret=$ADMIN_TOKEN`
+**Monitor:** `GET /api/admin/prediction-markets/backfill-link-status`
 - `remaining_to_try` = markets the backfill hasn't attempted yet. Should shrink to 0.
 - `marked_no_match` = markets that genuinely have no matching event (obscure leagues, etc.)
 - When `remaining_to_try == 0`, the backfill is complete.
@@ -925,7 +925,7 @@ Currently 62K resolved outcomes from prediction markets only. The Odds API sport
 
 ### Workstream: Celery Queue Health (FIXED May 15 — monitor at session start)
 
-**Monitor:** `GET /api/admin/celery-debug?secret=$ADMIN_TOKEN` → `queue_lengths.background`. Target: < 50.
+**Monitor:** `GET /api/admin/celery-debug` → `queue_lengths.background`. Target: < 50.
 
 **If queue > 50:** Check `celery-debug` active tasks, restart zombie workers (`heroku ps:restart worker-background`), purge if needed (`POST /api/admin/celery-purge-background`). Consider Standard-2X if chronic.
 

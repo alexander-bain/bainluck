@@ -8,11 +8,10 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import { AlertTriangle, CheckCircle2, Database, Link2, Unlink } from "lucide-react";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface SourceCounts {
   total: number;
@@ -120,7 +119,7 @@ export default function MatchingPage() {
   const { data: accuracy, isLoading } = useSWR<AccuracyData>(
     ["schedule-accuracy", secret],
     () =>
-      fetch(`${API_URL}/api/admin/schedule/accuracy?secret=${encodeURIComponent(secret)}&days=14`)
+      adminFetch("/api/admin/schedule/accuracy?days=14", secret)
         .then((r) => r.ok ? r.json() : null),
     { refreshInterval: 300000 }
   );

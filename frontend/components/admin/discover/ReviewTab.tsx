@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import { getIdToken } from "@/lib/firebase";
 import { StatusPill } from "./ui";
 import { formatTargetName, rateText } from "./utils";
@@ -208,7 +209,7 @@ export default function ReviewTab() {
   const { data: summary } = useSWR<JudgmentSummary>(
     ["judgment-summary", secret],
     () =>
-      fetch(`${API_URL}/api/admin/ranking-judgments/summary?secret=${encodeURIComponent(secret)}`)
+      adminFetch("/api/admin/ranking-judgments/summary", secret)
         .then((r) => r.json()),
     { refreshInterval: 30000 }
   );
@@ -290,7 +291,6 @@ export default function ReviewTab() {
     setSubmitting(true);
     try {
       const params = new URLSearchParams({
-        secret,
         surface: "discover",
         rank_seen: String(current.rank),
         item_type: current.type || "futures",
@@ -335,7 +335,7 @@ export default function ReviewTab() {
         Object.entries(taxonomyMetadata).filter(([, value]) => value !== null)
       );
 
-      await fetch(`${API_URL}/api/admin/ranking-judgments?${params}`, {
+      await adminFetch(`/api/admin/ranking-judgments?${params}`, secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

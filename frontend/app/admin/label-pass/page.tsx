@@ -3,52 +3,45 @@
 import { useState, useEffect, useCallback } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-
-const ADMIN_TOKEN = typeof window !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
-
-async function fetchPending() {
-  const res = await fetch(`/api/admin/label-pass/pending?secret=${ADMIN_TOKEN}`);
-  if (!res.ok) throw new Error("Failed to load");
-  return res.json();
-}
-
-async function submitVerdict(id: number, verdict: string, features: Record<string, unknown>) {
-  const res = await fetch(`/api/admin/label-pass/verdict?secret=${ADMIN_TOKEN}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision_id: id, verdict, features }),
-  });
-  if (!res.ok) throw new Error("Failed to submit");
-  return res.json();
-}
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetchJSON } from "@/lib/adminFetch";
 
 export default function LabelPassPage() {
   usePageTracking({ pageType: "admin_label_pass" });
   useScrollDepth({ pageType: "admin_label_pass" });
   useEngagementTime({ pageType: "admin_label_pass" });
 
-  const { data, error, mutate } = useSWR("label-pass-pending", fetchPending);
+  const { secret } = useAdminAuth();
+
+  const { data, error, mutate } = useSWR(
+    secret ? ["label-pass-pending", secret] : null,
+    () => adminFetchJSON("/api/admin/label-pass/pending", secret)
+  );
   const [index, setIndex] = useState(0);
   const [history, setHistory] = useState<Array<{ id: number; verdict: string }>>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  const items = data?.items || [];
-  const current = items[index] || null;
+  const items = (data as Record<string, unknown[]>)?.items || [];
+  const current = items[index] as Record<string, unknown> | null || null;
   const total = items.length;
   const reviewed = history.length;
 
   const handleVerdict = useCallback(async (verdict: string) => {
-    if (!current || submitting) return;
+    if (!current || submitting || !secret) return;
     setSubmitting(true);
     try {
-      await submitVerdict(current.id, verdict, current.features || {});
-      setHistory((h) => [...h, { id: current.id, verdict }]);
+      await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision_id: (current as Record<string, unknown>).id, verdict, features: (current as Record<string, unknown>).features || {} }),
+      });
+      setHistory((h) => [...h, { id: (current as Record<string, unknown>).id as number, verdict }]);
       setIndex((i) => i + 1);
     } catch (e) {
       console.error(e);
     }
     setSubmitting(false);
-  }, [current, submitting]);
+  }, [current, submitting, secret]);
 
   const handleUndo = useCallback(() => {
     if (history.length === 0) return;
@@ -70,7 +63,8 @@ export default function LabelPassPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [handleVerdict, handleUndo]);
 
-  if (error) return <div className="p-8 text-red-500">Error loading proposals. Set admin_token in localStorage.</div>;
+  if (!secret) return <div className="p-8 text-text-muted">Enter admin secret to access label pass.</div>;
+  if (error) return <div className="p-8 text-red-500">Error loading proposals.</div>;
   if (!data) return <div className="p-8 text-text-muted">Loading...</div>;
 
   if (!current) {
@@ -87,9 +81,11 @@ export default function LabelPassPage() {
     );
   }
 
-  const proposal = current.decision?.replace("llm_proposed_", "") || "unknown";
-  const probPct = current.features?.probability != null
-    ? `${Math.round(current.features.probability * 100)}%`
+  const item = current as Record<string, unknown>;
+  const proposal = ((item.decision as string) || "").replace("llm_proposed_", "") || "unknown";
+  const features = (item.features || {}) as Record<string, number | null>;
+  const probPct = features.probability != null
+    ? `${Math.round(features.probability * 100)}%`
     : "—";
 
   return (
@@ -107,21 +103,21 @@ export default function LabelPassPage() {
           }`}>
             LLM: {proposal}
           </span>
-          <span className="text-xs text-text-muted">{current.category}</span>
+          <span className="text-xs text-text-muted">{item.category as string}</span>
           <span className="ml-auto font-mono text-lg font-bold text-text-primary">{probPct}</span>
         </div>
-        <h2 className="text-lg font-semibold text-text-primary mb-2 leading-tight">{current.item_name}</h2>
-        {current.admin_notes && (
-          <p className="text-sm text-text-secondary leading-relaxed mb-3">{current.admin_notes}</p>
+        <h2 className="text-lg font-semibold text-text-primary mb-2 leading-tight">{item.item_name as string}</h2>
+        {item.admin_notes && (
+          <p className="text-sm text-text-secondary leading-relaxed mb-3">{item.admin_notes as string}</p>
         )}
         <div className="flex gap-4 text-xs text-text-muted">
-          {current.features?.movement_24h != null && (
-            <span>24h: {current.features.movement_24h > 0 ? "+" : ""}{(current.features.movement_24h * 100).toFixed(1)}pts</span>
+          {features.movement_24h != null && (
+            <span>24h: {features.movement_24h > 0 ? "+" : ""}{(features.movement_24h * 100).toFixed(1)}pts</span>
           )}
-          {current.features?.volume_24h != null && (
-            <span>Vol: ${Math.round(current.features.volume_24h / 1000)}K</span>
+          {features.volume_24h != null && (
+            <span>Vol: ${Math.round(features.volume_24h / 1000)}K</span>
           )}
-          {current.archetype && <span>{current.archetype}</span>}
+          {item.archetype && <span>{item.archetype as string}</span>}
         </div>
       </div>
 

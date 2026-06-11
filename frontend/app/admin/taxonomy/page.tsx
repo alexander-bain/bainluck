@@ -10,8 +10,7 @@ import {
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { adminFetchJSON } from "@/lib/adminFetch";
 
 interface TagCount {
   tag: string;
@@ -34,11 +33,7 @@ interface DashboardData {
 }
 
 async function fetchDashboard(secret: string): Promise<DashboardData> {
-  const res = await fetch(
-    `${API_URL}/api/admin/taxonomy/dashboard?secret=${encodeURIComponent(secret)}`
-  );
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
+  return adminFetchJSON<DashboardData>("/api/admin/taxonomy/dashboard", secret);
 }
 
 function CoverageBar({

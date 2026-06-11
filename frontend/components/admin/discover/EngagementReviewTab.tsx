@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com";
+import { adminFetch } from "@/lib/adminFetch";
 
 interface MarketItem {
   item_id: string;
@@ -87,8 +86,9 @@ export default function EngagementReviewTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${API}/api/admin/engagement/review?secret=${encodeURIComponent(secret)}`
+      const res = await adminFetch(
+        "/api/admin/engagement/review",
+        secret
       );
       if (!res.ok) {
         const text = await res.text();

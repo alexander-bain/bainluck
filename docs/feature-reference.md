@@ -44,11 +44,11 @@ The raw value represents the total "distance traveled" by the win probability cu
 - `GET /api/admin/ei/status` - Check calculation status
 - `GET /api/admin/ei/distributions` - Score distribution analysis
 - `GET /api/admin/ei/diagnosis` - Per-sport breakdown and snapshot distribution
-- `POST /api/admin/ei/recalculate?secret=xxx&limit=100` - Trigger batch recalc
+- `POST /api/admin/ei/recalculate?limit=100` - Trigger batch recalc
 
 **After algorithm changes:** Force-recalculate stored scores since `raw_ei` values are computed once and cached:
 ```bash
-curl -X POST "https://api.bainluck.com/api/admin/ei/recalculate?secret=any&limit=500"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/ei/recalculate?limit=500"
 curl "https://api.bainluck.com/api/admin/ei/distributions"
 ```
 
@@ -161,11 +161,11 @@ sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Ho
 **Admin Endpoints:**
 ```bash
 # Trigger a poll (queues background task, returns task_id)
-curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/kalshi/poll"
 # Response: {"status": "queued", "task_id": "abc123...", "message": "..."}
 
 # Check task status (use task_id from above)
-curl "https://api.bainluck.com/api/admin/kalshi/task/abc123?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/kalshi/task/abc123"
 # Response: {"task_id": "abc123", "state": "SUCCESS", "result": {...}}
 ```
 
@@ -233,13 +233,13 @@ Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kal
 **Admin endpoints:**
 ```bash
 # Trigger a poll
-curl -X POST "https://api.bainluck.com/api/admin/polymarket/poll?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/polymarket/poll"
 
 # Backfill price history (fetches CLOB /prices-history for outcomes with <24 snapshots)
-curl -X POST "https://api.bainluck.com/api/admin/polymarket/backfill-history?secret=any&limit=50"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/polymarket/backfill-history?limit=50"
 
 # Check task status
-curl "https://api.bainluck.com/api/admin/polymarket/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/polymarket/task/{task_id}"
 ```
 
 **Non-sports categories to enable:**
@@ -305,16 +305,16 @@ SPORT_PATTERNS = [
 curl "https://api.bainluck.com/api/admin/futures/categorization-status"
 
 # Trigger LLM categorization (requires OPENAI_API_KEY)
-curl -X POST "https://api.bainluck.com/api/admin/futures/categorize?secret=xxx&limit=50"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/futures/categorize?limit=50"
 
 # Dry run (preview without saving)
-curl -X POST "https://api.bainluck.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/futures/categorize?dry_run=true"
 
 # View uncategorized markets (diagnostic)
 curl "https://api.bainluck.com/api/admin/futures/uncategorized"
 
 # Force-categorize all remaining via LLM
-curl -X POST "https://api.bainluck.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/futures/force-categorize?limit=100"
 ```
 
 **Debug endpoints:**
@@ -358,11 +358,11 @@ Team rosters are synced daily using ESPN's roster endpoints and MLB Stats API fo
 **Admin endpoints:**
 ```bash
 # Trigger roster sync (all sports or specific)
-curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any"
-curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any&sport_key=basketball_nba"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/rosters/sync"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/rosters/sync?sport_key=basketball_nba"
 
 # Check task status
-curl "https://api.bainluck.com/api/admin/rosters/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/rosters/task/{task_id}"
 ```
 
 ### Related Futures (Event → Futures Linking)
@@ -462,26 +462,26 @@ Fills in logos/colors for teams missing them by matching against ESPN's `/teams`
 **Admin endpoints:**
 ```bash
 # Sync team data from ESPN (colors, logos)
-curl -X POST "https://api.bainluck.com/api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/sync-teams?sport_key=basketball_nba"
 
 # Check team sync status
 curl "https://api.bainluck.com/api/admin/espn/teams-status"
 
 # Sync live event data (clock, period, win prob)
-curl -X POST "https://api.bainluck.com/api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/sync-live-events?sport_key=basketball_nba"
 
 # Test team name matching
-curl -X POST "https://api.bainluck.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/match-teams?our_team_name=Lakers&sport_key=basketball_nba"
 
 # Fix incorrect commence_time values using ESPN as source of truth
 # (backfills completed events — the live sync task handles new ones automatically)
-curl -X POST "https://api.bainluck.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/fix-commence-times?limit=500"
 # Check task status:
-curl "https://api.bainluck.com/api/admin/espn/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/task/{task_id}"
 
 # Validate existing ESPN ID assignments and clear bad matches
 # (one-time cleanup — uses token-overlap scoring to detect mismatched logos)
-curl -X POST "https://api.bainluck.com/api/admin/espn/cleanup-bad-matches?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/espn/cleanup-bad-matches"
 ```
 
 ### Authentication & Personalization
@@ -595,13 +595,13 @@ Consecutive identical snapshot rows are collapsed into single rows with `capture
 **Admin endpoints:**
 ```bash
 # Trigger collapse for one table (table: odds, winprob, futures)
-curl -X POST "https://api.bainluck.com/api/admin/snapshots/collapse?secret=any&table=odds&limit=500"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/snapshots/collapse?table=odds&limit=500"
 
 # Check task status
-curl "https://api.bainluck.com/api/admin/snapshots/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/snapshots/task/{task_id}"
 
 # View current row counts
-curl "https://api.bainluck.com/api/admin/snapshots/stats?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/snapshots/stats"
 ```
 
 **Files:** `backend/app/tasks/retention.py` (`_collapse_snapshots_impl`, `_collapse_table_for_partition`), `backend/app/routes/admin.py` (snapshot endpoints), `backend/tests/test_snapshot_collapse.py` (13 tests)
@@ -644,8 +644,8 @@ MLB's official Stats API (`statsapi.mlb.com`) provides live win probability data
 
 **Admin endpoints:**
 ```bash
-curl -X POST "https://api.bainluck.com/api/admin/mlb/sync?secret=any"
-curl "https://api.bainluck.com/api/admin/mlb/task/{task_id}?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/mlb/sync"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/mlb/task/{task_id}"
 ```
 
 **Files:** `backend/app/services/mlb_api.py`, `backend/app/tasks/mlb_sync.py`, `backend/tests/test_mlb_api.py` (33 tests)
@@ -697,23 +697,23 @@ Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors"
 **Admin endpoints:**
 ```bash
 # Trigger matching
-curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/match?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/match"
 
 # Check status (linked vs unlinked counts)
-curl "https://api.bainluck.com/api/admin/prediction-markets/status?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/status"
 
 # Debug funnel (where markets drop off)
-curl "https://api.bainluck.com/api/admin/prediction-markets/debug?secret=any&sample_size=100"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/debug?sample_size=100"
 
 # Trigger live price poll (normally runs every 2 min automatically)
-curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/poll-live?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/poll-live"
 
 # Manual link (fallback when auto-matching fails)
-curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=any&market_id=123&event_id=456"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/link?market_id=123&event_id=456"
 
 # Backfill Polymarket win_prob_snapshots from CLOB price history
 # (fills in trend line from market creation, not just current price)
-curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/backfill-history?secret=any&market_id=130740&event_id=5541994"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/backfill-history?market_id=130740&event_id=5541994"
 ```
 
 **Files:**
@@ -739,20 +739,20 @@ Three daily Celery tasks that use GPT-4o-mini to audit matching quality across t
 **Admin endpoints:**
 ```bash
 # Trigger audits (background Celery task)
-curl -X POST "https://api.bainluck.com/api/admin/audit/canonical-keys?secret=any&limit=50"
-curl -X POST "https://api.bainluck.com/api/admin/audit/prediction-market-links?secret=any&limit=50"
-curl -X POST "https://api.bainluck.com/api/admin/audit/related-futures?secret=any&limit=30"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/canonical-keys?limit=50"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/prediction-market-links?limit=50"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/related-futures?limit=30"
 
 # Check task status
-curl "https://api.bainluck.com/api/admin/audit/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/task/{task_id}"
 
 # Get latest results
-curl "https://api.bainluck.com/api/admin/audit/canonical-keys?secret=any"
-curl "https://api.bainluck.com/api/admin/audit/prediction-market-links?secret=any"
-curl "https://api.bainluck.com/api/admin/audit/related-futures?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/canonical-keys"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/prediction-market-links"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/related-futures"
 
 # Aggregate recurring patterns (ranked by frequency, with suggested rules)
-curl "https://api.bainluck.com/api/admin/audit/patterns?secret=any&days=30"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/audit/patterns?days=30"
 ```
 
 **Phase 2 graduation criteria (when to enable auto-fix):**
@@ -886,22 +886,22 @@ Polymarket game events contain player props (Points O/U, Assists O/U, Rebounds O
 **Admin endpoints:**
 ```bash
 # Check identity mapping status (total mappings, per-source counts)
-curl "https://api.bainluck.com/api/admin/team-identity/status?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/team-identity/status"
 
 # Trigger one-time backfill from existing data
-curl -X POST "https://api.bainluck.com/api/admin/team-identity/backfill?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/team-identity/backfill"
 
 # Search mappings across all sources
 curl "https://api.bainluck.com/api/admin/team-identity/search?q=celtics&secret=any"
 
 # View all mappings for a specific team
-curl "https://api.bainluck.com/api/admin/team-identity/team/123?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/team-identity/team/123"
 
 # Find teams without identity mappings
-curl "https://api.bainluck.com/api/admin/team-identity/unmapped?secret=any&sport_key=basketball_nba"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/team-identity/unmapped?sport_key=basketball_nba"
 
 # Check task status
-curl "https://api.bainluck.com/api/admin/team-identity/task/{task_id}?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/team-identity/task/{task_id}"
 ```
 
 ### Oscars Landing Page
@@ -1224,13 +1224,13 @@ Markets differing only by a numeric threshold (e.g., "Will Bitcoin exceed $80,00
 **Admin endpoints:**
 ```bash
 # Discover and backfill canonical market keys
-curl -X POST "https://api.bainluck.com/api/admin/market-grouping/backfill-keys?secret=any"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/market-grouping/backfill-keys"
 
 # View grouped markets
-curl "https://api.bainluck.com/api/admin/market-grouping/groups?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/market-grouping/groups"
 
 # Detect threshold progressions
-curl "https://api.bainluck.com/api/admin/market-grouping/thresholds?secret=any"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/market-grouping/thresholds"
 ```
 
 **API endpoints:**

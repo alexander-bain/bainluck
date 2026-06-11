@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import useSWR from "swr";
 import { AlertTriangle, XCircle, Info, RefreshCw, Copy, Check } from "lucide-react";
 import { useAdminAuth } from "./AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -36,7 +37,7 @@ export default function DiagnosisCard() {
     ["llm-diagnosis", secret],
     async () => {
       try {
-        const r = await fetch(`${API_URL}/api/admin/llm-diagnosis?secret=${encodeURIComponent(secret)}`);
+        const r = await adminFetch("/api/admin/llm-diagnosis", secret);
         if (!r.ok) return null;
         return await r.json();
       } catch {
@@ -49,8 +50,9 @@ export default function DiagnosisCard() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch(
-        `${API_URL}/api/admin/llm-diagnosis?secret=${encodeURIComponent(secret)}&force=true`,
+      const res = await adminFetch(
+        "/api/admin/llm-diagnosis?force=true",
+        secret,
         { method: "POST" }
       );
       const fresh = await res.json();

@@ -112,13 +112,13 @@ The NBA L3 gap required 5 sequential fixes:
 
 ```bash
 # Trigger Kalshi poll
-curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=<token>"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/kalshi/poll"
 
 # Trigger prediction market matching
-curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/match?secret=<token>&limit=1000"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/match?limit=1000"
 
 # Trigger tier re-backfill
-curl -X POST "https://api.bainluck.com/api/admin/futures/link-teams?secret=<token>&limit=5000&use_llm=false"
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/futures/link-teams?limit=5000&use_llm=false"
 ```
 
 ## When to Re-Run This Playbook

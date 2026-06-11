@@ -19,6 +19,7 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
 
 
@@ -400,8 +401,9 @@ export default function DiscoverQualityPage() {
     if (!submittedSecret) return;
     setTriggering(true);
     try {
-      const res = await fetch(
-        `${API_URL}/api/admin/hook-enrichment/trigger?secret=${encodeURIComponent(submittedSecret)}&limit=100`,
+      const res = await adminFetch(
+        "/api/admin/hook-enrichment/trigger?limit=100",
+        submittedSecret,
         { method: "POST" }
       );
       if (!res.ok) throw new Error(`Trigger failed: ${res.status}`);
@@ -560,7 +562,7 @@ export default function DiscoverQualityPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-bold text-text-primary">Discover Quality</h1>
-          <a href={`/admin?secret=${encodeURIComponent(submittedSecret)}`} className="text-xs font-medium text-accent-futures hover:underline">
+          <a href="/admin" className="text-xs font-medium text-accent-futures hover:underline">
             Admin Dashboard
           </a>
         </div>

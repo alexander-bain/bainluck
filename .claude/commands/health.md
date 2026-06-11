@@ -31,7 +31,7 @@ heroku pg:info -a bainluck 2>&1 | grep "Connections:"
 gh run list --repo alexander-bain/bainluck --limit 3
 
 # Celery queue health
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/celery-debug?secret=$ADMIN_TOKEN" \
+source .env.claude && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/celery-debug" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); q=d.get('queue_lengths',{}); print(f'  bg={q.get(\"background\",0)} rt={q.get(\"realtime\",0)}')"
 ```
 
@@ -42,7 +42,7 @@ source .env.claude && curl -s "https://api.bainluck.com/api/admin/celery-debug?s
 # Note: source_coverage is a list of per-sport dicts, not a dict with .sources
 # quota is nested: quota.current.{remaining,used,total,health}, quota.budget.{projected_eom,projected_surplus,pace_48h_daily,days_remaining}
 # database keys: active_events, live_events, snapshots_last_hour, db_size_mb, growth_rate_mb_per_day
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_TOKEN" | python3 -c "
+source .env.claude && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/dashboard" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 qc=d.get('quota',{}).get('current',{}); qb=d.get('quota',{}).get('budget',{})
@@ -57,7 +57,7 @@ for s in tier1:
 "
 
 # Link rate health — structure: {overall: {link_rate_pct, open_total, open_linked}, kalshi: {totals, by_sport}, polymarket: {totals, by_sport}}
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN" | python3 -c "
+source .env.claude && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/prediction-markets/link-rate" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 ov=d.get('overall',{})
@@ -72,7 +72,7 @@ for src in ('kalshi','polymarket'):
 "
 
 # is_winner backfill coverage — target is 100% for every source (any gap is a bug)
-source .env.claude && curl -s "https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN" | python3 -c "
+source .env.claude && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/backfill-winners/status" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for s in d.get('sources',[]):

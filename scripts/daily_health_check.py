@@ -85,6 +85,7 @@ def _fetch_json(
     url: str,
     headers: dict | None = None,
     timeout: int = 30,
+    bearer_token: str | None = None,
 ) -> tuple[dict | None, str]:
     """Fetch JSON from *url*, returning ``(data, error_reason)``.
 
@@ -92,7 +93,10 @@ def _fetch_json(
     short diagnostic such as ``"timeout"`` or ``"403 Forbidden"`` so callers
     can surface it in the health report instead of a generic "UNREACHABLE".
     """
-    req = urllib.request.Request(url, headers=headers or {})
+    merged = dict(headers or {})
+    if bearer_token:
+        merged["Authorization"] = f"Bearer {bearer_token}"
+    req = urllib.request.Request(url, headers=merged)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode()), ""
@@ -126,7 +130,7 @@ def check_api_reachable(report: HealthReport) -> None:
 
 
 def check_dashboard(report: HealthReport, admin_token: str) -> None:
-    data, err = _fetch_json(f"{API_BASE}/api/admin/dashboard?secret={admin_token}", timeout=30)
+    data, err = _fetch_json(f"{API_BASE}/api/admin/dashboard", timeout=30, bearer_token=admin_token)
     if data is None:
         report.checks.append(CheckResult(
             name="Admin Dashboard",
@@ -209,7 +213,7 @@ def check_dashboard(report: HealthReport, admin_token: str) -> None:
 
 
 def check_celery_queue(report: HealthReport, admin_token: str) -> None:
-    data, err = _fetch_json(f"{API_BASE}/api/admin/celery-debug?secret={admin_token}", timeout=30)
+    data, err = _fetch_json(f"{API_BASE}/api/admin/celery-debug", timeout=30, bearer_token=admin_token)
     if data is None:
         report.checks.append(CheckResult(
             name="Celery Queue",
@@ -247,8 +251,9 @@ def check_celery_queue(report: HealthReport, admin_token: str) -> None:
 def check_backfill_coverage(report: HealthReport, admin_token: str) -> None:
     # This endpoint runs a heavy aggregate query; give it extra time.
     data, err = _fetch_json(
-        f"{API_BASE}/api/admin/backfill-winners/status?secret={admin_token}",
+        f"{API_BASE}/api/admin/backfill-winners/status",
         timeout=60,
+        bearer_token=admin_token,
     )
     if data is None:
         report.checks.append(CheckResult(

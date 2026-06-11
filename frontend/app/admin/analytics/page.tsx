@@ -8,6 +8,7 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import {
@@ -1246,14 +1247,14 @@ export default function AnalyticsPage() {
 
   // --- Data fetching ---
   const fetcher = (url: string) =>
-    fetch(url).then((r) => {
+    adminFetch(url, secret).then((r) => {
       if (!r.ok) throw new Error("API error: " + r.status);
       return r.json();
     });
 
   const makeUrl = (endpoint: string, params?: Record<string, string>) => {
-    const p = new URLSearchParams({ secret, period, ...params });
-    return `${API_URL}/api/admin/analytics/${endpoint}?${p}`;
+    const p = new URLSearchParams({ period, ...params });
+    return `/api/admin/analytics/${endpoint}?${p}`;
   };
 
   const { data: overviewData, error: overviewError, isLoading: overviewLoading } =
@@ -1290,7 +1291,7 @@ export default function AnalyticsPage() {
   const { data: realtimeData, error: realtimeError, isLoading: realtimeLoading } =
     useSWR<RealtimeData>(
       activeTab === "realtime"
-        ? `${API_URL}/api/admin/analytics/realtime?secret=${encodeURIComponent(secret)}`
+        ? "/api/admin/analytics/realtime"
         : null,
       fetcher,
       { refreshInterval: 30000 }

@@ -91,7 +91,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 ```
 https://bainluck.com/admin              — Operations dashboard
 https://api.bainluck.com/docs           — API docs (Swagger)
-https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN  — Link rate health
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://api.bainluck.com/api/admin/prediction-markets/link-rate  — Link rate health
 ```
 
 ---
@@ -371,7 +371,7 @@ Run `/health` at the start of every session. It covers all production checks: Se
 
 **Production API access from Claude Code:** The sandbox may block direct `curl` to `api.bainluck.com` or `heroku logs`. The workaround: `source ~/.claude/.env` first — this loads `BAINLUCK_API` and `ADMIN_TOKEN` as environment variables. Then use `$BAINLUCK_API` instead of the literal URL:
 ```bash
-source ~/.claude/.env && curl -s "$BAINLUCK_API/api/admin/audit-pass2-guess?secret=$ADMIN_TOKEN" | python3 -m json.tool
+source ~/.claude/.env && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$BAINLUCK_API/api/admin/audit-pass2-guess" | python3 -m json.tool
 ```
 If `~/.claude/.env` doesn't exist, ask the user to run:
 ```bash
@@ -421,9 +421,9 @@ When fixing ANY data quality, matching, or display issue:
 | Entertainment API | `GET /api/entertainment` |
 | League markets API | `GET /api/leagues/{sport_key}` (series, awards, props by league) |
 | Hook coverage | `GET /api/admin/hook-coverage` |
-| Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_TOKEN` |
-| Link rate health | `GET /api/admin/prediction-markets/link-rate` |
-| Ad-hoc SQL (read-only) | `POST /api/admin/db-query?secret=$ADMIN_TOKEN` (body: `{"sql":"...","limit":500}`) |
+| Grid health audit | `GET /api/admin/audit/all` (Authorization: Bearer $ADMIN_TOKEN) |
+| Link rate health | `GET /api/admin/prediction-markets/link-rate` (Authorization: Bearer $ADMIN_TOKEN) |
+| Ad-hoc SQL (read-only) | `POST /api/admin/db-query` (Authorization: Bearer $ADMIN_TOKEN, body: `{"sql":"...","limit":500}`) |
 | API docs | https://api.bainluck.com/docs |
 | Backlog | `docs/backlog.md` |
 | Shipped features | `docs/completed-features.md` |

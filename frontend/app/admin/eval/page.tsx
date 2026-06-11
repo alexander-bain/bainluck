@@ -6,6 +6,7 @@ import PairwiseTab from "@/components/admin/discover/PairwiseTab";
 
 import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -131,9 +132,10 @@ interface Override {
 
 async function fetchEvalDecisions(category?: "grid" | "futures"): Promise<EvalDecision[]> {
   try {
-    const params = new URLSearchParams({ secret: secret });
+    const params = new URLSearchParams();
     if (category) params.set("category", category);
-    const res = await fetch(`${API_URL}/api/admin/eval/decisions?${params}`);
+    const path = params.toString() ? `/api/admin/eval/decisions?${params}` : "/api/admin/eval/decisions";
+    const res = await adminFetch(path, secret);
     if (!res.ok) return [];
     const data = await res.json();
     return (data.decisions || []).map((d: Record<string, unknown>) => ({
@@ -154,14 +156,13 @@ async function saveEvalDecision(
   reason: string,
 ) {
   const params = new URLSearchParams({
-    secret: secret,
     source_name: sourceName,
     decision,
     category,
     reason,
   });
   try {
-    await fetch(`${API_URL}/api/admin/eval/decision?${params}`, { method: "POST" });
+    await adminFetch(`/api/admin/eval/decision?${params}`, secret, { method: "POST" });
   } catch {
     // Silently fail — not critical
   }
@@ -182,14 +183,14 @@ async function createOverride(
   decision: string = "approved",
 ) {
   const params = new URLSearchParams({
-    secret: secret,
     override_type: overrideType,
     source_name: sourceName,
     decision,
     reason,
   });
-  const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override?${params}`,
+  const res = await adminFetch(
+    `/api/admin/matching-review/${league}/override?${params}`,
+    secret,
     { method: "POST" },
   );
   if (!res.ok) throw new Error(`Override API error: ${res.status}`);
@@ -197,8 +198,9 @@ async function createOverride(
 }
 
 async function fetchOverrides(league: string): Promise<Override[]> {
-  const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}?secret=${encodeURIComponent(secret)}`,
+  const res = await adminFetch(
+    `/api/admin/matching-review/${league}`,
+    secret,
   );
   if (!res.ok) return [];
   const data = await res.json();
@@ -206,8 +208,9 @@ async function fetchOverrides(league: string): Promise<Override[]> {
 }
 
 async function deleteOverride(league: string, id: number) {
-  const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=${encodeURIComponent(secret)}`,
+  const res = await adminFetch(
+    `/api/admin/matching-review/${league}/override/${id}`,
+    secret,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error(`Delete override error: ${res.status}`);

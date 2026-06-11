@@ -208,7 +208,7 @@ Fetches historical price data from Polymarket's CLOB API (`/prices-history`) for
 
 The admin dashboard at `/admin` (frontend) shows quota, source coverage, DB storage, worker metrics.
 
-Key admin API endpoints (all require `?secret=$ADMIN_SECRET`):
+Key admin API endpoints (all require `Authorization: Bearer $ADMIN_TOKEN` header):
 - `POST /api/admin/cleanup/reclassify-events` — move misclassified pm_ events to correct sport based on Kalshi ticker
 - `POST /api/admin/cleanup/merge-duplicate-events` — merge pm_ duplicates into real events (sport filter + limit)
 - `POST /api/admin/cleanup/purge-orphan-pm-events` — delete pm_ events with no snapshot data
@@ -549,13 +549,14 @@ Claude Code can't directly connect to the production Postgres DB (sandbox blocks
 ### Endpoint
 
 ```
-GET /api/admin/query?secret=$ADMIN_TOKEN&sql=SELECT ...
+GET /api/admin/query?sql=SELECT ...
+Authorization: Bearer $ADMIN_TOKEN
 ```
 
 - **SELECT-only** — rejects INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/CREATE/GRANT/REVOKE/COPY
 - **1000 row limit** — hardcoded in the endpoint
 - **10 second statement timeout** — via `SET LOCAL statement_timeout = '10s'`
-- **Admin-secret gated** — requires `$ADMIN_TOKEN`
+- **Auth required** — `Authorization: Bearer $ADMIN_TOKEN` header (or `?secret=` query param, deprecated)
 - **Returns JSON**: `{"columns": [...], "rows": [{...}, ...], "count": N}`
 
 ### CLI tool
@@ -576,7 +577,7 @@ Formats results as a table. Works from Claude Code sessions via `urllib` (bypass
 
 ### If it breaks
 
-1. Check the endpoint exists: `curl "https://api.bainluck.com/api/admin/query?secret=$ADMIN_TOKEN&sql=SELECT%201"`
+1. Check the endpoint exists: `curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/query?sql=SELECT%201"`
 2. If 404: the route may not be mounted. Check `admin_data_quality.py` is included in `admin.py`'s router includes.
 3. If 500: check Heroku logs for the specific error. Most likely cause is the SQL having syntax errors or hitting the 10s timeout.
 4. If the endpoint is deleted: recreate it — see commit `00ce882` for the original implementation.

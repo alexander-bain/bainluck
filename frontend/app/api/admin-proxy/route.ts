@@ -23,9 +23,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const res = await fetch(`${API_URL}${path}?secret=${encodeURIComponent(secret)}`, {
+    const res = await fetch(`${API_URL}${path}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(55000),
+      headers: { Authorization: `Bearer ${secret}` },
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -51,20 +52,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Path not allowed" }, { status: 403 });
   }
 
-  // Forward all remaining query params
+  // Forward all remaining query params (excluding path and secret)
   const params = new URLSearchParams();
-  params.set("secret", secret);
   for (const [key, value] of searchParams.entries()) {
     if (key !== "path" && key !== "secret") {
       params.set(key, value);
     }
   }
 
+  const queryString = params.toString();
+  const url = queryString ? `${API_URL}${path}?${queryString}` : `${API_URL}${path}`;
+
   try {
-    const res = await fetch(`${API_URL}${path}?${params.toString()}`, {
+    const res = await fetch(url, {
       method: "POST",
       cache: "no-store",
       signal: AbortSignal.timeout(55000),
+      headers: { Authorization: `Bearer ${secret}` },
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");

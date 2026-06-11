@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -67,8 +68,9 @@ export default function FeedReviewPage() {
       const url = `bainluck://${item.type}/${item.data.id}`;
 
       try {
-        const resp = await fetch(
-          `${API_URL}/api/admin/ranking-judgments/curation-signal?secret=${secret}`,
+        const resp = await adminFetch(
+          "/api/admin/ranking-judgments/curation-signal",
+          secret,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

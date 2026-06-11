@@ -8,9 +8,8 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetchJSON } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const VERDICT_COLORS: Record<string, string> = {
   love: "bg-green-500",
@@ -375,14 +374,10 @@ export default function LabelingCoveragePage() {
   const { data, error, isLoading } = useSWR<CoverageData>(
     secret ? ["labeling-coverage", secret, window] : null,
     () =>
-      fetch(
-        `${API_URL}/api/admin/ranking-judgments/coverage?secret=${encodeURIComponent(
-          secret
-        )}&window=${window}`
-      ).then((r) => {
-        if (!r.ok) throw new Error("API error: " + r.status);
-        return r.json();
-      }),
+      adminFetchJSON<CoverageData>(
+        `/api/admin/ranking-judgments/coverage?window=${window}`,
+        secret
+      ),
     { refreshInterval: 120000 }
   );
 

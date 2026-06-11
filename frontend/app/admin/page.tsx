@@ -8,6 +8,7 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import DiagnosisCard from "@/components/admin/DiagnosisCard";
@@ -746,7 +747,7 @@ function LinkRateCard({ secret }: { secret: string }) {
   const { data } = useSWR<LinkRateData>(
     secret ? ["link-rate", secret] : null,
     () =>
-      fetch(API_URL + "/api/admin/prediction-markets/link-rate?secret=" + encodeURIComponent(secret))
+      adminFetch("/api/admin/prediction-markets/link-rate", secret)
         .then((r) => r.ok ? r.json() : null),
     { refreshInterval: 300000 }
   );
@@ -1287,11 +1288,7 @@ export default function AdminDashboard() {
   const { data, error, isLoading } = useSWR<DashboardData>(
     ["admin-dashboard", secret],
     () =>
-      fetch(API_URL + "/api/admin/dashboard?secret=" + encodeURIComponent(secret))
-        .then((r) => {
-          if (!r.ok) throw new Error("API error: " + r.status);
-          return r.json();
-        }),
+      adminFetchJSON<DashboardData>("/api/admin/dashboard", secret),
     { refreshInterval: 60000 }
   );
 
@@ -1498,7 +1495,7 @@ function DataQualityCard({ secret }: { secret: string }) {
   const { data, error, mutate } = useSWR<DataQualityReport>(
     ["data-quality", secret],
     () =>
-      fetch(API_URL + "/api/admin/data-quality?secret=" + encodeURIComponent(secret))
+      adminFetch("/api/admin/data-quality", secret)
         .then((r) => r.json()),
     { refreshInterval: 300000 } // 5 min
   );
@@ -1508,8 +1505,9 @@ function DataQualityCard({ secret }: { secret: string }) {
   const runCheck = async () => {
     setChecking(true);
     try {
-      const r = await fetch(
-        API_URL + "/api/admin/data-quality/check?secret=" + encodeURIComponent(secret),
+      const r = await adminFetch(
+        "/api/admin/data-quality/check",
+        secret,
         { method: "POST" }
       );
       const report = await r.json();
@@ -1730,7 +1728,7 @@ function GridHealthCard({ secret }: { secret: string }) {
   const { data, error, mutate } = useSWR<GridAuditResult>(
     ["grid-health", secret],
     () =>
-      fetch(API_URL + "/api/admin/audit/all?secret=" + encodeURIComponent(secret))
+      adminFetch("/api/admin/audit/all", secret)
         .then((r) => r.json()),
     { refreshInterval: 600000 } // 10 min
   );
@@ -1746,8 +1744,9 @@ function GridHealthCard({ secret }: { secret: string }) {
   const refresh = async () => {
     setChecking(true);
     try {
-      const r = await fetch(
-        API_URL + "/api/admin/audit/all?secret=" + encodeURIComponent(secret)
+      const r = await adminFetch(
+        "/api/admin/audit/all",
+        secret
       );
       const report = await r.json();
       mutate(report, false);

@@ -25,6 +25,7 @@ import os
 import sentry_sdk
 from celery import Celery
 from celery.schedules import crontab
+from sentry_sdk.integrations.celery import CeleryIntegration
 
 from app.tasks.base import run_async
 
@@ -146,6 +147,9 @@ if sentry_dsn:
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
         send_default_pii=False,
+        integrations=[
+            CeleryIntegration(monitor_beat_tasks=True),
+        ],
     )
 
 

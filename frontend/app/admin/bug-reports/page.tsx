@@ -6,6 +6,7 @@ import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { adminFetch } from "@/lib/adminFetch";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 
@@ -139,11 +140,9 @@ export default function BugReportsPage() {
     try {
       const headers = await getAuthHeaders();
       const statusParam = filter === "all" ? "" : `&status=${filter}`;
-      const secretParam = secret ? `&secret=${secret}` : "";
-      const res = await fetch(
-        `${API}/api/admin/bug-reports?limit=100${statusParam}${secretParam}`,
-        { headers }
-      );
+      const res = secret
+        ? await adminFetch(`/api/admin/bug-reports?limit=100${statusParam}`, secret, { headers })
+        : await fetch(`${API}/api/admin/bug-reports?limit=100${statusParam}`, { headers });
       if (!res.ok) {
         setReports([]);
         setLoading(false);
@@ -163,22 +162,22 @@ export default function BugReportsPage() {
 
   const updateStatus = async (id: number, newStatus: string) => {
     const headers = await getAuthHeaders();
-    const secretParam = secret ? `&secret=${secret}` : "";
-    await fetch(
-      `${API}/api/admin/bug-reports/${id}?status=${newStatus}${secretParam}`,
-      { method: "PATCH", headers }
-    );
+    if (secret) {
+      await adminFetch(`/api/admin/bug-reports/${id}?status=${newStatus}`, secret, { method: "PATCH", headers });
+    } else {
+      await fetch(`${API}/api/admin/bug-reports/${id}?status=${newStatus}`, { method: "PATCH", headers });
+    }
     loadReports();
   };
 
   const updateField = async (id: number, field: string, value: string) => {
     const headers = await getAuthHeaders();
-    const secretParam = secret ? `&secret=${secret}` : "";
     const param = encodeURIComponent(value);
-    await fetch(
-      `${API}/api/admin/bug-reports/${id}?${field}=${param}${secretParam}`,
-      { method: "PATCH", headers }
-    );
+    if (secret) {
+      await adminFetch(`/api/admin/bug-reports/${id}?${field}=${param}`, secret, { method: "PATCH", headers });
+    } else {
+      await fetch(`${API}/api/admin/bug-reports/${id}?${field}=${param}`, { method: "PATCH", headers });
+    }
     setReports(prev =>
       prev.map(r => (r.id === id ? { ...r, [field]: value || null } : r))
     );
@@ -195,8 +194,9 @@ export default function BugReportsPage() {
     if (report?.has_screenshot && !report.screenshot_base64) {
       try {
         const headers = await getAuthHeaders();
-        const secretParam = secret ? `?secret=${secret}` : "";
-        const resp = await fetch(`${API}/api/admin/bug-reports/${id}/screenshot${secretParam}`, { headers });
+        const resp = secret
+          ? await adminFetch(`/api/admin/bug-reports/${id}/screenshot`, secret, { headers })
+          : await fetch(`${API}/api/admin/bug-reports/${id}/screenshot`, { headers });
         if (resp.ok) {
           const blob = await resp.blob();
           const reader = new FileReader();
@@ -212,11 +212,11 @@ export default function BugReportsPage() {
 
   const updateStatusSilent = async (id: number, newStatus: string) => {
     const headers = await getAuthHeaders();
-    const secretParam = secret ? `&secret=${secret}` : "";
-    await fetch(
-      `${API}/api/admin/bug-reports/${id}?status=${newStatus}${secretParam}`,
-      { method: "PATCH", headers }
-    );
+    if (secret) {
+      await adminFetch(`/api/admin/bug-reports/${id}?status=${newStatus}`, secret, { method: "PATCH", headers });
+    } else {
+      await fetch(`${API}/api/admin/bug-reports/${id}?status=${newStatus}`, { method: "PATCH", headers });
+    }
   };
 
   const copyPrompt = (prompt: string) => {
@@ -235,7 +235,7 @@ export default function BugReportsPage() {
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <a href={`/admin?secret=${secret}`} className="text-sm text-blue-600 hover:underline">&larr; Admin Dashboard</a>
+            <a href="/admin" className="text-sm text-blue-600 hover:underline">&larr; Admin Dashboard</a>
             <PageHeader
               question="What bugs have users reported?"
               status={reports.length === 0 ? "good" : reports.some(r => r.status === "new") ? "warning" : "good"}
