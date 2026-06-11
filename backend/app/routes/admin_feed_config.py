@@ -4,7 +4,7 @@ Returns current Redis-backed feed flags so experiment conditions
 are provable in audit reports.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -12,9 +12,9 @@ router = APIRouter()
 
 
 @router.get("/feed-config")
-async def get_feed_config(secret: str = Query(...)):
+async def get_feed_config(request: Request, secret: str = Query(None)):
     """Return current feed experiment state from Redis."""
-    _check_admin_secret(secret)
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_redis_client
 
@@ -35,12 +35,13 @@ async def get_feed_config(secret: str = Query(...)):
 
 @router.post("/feed-config")
 async def set_feed_config(
-    secret: str = Query(...),
-    key: str = Query(..., description="Redis key suffix (e.g., 'interestingness:blend_weight')"),
+    request: Request,
+    secret: str = Query(None),
+    key: str = Query(..., description="Redis key suffix"),
     value: str = Query(..., description="Value to set"),
 ):
     """Set a feed config Redis key. Admin-only."""
-    _check_admin_secret(secret)
+    _check_admin_secret(secret, request=request)
 
     ALLOWED_KEYS = {
         "interestingness:blend_weight",

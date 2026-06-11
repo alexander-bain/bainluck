@@ -6,7 +6,7 @@ import sys
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from sqlalchemy import select, update, or_, text, func
@@ -3953,7 +3953,8 @@ class _DbQueryRequest(BaseModel):
 @router.post("/db-query")
 async def admin_db_query(
     body: _DbQueryRequest,
-    secret: str = Query(...),
+    request: Request,
+    secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Run a read-only SQL query via POST (SQL stays out of URL/access logs).
@@ -3967,8 +3968,7 @@ async def admin_db_query(
     """
     import time as _t
 
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     sql_stripped = body.sql.strip().rstrip(";")
 

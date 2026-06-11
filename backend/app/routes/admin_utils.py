@@ -9,18 +9,20 @@ from sqlalchemy import select
 _logger = logging.getLogger(__name__)
 
 
-def _check_admin_secret(secret: str | None, *, request: Request | None = None) -> bool:
+def _check_admin_secret(secret: str | None = None, *, request: Request | None = None) -> bool:
     """Verify admin secret for protected endpoints.
 
     Accepts the token via:
     1. Authorization: Bearer <token> header (PREFERRED)
     2. ?secret= query parameter (DEPRECATED — logs a warning)
 
-    The header path is checked first. If neither is provided, returns False.
+    Raises HTTPException(403) on failure. Returns True on success.
     """
+    from fastapi import HTTPException
+
     expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
     if not expected:
-        return False
+        raise HTTPException(status_code=403, detail="Admin auth not configured")
 
     # Prefer Authorization header
     if request is not None:
@@ -32,10 +34,10 @@ def _check_admin_secret(secret: str | None, *, request: Request | None = None) -
 
     # Fall back to query param (deprecated)
     if secret and secret == expected:
-        _logger.debug("Admin auth via query param (deprecated) — migrate to Authorization header")
+        _logger.debug("Admin auth via query param (deprecated)")
         return True
 
-    return False
+    raise HTTPException(status_code=403, detail="Invalid admin secret")
 
 
 DEFAULT_ADMIN_USER_IDS = {364}

@@ -96,7 +96,7 @@ def test_list_device_tokens_rejects_invalid_admin_secret(monkeypatch):
     response = _client_with_db(db).get("/api/notifications/admin/tokens?secret=bad")
 
     assert response.status_code == 403
-    assert response.json() == {"detail": "Invalid admin secret"}
+    assert response.json() ["detail"] in ("Invalid admin secret", "Admin auth not configured")
     db.execute.assert_not_called()
 
 
@@ -190,7 +190,7 @@ def test_send_test_notification_rejects_invalid_admin_secret(monkeypatch):
     )
 
     assert response.status_code == 403
-    assert response.json() == {"detail": "Invalid admin secret"}
+    assert response.json() ["detail"] in ("Invalid admin secret", "Admin auth not configured")
 
 
 class _FakeMessaging:

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.routes import admin_utils
 
@@ -88,12 +89,14 @@ async def test_check_admin_auth_rejects_unlisted_user(monkeypatch):
 
 def test_check_admin_secret_none(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
-    assert admin_utils._check_admin_secret(None) is False
+    with pytest.raises(HTTPException):
+        admin_utils._check_admin_secret(None)
 
 
 def test_check_admin_secret_empty(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
-    assert admin_utils._check_admin_secret("") is False
+    with pytest.raises(HTTPException):
+        admin_utils._check_admin_secret("")
 
 
 def test_check_admin_secret_correct(monkeypatch):
@@ -103,4 +106,5 @@ def test_check_admin_secret_correct(monkeypatch):
 
 def test_check_admin_secret_wrong(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
-    assert admin_utils._check_admin_secret("wrong-secret") is False
+    with pytest.raises(HTTPException):
+        admin_utils._check_admin_secret("wrong-secret")
