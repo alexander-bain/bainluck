@@ -101,6 +101,17 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Intake digest (parse + dedup + file issue)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Parse the latest sweep into deduplicated findings, write
+          # new_findings_count into the manifest, and file ONE digest issue
+          # (only when new findings exist). Best-effort: never fail the sweep.
+          python3 backend/scripts/manus_intake.py || echo "intake step failed (non-fatal)"
+
       - name: Upload results as artifact
         if: always()
         uses: actions/upload-artifact@v4

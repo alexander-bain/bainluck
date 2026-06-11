@@ -35,7 +35,10 @@ def _detect_severity(text: str) -> str:
 
 def _fingerprint(surface: str, description: str) -> str:
     """Deterministic fingerprint for dedup: hash of normalized surface + description."""
-    normalized = f"{surface.lower().strip()}|{re.sub(r'\\s+', ' ', description.lower().strip())}"
+    # NOTE: keep the regex out of the f-string expression — backslashes inside
+    # f-string expressions are a SyntaxError on Python < 3.12 (CI runs 3.11).
+    desc = re.sub(r"\s+", " ", description.lower().strip())
+    normalized = f"{surface.lower().strip()}|{desc}"
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 

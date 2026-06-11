@@ -127,7 +127,14 @@ function teamsToProgression(
 // ---------------------------------------------------------------------------
 
 function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] }) {
-  if (!movers.length) return null;
+  // Floor at 0.5 percentage points to suppress near-zero "0.0%" noise.
+  // change_24h is a 0-1 fraction (e.g. 0.005 = 0.5pp), matching the native
+  // iOS movers floor.
+  const MOVER_FLOOR = 0.005; // 0.5 percentage points
+  const realMovers = movers.filter(
+    (m) => m.change_24h != null && Math.abs(m.change_24h) >= MOVER_FLOOR
+  );
+  if (!realMovers.length) return null;
 
   return (
     <div className="mb-5">
@@ -135,7 +142,7 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
         Biggest Movers (24h)
       </h2>
       <div className="flex flex-wrap gap-2">
-        {movers.map((m) => {
+        {realMovers.map((m) => {
           const pct = Math.abs((m.change_24h ?? 0) * 100);
           const isUp = m.direction === "up";
           return (
@@ -156,7 +163,7 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
                   style={{ backgroundColor: m.primary_color }}
                 />
               )}
-              <span className="font-medium">{m.short_name}</span>
+              <span className="font-medium">{m.name || m.short_name}</span>
               <span className="font-mono text-xs">
                 {isUp ? "+" : "-"}
                 {pct >= 1 ? Math.round(pct) : pct.toFixed(1)}%

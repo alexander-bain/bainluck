@@ -16,12 +16,17 @@ interface MoversRibbonProps {
 export default function MoversRibbon({ movers, gridHref }: MoversRibbonProps) {
   if (!movers || movers.length === 0) return null;
 
-  // Show up to 6 movers, sorted by absolute change descending
-  // Filter out zero/null movers and guard against NaN from null change_24h
+  // Show up to 6 movers, sorted by absolute change descending.
+  // Floor at 0.5 percentage points to suppress near-zero "0.0%" noise.
+  // change_24h is a 0-1 fraction (e.g. 0.005 = 0.5pp), matching the native
+  // iOS movers floor. Guard against NaN from null change_24h.
+  const MOVER_FLOOR = 0.005; // 0.5 percentage points
   const sorted = [...movers]
-    .filter((m) => m.change_24h != null && Math.abs(m.change_24h) >= 0.001)
+    .filter((m) => m.change_24h != null && Math.abs(m.change_24h) >= MOVER_FLOOR)
     .sort((a, b) => Math.abs(b.change_24h ?? 0) - Math.abs(a.change_24h ?? 0))
     .slice(0, 6);
+
+  if (sorted.length === 0) return null;
 
   return (
     <section aria-label="Biggest odds movers in the last 24 hours">
@@ -68,7 +73,7 @@ export default function MoversRibbon({ movers, gridHref }: MoversRibbonProps) {
               {/* Name + change */}
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-text-primary truncate">
-                  {mover.short_name || mover.name}
+                  {mover.name || mover.short_name}
                 </div>
                 <div className="text-[10px] text-text-muted capitalize">
                   {mover.column.replace(/_/g, " ")}
