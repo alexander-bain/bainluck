@@ -201,6 +201,7 @@ class TestBeatScheduleCompleteness:
         "enrich-market-hooks",
         "enrich-discover-llm-metadata",
         "enrich-snippet-angles",
+        "enrich-cu-v2-profiles",
         "generate-discover-comparison-candidates",
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",

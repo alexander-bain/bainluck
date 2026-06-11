@@ -664,6 +664,13 @@ def enrich_discover_llm_metadata(self, limit: int = 100):
     return _tracked_run("enrich_discover_llm", _enrich(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.enrich_cu_v2_profiles", soft_time_limit=600, time_limit=660)
+def enrich_cu_v2_profiles(self, limit: int = 125):
+    """Generate Content Understanding v2 profiles for feed-shaped markets."""
+    from app.tasks.enrich_markets import enrich_cu_v2_profiles as _enrich
+    return _tracked_run("enrich_cu_v2", _enrich(limit))
+
+
 @celery_app.task(bind=True, name="app.tasks.enrich_snippet_angles", soft_time_limit=300, time_limit=360)
 def enrich_snippet_angles(self, limit: int = 125):
     """Compute and cache snippet angles for feed-shaped markets."""
@@ -1471,6 +1478,12 @@ celery_app.conf.beat_schedule = {
     "enrich-snippet-angles": {
         "task": "app.tasks.enrich_snippet_angles",
         "schedule": crontab(minute=30, hour="*/6"),
+        "kwargs": {"limit": 125},
+        "options": {"queue": "background"},
+    },
+    "enrich-cu-v2-profiles": {
+        "task": "app.tasks.enrich_cu_v2_profiles",
+        "schedule": crontab(minute=50, hour="*/12"),
         "kwargs": {"limit": 125},
         "options": {"queue": "background"},
     },

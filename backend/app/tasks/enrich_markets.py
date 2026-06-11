@@ -717,6 +717,214 @@ async def enrich_discover_llm_metadata(limit: int = 100):
     return stats
 
 
+_CU_V2_PROMPT = """You are classifying a prediction-market card for a casual audience's Discover feed. Return ONLY valid JSON matching the schema below — no extra keys, no prose.
+
+Market: {name}
+Category: {category}
+Source: {source}
+Resolution date: {resolution_date}
+Outcomes:
+{outcomes}
+
+JSON schema:
+{{
+  "topic": "sports|politics|geopolitics|economics|tech|entertainment|culture|health|weather|crypto",
+  "subtopic": "<lowercase open vocab, e.g. basketball, elections, fed, ai, awards>",
+  "entities": [{{"name": "<lowercase>", "type": "team|person|org|place|work|event"}}],
+  "geography": "us|global|local|country:<XX>",
+  "story_key": "story:<slug>",
+  "series_key": "series:<slug>|null",
+  "temporal": "event_tied|deadline|evergreen|periodic",
+  "event_date": "<YYYY-MM-DD or null — the real-world moment, NOT resolution_date>",
+  "recurrence": "one_off|annual|weekly|daily|null",
+  "stakes": <1-5, magnitude of outcome: champion=5, prop=1>,
+  "breadth": <1-5, who's heard of this: mainstream=5, niche=1>,
+  "oddity": <1-5, novelty/absurdity: Joe Rogan + 60 Minutes = 5>,
+  "arc": "race|comeback|collapse|milestone|upset_watch|none",
+  "hook_facts": [{{"type": "stat|context|comparison", "text": "<one falsifiable claim>"}}],
+  "junk_flags": ["<ladder|dated_bucket|social_count|duplicate_phrasing — empty array if none>"],
+  "confidence": <0.0-1.0, your confidence in this classification>
+}}"""
+
+
+def _compute_liveness(leader_prob: float | None, status: str | None) -> str:
+    if status and status != "open":
+        return "resolved"
+    if leader_prob is None:
+        return "unknown"
+    if leader_prob < 0.02 or leader_prob > 0.98:
+        return "dead"
+    if leader_prob < 0.05 or leader_prob > 0.95:
+        return "extreme"
+    return "active"
+
+
+async def enrich_cu_v2_profiles(limit: int = 125):
+    """Generate Content Understanding v2 profiles for feed-shaped markets.
+
+    Writes to market_metadata['discover_llm'] with schema_version=2.
+    v1 profiles are preserved — v2 overwrites the same key but consumers
+    check schema_version before reading.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.services.llm import _get_client
+    from sqlalchemy import or_
+
+    client = _get_client()
+    if not client:
+        return {"skipped": True, "reason": "no_openai_key"}
+
+    now = datetime.now(timezone.utc)
+    stats = {
+        "processed": 0, "generated": 0, "skipped_fresh": 0,
+        "errors": 0, "input_tokens": 0, "output_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    COST_CAP_USD = 30.0
+
+    async with get_task_session() as session:
+        feed_categories = [
+            "politics", "geopolitics", "economics", "tech", "health",
+            "entertainment", "weather", "basketball", "baseball",
+            "football", "hockey", "soccer", "golf", "culture", "mma",
+        ]
+        result = await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.status == "open",
+                or_(
+                    FuturesMarket.llm_sport_category.in_(feed_categories),
+                    FuturesMarket.volume_24h >= 5_000,
+                    FuturesMarket.market_tier <= 3,
+                ),
+                FuturesMarket.llm_sport_category != "crypto",
+            )
+            .order_by(
+                FuturesMarket.volume_24h.desc().nullslast(),
+                FuturesMarket.updated_at.desc().nullslast(),
+            )
+            .limit(limit * 4)
+        )
+        candidates = result.scalars().all()
+
+        for market in candidates:
+            if stats["processed"] >= limit:
+                break
+            if stats["estimated_cost_usd"] >= COST_CAP_USD:
+                logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
+                break
+
+            existing = (market.market_metadata or {}).get(DISCOVER_LLM_METADATA_KEY)
+            if existing and isinstance(existing, dict) and existing.get("schema_version") == 2:
+                ts = existing.get("generated_at", "")
+                if ts:
+                    try:
+                        age = (now - datetime.fromisoformat(ts)).total_seconds()
+                        if age < 86400:
+                            stats["skipped_fresh"] += 1
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+            outcome_result = await session.execute(
+                select(FuturesOutcome.name, FuturesOutcome.current_probability, FuturesOutcome.probability_change_24h)
+                .where(FuturesOutcome.market_id == market.id)
+                .order_by(FuturesOutcome.rank.asc().nullslast())
+                .limit(8)
+            )
+            outcomes = outcome_result.all()
+            outcome_lines = []
+            leader_prob = None
+            for i, o in enumerate(outcomes):
+                prob = float(o.current_probability or 0)
+                if i == 0:
+                    leader_prob = prob
+                move = float(o.probability_change_24h or 0)
+                move_text = f", 24h {move * 100:+.1f}pp" if abs(move) >= 0.01 else ""
+                outcome_lines.append(f"- {o.name}: {int(prob * 100)}%{move_text}")
+
+            prompt = _CU_V2_PROMPT.format(
+                name=market.name or "",
+                category=market.llm_sport_category or market.category or "other",
+                source=market.source or "",
+                resolution_date=market.resolution_date.isoformat() if market.resolution_date else "unknown",
+                outcomes="\n".join(outcome_lines) if outcome_lines else "- unknown",
+            )
+
+            try:
+                response = client.chat.completions.create(
+                    model=DISCOVER_LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=500,
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
+                content = response.choices[0].message.content or "{}"
+                raw = _json_from_llm_response(content)
+
+                usage = getattr(response, "usage", None)
+                if usage:
+                    inp = int(getattr(usage, "prompt_tokens", 0) or 0)
+                    out = int(getattr(usage, "completion_tokens", 0) or 0)
+                    stats["input_tokens"] += inp
+                    stats["output_tokens"] += out
+                    stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
+
+                liveness = _compute_liveness(leader_prob, market.status)
+                profile = {
+                    "schema_version": 2,
+                    "model": DISCOVER_LLM_MODEL,
+                    "generated_at": now.isoformat(),
+                    "topic": raw.get("topic"),
+                    "subtopic": raw.get("subtopic"),
+                    "entities": raw.get("entities", []),
+                    "geography": raw.get("geography"),
+                    "story_key": raw.get("story_key"),
+                    "series_key": raw.get("series_key"),
+                    "temporal": raw.get("temporal"),
+                    "event_date": raw.get("event_date"),
+                    "recurrence": raw.get("recurrence"),
+                    "stakes": raw.get("stakes"),
+                    "breadth": raw.get("breadth"),
+                    "oddity": raw.get("oddity"),
+                    "arc": raw.get("arc"),
+                    "hook_facts": raw.get("hook_facts", []),
+                    "junk_flags": raw.get("junk_flags", []),
+                    "confidence": raw.get("confidence"),
+                    "liveness": liveness,
+                }
+
+                next_metadata = dict(market.market_metadata or {})
+                next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
+
+                story_key = raw.get("story_key")
+
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == market.id)
+                    .values(
+                        market_metadata=next_metadata,
+                        **({"story_key": story_key} if story_key else {}),
+                    )
+                )
+                stats["generated"] += 1
+            except Exception as exc:
+                logger.warning("CU v2 failed for market %s: %s", market.id, exc)
+                stats["errors"] += 1
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+
+            stats["processed"] += 1
+            await asyncio.sleep(0.15)
+
+        await session.commit()
+
+    logger.info("CU v2 enrichment: %s", stats)
+    return stats
+
+
 def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
     data = item.get("data") or {}
     top = data.get("top_outcomes") or []
