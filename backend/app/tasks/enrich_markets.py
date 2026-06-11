@@ -782,53 +782,42 @@ async def enrich_cu_v2_profiles(limit: int = 125):
     }
     COST_CAP_USD = 30.0
 
-    async with get_task_session() as session:
+    # Phase 1: ONE upfront read — materialize everything as plain dicts.
+    # Zero ORM objects survive into the write loop (gotcha #6).
+    work_items: list[dict] = []
+    async with get_task_session() as read_session:
         feed_categories = [
             "politics", "geopolitics", "economics", "tech", "health",
             "entertainment", "weather", "basketball", "baseball",
             "football", "hockey", "soccer", "golf", "culture", "mma",
         ]
-        result = await session.execute(
-            select(FuturesMarket)
-            .where(
-                FuturesMarket.status == "open",
-                or_(
-                    FuturesMarket.llm_sport_category.in_(feed_categories),
-                    FuturesMarket.volume_24h >= 5_000,
-                    FuturesMarket.market_tier <= 3,
-                ),
-                FuturesMarket.llm_sport_category != "crypto",
-            )
-            .order_by(
-                FuturesMarket.volume_24h.desc().nullslast(),
-                FuturesMarket.updated_at.desc().nullslast(),
-            )
-            .limit(limit * 4)
-        )
-        candidates = result.scalars().all()
+        from sqlalchemy import text as _text
+        rows = await read_session.execute(_text("""
+            SELECT fm.id, fm.name, fm.source, fm.status,
+                   COALESCE(fm.llm_sport_category, fm.category, 'other') AS category,
+                   fm.resolution_date, fm.market_metadata,
+                   (SELECT json_agg(json_build_object(
+                       'name', fo.name,
+                       'prob', fo.current_probability,
+                       'move', fo.probability_change_24h
+                   ) ORDER BY fo.rank ASC NULLS LAST)
+                    FROM futures_outcomes fo
+                    WHERE fo.market_id = fm.id
+                    LIMIT 8
+                   ) AS outcomes
+            FROM futures_markets fm
+            WHERE fm.status = 'open'
+              AND fm.llm_sport_category != 'crypto'
+              AND (fm.llm_sport_category = ANY(:cats) OR fm.volume_24h >= 5000 OR fm.market_tier <= 3)
+            ORDER BY fm.volume_24h DESC NULLS LAST, fm.updated_at DESC NULLS LAST
+            LIMIT :lim
+        """), {"cats": feed_categories, "lim": limit * 4})
 
-        # Copy all ORM attributes to scalars before the loop to survive
-        # rollback boundaries (gotcha #6).
-        market_refs = []
-        for m in candidates:
-            market_refs.append({
-                "id": m.id,
-                "name": m.name,
-                "source": m.source,
-                "status": m.status,
-                "category": m.llm_sport_category or m.category or "other",
-                "resolution_date": m.resolution_date.isoformat() if m.resolution_date else "unknown",
-                "metadata": dict(m.__dict__.get("market_metadata") or {}),
-            })
-
-        for mref in market_refs:
-            if stats["processed"] >= limit:
-                break
-            if stats["estimated_cost_usd"] >= COST_CAP_USD:
-                logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
-                break
-
-            existing = mref["metadata"].get(DISCOVER_LLM_METADATA_KEY)
+        for r in rows.mappings().all():
+            meta = r["market_metadata"] or {}
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            existing = meta.get(DISCOVER_LLM_METADATA_KEY)
             if existing and isinstance(existing, dict) and existing.get("schema_version") == 2:
                 ts = existing.get("generated_at", "")
                 if ts:
@@ -840,30 +829,48 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     except (ValueError, TypeError):
                         pass
 
-            market_id = mref["id"]
-            outcome_result = await session.execute(
-                select(FuturesOutcome.name, FuturesOutcome.current_probability, FuturesOutcome.probability_change_24h)
-                .where(FuturesOutcome.market_id == market_id)
-                .order_by(FuturesOutcome.rank.asc().nullslast())
-                .limit(8)
-            )
-            outcomes = outcome_result.all()
+            outcomes_raw = r["outcomes"] or []
+            if isinstance(outcomes_raw, str):
+                outcomes_raw = json.loads(outcomes_raw)
             outcome_lines = []
             leader_prob = None
-            for i, o in enumerate(outcomes):
-                prob = float(o.current_probability or 0)
+            for i, o in enumerate(outcomes_raw[:8]):
+                prob = float(o.get("prob") or 0)
                 if i == 0:
                     leader_prob = prob
-                move = float(o.probability_change_24h or 0)
+                move = float(o.get("move") or 0)
                 move_text = f", 24h {move * 100:+.1f}pp" if abs(move) >= 0.01 else ""
-                outcome_lines.append(f"- {o.name}: {int(prob * 100)}%{move_text}")
+                outcome_lines.append(f"- {o.get('name', '?')}: {int(prob * 100)}%{move_text}")
+
+            work_items.append({
+                "id": r["id"],
+                "name": r["name"],
+                "source": r["source"],
+                "status": r["status"],
+                "category": r["category"],
+                "resolution_date": r["resolution_date"].isoformat() if r["resolution_date"] else "unknown",
+                "metadata": dict(meta),
+                "outcome_lines": outcome_lines,
+                "leader_prob": leader_prob,
+            })
+            if len(work_items) >= limit:
+                break
+
+    logger.info("CU v2: %d candidates materialized, %d skipped fresh", len(work_items), stats["skipped_fresh"])
+
+    # Phase 2: LLM calls + Core UPDATEs only — no session reads.
+    async with get_task_session() as write_session:
+        for item in work_items:
+            if stats["estimated_cost_usd"] >= COST_CAP_USD:
+                logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
+                break
 
             prompt = _CU_V2_PROMPT.format(
-                name=mref["name"] or "",
-                category=mref["category"],
-                source=mref["source"] or "",
-                resolution_date=mref["resolution_date"],
-                outcomes="\n".join(outcome_lines) if outcome_lines else "- unknown",
+                name=item["name"] or "",
+                category=item["category"],
+                source=item["source"] or "",
+                resolution_date=item["resolution_date"],
+                outcomes="\n".join(item["outcome_lines"]) if item["outcome_lines"] else "- unknown",
             )
 
             try:
@@ -885,7 +892,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     stats["output_tokens"] += out
                     stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
 
-                liveness = _compute_liveness(leader_prob, mref["status"])
+                liveness = _compute_liveness(item["leader_prob"], item["status"])
                 profile = {
                     "schema_version": 2,
                     "model": DISCOVER_LLM_MODEL,
@@ -909,14 +916,13 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "liveness": liveness,
                 }
 
-                next_metadata = dict(mref["metadata"])
+                next_metadata = dict(item["metadata"])
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
-
                 story_key = raw.get("story_key")
 
-                await session.execute(
+                await write_session.execute(
                     update(FuturesMarket)
-                    .where(FuturesMarket.id == market_id)
+                    .where(FuturesMarket.id == item["id"])
                     .values(
                         market_metadata=next_metadata,
                         **({"story_key": story_key} if story_key else {}),
@@ -924,17 +930,17 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 )
                 stats["generated"] += 1
             except Exception as exc:
-                logger.warning("CU v2 failed for market %s: %s", market_id, exc)
+                logger.warning("CU v2 failed for market %s: %s", item["id"], exc)
                 stats["errors"] += 1
                 try:
-                    await session.rollback()
+                    await write_session.rollback()
                 except Exception:
                     pass
 
             stats["processed"] += 1
             await asyncio.sleep(0.15)
 
-        await session.commit()
+        await write_session.commit()
 
     logger.info("CU v2 enrichment: %s", stats)
     return stats
