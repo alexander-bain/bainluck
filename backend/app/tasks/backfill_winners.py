@@ -4637,6 +4637,21 @@ async def _compute_calibration_prices():
                 )
             stats["with_commence"] = part_a_total
 
+            # Part A1-dg: DataGolf outcomes — opening_probability IS the calibration
+            # price (model prediction, not a market price). No snapshot lookup needed.
+            dg_result = await session.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = fo.opening_probability
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fo.calibration_probability IS NULL
+                      AND fo.opening_probability IS NOT NULL
+                """))
+            await session.commit()
+            stats["datagolf_direct"] = dg_result.rowcount
+
             # Part A2: Non-event markets with commence_time on the market itself.
             # Kalshi/DataGolf golf markets have event_id IS NULL but DO have
             # commence_time (adjusted by _fix_golf_commence_times). Part A
@@ -4659,6 +4674,7 @@ async def _compute_calibration_prices():
                       AND fm.status = 'resolved'
                       AND fm.event_id IS NULL
                       AND fm.commence_time IS NOT NULL
+                      AND fm.source != 'datagolf'
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.calibration_probability = fo.opening_probability
                       AND fo.opening_probability IS NOT NULL
