@@ -66,7 +66,7 @@ def _admin_user_emails() -> set[str]:
 
 
 async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
-    if secret and _check_admin_secret(secret):
+    if secret and _check_admin_secret(secret, request=request):
         return True
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):

@@ -223,6 +223,6 @@ class TestFuturesMarketDetail:
         resp = await client.get("/api/futures/999999")
         assert resp.status_code == 404
 
-    async def test_invalid_id_returns_422(self, client):
+    async def test_invalid_id_returns_403(self, client):
         resp = await client.get("/api/futures/not-a-number")
         assert resp.status_code == 422

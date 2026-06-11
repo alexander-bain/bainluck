@@ -35,7 +35,7 @@ class TestEventList:
         resp = await client.get("/api/events?limit=5")
         assert resp.status_code == 200
 
-    async def test_invalid_days_type_returns_422(self, client):
+    async def test_invalid_days_type_returns_403(self, client):
         resp = await client.get("/api/events?days=soon")
         assert resp.status_code == 422
 
@@ -52,7 +52,7 @@ class TestLiveEvents:
 class TestEventSearch:
     """GET /api/events/search — search by query string."""
 
-    async def test_missing_query_returns_422(self, client):
+    async def test_missing_query_returns_403(self, client):
         resp = await client.get("/api/events/search")
         assert resp.status_code == 422
 
@@ -107,7 +107,7 @@ class TestEventTypeahead:
         assert resp.json() == {"suggestions": [], "query": "celtics"}
 
     @pytest.mark.parametrize("q", ["x", ""])
-    async def test_short_query_returns_422(self, client, q):
+    async def test_short_query_returns_403(self, client, q):
         resp = await client.get(f"/api/events/typeahead?q={q}")
         assert resp.status_code == 422
 
@@ -169,7 +169,7 @@ class TestEventEiRankings:
         }
 
     @pytest.mark.parametrize("limit", [0, 101])
-    async def test_invalid_limit_returns_422(self, client, limit):
+    async def test_invalid_limit_returns_403(self, client, limit):
         resp = await client.get(f"/api/events/ei-rankings?limit={limit}")
         assert resp.status_code == 422
 
@@ -222,7 +222,7 @@ class TestEventDetail404:
         assert "detail" in body
         assert body["detail"] == "Event not found"
 
-    async def test_invalid_id_type_returns_422(self, client):
+    async def test_invalid_id_type_returns_403(self, client):
         resp = await client.get("/api/events/not-a-number")
         assert resp.status_code == 422
 
@@ -241,7 +241,7 @@ class TestRelatedFutures404:
         resp = await client.get("/api/events/999999/related-futures")
         assert resp.status_code == 404
 
-    async def test_invalid_id_returns_422(self, client):
+    async def test_invalid_id_returns_403(self, client):
         resp = await client.get("/api/events/abc/related-futures")
         assert resp.status_code == 422
 
@@ -253,6 +253,6 @@ class TestEventOddsHistory:
         resp = await client.get("/api/events/999999/history")
         assert resp.status_code == 404
 
-    async def test_invalid_id_returns_422(self, client):
+    async def test_invalid_id_returns_403(self, client):
         resp = await client.get("/api/events/abc/history")
         assert resp.status_code == 422

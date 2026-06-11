@@ -595,19 +595,19 @@ class TestPlayoffGridQueryParams:
         resp = await client.get("/api/playoffs/nba?top=50")
         assert resp.status_code == 200
 
-    async def test_top_param_exceeds_max_returns_422(self, client):
+    async def test_top_param_exceeds_max_returns_403(self, client):
         resp = await client.get("/api/playoffs/nba?top=51")
         assert resp.status_code == 422
 
-    async def test_top_param_zero_returns_422(self, client):
+    async def test_top_param_zero_returns_403(self, client):
         resp = await client.get("/api/playoffs/nba?top=0")
         assert resp.status_code == 422
 
-    async def test_top_param_non_integer_returns_422(self, client):
+    async def test_top_param_non_integer_returns_403(self, client):
         resp = await client.get("/api/playoffs/nba?top=abc")
         assert resp.status_code == 422
 
-    async def test_hours_param_non_integer_returns_422(self, client):
+    async def test_hours_param_non_integer_returns_403(self, client):
         resp = await client.get("/api/playoffs/nba?hours=soon")
         assert resp.status_code == 422
 

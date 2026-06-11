@@ -4,22 +4,18 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 router = APIRouter(prefix="/admin", tags=["admin-llm"])
 logger = logging.getLogger(__name__)
 
 
-def _check_admin_secret(secret: str) -> bool:
-    import os
-    expected = os.getenv("ADMIN_SECRET", "")
-    return bool(expected) and secret == expected
-
+from app.routes.admin_utils import _check_admin_secret  # noqa
 
 @router.get("/llm-diagnosis")
 @router.post("/llm-diagnosis")
 async def llm_diagnosis(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     force: bool = Query(False),
 ):
     """Generate an LLM-powered diagnosis of current system health.
@@ -27,7 +23,7 @@ async def llm_diagnosis(
     GET returns cached result if available.
     POST with force=true regenerates.
     """
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     from app.tasks.redis_state import get_redis_client

@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
@@ -12,9 +12,7 @@ from app.services import get_db, get_db_rw, OddsAPIService
 from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
 
 
-def _check_admin_secret(secret: str) -> bool:
-    expected = os.environ.get("ADMIN_TOKEN") or os.environ.get("ADMIN_SECRET")
-    return bool(expected and secret == expected)
+from app.routes.admin_utils import _check_admin_secret  # noqa: E402 — use shared auth
 
 router = APIRouter()
 
@@ -45,10 +43,9 @@ async def list_sports(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/available")
-async def list_available_sports(secret: str = Query(..., description="Admin secret")):
+async def list_available_sports(request: Request, secret: str = Query(None, description="Admin secret")):
     """List all sports available from The Odds API. Requires admin auth (burns API quota)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     try:
         service = OddsAPIService()
         sports = await service.get_sports()
@@ -77,12 +74,12 @@ async def list_available_sports(secret: str = Query(..., description="Admin secr
 
 @router.post("/sync")
 async def sync_sports_from_api(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Sync all sports from The Odds API to the database. Requires admin auth."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     try:
         service = OddsAPIService()
         sports_data = await service.get_sports()

@@ -60,13 +60,12 @@ _VALID_BUG_CATEGORIES = {"ui", "data_quality", "performance", "feature_request",
 
 @router.get("/discover-label-eval/runs")
 async def list_discover_label_eval_runs(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """List recent persisted Discover human-label eval runs."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(DiscoverLabelEvalRun)
@@ -83,13 +82,12 @@ async def list_discover_label_eval_runs(
 
 @router.get("/discover-label-eval/trends")
 async def list_discover_label_eval_trends(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(12, ge=2, le=50),
     db: AsyncSession = Depends(get_db),
 ):
     """Return recent label eval runs with run-over-run metric deltas."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(DiscoverLabelEvalRun)
@@ -124,12 +122,11 @@ async def list_discover_label_eval_trends(
 @router.get("/discover-label-eval/runs/{run_id}")
 async def get_discover_label_eval_run(
     run_id: str,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Return full details for one persisted Discover human-label eval run."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(DiscoverLabelEvalRun).where(DiscoverLabelEvalRun.run_id == run_id)
@@ -142,7 +139,7 @@ async def get_discover_label_eval_run(
 
 @router.post("/discover-label-eval/snapshot")
 async def trigger_discover_label_eval_snapshot(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(20, ge=1, le=100),
     limit: int = Query(5000, ge=1, le=50000),
@@ -150,8 +147,7 @@ async def trigger_discover_label_eval_snapshot(
     reviewer: str | None = Query(None),
 ):
     """Queue a persisted Discover human-label eval snapshot."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -223,12 +219,11 @@ def _suggest_bug_report_category(
 
 @router.get("/hook-coverage")
 async def hook_coverage(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Hook description and image coverage stats for open markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from sqlalchemy import text
     result = await db.execute(text("""
         SELECT
@@ -258,12 +253,11 @@ async def hook_coverage(
 
 @router.post("/hook-enrichment/trigger")
 async def trigger_hook_enrichment(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(100, ge=1, le=250),
 ):
     """Queue hook enrichment for feed-prioritized open markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -278,15 +272,14 @@ async def trigger_hook_enrichment(
 @router.get("/discover-quality/trace/{market_id}")
 async def discover_quality_market_trace(
     market_id: int,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     include_events: bool = Query(False),
     event_pct: float = Query(0.15, ge=0, le=1),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
     """Explain how a futures market flows through Discover ranking."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.routes.feed import build_discover_market_trace
 
@@ -304,13 +297,12 @@ async def discover_quality_market_trace(
 
 @router.get("/discover-quality/effective-settlement-followups")
 async def list_effective_settlement_followups(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     """List open sports futures suppressed as effectively settled for ops follow-up."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.routes.feed import (
         DISCOVER_SPORTS_CATEGORIES,
@@ -413,20 +405,18 @@ async def _load_discover_runtime_config() -> dict:
 
 @router.get("/discover-config")
 async def get_discover_runtime_config(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     return await _load_discover_runtime_config()
 
 
 @router.post("/discover-config")
 async def update_discover_runtime_config(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     body: dict = Body(...),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     allowed = _discover_config_defaults()
     values = {}
@@ -457,11 +447,10 @@ async def update_discover_runtime_config(
 @router.post("/discover-review-decisions")
 async def create_discover_review_decision(
     payload: DiscoverReviewDecisionIn,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     valid = {"accepted_promote", "accepted_downrank", "ignored", "needs_design_fix", "needs_data_fix"}
     if payload.decision not in valid:
         raise HTTPException(status_code=400, detail=f"decision must be one of: {sorted(valid)}")
@@ -500,12 +489,11 @@ async def create_discover_review_decision(
 
 @router.get("/discover-review-decisions")
 async def list_discover_review_decisions(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     result = await db.execute(
         select(DiscoverReviewDecision)
         .order_by(DiscoverReviewDecision.created_at.desc())
@@ -542,13 +530,12 @@ async def list_discover_review_decisions(
 
 @router.get("/discover-ground-truth-diagnostics/runs")
 async def list_discover_ground_truth_diagnostic_runs(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """List recent persisted Discover ground-truth diagnostic snapshot runs."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         text(
@@ -618,13 +605,12 @@ async def list_discover_ground_truth_diagnostic_runs(
 
 @router.get("/discover-ground-truth-diagnostics/trends")
 async def list_discover_ground_truth_diagnostic_trends(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(8, ge=2, le=30),
     db: AsyncSession = Depends(get_db),
 ):
     """Summarize recent Discover ground-truth diagnostic runs with run-over-run deltas."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         text(
@@ -732,12 +718,11 @@ async def list_discover_ground_truth_diagnostic_trends(
 
 @router.post("/discover-ground-truth-diagnostics/snapshot")
 async def trigger_discover_ground_truth_diagnostic_snapshot(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ):
     """Queue a Discover ground-truth diagnostic snapshot."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -754,13 +739,12 @@ async def trigger_discover_ground_truth_diagnostic_snapshot(
 
 @router.get("/discover-external-curator-ground-truth/status")
 async def get_discover_external_curator_ground_truth_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     item_limit: int = Query(20, ge=0, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """Inspect persisted reviewed external-curator/social ground truth."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     report = await load_persisted_external_curator_ground_truth_report(db)
     status_result = await db.execute(
@@ -783,13 +767,12 @@ async def get_discover_external_curator_ground_truth_status(
 
 @router.get("/discover-ground-truth-health")
 async def get_discover_ground_truth_health(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     min_load_rate: float = Query(0.25, ge=0, le=1),
     db: AsyncSession = Depends(get_db),
 ):
     """Inspect freshness and parse coverage for Discover ground-truth inputs."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     email_report = load_polymarket_email_ground_truth_report_from_env()
     file_curator_report = load_external_curator_ground_truth_report_from_env()
@@ -816,11 +799,10 @@ async def get_discover_ground_truth_health(
 
 @router.post("/discover-external-curator-ground-truth/import")
 async def trigger_discover_external_curator_ground_truth_import(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Queue import of configured reviewed external-curator/social ground truth."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -834,12 +816,11 @@ async def trigger_discover_external_curator_ground_truth_import(
 @router.post("/discover-external-curator-ground-truth/import-rows")
 async def import_discover_external_curator_ground_truth_rows(
     payload: ExternalCuratorGroundTruthImportRequest,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Import reviewed external-curator/social rows from an admin-uploaded payload."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     if not payload.rows:
         return {
             "status": "ok",
@@ -859,7 +840,7 @@ async def import_discover_external_curator_ground_truth_rows(
 @router.get("/discover-ground-truth-diagnostics/runs/{run_id}/rows")
 async def list_discover_ground_truth_diagnostic_rows(
     run_id: str,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     source_group: Optional[str] = Query(None, max_length=40),
     status: Optional[str] = Query(None, max_length=20),
     triage_bucket: Optional[str] = Query(None, max_length=80),
@@ -868,8 +849,7 @@ async def list_discover_ground_truth_diagnostic_rows(
     db: AsyncSession = Depends(get_db),
 ):
     """List persisted Discover ground-truth diagnostic rows for a snapshot run."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     clauses = [DiscoverGroundTruthDiagnostic.run_id == run_id]
     if source_group:
@@ -938,13 +918,13 @@ async def list_discover_ground_truth_diagnostic_rows(
 
 @router.get("/discover-engagement")
 async def discover_engagement_summary(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     days: int = Query(7, ge=1, le=30),
     db: AsyncSession = Depends(get_db),
 ):
     """Summarize first-party Discover engagement by surface/category/type."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     result = await db.execute(
@@ -1593,12 +1573,12 @@ async def discover_engagement_summary(
 
 @router.get("/discover-engagement/launch-health-trends")
 async def discover_launch_health_trends(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return repeat/stale launch-health rates across short, medium, and long windows."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     now = datetime.now(timezone.utc)
     runtime_config = await _load_discover_runtime_config()
@@ -1969,7 +1949,8 @@ async def test_daily_digest(
 
 @router.get("/engagement/review")
 async def engagement_review(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Return the latest nightly engagement-calibrated ranking review.
 
@@ -1980,8 +1961,7 @@ async def engagement_review(
 
     This is REPORTING only — it never auto-tunes production weights.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json as _json
 

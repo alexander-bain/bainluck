@@ -4,7 +4,7 @@ import logging
 import traceback
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 @router.get("/audit")
 async def snapshot_sparsity_audit(
-    db: AsyncSession = Depends(get_db),
-    secret: str = Query(...),
+    request: Request,
+    db: AsyncSession = Depends(get_db), secret: str = Query(None),
     days_back: int = Query(30),
     sport: str = Query("baseball_mlb"),
     threshold: int = Query(20),
 ):
     """Audit snapshot sparsity for a single sport over a time window."""
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     try:
@@ -103,7 +103,7 @@ async def snapshot_sparsity_audit(
 
 @router.post("/backfill-historical")
 async def backfill_historical_odds(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     sport: str = Query("baseball_mlb"),
     days_back: int = Query(30),
     max_events: int = Query(500),
@@ -113,7 +113,7 @@ async def backfill_historical_odds(
     Returns immediately with a task ID. The actual backfill runs in
     the background worker with no timeout limit.
     """
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     from app.tasks import backfill_historical_odds_task
@@ -131,8 +131,8 @@ async def backfill_historical_odds(
 
 @router.get("/inventory")
 async def snapshot_inventory(
-    db: AsyncSession = Depends(get_db),
-    secret: str = Query(...),
+    request: Request,
+    db: AsyncSession = Depends(get_db), secret: str = Query(None),
     days_back: int = Query(30),
     threshold: int = Query(20),
 ):
@@ -141,7 +141,7 @@ async def snapshot_inventory(
     Returns every event with its snapshot count, grouped by sport then by date.
     Events below threshold are flagged as sparse.
     """
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     try:
@@ -253,7 +253,7 @@ async def snapshot_inventory(
 
 @router.post("/lookup-and-backfill")
 async def lookup_and_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     sport: str = Query("baseball_mlb"),
     days_back: int = Query(30),
     max_events: int = Query(50),
@@ -264,7 +264,7 @@ async def lookup_and_backfill(
     Queries the historical API at game time to find the matching event ID by
     team name fuzzy matching, then backfills full snapshot history.
     """
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     from app.tasks import lookup_and_backfill_extids_task

@@ -4,7 +4,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from sqlalchemy import select, or_, text, func
 
@@ -24,7 +24,8 @@ router = APIRouter()
 
 @router.post("/futures/categorize")
 async def categorize_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to categorize per batch"),
 ):
     """
@@ -33,8 +34,7 @@ async def categorize_futures(
     Queues a background Celery task to avoid Heroku's 30-second timeout.
     Use /futures/task/{task_id} to check status.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import categorize_futures_task
 
@@ -52,7 +52,8 @@ async def categorize_futures(
 
 @router.post("/futures/recategorize-other")
 async def recategorize_other_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max markets to re-check"),
     from_category: str = Query(None, description="Target a specific category instead of 'other'/NULL (e.g., 'basketball')"),
 ):
@@ -63,8 +64,7 @@ async def recategorize_other_futures(
     re-evaluate markets in a specific category (e.g., after adding new
     patterns that would reclassify some basketball markets as soccer).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import recategorize_other_task
 
@@ -83,7 +83,8 @@ async def recategorize_other_futures(
 
 @router.post("/futures/regenerate-tags")
 async def regenerate_tags(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(5000, description="Max markets to process"),
     category: str = Query(None, description="Only regenerate tags for this category (e.g., 'crypto', 'politics')"),
 ):
@@ -93,8 +94,7 @@ async def regenerate_tags(
     Use after adding new entity patterns to _TAG_KEYWORDS. Does NOT change
     llm_sport_category — only updates the subcategory tags used for grouping.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import regenerate_tags_task
 
@@ -113,7 +113,8 @@ async def regenerate_tags(
 
 @router.get("/futures/categorization-status")
 async def futures_categorization_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -121,8 +122,7 @@ async def futures_categorization_status(
 
     Returns counts of categorized vs uncategorized markets.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
     from app.models import FuturesMarket
@@ -158,7 +158,8 @@ async def futures_categorization_status(
 
 @router.get("/futures/uncategorized")
 async def list_uncategorized_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to return"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -167,8 +168,7 @@ async def list_uncategorized_futures(
 
     Shows market names to help identify patterns that should be added.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import FuturesMarket
     from app.utils.futures_categorization import categorize_by_rules
@@ -205,7 +205,8 @@ async def list_uncategorized_futures(
 
 @router.post("/futures/force-categorize")
 async def force_categorize_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to categorize"),
 ):
     """
@@ -215,8 +216,7 @@ async def force_categorize_futures(
     Queues a background Celery task to avoid Heroku's 30-second timeout.
     Use /futures/task/{task_id} to check status.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import categorize_futures_task
 
@@ -239,7 +239,8 @@ async def force_categorize_futures(
 
 @router.post("/events/enrich-metadata")
 async def enrich_events_metadata(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Max events to process per batch"),
     dry_run: bool = Query(False, description="Preview enrichment without saving"),
     force: bool = Query(False, description="Re-enrich events that already have metadata (for team normalization)"),
@@ -253,8 +254,7 @@ async def enrich_events_metadata(
 
     Set force=true to re-enrich events that have metadata but need team name normalization.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services import llm
     from sqlalchemy.orm import selectinload
@@ -363,7 +363,8 @@ async def enrich_events_metadata(
 
 @router.get("/events/metadata-status")
 async def events_metadata_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -371,8 +372,7 @@ async def events_metadata_status(
 
     Returns counts of enriched vs un-enriched events.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
     from app.services import llm
@@ -408,7 +408,8 @@ async def events_metadata_status(
 
 @router.post("/futures/enrich-metadata")
 async def enrich_futures_metadata(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Max markets to process per batch"),
     dry_run: bool = Query(False, description="Preview enrichment without saving"),
     db: AsyncSession = Depends(get_db_rw),
@@ -418,8 +419,7 @@ async def enrich_futures_metadata(
 
     Works alongside the existing categorize endpoint but adds more detailed metadata.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import FuturesMarket
     from app.services import llm
@@ -493,7 +493,8 @@ async def enrich_futures_metadata(
 
 @router.get("/futures/metadata-status")
 async def futures_metadata_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -501,8 +502,7 @@ async def futures_metadata_status(
 
     Returns counts of enriched vs un-enriched markets.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
     from app.models import FuturesMarket
@@ -542,11 +542,11 @@ async def futures_metadata_status(
 
 @router.get("/taxonomy/debug-redis")
 async def taxonomy_debug_redis(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check Redis markers set by taxonomy piggybacking code."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import redis
     import os
@@ -570,14 +570,14 @@ async def taxonomy_debug_redis(
 
 @router.post("/taxonomy/backfill")
 async def backfill_taxonomy(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max items to process"),
     sync: bool = Query(False, description="Run synchronously instead of via Celery"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Trigger taxonomy tag computation for events and futures markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     if sync:
         # Run directly in the web process using the existing DB session
@@ -707,12 +707,12 @@ async def backfill_taxonomy(
 
 @router.get("/taxonomy/task/{task_id}")
 async def taxonomy_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check taxonomy task status."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app as app
 
@@ -730,11 +730,11 @@ async def taxonomy_task_status(
 
 @router.get("/taxonomy/vocabulary")
 async def taxonomy_vocabulary(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Return the controlled tag vocabulary for inspection."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.event_taxonomy import ALLOWED_TAGS
 
@@ -746,7 +746,8 @@ async def taxonomy_vocabulary(
 
 @router.get("/taxonomy/dashboard")
 async def taxonomy_dashboard(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Tag distribution and content quality dashboard.
@@ -754,8 +755,7 @@ async def taxonomy_dashboard(
     Returns coverage stats, tag value distributions, and data quality signals
     for monitoring the event taxonomy system.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import text, func as sqlfunc
     from datetime import timezone
@@ -874,13 +874,13 @@ async def taxonomy_dashboard(
 
 @router.post("/taxonomy/enrich")
 async def enrich_taxonomy(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     event_limit: int = Query(50, description="Max events to enrich"),
     market_limit: int = Query(30, description="Max futures markets to enrich"),
 ):
     """Trigger LLM taxonomy enrichment for events and futures markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import enrich_taxonomy_llm as task
 
@@ -895,12 +895,12 @@ async def enrich_taxonomy(
 
 @router.get("/taxonomy/enrichment-status")
 async def taxonomy_enrichment_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """LLM enrichment coverage — events and markets with/without LLM-generated tags."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import text
     from app.utils.event_taxonomy import LLM_ENRICHMENT_NAMESPACES

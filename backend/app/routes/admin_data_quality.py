@@ -29,7 +29,8 @@ router = APIRouter()
 
 @router.post("/snapshots/collapse")
 async def trigger_snapshot_collapse(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     table: str = Query("odds", description="Table to collapse: 'odds', 'winprob', or 'futures'"),
     limit: int = Query(200, description="Max events/outcomes to process per run"),
     min_age_hours: int = Query(48, description="Only collapse snapshots older than this many hours"),
@@ -42,8 +43,7 @@ async def trigger_snapshot_collapse(
     Run once per table: table=odds, table=winprob, table=futures.
     Use limit to control batch size (default 200 events/outcomes per run).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     if table not in ("odds", "winprob", "futures"):
         raise HTTPException(status_code=400, detail="table must be 'odds', 'winprob', or 'futures'")
@@ -62,12 +62,12 @@ async def trigger_snapshot_collapse(
 
 @router.get("/snapshots/task/{task_id}")
 async def get_snapshot_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a snapshot collapse task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -88,12 +88,12 @@ async def get_snapshot_task_status(
 
 @router.get("/snapshots/stats")
 async def get_snapshot_stats(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get current snapshot table row counts."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
     from app.models import OddsSnapshot, WinProbSnapshot, FuturesOddsSnapshot
@@ -112,11 +112,11 @@ async def get_snapshot_stats(
 
 @router.post("/snapshots/distribution")
 async def trigger_snapshot_distribution(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Queue a Celery task to compute snapshot distribution (too slow for a request)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import compute_snapshot_distribution
     task = compute_snapshot_distribution.delay()
@@ -125,11 +125,11 @@ async def trigger_snapshot_distribution(
 
 @router.get("/snapshots/distribution")
 async def get_snapshot_distribution(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Read cached snapshot distribution from Redis (computed by Celery task)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json as _json
     from app.tasks.redis_state import get_redis_client
@@ -151,6 +151,7 @@ async def get_snapshot_distribution(
 
 @router.post("/futures/groups/discover")
 async def discover_market_groups(
+    request: Request,
     secret: str = Query(""),
     limit: int = Query(500, ge=1, le=5000),
     source: Optional[str] = Query(None, description="Filter by source (polymarket, kalshi, odds_api)"),
@@ -166,8 +167,7 @@ async def discover_market_groups(
 
     Use dry_run=true to preview without saving.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.market_grouping import discover_group_id_for_market
     from sqlalchemy import func as sqla_func
@@ -225,6 +225,7 @@ async def discover_market_groups(
 
 @router.get("/futures/groups/status")
 async def group_status(
+    request: Request,
     secret: str = Query(""),
     db: AsyncSession = Depends(get_db),
 ):
@@ -233,8 +234,7 @@ async def group_status(
 
     Returns counts of grouped vs ungrouped markets, breakdown by group_type.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func as sqla_func
 
@@ -296,15 +296,15 @@ async def group_status(
 
 @router.post("/cleanup/crypto")
 async def cleanup_crypto_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     batch_size: int = Query(5000, description="Rows to delete per batch"),
 ):
     """
     Dispatch a Celery background task to delete all crypto futures data.
     Returns immediately with a task ID — check Celery logs for progress.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import cleanup_crypto
     result = cleanup_crypto.delay(batch_size=batch_size)
@@ -318,7 +318,8 @@ async def cleanup_crypto_futures(
 
 @router.post("/cleanup/turbo-collapse")
 async def turbo_collapse(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(5000, description="Max partitions to process per table"),
 ):
     """
@@ -327,8 +328,7 @@ async def turbo_collapse(
     Collapses consecutive identical values into single rows with reading_count.
     Prioritizes resolved futures markets. No data is lost — just deduplicated.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import turbo_collapse_futures, turbo_collapse_odds
 
@@ -345,7 +345,7 @@ async def turbo_collapse(
 
 @router.post("/cleanup/reclassify-events")
 async def reclassify_misclassified_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(True),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -355,8 +355,7 @@ async def reclassify_misclassified_events(
     (e.g., tennis events in basketball_other) and moves them to the correct
     sport based on their ticker prefix.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import Sport
     from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
@@ -437,7 +436,7 @@ async def reclassify_misclassified_events(
 
 @router.post("/cleanup/merge-duplicate-events")
 async def merge_duplicate_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(True),
     limit: int = Query(200, description="Max pm_ events to process per call"),
     sport: Optional[str] = Query(None, description="Filter to specific sport_id"),
@@ -451,8 +450,7 @@ async def merge_duplicate_events(
     merges them: migrates any snapshots/futures links from the pm_ event to
     the real event, then deletes the pm_ event.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
     from app.utils.name_normalization import names_match
@@ -565,7 +563,7 @@ async def merge_duplicate_events(
 
 @router.post("/cleanup/purge-orphan-pm-events")
 async def purge_orphan_pm_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(True),
     limit: int = Query(500, description="Max events to process per call"),
     sport: Optional[str] = Query(None, description="Filter to specific sport key"),
@@ -577,8 +575,7 @@ async def purge_orphan_pm_events(
     guard blocked discovery. They have no odds snapshots and just clutter
     the database.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
 
@@ -678,6 +675,7 @@ async def purge_orphan_pm_events(
 
 @router.get("/db/storage-analysis")
 async def db_storage_analysis(
+    request: Request,
     secret: str = Query("", description="Admin secret"),
     detail: str = Query("sizes", description="What to analyze: sizes, age, status, orphans, all"),
     db: AsyncSession = Depends(get_db_rw),
@@ -687,8 +685,7 @@ async def db_storage_analysis(
     Use detail=sizes (fast), detail=age, detail=status, detail=orphans,
     or detail=all (slow, may timeout).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     results = {}
 
@@ -1015,6 +1012,7 @@ async def db_storage_analysis(
 
 @router.post("/db/collapse-resolved-futures")
 async def collapse_resolved_futures(
+    request: Request,
     secret: str = Query("", description="Admin secret"),
     limit: int = Query(10000, description="Number of outcomes to process"),
 ):
@@ -1023,8 +1021,7 @@ async def collapse_resolved_futures(
     Uses the same dedup logic as the existing retention system but with a much
     higher outcome limit. Returns immediately with a task ID.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import turbo_collapse_futures
     task = turbo_collapse_futures.delay(limit=limit)
@@ -1039,14 +1036,14 @@ async def collapse_resolved_futures(
 
 @router.post("/db/delete-orphan-futures-snapshots")
 async def delete_orphan_futures_snapshots(
+    request: Request,
     secret: str = Query("", description="Admin secret"),
     batch_size: int = Query(50000, description="Delete in batches"),
     dry_run: bool = Query(True, description="Preview without deleting"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete futures_odds_snapshots with no matching outcome."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     if dry_run:
         count_result = (await db.execute(text(
@@ -1079,6 +1076,7 @@ async def delete_orphan_futures_snapshots(
 
 @router.post("/db/vacuum")
 async def vacuum_table(
+    request: Request,
     secret: str = Query("", description="Admin secret"),
     table: str = Query("futures_odds_snapshots", description="Table to vacuum"),
     full: bool = Query(False, description="VACUUM FULL (rewrites table, reclaims disk)"),
@@ -1089,8 +1087,7 @@ async def vacuum_table(
     VACUUM FULL rewrites the table to reclaim disk space but locks the table.
     Requires sufficient free disk space (~equal to table size) for FULL.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Allowlist tables
     allowed = {"futures_odds_snapshots", "odds_snapshots", "win_prob_snapshots",
@@ -1134,13 +1131,13 @@ async def vacuum_table(
 
 @router.post("/db/drop-duplicate-index")
 async def drop_duplicate_index(
+    request: Request,
     secret: str = Query("", description="Admin secret"),
     index_name: str = Query(..., description="Index name to drop"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Drop a duplicate index by name. Only allows dropping known-safe duplicates."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Verify it exists and get its definition
     idx_info = (await db.execute(text(
@@ -1198,15 +1195,14 @@ async def drop_duplicate_index(
 
 @router.get("/data-quality")
 async def get_data_quality_report(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Get the latest data quality report (classification + matching health).
 
     Report is generated daily by the check_data_quality task and cached in Redis.
     Trigger a fresh check with POST /api/admin/data-quality/check.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json as _json
     from app.tasks.redis_state import get_redis_client
@@ -1223,11 +1219,10 @@ async def get_data_quality_report(
 
 @router.post("/data-quality/check")
 async def trigger_data_quality_check(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Trigger an immediate data quality check (runs inline, not queued)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.data_quality import _check_data_quality
 
@@ -1237,7 +1232,7 @@ async def trigger_data_quality_check(
 
 @router.get("/audit")
 async def run_audit(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     grid: str = Query("mlb", description="Grid to audit: nba, nhl, mlb, golf"),
     skip_event: bool = Query(False, description="Skip event detail audit"),
     skip_grid: bool = Query(False, description="Skip grid audit"),
@@ -1247,8 +1242,7 @@ async def run_audit(
     Executes the audit_matching_quality.py script with --json --skip-llm
     and returns the structured report for dashboard display.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import asyncio
     import json as json_mod
@@ -1293,11 +1287,10 @@ async def run_audit(
 
 @router.get("/audit/all")
 async def run_audit_all_grids(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Run audit across all grids and return combined results."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import asyncio
     import json as json_mod
@@ -1347,7 +1340,7 @@ async def run_audit_all_grids(
 
 @router.get("/debug/golf-markets")
 async def debug_golf_markets(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """List all golf markets from Kalshi/Polymarket/Odds API in the DB.
@@ -1355,8 +1348,7 @@ async def debug_golf_markets(
     Shows market names, sources, outcome counts, and probabilities
     to diagnose tournament matching issues in the golf grid.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     stmt = (
         select(FuturesMarket)
@@ -1420,7 +1412,7 @@ async def debug_golf_markets(
 
 @router.post("/events/backfill-completed-at")
 async def backfill_completed_at(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(5000),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -1428,8 +1420,7 @@ async def backfill_completed_at(
 
     Priority: statpal_end_time > last ESPN snapshot > last stat_model snapshot.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import Event, ESPNSnapshot, WinProbSnapshot
 
@@ -1503,12 +1494,11 @@ async def backfill_completed_at(
 
 @router.get("/calibration-data")
 async def calibration_data(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Return pre-aggregated calibration buckets for resolved prediction markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Calibration methodology (auditable, no ad-hoc exclusions):
     #
@@ -1733,13 +1723,12 @@ async def calibration_data(
 
 @router.post("/backfill-winners")
 async def trigger_backfill_winners(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(False, description="Log what would change without writing"),
     limit: int = Query(2000, description="Max Kalshi events to process"),
 ):
     """Trigger the is_winner backfill task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task(
         "app.tasks.backfill_winners",
@@ -1750,10 +1739,9 @@ async def trigger_backfill_winners(
 
 
 @router.post("/calibration/recompute")
-async def trigger_calibration_recompute(secret: str = Query(...)):
+async def trigger_calibration_recompute(request: Request, secret: str = Query(None)):
     """Force recompute the public calibration cache."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.precompute_calibration_main", queue="background")
     return {"status": "queued", "task_id": result.id}
@@ -1761,13 +1749,12 @@ async def trigger_calibration_recompute(secret: str = Query(...)):
 
 @router.post("/backfill-volume-direct")
 async def backfill_volume_direct(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     series: str = Query("KXNHLGOAL"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Directly populate volume for one series — runs in-request, no Celery."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     try:
         from app.services.kalshi_api import KalshiAPIService
         svc = KalshiAPIService()
@@ -1812,10 +1799,9 @@ async def backfill_volume_direct(
 
 
 @router.post("/backfill-volume")
-async def trigger_volume_backfill(secret: str = Query(...)):
+async def trigger_volume_backfill(request: Request, secret: str = Query(None)):
     """Fast volume-only backfill — skips all phases except volume writes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="background")
     return {"status": "queued", "task_id": result.id}
@@ -1823,12 +1809,11 @@ async def trigger_volume_backfill(secret: str = Query(...)):
 
 @router.post("/backfill-trades")
 async def trigger_trade_history_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500),
 ):
     """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task(
         "app.tasks.backfill_kalshi_trades",
@@ -1840,12 +1825,11 @@ async def trigger_trade_history_backfill(
 
 @router.post("/backfill-candlestick")
 async def trigger_candlestick_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500),
 ):
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task(
         "app.tasks.backfill_kalshi_candlestick",
@@ -1857,7 +1841,7 @@ async def trigger_candlestick_backfill(
 
 @router.post("/backfill-winners/score-resolution")
 async def trigger_score_resolution(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Run ONLY the score-based resolution phases (Phase 1a).
 
@@ -1865,8 +1849,7 @@ async def trigger_score_resolution(
     resolved moneyline, spread, total, player prop, and period prop
     markets.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.backfill_winners import (
         _resolve_kalshi_from_scores,
@@ -1930,7 +1913,7 @@ async def trigger_score_resolution(
 
 @router.post("/backfill-winners/kalshi-markets")
 async def trigger_kalshi_markets_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(10000),
 ):
     """Resolve Kalshi winners via the markets API (not events API).
@@ -1939,8 +1922,7 @@ async def trigger_kalshi_markets_backfill(
     markets. Pages through GET /markets?status=settled with cursor
     persistence, 1000 markets/page.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.backfill_winners import _backfill_kalshi_winners_via_markets
     stats = await _backfill_kalshi_winners_via_markets(limit=limit)
     return stats
@@ -1948,7 +1930,7 @@ async def trigger_kalshi_markets_backfill(
 
 @router.post("/backfill-winners/kalshi-targeted")
 async def trigger_kalshi_targeted(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(200),
 ):
     """Look up specific event tickers that need resolution via markets API.
@@ -1957,8 +1939,7 @@ async def trigger_kalshi_targeted(
     event tickers with pass2_guess outcomes, then GET /markets?event_ticker=X
     for each to get the result field.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.backfill_winners import _backfill_kalshi_winners_targeted
     stats = await _backfill_kalshi_winners_targeted(limit=limit)
     return stats
@@ -1966,13 +1947,12 @@ async def trigger_kalshi_targeted(
 
 @router.post("/test-ticker-linking")
 async def test_ticker_linking(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(20),
     db: AsyncSession = Depends(get_db),
 ):
     """Test name-based event linking for unlinked Kalshi markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.utils.prediction_market_matching import extract_game_date_from_ticker
     from datetime import timedelta
     import re
@@ -2026,14 +2006,13 @@ async def test_ticker_linking(
 
 @router.post("/run-lean-settled")
 async def run_lean_settled(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     series: str = Query("KXNCAAMBTOTAL"),
     max_pages: int = Query(10),
 ):
     """Run the lean settled events scanner for ONE series inline (no Celery).
     Returns immediately with results — bypasses worker queue."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.kalshi_api import KalshiAPIService
     from app.tasks.redis_state import get_redis_client
@@ -2140,12 +2119,11 @@ async def run_lean_settled(
 
 @router.get("/test-kalshi-market-endpoint")
 async def test_kalshi_market_endpoint(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Test if Kalshi GET /markets/{ticker} works for old settled tickers."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT DISTINCT fo.external_id AS outcome_ticker,
@@ -2182,13 +2160,12 @@ async def test_kalshi_market_endpoint(
 
 @router.get("/redis-read")
 async def redis_read(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     key: str = Query("bainluck:option_c_analysis"),
 ):
     """Read any bainluck: prefixed Redis key. For diagnostic scripts that
     save results to Redis for retrieval via the API."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     if not key.startswith("bainluck:"):
         raise HTTPException(status_code=400, detail="Key must start with bainluck:")
     import json as _json
@@ -2205,13 +2182,12 @@ async def redis_read(
 
 @router.get("/option-c-analysis")
 async def option_c_analysis(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Exact numbers for Option C: re-null clean_resolution winners that
     originated from pass2_guess and are blocking score-based resolution."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     queries = {}
 
@@ -2331,12 +2307,11 @@ async def option_c_analysis(
 
 @router.get("/retrotag-pool")
 async def retrotag_pool(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Count outcomes that retro-tagging would discover on next run."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT
@@ -2364,11 +2339,10 @@ async def retrotag_pool(
 
 @router.post("/backfill-settled/reset-cursors")
 async def reset_settled_cursors(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Reset all settled events series cursors to start from page 1."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.redis_state import get_redis_client
     rc = get_redis_client()
     deleted = 0
@@ -2381,7 +2355,7 @@ async def reset_settled_cursors(
 
 @router.post("/backfill-winners/kalshi-api-only")
 async def trigger_kalshi_api_only(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500),
 ):
     """Run ONLY the Kalshi per-event API winner backfill (no other phases).
@@ -2389,8 +2363,7 @@ async def trigger_kalshi_api_only(
     Returns detailed stats including api_miss rate, so we can see how
     much of the backlog is actually reachable via the API.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.backfill_winners import _backfill_kalshi_winners
     stats = await _backfill_kalshi_winners(limit=limit)
     return stats
@@ -2398,12 +2371,11 @@ async def trigger_kalshi_api_only(
 
 @router.get("/box-score-gap")
 async def box_score_gap(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Count events missing box_score_data that have Kalshi player props."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT COUNT(DISTINCT e.id) as events_needing,
@@ -2440,13 +2412,12 @@ async def box_score_gap(
 
 @router.post("/backfill-box-scores")
 async def trigger_backfill_box_scores(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500),
     priority: bool = Query(True, description="Prioritize events with Kalshi player props"),
 ):
     """Trigger ESPN box score backfill for events missing box_score_data."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task(
         "app.tasks.backfill_box_scores",
@@ -2458,12 +2429,11 @@ async def trigger_backfill_box_scores(
 
 @router.get("/backfill-winners/unresolved-samples")
 async def unresolved_linked_samples(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Sample unresolved linked game outcomes for debugging no_parse."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT fo.name AS outcome_name, fm.name AS market_name,
@@ -2495,12 +2465,11 @@ async def unresolved_linked_samples(
 
 @router.post("/backfill-winners/probability-only")
 async def trigger_probability_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run the probability-based is_winner passes using the request DB session."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     stats = {"clean_w": 0, "clean_l": 0, "mutex_w": 0, "mutex_l": 0,
              "thresh_w": 0, "thresh_l": 0, "all_losers": 0, "errors": []}
@@ -2684,12 +2653,11 @@ async def trigger_probability_backfill(
 
 @router.post("/backfill-polymarket-history")
 async def trigger_backfill_polymarket_history(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500, description="Max outcomes to process"),
 ):
     """Trigger Polymarket price history backfill for outcomes with sparse data."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import backfill_polymarket_history as task
     result = task.delay(limit=limit)
     return {"status": "queued", "task_id": result.id, "limit": limit}
@@ -2697,13 +2665,12 @@ async def trigger_backfill_polymarket_history(
 
 @router.post("/backfill-polymarket-history/sync")
 async def trigger_backfill_polymarket_history_sync(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(20, description="Max outcomes to process"),
     mode: str = Query("resolved_zero"),
 ):
     """Run Polymarket price history backfill synchronously (returns stats)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.polymarket import _backfill_polymarket_price_history
     stats = await _backfill_polymarket_price_history(limit=limit, mode=mode)
     return stats
@@ -2711,12 +2678,11 @@ async def trigger_backfill_polymarket_history_sync(
 
 @router.post("/backfill-kalshi-history")
 async def trigger_backfill_kalshi_history(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500, description="Max outcomes to process"),
 ):
     """Trigger Kalshi price history backfill for outcomes with sparse data."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import backfill_kalshi_history as task
     result = task.delay(limit=limit)
     return {"status": "queued", "task_id": result.id, "limit": limit}
@@ -2724,13 +2690,12 @@ async def trigger_backfill_kalshi_history(
 
 @router.get("/debug-kalshi-settled")
 async def debug_kalshi_settled(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     series: str = Query("KXNBAPTS"),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug the settled events backfill — show what it finds."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.kalshi_api import KalshiAPIService
     service = KalshiAPIService()
@@ -2784,22 +2749,20 @@ async def debug_kalshi_settled(
 
 @router.post("/backfill-kalshi-settled")
 async def trigger_backfill_kalshi_settled(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(5000, description="Max outcomes to process"),
 ):
     """Recover full price history from Kalshi settled events API."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.backfill_kalshi_settled", args=[limit])
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
 @router.post("/fix-commence-times")
-async def fix_commence_times(secret: str = Query(...)):
+async def fix_commence_times(request: Request, secret: str = Query(None)):
     """Run golf + hockey commence_time fixes synchronously (no Celery)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
     golf = await _fix_golf_commence_times()
     hockey = await _fix_hockey_commence_times()
@@ -2808,13 +2771,12 @@ async def fix_commence_times(secret: str = Query(...)):
 
 @router.get("/backfill-winners/kalshi-probe")
 async def kalshi_settlement_probe(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     sample: int = Query(50, description="Number of tickers to probe"),
     db: AsyncSession = Depends(get_db),
 ):
     """Probe the Kalshi API for a sample of stuck markets to diagnose Phase 2 failures."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     try:
         from app.services.kalshi_api import KalshiAPIService
@@ -2897,12 +2859,11 @@ def _count_by_cat(results: dict) -> dict:
 
 @router.get("/backfill-winners/golf-debug")
 async def golf_cross_ref_debug(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug the golf cross-reference: what DataGolf leaderboards exist, what Kalshi markets match."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     try:
         from app.routes.golf import _normalize_tournament
@@ -3043,11 +3004,10 @@ async def _golf_cross_ref_dry_run(db, _normalize_tournament):
 
 @router.post("/backfill-winners/golf-cross-ref")
 async def trigger_golf_cross_ref(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Run the golf cross-reference synchronously and return stats."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.backfill_winners import _resolve_kalshi_golf_from_datagolf
     stats = await _resolve_kalshi_golf_from_datagolf()
@@ -3056,7 +3016,7 @@ async def trigger_golf_cross_ref(
 
 @router.post("/backfill-winners/golf-outrights")
 async def trigger_golf_outrights(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Resolve DataGolf golf outcomes using historical outrights settlement data.
 
@@ -3064,8 +3024,7 @@ async def trigger_golf_outrights(
     outrights API. More authoritative than leaderboard inference. Covers
     win, top_5, top_10, top_20, and make_cut markets across all tours.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.backfill_winners import _resolve_golf_from_historical_outrights
     stats = await _resolve_golf_from_historical_outrights()
@@ -3074,12 +3033,11 @@ async def trigger_golf_outrights(
 
 @router.get("/backfill-winners/stuck-diagnosis")
 async def stuck_diagnosis(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Lightweight diagnosis of stuck outcomes by source and bucket."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     await db.execute(text("SET LOCAL statement_timeout = '15s'"))
     result = await db.execute(text("""
@@ -3248,7 +3206,7 @@ async def stuck_diagnosis(
 
 @router.post("/backfill-winners/datagolf-leaderboards")
 async def trigger_datagolf_leaderboard_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Re-fetch full leaderboards for resolved DataGolf markets with truncated data.
 
@@ -3256,8 +3214,7 @@ async def trigger_datagolf_leaderboard_backfill(
     were resolved before the full-leaderboard fix still have only 50 players,
     causing incorrect make_cut and placement resolution.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.backfill_winners import _backfill_datagolf_leaderboards
     stats = await _backfill_datagolf_leaderboards()
@@ -3266,7 +3223,7 @@ async def trigger_datagolf_leaderboard_backfill(
 
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     bust: bool = Query(False, description="Bypass cache and trigger async recompute"),
 ):
     """Check how many markets still need is_winner backfill.
@@ -3275,8 +3232,7 @@ async def backfill_winners_status(
     precompute_backfill_winners_status Celery task).  Pass bust=true to
     trigger an immediate async recompute and return the current cache.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json as _json
     from app.tasks.redis_state import get_redis_client
@@ -3463,12 +3419,11 @@ async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
 
 @router.get("/calibration/resolution-status")
 async def calibration_resolution_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Quick status: how many markets can we resolve, by type?"""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Box score coverage
     bs = await db.execute(text("""
@@ -3542,7 +3497,7 @@ async def _espn_unavailable_breakdown(db):
 
 @router.get("/calibration/coverage-audit")
 async def calibration_coverage_audit(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Complete audit of what's in the DB vs what enters calibration.
@@ -3550,8 +3505,7 @@ async def calibration_coverage_audit(
     Shows every (source, category) combination with outcome counts at each
     filter gate, so we can see exactly what's being dropped and why.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Gate-by-gate funnel for futures outcomes
     futures_funnel = await db.execute(text("""
@@ -3670,12 +3624,11 @@ async def calibration_coverage_audit(
 
 @router.post("/calibration/tag-guesses")
 async def tag_guesses(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Tag midrange untagged outcomes as pass2_guess."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     count = await db.execute(text("""
         SELECT COUNT(*) FROM futures_outcomes fo
@@ -3711,12 +3664,11 @@ async def tag_guesses(
 
 @router.post("/calibration/test-retrotag")
 async def test_retrotag(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Test the retroactive tagging query directly."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # First count how many SHOULD match
     count = await db.execute(text("""
@@ -3760,7 +3712,7 @@ async def test_retrotag(
 
 @router.get("/calibration/decomposition")
 async def calibration_decomposition(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Full quality funnel by source × league × market_type × age.
@@ -3768,8 +3720,7 @@ async def calibration_decomposition(
     Shows N, opening derivation, resolution source breakdown, and
     whether we're capturing forward for each cell.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT
@@ -3926,11 +3877,10 @@ async def calibration_decomposition(
 
 @router.post("/backfill-calibration-prices")
 async def trigger_calibration_prices(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Queue the calibration_probability computation as a background Celery task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.compute_calibration_prices")
@@ -3952,8 +3902,8 @@ class _DbQueryRequest(BaseModel):
 
 @router.post("/db-query")
 async def admin_db_query(
-    body: _DbQueryRequest,
     request: Request,
+    body: _DbQueryRequest,
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -4020,8 +3970,8 @@ async def admin_db_query(
 
 @router.get("/query")
 async def admin_query(
-    sql: str = Query(..., description="SELECT-only SQL query"),
-    secret: str = Query(...),
+    request: Request,
+    sql: str = Query(..., description="SELECT-only SQL query"), secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Run a read-only SQL query and return JSON results.
@@ -4029,8 +3979,7 @@ async def admin_query(
     Admin-secret gated. Only SELECT statements allowed.
     1000 row limit, 30 second statement timeout.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     sql_stripped = sql.strip().rstrip(";")
     if _MUTATING_RE.search(sql_stripped):
@@ -4052,13 +4001,12 @@ async def admin_query(
 
 @router.get("/debug-cal-prob")
 async def debug_cal_prob(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     outcome_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug why calibration_probability is NULL for a specific outcome."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         text("""
@@ -4106,13 +4054,12 @@ async def debug_cal_prob(
 
 @router.post("/debug-compute-cal-prob")
 async def debug_compute_cal_prob(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     outcome_ids: str = Query("125766040,125766041"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run Part A calibration computation for specific outcomes and return results."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     ids = [int(x.strip()) for x in outcome_ids.split(",") if x.strip().isdigit()]
 
@@ -4167,13 +4114,12 @@ async def debug_compute_cal_prob(
 
 @router.post("/fix-market-status")
 async def fix_market_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     outcome_ids: str = Query(...),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Fix market status to 'resolved' for markets containing specific outcomes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     ids = [int(x.strip()) for x in outcome_ids.split(",") if x.strip().isdigit()]
 
@@ -4198,7 +4144,7 @@ async def fix_market_status(
 
 @router.post("/fix-datagolf-market-status")
 async def fix_datagolf_market_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(False, description="Preview without writing"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -4208,8 +4154,7 @@ async def fix_datagolf_market_status(
     so 'closed' is the wrong terminal status — the backfill_winners
     pipeline only processes status='resolved'.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Find all DataGolf markets stuck at 'closed'
     stuck = await db.execute(
@@ -4260,11 +4205,10 @@ async def fix_datagolf_market_status(
 
 @router.post("/sync-polymarket-resolved")
 async def trigger_sync_polymarket_resolved(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Scan closed Polymarket events and update stuck market statuses to 'resolved'."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.sync_polymarket_resolved")
     return {"status": "queued", "task_id": str(result.id)}
@@ -4272,7 +4216,7 @@ async def trigger_sync_polymarket_resolved(
 
 @router.post("/backfill-espn-win-prob")
 async def trigger_backfill_espn_win_prob(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(200),
 ):
     """Backfill ESPN win probability history for completed events with sparse snapshots.
@@ -4280,8 +4224,7 @@ async def trigger_backfill_espn_win_prob(
     Processes ALL historical events with espn_id that have fewer than 10 ESPN
     win probability snapshots. No time-window limit -- targets 100% coverage.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task(
         "app.tasks.backfill_espn_win_prob", args=[limit]
@@ -4291,12 +4234,11 @@ async def trigger_backfill_espn_win_prob(
 
 @router.get("/coverage-trends")
 async def get_coverage_trends(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     days: int = Query(30, description="Number of days of history"),
 ):
     """Get daily coverage metric snapshots for tracking progress over time."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_redis_client
     import json as _json
@@ -4327,11 +4269,10 @@ async def get_coverage_trends(
 
 @router.post("/coverage-trends/snapshot")
 async def trigger_coverage_snapshot(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Take a coverage metrics snapshot right now."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.snapshot_coverage_metrics")
     return {"status": "queued", "task_id": str(result.id)}
@@ -4339,12 +4280,11 @@ async def trigger_coverage_snapshot(
 
 @router.get("/debug-winner-backfill")
 async def debug_winner_backfill(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug: show what the Kalshi winner backfill query would select."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         text("""
@@ -4384,13 +4324,12 @@ async def debug_winner_backfill(
 
 @router.get("/debug-phase3")
 async def debug_phase3(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     ticker: str = Query("KXNBASPREAD-26MAY28OKCSAS-SAS26"),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug Phase 3: check if a ticker would be updated."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Check what exists in DB for this ticker
     result = await db.execute(
@@ -4424,12 +4363,11 @@ async def debug_phase3(
 
 @router.get("/task-metrics")
 async def get_task_metrics(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     task_name: str = Query("kalshi_settled"),
 ):
     """Read task execution metrics from Redis."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json as _json
     from app.tasks.redis_state import get_redis_client
@@ -4454,12 +4392,11 @@ async def get_task_metrics(
 
 @router.get("/debug-settled-precheck")
 async def debug_settled_precheck(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Run the settled events needs_work pre-check and return which series need work."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Discover series
     series_result = await db.execute(
@@ -4517,12 +4454,11 @@ async def debug_settled_precheck(
 
 @router.post("/backfill-polymarket-winners")
 async def trigger_backfill_polymarket_winners(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(10000),
 ):
     """Resolve Polymarket winners from Gamma API settlement data."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     result = celery_app.send_task("app.tasks.backfill_polymarket_winners", args=[limit])
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
@@ -4530,12 +4466,11 @@ async def trigger_backfill_polymarket_winners(
 
 @router.get("/audit-pass2-guess")
 async def audit_pass2_guess(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Deep audit of remaining pass2_guess outcomes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT fm.source, COUNT(*) as cnt
@@ -4678,7 +4613,8 @@ async def audit_pass2_guess(
 
 @router.get("/calibration/price-audit")
 async def calibration_price_audit(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     category: str = Query("golf", description="Sport category to audit (golf, hockey, etc.)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -4690,8 +4626,7 @@ async def calibration_price_audit(
     - Average divergence between cal_prob and opening_probability
     - Sample outcomes where cal_prob > 0.7 but is_winner = false (inverted bucket)
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Total outcomes with calibration_probability set
     r = await db.execute(text("""
@@ -4830,7 +4765,7 @@ async def calibration_price_audit(
 
 @router.get("/audit-clean-resolution-candidates")
 async def audit_clean_resolution_candidates(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Count markets that WOULD be fixed by the widened clean resolution guard.
@@ -4839,8 +4774,7 @@ async def audit_clean_resolution_candidates(
     - All outcomes have current_probability at extremes (>= 0.95 or <= 0.05)
     - But pass2_guess already set is_winner, blocking clean resolution
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT fm.source, COUNT(*) as market_count,
@@ -4878,12 +4812,11 @@ async def audit_clean_resolution_candidates(
 
 @router.get("/calibration-mce-by-sport")
 async def calibration_mce_by_sport(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Lightweight per-sport MCE computation for calibration monitoring."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         WITH cal_data AS (
@@ -5224,12 +5157,11 @@ async def calibration_mce_by_sport(
 
 @router.get("/volume-stats")
 async def volume_stats(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Check how many outcomes have volume populated."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     try:
         r = await db.execute(text("""
             SELECT
@@ -5258,13 +5190,12 @@ async def volume_stats(
 
 @router.get("/calibration-90plus-losers")
 async def calibration_90plus_losers(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     category: str = Query("hockey"),
     db: AsyncSession = Depends(get_db),
 ):
     """Show actual outcomes in the 90%+ bucket that are losing."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     r = await db.execute(text("""
         SELECT fo.name, fm.name AS market_name, fm.source,
@@ -5332,12 +5263,11 @@ async def calibration_90plus_losers(
 
 @router.post("/datagolf-retag")
 async def datagolf_retag(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Retag DataGolf non-authoritative losers as did_not_play."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Fix: restore multi_max_prob winners that were wrongly retagged
     fix = await db.execute(text("""
@@ -5392,12 +5322,11 @@ async def datagolf_retag(
 
 @router.get("/calibration-datagolf-diagnosis")
 async def datagolf_calibration_diagnosis(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Diagnose DataGolf 15.4pp MCE — check NULL is_winner hypothesis."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # 1. Resolution coverage by market type
     r1 = await db.execute(text("""

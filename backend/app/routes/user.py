@@ -7,7 +7,7 @@ All endpoints require authentication unless noted otherwise.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from sqlalchemy import select, delete, and_, or_, case, cast, func, String, union_all
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -236,11 +236,11 @@ class TestFuturesBrowseEndpoint:
         compiled_sql = str(page_query.compile()).lower()
         assert "order by futures_markets.resolution_date asc nulls last" in compiled_sql
 
-    async def test_limit_too_high_returns_422(self, client):
+    async def test_limit_too_high_returns_403(self, client):
         resp = await client.get("/api/futures/browse?limit=999")
         assert resp.status_code == 422
 
-    async def test_negative_offset_returns_422(self, client):
+    async def test_negative_offset_returns_403(self, client):
         resp = await client.get("/api/futures/browse?offset=-1")
         assert resp.status_code == 422
 
@@ -408,7 +408,7 @@ class TestFuturesListEndpoint:
 class TestFuturesCompareEndpoint:
     """GET /api/futures/compare — cross-source market comparison."""
 
-    async def test_missing_key_returns_422(self, client):
+    async def test_missing_key_returns_403(self, client):
         """The key parameter is required."""
         resp = await client.get("/api/futures/compare")
         assert resp.status_code == 422

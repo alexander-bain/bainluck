@@ -24,6 +24,6 @@ class TestTeamAdminAuthGuards:
             "/api/admin/team-identity/unmapped",
         ],
     )
-    async def test_missing_secret_returns_422(self, client, path):
+    async def test_missing_secret_returns_403(self, client, path):
         resp = await client.get(path)
-        assert resp.status_code == 422
+        assert resp.status_code == 403

@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,7 +28,8 @@ router = APIRouter()
 
 @router.post("/kalshi/poll")
 async def trigger_kalshi_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Manually trigger Kalshi market polling.
@@ -37,8 +38,7 @@ async def trigger_kalshi_poll(
     Returns immediately with task ID - check Celery logs for results.
     Requires KALSHI_API_KEY to be configured.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     kalshi_key = os.getenv("KALSHI_API_KEY")
     if not kalshi_key:
@@ -63,16 +63,16 @@ async def trigger_kalshi_poll(
 
 @router.get("/kalshi/task/{task_id}")
 async def get_kalshi_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Check the status of a Kalshi polling task.
 
     Returns the task state and result (if complete).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -93,15 +93,15 @@ async def get_kalshi_task_status(
 
 @router.get("/kalshi/debug-discovery")
 async def debug_kalshi_discovery(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     search: Optional[str] = Query(None, description="Search term to filter series (e.g., 'olympic')"),
 ):
     """
     Debug Kalshi series discovery: shows what series each category returns,
     and optionally searches all series for a keyword.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     kalshi_key = os.getenv("KALSHI_API_KEY")
     if not kalshi_key:
@@ -215,7 +215,8 @@ async def debug_kalshi_discovery(
 
 @router.post("/polymarket/poll")
 async def trigger_polymarket_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Manually trigger Polymarket polling.
@@ -224,8 +225,7 @@ async def trigger_polymarket_poll(
     Returns immediately with task ID - check Celery logs for results.
     No API key required (Polymarket is fully public).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import poll_polymarket_markets
 
@@ -242,16 +242,16 @@ async def trigger_polymarket_poll(
 
 @router.get("/polymarket/task/{task_id}")
 async def get_polymarket_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Check the status of a Polymarket polling/backfill task.
 
     Returns the task state and result (if complete).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -272,7 +272,8 @@ async def get_polymarket_task_status(
 
 @router.post("/polymarket/backfill-history")
 async def trigger_polymarket_history_backfill(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Max outcomes to process per run"),
     fidelity: int = Query(60, description="Price granularity in minutes (60=hourly, 1440=daily)"),
     interval: str = Query("max", description="Time range: 1h, 6h, 1d, 1w, max"),
@@ -284,8 +285,7 @@ async def trigger_polymarket_history_backfill(
     snapshot data. Prioritizes outcomes with the fewest existing snapshots.
     Uses ON CONFLICT DO NOTHING to avoid duplicate inserts.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_polymarket_history
 
@@ -302,7 +302,8 @@ async def trigger_polymarket_history_backfill(
 
 @router.post("/polymarket/fix-outcome-names")
 async def fix_polymarket_outcome_names(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Fix Polymarket outcome names using groupItemTitle from Gamma API.
@@ -313,8 +314,7 @@ async def fix_polymarket_outcome_names(
 
     Runs as a background Celery task to avoid Heroku's 30-second HTTP timeout.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import fix_outcome_names
 
@@ -336,7 +336,8 @@ async def fix_polymarket_outcome_names(
 
 @router.post("/futures/poll")
 async def trigger_futures_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Manually trigger futures/outrights polling from The Odds API.
@@ -344,8 +345,7 @@ async def trigger_futures_poll(
     Queues the polling task to run in the background via Celery.
     Returns immediately with task ID - use /futures/task/{id} to check status.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import poll_futures_odds
 
@@ -362,16 +362,16 @@ async def trigger_futures_poll(
 
 @router.get("/futures/task/{task_id}")
 async def get_futures_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Check the status of a futures polling task.
 
     Returns the task state and result (if complete).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -392,7 +392,8 @@ async def get_futures_task_status(
 
 @router.get("/futures/sports")
 async def get_sports_with_outrights(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Debug endpoint: Get list of sports that have outrights/futures available.
@@ -400,8 +401,7 @@ async def get_sports_with_outrights(
     This calls The Odds API to see which sports have has_outrights=True.
     Useful for debugging why certain futures aren't appearing.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.odds_api import OddsAPIService
 
@@ -419,7 +419,8 @@ async def get_sports_with_outrights(
 
 @router.post("/futures/normalize-probabilities")
 async def normalize_futures_probabilities(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     dry_run: bool = Query(False, description="Preview changes without saving"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -434,8 +435,7 @@ async def normalize_futures_probabilities(
     3. Recalculates opening_probability on futures_outcomes
     4. Recalculates American odds from normalized probabilities
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from collections import defaultdict
     from statistics import mean
@@ -567,13 +567,12 @@ async def normalize_futures_probabilities(
 
 @router.post("/futures/retier")
 async def retier_futures_markets(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(1000),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Re-compute market_tier for all futures markets using current patterns."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.market_label_normalization import compute_market_tier
 
@@ -602,7 +601,8 @@ async def retier_futures_markets(
 
 @router.post("/espn/sync-teams")
 async def sync_espn_teams(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key to sync (e.g., basketball_nba)"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
     db: AsyncSession = Depends(get_db_rw),
@@ -613,8 +613,7 @@ async def sync_espn_teams(
     Fetches teams from ESPN API and updates matching teams in our database.
     Uses LLM for fuzzy name matching when direct match fails.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services import get_espn_service, llm
     from app.models import Team, Sport
@@ -745,7 +744,8 @@ async def sync_espn_teams(
 
 @router.get("/espn/teams-status")
 async def espn_teams_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -753,8 +753,7 @@ async def espn_teams_status(
 
     Shows how many teams have ESPN data (colors, logos).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Team
 
@@ -781,7 +780,8 @@ async def espn_teams_status(
 
 @router.post("/espn/sync-live-events")
 async def sync_espn_live_events(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key to sync"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
     skip_llm: bool = Query(False, description="Skip LLM matching (faster, avoids timeout)"),
@@ -793,8 +793,7 @@ async def sync_espn_live_events(
     Matches ESPN events to our events and updates game state.
     Use skip_llm=true to avoid timeouts when LLM matching is slow.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services import get_espn_service, llm
     from app.models import Venue
@@ -985,7 +984,8 @@ async def sync_espn_live_events(
 
 @router.get("/espn/events-status")
 async def espn_events_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -993,8 +993,7 @@ async def espn_events_status(
 
     Shows how many events have ESPN data (clock, period, venue, win prob).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(
@@ -1022,7 +1021,8 @@ async def espn_events_status(
 
 @router.post("/espn/match-teams")
 async def match_espn_teams(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     our_team_name: str = Query(..., description="Our team name"),
     sport_key: str = Query(..., description="Sport key"),
     db: AsyncSession = Depends(get_db_rw),
@@ -1032,8 +1032,7 @@ async def match_espn_teams(
 
     Useful for testing entity resolution before bulk sync.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services import get_espn_service, llm
 
@@ -1071,12 +1070,12 @@ async def match_espn_teams(
 
 @router.get("/espn/task/{task_id}")
 async def get_espn_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of an ESPN correction task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -1097,7 +1096,8 @@ async def get_espn_task_status(
 
 @router.post("/espn/cleanup-bad-matches")
 async def cleanup_bad_espn_matches(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Validate existing ESPN ID assignments and clear bad matches.
@@ -1106,8 +1106,7 @@ async def cleanup_bad_espn_matches(
     scoring, and clears ESPN data (ID, logos, colors) for teams below the
     match threshold. Returns task_id for status checking.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import cleanup_bad_espn_matches as task
 
@@ -1121,7 +1120,8 @@ async def cleanup_bad_espn_matches(
 
 @router.post("/espn/backfill-boxscores")
 async def backfill_box_scores(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process"),
     priority: str = Query("recent", description="'recent' (default) or 'calibration' (events with Kalshi props)"),
 ):
@@ -1131,8 +1131,7 @@ async def backfill_box_scores(
     priority=calibration targets events with Kalshi player prop markets
     needing is_winner resolution first.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_box_scores as task
 
@@ -1146,13 +1145,12 @@ async def backfill_box_scores(
 
 @router.post("/espn/clear-unavailable")
 async def clear_espn_unavailable(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     sport: str = Query(..., description="Sport key prefix to clear (e.g., 'icehockey')"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Clear 'not_available' box_score_data on events so they get retried."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         text("""
@@ -1172,7 +1170,7 @@ async def clear_espn_unavailable(
 
 @router.post("/espn/backfill-ids")
 async def backfill_espn_ids(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     days: int = Query(0, description="How many days back to scan (0 = all time)"),
     sport: Optional[str] = Query(None, description="Sport key filter (e.g., basketball_nba)"),
     dry_run: bool = Query(True, description="If true, report matches without updating"),
@@ -1184,8 +1182,7 @@ async def backfill_espn_ids(
     Scans events that have no espn_id, fetches ESPN's schedule for each
     date, and matches by team names. Set days=0 to scan all time.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.espn_api import ESPNAPIService
     from app.utils.sport_keys import ESPN_SPORT_MAPPING
@@ -1326,13 +1323,13 @@ async def backfill_espn_ids(
 
 @router.get("/rosters/teams-debug")
 async def rosters_teams_debug(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key (e.g., 'americanfootball_nfl')"),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug: show team names, abbreviations, and roster status for a sport."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Team, Sport
 
@@ -1368,7 +1365,8 @@ async def rosters_teams_debug(
 
 @router.post("/rosters/sync")
 async def trigger_roster_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: Optional[str] = Query(None, description="Sport key (e.g., 'basketball_nba'). If omitted, syncs all supported sports."),
 ):
     """Trigger roster sync from ESPN + MLB Stats API (runs as background Celery task).
@@ -1376,8 +1374,7 @@ async def trigger_roster_sync(
     Fetches player rosters and stores them on Team.roster_players for use
     in related-futures player name matching.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_rosters
 
@@ -1392,12 +1389,12 @@ async def trigger_roster_sync(
 
 @router.get("/rosters/task/{task_id}")
 async def get_roster_sync_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a roster sync task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -1423,7 +1420,8 @@ async def get_roster_sync_task_status(
 
 @router.post("/mlb/sync")
 async def trigger_mlb_win_prob_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Trigger a one-off MLB win probability sync.
@@ -1431,8 +1429,7 @@ async def trigger_mlb_win_prob_sync(
     Fetches live MLB games from the MLB Stats API and writes win probability
     snapshots for matched events. Normally runs automatically every 2 minutes.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_mlb_win_probability
 
@@ -1450,12 +1447,12 @@ async def trigger_mlb_win_prob_sync(
 
 @router.get("/mlb/task/{task_id}")
 async def get_mlb_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of an MLB sync task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -1476,11 +1473,11 @@ async def get_mlb_task_status(
 
 @router.get("/odds-api/usage")
 async def odds_api_usage(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Current Odds API quota status and hourly history."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_odds_api_quota, get_odds_api_quota_history
 
@@ -1513,7 +1510,8 @@ async def odds_api_usage(
 
 @router.get("/odds-api/daily-activity")
 async def odds_api_daily_activity(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
     month: int = Query(2, description="Month (1-12)"),
     year: int = Query(2026, description="Year"),
@@ -1524,8 +1522,7 @@ async def odds_api_daily_activity(
     Query one table at a time (table=odds|futures|winprob) to stay within
     Heroku's 30-second timeout, or table=all to try all three.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import date
 
@@ -1604,11 +1601,11 @@ async def odds_api_daily_activity(
 
 @router.get("/statpal/usage")
 async def statpal_usage(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Current StatPal API usage and daily history."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_statpal_usage, get_statpal_usage_history
 
@@ -1632,7 +1629,8 @@ async def statpal_usage(
 
 @router.post("/statpal/sync-schedules")
 async def trigger_statpal_schedule_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
 ):
     """
@@ -1642,8 +1640,7 @@ async def trigger_statpal_schedule_sync(
     populates end_time for finished games, and stores StatPal fixture IDs for
     play-by-play lookups.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_schedules
 
@@ -1661,12 +1658,12 @@ async def trigger_statpal_schedule_sync(
 
 @router.get("/statpal/probe-endpoints")
 async def statpal_probe_endpoints(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport: str = Query("nba", description="StatPal sport"),
 ):
     """Probe StatPal with different endpoints/params to find playoff schedules."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.statpal_api import StatPalAPIService, is_available
     if not is_available():
@@ -1763,12 +1760,12 @@ async def statpal_probe_endpoints(
 
 @router.get("/statpal/fixture-debug")
 async def statpal_fixture_debug(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport: str = Query("nba", description="StatPal sport (nba, nhl, mlb)"),
 ):
     """Show raw StatPal fixture data to debug date parsing."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.statpal_api import StatPalAPIService, is_available
     if not is_available():
@@ -1814,7 +1811,8 @@ async def statpal_fixture_debug(
 
 @router.post("/statpal/sync-injuries")
 async def trigger_statpal_injury_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
 ):
     """
@@ -1823,8 +1821,7 @@ async def trigger_statpal_injury_sync(
     Fetches injury reports and attaches them to upcoming/live events for
     "Why Did the Line Move?" context.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_injuries
 
@@ -1842,7 +1839,8 @@ async def trigger_statpal_injury_sync(
 
 @router.post("/statpal/sync-plays")
 async def trigger_statpal_play_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Sport key. If omitted, syncs all live games."),
 ):
     """
@@ -1851,8 +1849,7 @@ async def trigger_statpal_play_sync(
     Fetches recent plays from live games to provide context for probability
     movements and Pulse calculations.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_live_plays
 
@@ -1870,7 +1867,8 @@ async def trigger_statpal_play_sync(
 
 @router.post("/statpal/sync-rosters")
 async def trigger_statpal_roster_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Sport key. If omitted, syncs all."),
 ):
     """
@@ -1878,8 +1876,7 @@ async def trigger_statpal_roster_sync(
 
     Only updates teams that don't already have roster data from ESPN.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_rosters
 
@@ -1897,12 +1894,12 @@ async def trigger_statpal_roster_sync(
 
 @router.get("/statpal/task/{task_id}")
 async def get_statpal_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a StatPal sync task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -1918,11 +1915,11 @@ async def get_statpal_task_status(
 
 @router.get("/statpal/status")
 async def statpal_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check StatPal integration status -- API key configured, sport mapping, etc."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.statpal_api import is_available
     from app.tasks.config import STATPAL_SPORT_MAPPING
@@ -1944,12 +1941,12 @@ async def statpal_status(
 
 @router.post("/statpal/sync-standings")
 async def trigger_statpal_standings_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Optional: limit to one sport key"),
 ):
     """Trigger StatPal standings sync (daily task, runs at 8:00 AM UTC)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_standings
 
@@ -1967,12 +1964,12 @@ async def trigger_statpal_standings_sync(
 
 @router.post("/statpal/sync-team-stats")
 async def trigger_statpal_team_stats_sync(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Optional: limit to one sport key"),
 ):
     """Trigger StatPal team stats sync (weekly task, runs Monday 9:00 AM UTC)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import sync_statpal_team_stats
 
@@ -1995,15 +1992,15 @@ async def trigger_statpal_team_stats_sync(
 
 @router.post("/datagolf/poll")
 async def trigger_datagolf_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Manually trigger DataGolf market polling (runs inline, not via Celery queue).
 
     The worker only has 2 concurrency slots permanently occupied by
     high-frequency tasks, so Celery .delay() would queue but never execute.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.datagolf import _poll_datagolf_markets
     try:
@@ -2015,11 +2012,11 @@ async def trigger_datagolf_poll(
 
 @router.post("/datagolf/poll-live")
 async def trigger_datagolf_live_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Manually trigger DataGolf live in-play polling (runs inline)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.datagolf import _poll_datagolf_live
     try:
@@ -2031,11 +2028,11 @@ async def trigger_datagolf_live_poll(
 
 @router.get("/datagolf/debug-schedule")
 async def datagolf_debug_schedule(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Fetch raw DataGolf schedule for field name discovery."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.datagolf_api import DataGolfAPIService
     service = DataGolfAPIService()
@@ -2057,12 +2054,12 @@ async def datagolf_debug_schedule(
 
 @router.get("/datagolf/status")
 async def datagolf_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Check DataGolf integration status: markets, outcomes, live flags."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Count DataGolf markets
     market_result = await db.execute(
@@ -2146,10 +2143,10 @@ async def datagolf_status(
 
 @router.get("/odds-api/sport-polling-status")
 async def sport_polling_status(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Live polling status for each sport — shows 404 caches, adaptive slowdown, and skip reasons."""
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     from datetime import datetime, timezone

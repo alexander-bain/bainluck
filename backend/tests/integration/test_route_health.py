@@ -95,7 +95,7 @@ class TestSportsAdminEndpointGuards:
             resp = await getattr(client, method)(path)
 
         assert resp.status_code == 403
-        assert resp.json() ["detail"] in ("Invalid admin secret", "Admin auth not configured")
+        assert resp.json()["detail"] in ("Invalid admin secret", "Admin auth not configured")
         service_cls.assert_not_called()
 
     async def test_sync_invalid_secret_does_not_commit(self, client, mock_db):

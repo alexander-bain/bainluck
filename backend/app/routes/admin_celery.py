@@ -3,7 +3,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -13,11 +13,11 @@ router = APIRouter()
 
 @router.get("/celery/health")
 async def celery_health(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check Celery worker health via heartbeat timestamp in Redis."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_redis_client
 
@@ -49,7 +49,8 @@ async def celery_health(
 
 @router.get("/celery/dashboard")
 async def celery_dashboard(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Task-level success metrics dashboard.
@@ -59,8 +60,7 @@ async def celery_dashboard(
     crashes) — e.g., ESPN sync matching 0 events, odds polling returning
     empty results.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_all_task_metrics, get_redis_client
 
@@ -115,12 +115,12 @@ async def celery_dashboard(
 
 @router.get("/celery/task-metrics/{task_name}")
 async def get_task_metrics_endpoint(
+    request: Request,
     task_name: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Get detailed metrics for a specific task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_task_metrics
     return get_task_metrics(task_name)
@@ -128,11 +128,11 @@ async def get_task_metrics_endpoint(
 
 @router.get("/celery/inspect")
 async def celery_inspect(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
     i = celery_app.control.inspect(timeout=5)
@@ -161,20 +161,18 @@ async def celery_inspect(
 
 
 @router.post("/celery-purge-background")
-async def celery_purge_background(secret: str = Query(...)):
+async def celery_purge_background(request: Request, secret: str = Query(None)):
     """Purge stale tasks from the background queue."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     purged = celery_app.control.purge()
     return {"purged": purged}
 
 
 @router.get("/celery-debug")
-async def celery_debug(secret: str = Query(...)):
+async def celery_debug(request: Request, secret: str = Query(None)):
     """Inspect Celery worker status and queue lengths."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     import redis as redis_lib
 

@@ -32,7 +32,8 @@ router = APIRouter()
 @router.post("/pulse/recalculate")
 @router.post("/ei/recalculate")
 async def recalculate_ei(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process per batch"),
     force: bool = Query(False, description="Force recalculation even if EI already exists"),
     db: AsyncSession = Depends(get_db),
@@ -47,8 +48,7 @@ async def recalculate_ei(
     - Initial backfill after deploying EI
     - Recalculating after algorithm changes
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.excitement_index import calculate_ei, EIDataPoint
     from app.models import OddsSnapshot
@@ -180,7 +180,8 @@ async def recalculate_ei(
 
 @router.get("/ei/diagnosis")
 async def ei_diagnosis(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -189,8 +190,7 @@ async def ei_diagnosis(
     Breaks down completed/closed events with raw_ei=NULL by root cause,
     including sport breakdown for zero-snapshot events.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func, text
 
@@ -273,7 +273,8 @@ async def ei_diagnosis(
 @router.get("/pulse/status")
 @router.get("/ei/status")
 async def ei_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -281,8 +282,7 @@ async def ei_status(
 
     Returns counts of events with and without EI scores.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
 
@@ -322,7 +322,8 @@ async def ei_status(
 @router.get("/pulse/distributions")
 @router.get("/ei/distributions")
 async def ei_distributions(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -331,8 +332,7 @@ async def ei_distributions(
     Returns histograms and statistics for the overall score and EI metadata
     (raw_ei, lead_changes, comeback_factor).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import json
     from sqlalchemy import func
@@ -469,6 +469,7 @@ async def ei_distributions(
 
 @router.get("/dashboard")
 async def operations_dashboard(
+    request: Request,
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ):
@@ -483,8 +484,7 @@ async def operations_dashboard(
     Implementation lives in ``app.utils.admin_dashboard`` — each section is
     an independently testable helper function.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.admin_dashboard import (
         build_quota_section,
@@ -525,7 +525,8 @@ async def operations_dashboard(
 
 @router.get("/latency-stats")
 async def get_latency_stats(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     top: int = Query(20, description="Number of slowest endpoints to return"),
 ):
     """Return p50/p95/p99 latency per endpoint from the last hour.
@@ -533,8 +534,7 @@ async def get_latency_stats(
     Data comes from sampled request timings stored in Redis sorted sets
     by the LatencyMiddleware.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import time as _time
 
@@ -607,7 +607,8 @@ async def get_latency_stats(
 
 @router.get("/ground-truth/status")
 async def get_ground_truth_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     days: int = Query(7, description="Number of days to look back"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -616,8 +617,7 @@ async def get_ground_truth_status(
     Returns rows per source per day, match rate, and recent captures.
     Advisory signal for Discover ranking review — does not auto-promote.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.featured_market_capture import get_featured_capture_status
 
@@ -626,12 +626,12 @@ async def get_ground_truth_status(
 
 @router.post("/ground-truth/capture")
 async def trigger_ground_truth_capture(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Manually trigger a featured-market capture for today."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.featured_market_capture import capture_all_featured
 
@@ -663,7 +663,8 @@ class PairwiseLabelBody(BaseModel):
 
 @router.get("/pairwise/next")
 async def pairwise_next(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Serve a pair of Discover cards for pairwise preference labeling.
@@ -672,8 +673,7 @@ async def pairwise_next(
     (one from top third, one from bottom third of available markets)
     to maximize information value of each comparison.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import DiscoverPairwiseLabel
 
@@ -790,13 +790,13 @@ async def pairwise_next(
 
 @router.post("/pairwise/label")
 async def pairwise_label(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     body: PairwiseLabelBody = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
     """Record a pairwise preference label."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import DiscoverPairwiseLabel
 
@@ -825,12 +825,12 @@ async def pairwise_label(
 
 @router.get("/pairwise/stats")
 async def pairwise_stats(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Show labeling statistics including agreement with current ranking."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import DiscoverPairwiseLabel
 

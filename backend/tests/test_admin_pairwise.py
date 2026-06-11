@@ -30,7 +30,7 @@ class _WriteDB:
 
 def test_pairwise_label_persists_feed_context(monkeypatch):
     db = _WriteDB()
-    monkeypatch.setattr(admin, "_check_admin_secret", lambda secret: secret == "ok")
+    monkeypatch.setattr(admin, "_check_admin_secret", lambda secret, **kw: secret == "ok")
 
     response = _client_with_db(db).post(
         "/admin/pairwise/label?secret=ok",

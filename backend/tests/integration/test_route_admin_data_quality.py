@@ -18,6 +18,6 @@ class TestDataQualityAuthGuards:
         resp = await client.get(path)
         assert resp.status_code == 403
 
-    async def test_missing_secret_returns_422(self, client):
+    async def test_missing_secret_returns_403(self, client):
         resp = await client.get("/api/admin/snapshots/stats")
-        assert resp.status_code == 422
+        assert resp.status_code == 403

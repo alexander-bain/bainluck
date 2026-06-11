@@ -108,19 +108,19 @@ class TestMarketMovesEndpoint:
         resp = await client.get("/api/market-moves?limit=5")
         assert resp.status_code == 200
 
-    async def test_hours_too_low_returns_422(self, client):
+    async def test_hours_too_low_returns_403(self, client):
         resp = await client.get("/api/market-moves?hours=1")
         assert resp.status_code == 422
 
-    async def test_hours_too_high_returns_422(self, client):
+    async def test_hours_too_high_returns_403(self, client):
         resp = await client.get("/api/market-moves?hours=999")
         assert resp.status_code == 422
 
-    async def test_limit_too_high_returns_422(self, client):
+    async def test_limit_too_high_returns_403(self, client):
         resp = await client.get("/api/market-moves?limit=100")
         assert resp.status_code == 422
 
-    async def test_limit_zero_returns_422(self, client):
+    async def test_limit_zero_returns_403(self, client):
         resp = await client.get("/api/market-moves?limit=0")
         assert resp.status_code == 422
 

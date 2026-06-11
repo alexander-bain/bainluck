@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, text, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,8 @@ router = APIRouter()
 
 @router.post("/teams/backfill-logos")
 async def trigger_team_logo_backfill(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Manually trigger team logo backfill from ESPN's /teams endpoint.
@@ -29,8 +30,7 @@ async def trigger_team_logo_backfill(
     Fetches all teams for supported leagues and fills in missing logos.
     Queues as a background Celery task and returns immediately.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_team_logos
 
@@ -47,12 +47,12 @@ async def trigger_team_logo_backfill(
 
 @router.get("/teams/task/{task_id}")
 async def get_team_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a team logo backfill task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -73,14 +73,13 @@ async def get_team_task_status(
 
 @router.post("/teams/merge")
 async def merge_duplicate_team(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     source_id: int = Query(..., description="Team ID to merge FROM (duplicate, will be deleted)"),
     target_id: int = Query(..., description="Team ID to merge INTO (canonical, will be kept)"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge a duplicate team into the canonical one. Reassigns all FKs then deletes the duplicate."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Team
 
@@ -119,14 +118,13 @@ async def merge_duplicate_team(
 
 @router.post("/teams/add-alias")
 async def add_team_alias(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     team_id: int = Query(...),
     alias: str = Query(..., description="Alias to add to alternate_names"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Add an alias to a team's alternate_names list."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Team
     team = await db.get(Team, team_id)
@@ -149,12 +147,12 @@ async def add_team_alias(
 
 @router.get("/team-identity/status")
 async def team_identity_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Count mappings by source, total mapped teams, unmapped teams."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import TeamIdentityMapping, Team
 
@@ -186,11 +184,11 @@ async def team_identity_status(
 
 @router.post("/team-identity/backfill")
 async def trigger_team_identity_backfill(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Trigger one-time backfill of team identity mappings from existing data."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_team_identities
     try:
@@ -207,12 +205,12 @@ async def trigger_team_identity_backfill(
 
 @router.get("/team-identity/task/{task_id}")
 async def team_identity_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check team identity task status."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app as app
     result = app.AsyncResult(task_id)
@@ -226,13 +224,13 @@ async def team_identity_task_status(
 
 @router.get("/team-identity/search")
 async def team_identity_search(
+    request: Request,
     q: str = Query(..., description="Search query for team name"),
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Search team identity mappings across all sources."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import TeamIdentityMapping, Team
 
@@ -270,13 +268,13 @@ async def team_identity_search(
 
 @router.get("/team-identity/team/{team_id}")
 async def team_identity_detail(
+    request: Request,
     team_id: int,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """All identity mappings for a specific team."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import TeamIdentityMapping, Team
 
@@ -319,13 +317,13 @@ async def team_identity_detail(
 
 @router.get("/team-identity/unmapped")
 async def team_identity_unmapped(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(None, description="Filter by sport key"),
     db: AsyncSession = Depends(get_db),
 ):
     """Teams with no identity mappings."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.services.team_identity import TeamIdentityService
     service = TeamIdentityService()
@@ -354,7 +352,8 @@ async def team_identity_unmapped(
 
 @router.post("/futures/link-teams")
 async def trigger_team_linking(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(200, description="Max outcomes to process per run"),
     use_llm: bool = Query(True, description="Use LLM for player-team classification"),
 ):
@@ -365,8 +364,7 @@ async def trigger_team_linking(
 
     Runs as a background Celery task to avoid HTTP timeouts.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_team_links
 
@@ -382,12 +380,12 @@ async def trigger_team_linking(
 
 @router.get("/futures/link-teams/task/{task_id}")
 async def get_team_linking_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a team linking backfill task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -408,12 +406,12 @@ async def get_team_linking_task_status(
 
 @router.get("/futures/team-links-status")
 async def get_team_links_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Check the status of team linking across futures outcomes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Count outcomes with/without team_id
     total = (await db.execute(
@@ -447,13 +445,12 @@ async def get_team_links_status(
 
 @router.get("/futures/team-links-sample")
 async def sample_team_linked_outcomes(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(50),
     db: AsyncSession = Depends(get_db),
 ):
     """Sample recently linked outcomes to verify matching accuracy."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Team
 
@@ -492,12 +489,11 @@ async def sample_team_linked_outcomes(
 
 @router.get("/futures/team-links-debug")
 async def debug_team_links(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug team linking: show distribution of unlinked outcomes."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # How many markets have event_id?
     event_linked = await db.execute(text("""
@@ -638,15 +634,15 @@ async def debug_team_links(
 
 @router.post("/futures/backfill-canonical-keys")
 async def trigger_canonical_key_backfill(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max markets to process per run"),
 ):
     """Trigger backfill of canonical_market_key and llm_league on futures markets.
 
     Runs as a background Celery task. Returns task_id for status polling.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_canonical_keys
     task = backfill_canonical_keys.delay(limit)
@@ -660,12 +656,12 @@ async def trigger_canonical_key_backfill(
 
 @router.get("/futures/canonical-key-status")
 async def get_canonical_key_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Check the status of canonical market key population across futures markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     total = (await db.execute(
         select(func.count(FuturesMarket.id))

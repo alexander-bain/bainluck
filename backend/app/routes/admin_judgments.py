@@ -764,7 +764,7 @@ async def list_labeling_candidates(
     limit: int = Query(40, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _check_admin_secret(secret) and not await _check_admin_auth(
+    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
         secret, request, db
     ):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -840,15 +840,14 @@ async def list_labeling_candidates(
 
 @router.get("")
 async def list_judgments(
-    db: AsyncSession = Depends(get_db),
-    secret: str = Query(...),
+    request: Request,
+    db: AsyncSession = Depends(get_db), secret: str = Query(None),
     limit: int = Query(50),
     offset: int = Query(0),
     label: str | None = Query(None),
     surface: str | None = Query(None),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     q = select(RankingJudgment).order_by(desc(RankingJudgment.created_at))
     count_q = select(func.count(RankingJudgment.id))
@@ -893,7 +892,7 @@ async def labeling_coverage(
     reviewer (hashed), plus queue health showing unreviewed candidates
     per stratum.
     """
-    if not _check_admin_secret(secret) and not await _check_admin_auth(
+    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
         secret, request, db
     ):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1022,9 +1021,8 @@ async def labeling_coverage(
 
 
 @router.get("/summary")
-async def judgment_summary(db: AsyncSession = Depends(get_db), secret: str = Query(...)):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+async def judgment_summary(request: Request, db: AsyncSession = Depends(get_db), secret: str = Query(None)):
+    _check_admin_secret(secret, request=request)
 
     label_q = select(
         RankingJudgment.label,
@@ -1086,14 +1084,13 @@ async def judgment_summary(db: AsyncSession = Depends(get_db), secret: str = Que
 
 @router.get("/fixable-interest/clusters")
 async def fixable_interest_clusters(
-    db: AsyncSession = Depends(get_db),
-    secret: str = Query(...),
+    request: Request,
+    db: AsyncSession = Depends(get_db), secret: str = Query(None),
     status: str = Query("open"),
     limit: int = Query(50),
     row_limit: int = Query(1000),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     rows = (
         await db.execute(
@@ -1127,7 +1124,7 @@ async def repair_clusters(
     Returns clusters sorted by count (most common first), each with sample
     market IDs and reviewer count.
     """
-    if not _check_admin_secret(secret) and not await _check_admin_auth(
+    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
         secret, request, db
     ):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1248,9 +1245,8 @@ async def triage_fixable_interest_cluster(
 
 
 @router.get("/export")
-async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Query(...)):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+async def export_judgments(request: Request, db: AsyncSession = Depends(get_db), secret: str = Query(None)):
+    _check_admin_secret(secret, request=request)
 
     rows = (
         await db.execute(
@@ -1368,7 +1364,7 @@ async def export_eval_dataset(
     Returns JSON by default. Set fmt=csv for CSV download.
     No PII is included — reviewer emails are hashed.
     """
-    if not _check_admin_secret(secret) and not await _check_admin_auth(
+    if not _check_admin_secret(secret, request=request) and not await _check_admin_auth(
         secret, request, db
     ):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1440,8 +1436,8 @@ class CurationSignalInput(BaseModel):
 
 @router.post("/curation-signal")
 async def create_curation_signal(
-    body: CurationSignalInput,
-    secret: str = Query(...),
+    request: Request,
+    body: CurationSignalInput, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Record a boost/demote signal from the curator.
@@ -1449,8 +1445,7 @@ async def create_curation_signal(
     Designed for fast input from iOS Share Sheet shortcut.
     Parses Kalshi/Polymarket URLs to extract market identifiers.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     import re
     from app.models.models import CurationSignal, FuturesMarket
@@ -1593,14 +1588,13 @@ async def create_curation_signal(
 
 @router.get("/curation-signals")
 async def list_curation_signals(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     processed: bool | None = Query(None),
     limit: int = Query(50),
     db: AsyncSession = Depends(get_db),
 ):
     """List curation signals, optionally filtered by processed status."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import CurationSignal
 

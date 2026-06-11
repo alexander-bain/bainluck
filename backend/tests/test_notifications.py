@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
@@ -91,7 +91,9 @@ def test_register_device_token_falls_back_to_header_and_ignores_bad_user_id():
 
 def test_list_device_tokens_rejects_invalid_admin_secret(monkeypatch):
     db = _CaptureDB()
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: False)
+    def _reject_admin(secret, **kw):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    monkeypatch.setattr(notifications, "_check_admin_secret", _reject_admin)
 
     response = _client_with_db(db).get("/api/notifications/admin/tokens?secret=bad")
 
@@ -145,7 +147,7 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: secret == "ok")
+    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret, **kw: secret == "ok")
 
     response = _client_with_db(db).get("/api/notifications/admin/tokens?secret=ok")
 
@@ -182,7 +184,9 @@ def test_list_device_tokens_returns_redacted_active_tokens(monkeypatch):
 
 
 def test_send_test_notification_rejects_invalid_admin_secret(monkeypatch):
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: False)
+    def _reject_admin(secret, **kw):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    monkeypatch.setattr(notifications, "_check_admin_secret", _reject_admin)
 
     response = _client_with_db().post(
         "/api/notifications/admin/send-test?secret=bad",
@@ -251,7 +255,7 @@ def _install_fake_firebase(monkeypatch, *, init_result=True, send_error=None):
 
 
 def test_send_test_notification_uses_fcm_payload_and_defaults(monkeypatch):
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: True)
+    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret, **kw: True)
     _install_fake_firebase(monkeypatch)
 
     response = _client_with_db().post(
@@ -276,7 +280,7 @@ def test_send_test_notification_uses_fcm_payload_and_defaults(monkeypatch):
 
 
 def test_send_test_notification_returns_hint_for_invalid_fcm_token(monkeypatch):
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: True)
+    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret, **kw: True)
     _install_fake_firebase(
         monkeypatch,
         send_error=Exception("Invalid registration token"),
@@ -299,7 +303,7 @@ def test_send_test_notification_returns_hint_for_invalid_fcm_token(monkeypatch):
 
 
 def test_send_test_notification_reports_unconfigured_firebase(monkeypatch):
-    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret: True)
+    monkeypatch.setattr(notifications, "_check_admin_secret", lambda secret, **kw: True)
     _install_fake_firebase(monkeypatch, init_result=False)
 
     response = _client_with_db().post(

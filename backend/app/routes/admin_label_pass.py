@@ -6,7 +6,7 @@ and records human verdicts (accept/reject/skip).
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +20,11 @@ router = APIRouter()
 
 @router.get("/label-pass/pending")
 async def label_pass_pending(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Return pending LLM-proposed decisions with frozen features."""
-    _check_admin_secret(secret)
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(DiscoverReviewDecision)
@@ -110,12 +110,12 @@ class VerdictRequest(BaseModel):
 
 @router.post("/label-pass/verdict")
 async def label_pass_verdict(
-    body: VerdictRequest,
-    secret: str = Query(...),
+    request: Request,
+    body: VerdictRequest, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Record a human verdict on an LLM proposal."""
-    _check_admin_secret(secret)
+    _check_admin_secret(secret, request=request)
 
     if body.verdict not in ("accept", "reject", "skip"):
         raise HTTPException(status_code=400, detail="verdict must be accept/reject/skip")

@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/source-health", tags=["admin-source-health"])
 
 
-def _check_admin_secret(secret: str) -> bool:
-    import os
-    return secret == os.getenv("ADMIN_TOKEN", os.getenv("ADMIN_SECRET", ""))
-
+from app.routes.admin_utils import _check_admin_secret  # noqa
 
 # Map each source to its primary task names for Redis metric lookups
 _SOURCE_TASKS = {
@@ -45,12 +42,11 @@ _SOURCE_FRESHNESS_QUERIES = {
 
 @router.get("")
 async def source_health(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Live health status for every external data source."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_task_metrics, get_redis_client
 

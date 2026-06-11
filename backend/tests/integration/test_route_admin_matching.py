@@ -25,6 +25,6 @@ class TestMatchingAuthGuards:
             "/api/admin/prediction-markets/status",
         ],
     )
-    async def test_missing_secret_returns_422(self, client, path):
+    async def test_missing_secret_returns_403(self, client, path):
         resp = await client.get(path)
-        assert resp.status_code == 422
+        assert resp.status_code == 403

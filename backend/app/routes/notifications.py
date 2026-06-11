@@ -33,8 +33,8 @@ class TestNotificationRequest(BaseModel):
 
 @router.post("/register")
 async def register_device_token(
-    body: DeviceTokenRegistration,
     request: Request,
+    body: DeviceTokenRegistration,
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Register a device token for push notifications.
@@ -87,9 +87,9 @@ async def register_device_token(
 
 @router.post("/admin/send-test")
 async def send_test_notification(
-    body: TestNotificationRequest,
     request: Request,
-    secret: str = Query(...),
+    body: TestNotificationRequest,
+    secret: str = Query(None),
 ):
     """Send a test push notification to a specific device token.
 
@@ -102,8 +102,7 @@ async def send_test_notification(
     FirebaseMessaging SDK and use Messaging.messaging().fcmToken
     instead of the raw APNS device token.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     try:
         from firebase_admin import messaging
@@ -163,12 +162,11 @@ async def send_test_notification(
 @router.get("/admin/tokens")
 async def list_device_tokens(
     request: Request,
-    secret: str = Query(...),
+    secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """List all registered device tokens. Requires admin secret."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(DeviceToken)

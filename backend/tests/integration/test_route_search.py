@@ -93,12 +93,12 @@ class TestSearchEndpoint:
         assert "days_back" in filters
         assert "include_upcoming" in filters
 
-    async def test_missing_q_returns_422(self, client):
+    async def test_missing_q_returns_403(self, client):
         """The q parameter is required (min_length=2)."""
         resp = await client.get("/api/events/search")
         assert resp.status_code == 422
 
-    async def test_short_q_returns_422(self, client):
+    async def test_short_q_returns_403(self, client):
         """q must be at least 2 characters."""
         resp = await client.get("/api/events/search?q=a")
         assert resp.status_code == 422
@@ -280,16 +280,16 @@ class TestTypeaheadEndpoint:
         body = resp.json()
         assert set(body.keys()) == {"suggestions", "query"}
 
-    async def test_missing_q_returns_422(self, client):
+    async def test_missing_q_returns_403(self, client):
         resp = await client.get("/api/events/typeahead")
         assert resp.status_code == 422
 
-    async def test_short_q_returns_422(self, client):
+    async def test_short_q_returns_403(self, client):
         """q must be at least 2 characters."""
         resp = await client.get("/api/events/typeahead?q=a")
         assert resp.status_code == 422
 
-    async def test_long_q_returns_422(self, client):
+    async def test_long_q_returns_403(self, client):
         """q must be at most 50 characters."""
         long_query = "a" * 51
         resp = await client.get(f"/api/events/typeahead?q={long_query}")
@@ -527,19 +527,19 @@ class TestFacetedSearchEndpoint:
         assert body["page"] == 2
         assert body["per_page"] == 10
 
-    async def test_invalid_page_returns_422(self, client):
+    async def test_invalid_page_returns_403(self, client):
         resp = await client.get("/api/events/faceted?page=0")
         assert resp.status_code == 422
 
-    async def test_invalid_per_page_returns_422(self, client):
+    async def test_invalid_per_page_returns_403(self, client):
         resp = await client.get("/api/events/faceted?per_page=101")
         assert resp.status_code == 422
 
-    async def test_invalid_days_too_low_returns_422(self, client):
+    async def test_invalid_days_too_low_returns_403(self, client):
         resp = await client.get("/api/events/faceted?days=0")
         assert resp.status_code == 422
 
-    async def test_invalid_days_too_high_returns_422(self, client):
+    async def test_invalid_days_too_high_returns_403(self, client):
         resp = await client.get("/api/events/faceted?days=31")
         assert resp.status_code == 422
 

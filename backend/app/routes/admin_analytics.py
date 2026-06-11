@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -60,12 +60,12 @@ CACHE_TTL_REALTIME = 300   # 5 minutes
 
 @router.get("/analytics/overview")
 async def analytics_overview(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     period: str = Query("7d", description="Period: 7d or 30d"),
 ):
     """Key site metrics: DAU, sessions, avg session duration, bounce rate, top pages."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = f"overview:{period}"
     cached = await _cache_get(cache_key)
@@ -95,12 +95,12 @@ async def analytics_overview(
 
 @router.get("/analytics/discover")
 async def analytics_discover(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     period: str = Query("7d", description="Period: 7d or 30d"),
 ):
     """Discover-specific metrics: feed loads, card events, scroll depth, H/L plays."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = f"discover:{period}"
     cached = await _cache_get(cache_key)
@@ -175,11 +175,11 @@ async def analytics_discover(
 
 @router.get("/analytics/realtime")
 async def analytics_realtime(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
 ):
     """Current active users and top active pages."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = "realtime"
     cached = await _cache_get(cache_key)
@@ -200,12 +200,12 @@ async def analytics_realtime(
 
 @router.get("/analytics/retention")
 async def analytics_retention(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     period: str = Query("30d", description="Period: 7d, 30d, or 90d"),
 ):
     """Daily/weekly retention cohorts: new vs returning users."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = f"retention:{period}"
     cached = await _cache_get(cache_key)
@@ -264,12 +264,12 @@ async def analytics_retention(
 
 @router.get("/analytics/funnel")
 async def analytics_funnel(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     period: str = Query("7d", description="Period: 7d or 30d"),
 ):
     """Discover conversion funnel: visit -> swipe/interact -> guess -> sign-up."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = f"funnel:{period}"
     cached = await _cache_get(cache_key)
@@ -417,12 +417,12 @@ async def analytics_funnel(
 
 @router.get("/analytics/pages")
 async def analytics_pages(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     period: str = Query("7d", description="Period: 7d or 30d"),
 ):
     """Page-level engagement: views, users, duration, grouped by section."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     cache_key = f"pages:{period}"
     cached = await _cache_get(cache_key)

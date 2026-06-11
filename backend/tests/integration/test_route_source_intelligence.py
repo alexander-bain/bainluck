@@ -159,7 +159,7 @@ class TestLinkedMarketsAudit:
         assert body["linked_markets"] == []
         assert body["snapshot_market_sources"] == []
 
-    async def test_missing_event_id_returns_422(self, client):
+    async def test_missing_event_id_returns_403(self, client):
         resp = await client.get("/api/source-intelligence/linked-markets")
         assert resp.status_code == 422
 

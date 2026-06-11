@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 
 class TestBugReportSubmission:
-    async def test_missing_body_returns_422(self, client):
+    async def test_missing_body_returns_403(self, client):
         resp = await client.post("/api/feedback/bug-report")
         assert resp.status_code == 422
 

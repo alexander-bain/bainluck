@@ -336,7 +336,7 @@ class TestDiscoverQualityTrace:
 
         resp = await client.get("/api/admin/discover-quality/trace/123")
 
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_trace_rejects_bad_admin_secret(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
@@ -409,7 +409,7 @@ class TestDiscoverEffectiveSettlementFollowups:
             "/api/admin/discover-quality/effective-settlement-followups"
         )
 
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_followups_reject_bad_admin_secret(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")

@@ -55,7 +55,7 @@ class TestOGPredictionCard:
         body = (await client.get("/api/og/prediction?market_id=999")).text
         assert "Prediction Market" in body
 
-    async def test_missing_market_id_returns_422(self, client):
+    async def test_missing_market_id_returns_403(self, client):
         resp = await client.get("/api/og/prediction")
         assert resp.status_code == 422
 

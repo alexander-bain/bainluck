@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
+def _mock_request():
+    return SimpleNamespace(headers={})
+
 from app.routes.admin_matching import (
     _should_exclude_tier1_gap_for_closed_game,
     prediction_market_tier1_gaps,
@@ -99,7 +103,7 @@ async def test_tier1_gaps_endpoint_skips_settlement_open_closed_game(
         ),
     ]
 
-    response = await prediction_market_tier1_gaps(secret="test-secret", db=db)
+    response = await prediction_market_tier1_gaps(request=_mock_request(), secret="test-secret", db=db)
 
     assert response["total_tier1_gaps"] == 1
     assert response["excluded_closed_game_markets"] == 1

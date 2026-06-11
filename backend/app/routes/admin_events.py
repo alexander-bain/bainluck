@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,7 +23,8 @@ router = APIRouter()
 
 @router.post("/events/create")
 async def create_event_manually(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     home_team: str = Query(..., description="Home team name (e.g., 'USA', 'Canada')"),
     away_team: str = Query(..., description="Away team name"),
     sport_key: str = Query(..., description="Sport key (e.g., 'icehockey_olympics')"),
@@ -41,8 +42,7 @@ async def create_event_manually(
     After creating, use POST /api/admin/prediction-markets/link to connect
     prediction markets, or trigger the matching task to auto-link.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import Sport
 
@@ -112,16 +112,16 @@ async def create_event_manually(
 
 @router.patch("/events/{event_id}")
 async def patch_event(
+    request: Request,
     event_id: int,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
     home_team: Optional[str] = Query(None, description="New home team name"),
     away_team: Optional[str] = Query(None, description="New away team name"),
     status: Optional[str] = Query(None, description="New status"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Patch an event's fields (admin only)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
@@ -145,7 +145,8 @@ async def patch_event(
 
 @router.post("/fix-live-statuses")
 async def fix_live_statuses(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     dry_run: bool = Query(False, description="Preview without making changes"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -154,8 +155,7 @@ async def fix_live_statuses(
     Resets events to 'scheduled' if they are marked 'live' but their
     commence_time is more than 1 hour in the future (clearly haven't started).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=1)  # Buffer for clock drift
@@ -207,7 +207,8 @@ async def fix_live_statuses(
 
 @router.post("/events/backfill-game-state")
 async def backfill_game_state(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max events to process"),
     sport: Optional[str] = Query(None, description="Sport key filter (e.g., 'baseball_mlb', 'basketball')"),
 ):
@@ -223,8 +224,7 @@ async def backfill_game_state(
     for all sports. Safe to run multiple times -- skips events that already
     have data.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_game_state as task
 
@@ -241,12 +241,12 @@ async def backfill_game_state(
 
 @router.get("/events/task/{task_id}")
 async def get_event_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of an event backfill task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -262,14 +262,14 @@ async def get_event_task_status(
 
 @router.get("/events/creation-lead-time")
 async def event_creation_lead_time(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport: str = Query("basketball_nba", description="Sport key"),
     days: int = Query(14, description="Look back N days"),
     db: AsyncSession = Depends(get_db),
 ):
     """How far in advance are Tier 1 events created before their commence_time?"""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import text as _text
 
@@ -336,13 +336,12 @@ async def event_creation_lead_time(
 
 @router.delete("/events/delete-duplicates")
 async def delete_duplicate_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     event_ids: str = Query(..., description="Comma-separated event IDs to delete"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete specific duplicate events with FK cleanup."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     ids = [int(x.strip()) for x in event_ids.split(",") if x.strip().isdigit()]
     if not ids:
@@ -368,12 +367,11 @@ async def delete_duplicate_events(
 
 @router.get("/events/duplicates")
 async def list_duplicate_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Find duplicate events: same sport, same teams, same date."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         WITH dupes AS (
@@ -447,7 +445,7 @@ async def list_duplicate_events(
 
 @router.post("/events/merge-duplicates")
 async def merge_duplicate_events(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(True, description="Preview without making changes"),
 ):
     """Queue a Celery task to merge duplicate events.
@@ -455,8 +453,7 @@ async def merge_duplicate_events(
     Runs in background to avoid Heroku 30s timeout.
     Check status with GET /api/admin/events/merge-task/{task_id}
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import merge_duplicate_events_task
     task = merge_duplicate_events_task.delay(dry_run=dry_run)
@@ -470,13 +467,12 @@ async def merge_duplicate_events(
 
 @router.post("/events/merge-duplicates-sql")
 async def merge_duplicate_events_sql(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     dry_run: bool = Query(True, description="Preview without making changes"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge duplicate events: find orphans, clear FK refs, then delete."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Step 1: Find keeper-orphan pairs
     result = await db.execute(text("""
@@ -581,11 +577,10 @@ async def merge_duplicate_events_sql(
 @router.get("/events/merge-task/{task_id}")
 async def check_merge_task(
     task_id: str,
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
 ):
     """Check status of a merge-duplicates background task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from celery.result import AsyncResult
     from app.tasks import celery_app
@@ -603,12 +598,11 @@ async def check_merge_task(
 
 @router.post("/merge-events")
 async def merge_events_admin(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Manually trigger the duplicate event merger (runs in non-dry-run mode)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.sports import _merge_duplicate_events_impl
     result = await _merge_duplicate_events_impl(dry_run=False)
@@ -622,13 +616,13 @@ async def merge_events_admin(
 
 @router.delete("/line-movement/cache/{event_id}")
 async def clear_line_movement_cache(
+    request: Request,
     event_id: int,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete cached line movement explanations for an event so they regenerate."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(
         select(LineMovementAnalysis).where(
@@ -651,14 +645,13 @@ async def clear_line_movement_cache(
 
 @router.get("/market-lookup")
 async def market_lookup(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     ticker: str = Query(None),
     name: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Look up futures markets by external_id prefix or name pattern."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     query = select(
         FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.name,
@@ -688,13 +681,13 @@ async def market_lookup(
 
 @router.get("/schedule/accuracy")
 async def schedule_accuracy(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     days: int = Query(30, description="Look back period in days"),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-sport breakdown of commence_time_source to audit date accuracy."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import Sport
 

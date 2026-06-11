@@ -201,8 +201,8 @@ class BugReportSubmission(BaseModel):
 
 @router.post("/bug-report")
 async def submit_bug_report(
-    body: BugReportSubmission,
     request: Request,
+    body: BugReportSubmission,
     db: AsyncSession = Depends(get_db_rw),
     user: User | None = Depends(get_optional_user),
 ):

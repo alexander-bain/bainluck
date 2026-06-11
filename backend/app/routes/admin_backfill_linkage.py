@@ -7,7 +7,7 @@ so it catches "NY Knicks" vs "New York Knicks" style differences.
 import logging
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import text, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 @router.post("/run")
 async def run_linkage_backfill(
-    db: AsyncSession = Depends(get_db_rw),
-    secret: str = Query(...),
+    request: Request,
+    db: AsyncSession = Depends(get_db_rw), secret: str = Query(None),
     days_back: int = Query(30),
     dry_run: bool = Query(True),
     sport: str = Query("baseball_mlb"),
@@ -32,7 +32,7 @@ async def run_linkage_backfill(
     Uses fuzzy names_match() instead of SQL exact matching.
     Set dry_run=false to actually merge.
     """
-    if not _check_admin_secret(secret):
+    if not _check_admin_secret(secret, request=request):
         return {"error": "unauthorized"}
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)

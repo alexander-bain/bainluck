@@ -42,10 +42,10 @@ class TestCeleryAuthGuards:
             "/api/admin/celery-debug",
         ],
     )
-    async def test_missing_secret_returns_422(self, client, path):
-        """Query param `secret` is required — omitting it returns 422."""
+    async def test_missing_secret_returns_403(self, client, path):
+        """Missing secret now returns 403 (auth raises)."""
         resp = await client.get(path)
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------

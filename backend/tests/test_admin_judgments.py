@@ -103,7 +103,7 @@ def _judgment(**overrides):
 def test_create_judgment_accepts_json_body(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -184,7 +184,7 @@ def test_create_judgment_accepts_json_body(monkeypatch):
 def test_create_judgment_keeps_query_param_write_path(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -202,7 +202,7 @@ def test_create_judgment_keeps_query_param_write_path(monkeypatch):
 def test_create_judgment_canonicalizes_reason_tag_aliases(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -217,7 +217,7 @@ def test_create_judgment_canonicalizes_reason_tag_aliases(monkeypatch):
 def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -287,7 +287,7 @@ def test_labeling_candidates_low_confidence_stratum(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -334,7 +334,7 @@ def test_labeling_candidates_returns_stratified_items(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -412,7 +412,7 @@ def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -433,7 +433,7 @@ def test_labeling_candidates_excludes_reviewed_market(monkeypatch):
 def test_create_judgment_accepts_nested_card_snapshot_metadata(monkeypatch):
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -474,7 +474,7 @@ def test_list_judgments_returns_rows_and_summary(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -502,7 +502,7 @@ def test_summary_judgments_returns_category_breakdown(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get("/admin/ranking-judgments/summary?secret=ok")
@@ -528,7 +528,7 @@ def test_summary_judgments_returns_category_breakdown(monkeypatch):
 def test_export_judgments_streams_csv(monkeypatch):
     db = _ReadDB([_ExecuteResult(scalar_rows=[_judgment()])])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get("/admin/ranking-judgments/export?secret=ok")
@@ -570,7 +570,7 @@ def test_fixable_interest_clusters_groups_rows(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -624,7 +624,7 @@ def test_triage_fixable_interest_cluster_updates_matching_rows(monkeypatch):
 
     db = _WriteReadDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(
@@ -680,7 +680,7 @@ def test_eval_export_returns_json_with_hashed_reviewer(monkeypatch):
     )
     db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -734,7 +734,7 @@ def test_eval_export_csv_format(monkeypatch):
     judgment = _judgment(market_id=200, label="bad", reason_tags=["boring", "stale"])
     db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -755,7 +755,7 @@ def test_eval_export_split_filter(monkeypatch):
     ]
     db = _ReadDB([_ExecuteResult(scalar_rows=judgments)])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -775,7 +775,7 @@ def test_eval_export_no_pii_in_output(monkeypatch):
     )
     db = _ReadDB([_ExecuteResult(scalar_rows=[judgment])])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -791,7 +791,7 @@ def test_eval_export_no_pii_in_output(monkeypatch):
 def test_eval_export_requires_auth(monkeypatch):
     db = _ReadDB([])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: False
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: False
     )
 
     response = _client_with_db(db).get(
@@ -814,7 +814,7 @@ def test_create_judgment_resolves_native_reviewer_to_admin_email(monkeypatch):
     resolves the reviewer to the admin's email for per-user reviewed state."""
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
     monkeypatch.setattr(
         admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
@@ -832,7 +832,7 @@ def test_create_judgment_keeps_explicit_reviewer(monkeypatch):
     """When reviewer is explicitly set (not 'native'), it is not resolved."""
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
     monkeypatch.setattr(
         admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email,
@@ -851,7 +851,7 @@ def test_create_judgment_native_reviewer_fallback_when_unauthenticated(monkeypat
     reviewer stays 'native'."""
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
     monkeypatch.setattr(
         admin_judgments, "_resolve_admin_email", _fake_resolve_admin_email_none,
@@ -920,7 +920,7 @@ def test_coverage_returns_stratum_heatmap_and_queue_health(monkeypatch):
     )
     db = _CoverageDB([j1, j2])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -976,7 +976,7 @@ def test_coverage_window_filter(monkeypatch):
     # We just verify the endpoint accepts the window param without error.
     db = _CoverageDB([j_old, j_new])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -990,7 +990,7 @@ def test_coverage_window_filter(monkeypatch):
 def test_coverage_requires_auth(monkeypatch):
     db = _CoverageDB([])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: False
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: False
     )
 
     response = _client_with_db(db).get(
@@ -1005,7 +1005,7 @@ def test_coverage_unknown_stratum_fallback(monkeypatch):
     j = _judgment(id=1, label="love", label_metadata=None)
     db = _CoverageDB([j])
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).get(
@@ -1021,7 +1021,7 @@ def test_card_snapshot_preserves_stratum_and_selection_reason(monkeypatch):
     """The stratum and selection_reason fields are now in the allowed snapshot keys."""
     db = _WriteDB()
     monkeypatch.setattr(
-        admin_judgments, "_check_admin_secret", lambda secret: secret == "ok"
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: secret == "ok"
     )
 
     response = _client_with_db(db).post(

@@ -6,6 +6,10 @@ import pytest
 from app.routes import admin_engagement
 
 
+def _mock_request():
+    return SimpleNamespace(headers={})
+
+
 class _ScalarsResult:
     def __init__(self, rows):
         self._rows = rows
@@ -32,7 +36,7 @@ class _Session:
 
 @pytest.fixture(autouse=True)
 def allow_admin_secret(monkeypatch):
-    monkeypatch.setattr(admin_engagement, "_check_admin_secret", lambda secret: secret == "ok")
+    monkeypatch.setattr(admin_engagement, "_check_admin_secret", lambda secret, **kw: secret == "ok")
 
 
 def _run(**overrides):
@@ -71,6 +75,7 @@ async def test_list_discover_label_eval_runs_serializes_recent_runs():
     db = _Session(_ScalarsResult([_run()]))
 
     response = await admin_engagement.list_discover_label_eval_runs(
+        request=_mock_request(),
         secret="ok",
         limit=20,
         db=db,
@@ -86,6 +91,7 @@ async def test_get_discover_label_eval_run_returns_full_details():
     db = _Session(_ScalarsResult([_run()]))
 
     response = await admin_engagement.get_discover_label_eval_run(
+        request=_mock_request(),
         run_id="run-1",
         secret="ok",
         db=db,
@@ -108,6 +114,7 @@ async def test_label_eval_trends_adds_run_over_run_deltas():
     )
 
     response = await admin_engagement.list_discover_label_eval_trends(
+        request=_mock_request(),
         secret="ok",
         limit=12,
         db=db,
@@ -131,6 +138,7 @@ async def test_snapshot_endpoint_queues_celery_task(monkeypatch):
     monkeypatch.setattr(celery_app, "send_task", send_task)
 
     response = await admin_engagement.trigger_discover_label_eval_snapshot(
+        request=_mock_request(),
         secret="ok",
         days=14,
         top_k=10,

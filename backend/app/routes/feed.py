@@ -197,10 +197,7 @@ def _set_feed_cache_status(response: Response, status: str) -> None:
     response.headers["X-Feed-Cache"] = status
 
 
-def _check_admin_secret(secret: str | None) -> bool:
-    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
-    return bool(expected and secret == expected)
-
+from app.routes.admin_utils import _check_admin_secret  # noqa
 
 def _discover_runtime_config_defaults() -> dict[str, float | bool]:
     return {
@@ -255,8 +252,8 @@ async def _load_discover_runtime_config() -> dict[str, float | bool]:
 
 @router.post("/interactions")
 async def record_discover_interactions(
-    body: DiscoverInteractionBatch,
     request: Request,
+    body: DiscoverInteractionBatch,
     user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_rw),
 ):

@@ -74,14 +74,14 @@ class TestNotificationRegister:
         )
         assert resp.status_code == 200
 
-    async def test_missing_device_token_returns_422(self, client):
+    async def test_missing_device_token_returns_403(self, client):
         resp = await client.post(
             "/api/notifications/register",
             json={"platform": "ios"},
         )
         assert resp.status_code == 422
 
-    async def test_missing_platform_returns_422(self, client):
+    async def test_missing_platform_returns_403(self, client):
         resp = await client.post(
             "/api/notifications/register",
             json={"device_token": "abc123"},
@@ -117,7 +117,7 @@ class TestNotificationRegister:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    async def test_empty_body_returns_422(self, client):
+    async def test_empty_body_returns_403(self, client):
         """Empty JSON body should be rejected."""
         resp = await client.post("/api/notifications/register", json={})
         assert resp.status_code == 422
@@ -137,7 +137,7 @@ class TestNotificationAdminTokens:
 
     async def test_rejects_missing_secret(self, client):
         resp = await client.get("/api/notifications/admin/tokens")
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_403_body_has_detail(self, client):
         resp = await client.get("/api/notifications/admin/tokens?secret=wrong")
@@ -205,7 +205,7 @@ class TestNotificationAdminSendTest:
             "/api/notifications/admin/send-test",
             json={"device_token": "abc123"},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_rejects_get(self, client):
         resp = await client.get("/api/notifications/admin/send-test?secret=bad")
@@ -215,7 +215,7 @@ class TestNotificationAdminSendTest:
         resp = await client.post("/api/notifications/admin/send-test?secret=bad")
         assert resp.status_code == 422
 
-    async def test_missing_device_token_returns_422(self, client, monkeypatch):
+    async def test_missing_device_token_returns_403(self, client, monkeypatch):
         """Body without device_token should fail validation."""
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
         resp = await client.post(

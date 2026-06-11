@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from sqlalchemy import select, update, or_, not_, text, func, delete, case
 
@@ -177,7 +177,8 @@ def _is_polymarket_matcher_game_level(
 
 @router.post("/prediction-markets/match")
 async def trigger_prediction_market_matching(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max markets to scan"),
 ):
     """
@@ -186,8 +187,7 @@ async def trigger_prediction_market_matching(
     Scans Kalshi and Polymarket game-level markets and links them to events.
     Also writes win_prob_snapshots for linked markets.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import match_prediction_markets
 
@@ -205,7 +205,8 @@ async def trigger_prediction_market_matching(
 
 @router.post("/prediction-markets/poll-live")
 async def trigger_live_prediction_market_poll(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """
     Trigger a one-off live prediction market price poll.
@@ -214,8 +215,7 @@ async def trigger_live_prediction_market_poll(
     linked to events with status='live'. Much faster than full polls.
     Normally runs automatically every 2 minutes via beat schedule.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import poll_live_prediction_markets
 
@@ -233,7 +233,8 @@ async def trigger_live_prediction_market_poll(
 
 @router.post("/prediction-markets/backfill-history")
 async def trigger_polymarket_win_prob_backfill(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     market_id: int = Query(..., description="FuturesMarket ID"),
     event_id: int = Query(..., description="Event ID"),
 ):
@@ -243,8 +244,7 @@ async def trigger_polymarket_win_prob_backfill(
     Fetches historical prices for the moneyline outcome and writes them
     as win_prob_snapshots for the event's OddsChart trend line.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import backfill_polymarket_win_prob
 
@@ -262,12 +262,12 @@ async def trigger_polymarket_win_prob_backfill(
 
 @router.get("/prediction-markets/task/{task_id}")
 async def get_prediction_market_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of a prediction market matching task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
 
@@ -283,7 +283,8 @@ async def get_prediction_market_task_status(
 
 @router.get("/prediction-markets/status")
 async def prediction_market_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -292,8 +293,7 @@ async def prediction_market_status(
     Reports how many game-level markets are linked vs unlinked,
     and how many win_prob_snapshots exist per source.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func, case
     from app.models.models import FuturesMarket, WinProbSnapshot
@@ -362,12 +362,12 @@ async def prediction_market_status(
 
 @router.post("/prediction-markets/fix-sport-categories")
 async def fix_sport_categories(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Bulk-fix llm_sport_category for Kalshi markets based on ticker prefix."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY, KALSHI_FUTURES_TICKER_TO_SPORT_KEY, SPORT_PREFIX_TO_LLM_CATEGORY
 
@@ -406,7 +406,8 @@ async def fix_sport_categories(
 
 @router.get("/prediction-markets/link-rate")
 async def prediction_market_link_rate(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -416,8 +417,7 @@ async def prediction_market_link_rate(
     excluding politics/crypto/weather) and reports what % are actually linked,
     broken down by sport.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Build game-level ticker filter for Kalshi.
     # Only count markets with game ticker prefixes — these are the markets
@@ -678,7 +678,8 @@ async def prediction_market_link_rate(
 
 @router.get("/prediction-markets/tier1-compliance")
 async def tier1_source_compliance(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Hill-climb metric: every Tier 1 event must have ALL sources linked.
@@ -688,8 +689,7 @@ async def tier1_source_compliance(
     Only counts scheduled/live events happening today (-6h to +12h).
     Target: 100% compliance for each sport × source cell. No excuses.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import text as _text
     await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
@@ -922,7 +922,8 @@ async def _golf_compliance(db: AsyncSession) -> dict:
 
 @router.get("/prediction-markets/game-diagnostics")
 async def prediction_market_game_diagnostics(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     sport: str = Query(None, description="Filter to prefixes for a sport (e.g. 'mlb', 'nba')"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -933,8 +934,7 @@ async def prediction_market_game_diagnostics(
     and sample unlinked markets to identify matching failures.
     Pass ?sport=mlb to filter to MLB prefixes only.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func, case, text as _text
     from app.models.models import FuturesMarket
@@ -1091,7 +1091,8 @@ async def prediction_market_game_diagnostics(
 
 @router.get("/prediction-markets/debug")
 async def prediction_market_debug(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     source: Optional[str] = Query(None, description="Filter by source (kalshi, polymarket)"),
     sample_size: int = Query(50, description="Number of unlinked markets to analyze"),
     db: AsyncSession = Depends(get_db),
@@ -1103,8 +1104,7 @@ async def prediction_market_debug(
     (game-level detection → matchup extraction → event lookup).
     Includes sample market names at each stage for pattern analysis.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func
     from app.models.models import FuturesMarket, FuturesOutcome
@@ -1186,12 +1186,12 @@ async def prediction_market_debug(
 
 @router.get("/prediction-markets/tier1-gaps")
 async def prediction_market_tier1_gaps(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Diagnose every unlinked open Tier 1 game market with failure reasons."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import func, or_, text as _text
@@ -1344,13 +1344,13 @@ async def prediction_market_tier1_gaps(
 
 @router.get("/prediction-markets/match-trace")
 async def prediction_market_match_trace(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     external_id: str = Query(..., description="Kalshi external_id to trace"),
     db: AsyncSession = Depends(get_db),
 ):
     """Trace the matching logic for a specific unlinked market."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import or_
@@ -1522,12 +1522,12 @@ async def prediction_market_match_trace(
 
 @router.get("/prediction-markets/backfill-link-status")
 async def backfill_link_status(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Status of the historical link backfill: how many left, how many done."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from sqlalchemy import func as _func, text as _text
     from app.models.models import FuturesMarket
@@ -1562,12 +1562,12 @@ async def backfill_link_status(
 
 @router.post("/prediction-markets/backfill-link-run")
 async def backfill_link_run(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     batch_size: int = Query(50, description="Markets to process"),
 ):
     """Trigger a single run of the historical link backfill."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.prediction_market_matching import _backfill_historical_links
 
@@ -1577,13 +1577,13 @@ async def backfill_link_run(
 
 @router.post("/prediction-markets/force-link")
 async def prediction_market_force_link(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     external_id: str = Query(..., description="Market external_id to link"),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Force-link a single unlinked market by running the full matching pipeline."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import datetime, timezone
     from app.models.models import FuturesMarket
@@ -1634,7 +1634,8 @@ async def prediction_market_force_link(
 
 @router.get("/prediction-markets/event-debug")
 async def prediction_market_event_debug(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     event_id: int = Query(..., description="Event ID to debug"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1648,8 +1649,7 @@ async def prediction_market_event_debug(
     - Any win_prob_snapshots written for this event (by source)
     - Potential unlinked markets that SHOULD match (searches by team name)
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import or_
@@ -1930,7 +1930,8 @@ async def prediction_market_event_debug(
 
 @router.post("/prediction-markets/unlink")
 async def unlink_prediction_market(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     market_id: int = Query(..., description="FuturesMarket.id to unlink"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -1938,8 +1939,7 @@ async def unlink_prediction_market(
     Unlink a prediction market from its event. Sets event_id to NULL so the
     matching task can re-link it to the correct event on next run.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import FuturesMarket
     market_result = await db.execute(
@@ -1978,7 +1978,8 @@ async def unlink_prediction_market(
 
 @router.post("/prediction-markets/fix-inversions")
 async def fix_inverted_prediction_market_snapshots(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     event_id: int = Query(..., description="Event.id to fix inversions for"),
     source: Optional[str] = Query(None, description="Source to fix (kalshi/polymarket). If omitted, fixes both."),
     db: AsyncSession = Depends(get_db_rw),
@@ -1989,8 +1990,7 @@ async def fix_inverted_prediction_market_snapshots(
     Compares prediction market snapshots against the sportsbook consensus
     (from odds_snapshots) and flips any that appear inverted.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models.models import Event, WinProbSnapshot, OddsSnapshot
     import statistics
@@ -2090,7 +2090,8 @@ async def fix_inverted_prediction_market_snapshots(
 
 @router.post("/prediction-markets/link")
 async def manual_link_prediction_market(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     market_id: int = Query(..., description="FuturesMarket.id to link"),
     event_id: int = Query(..., description="Event.id to link to"),
     db: AsyncSession = Depends(get_db_rw),
@@ -2102,8 +2103,7 @@ async def manual_link_prediction_market(
     Use when auto-matching fails (e.g., name patterns don't match, or the game
     is already completed and the market is resolved).
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from datetime import datetime, timezone
     from app.models.models import FuturesMarket, FuturesOutcome, WinProbSnapshot
@@ -2196,12 +2196,12 @@ async def manual_link_prediction_market(
 
 @router.post("/audit/canonical-keys")
 async def trigger_audit_canonical_keys(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Number of groups/markets to sample"),
 ):
     """Trigger canonical key dedup audit (runs as background Celery task)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import audit_canonical_keys
     task = audit_canonical_keys.delay(limit)
@@ -2214,12 +2214,12 @@ async def trigger_audit_canonical_keys(
 
 @router.post("/audit/prediction-market-links")
 async def trigger_audit_prediction_market_links(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Number of links/markets to sample"),
 ):
     """Trigger prediction market → event link audit (background task)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import audit_prediction_market_links
     task = audit_prediction_market_links.delay(limit)
@@ -2232,12 +2232,12 @@ async def trigger_audit_prediction_market_links(
 
 @router.post("/audit/related-futures")
 async def trigger_audit_related_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(30, description="Number of events/outcomes to sample"),
 ):
     """Trigger related futures coverage audit (background task)."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import audit_related_futures
     task = audit_related_futures.delay(limit)
@@ -2250,12 +2250,12 @@ async def trigger_audit_related_futures(
 
 @router.get("/audit/task/{task_id}")
 async def get_audit_task_status(
+    request: Request,
     task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Check the status of an audit task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app as _celery
 
@@ -2276,12 +2276,12 @@ async def get_audit_task_status(
 
 @router.get("/audit/canonical-keys")
 async def get_audit_canonical_keys(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest canonical key audit results."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import LineMovementAnalysis
 
@@ -2304,12 +2304,12 @@ async def get_audit_canonical_keys(
 
 @router.get("/audit/prediction-market-links")
 async def get_audit_prediction_market_links(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest prediction market link audit results."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import LineMovementAnalysis
 
@@ -2332,12 +2332,12 @@ async def get_audit_prediction_market_links(
 
 @router.get("/audit/related-futures")
 async def get_audit_related_futures(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest related futures audit results."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import LineMovementAnalysis
 
@@ -2360,7 +2360,8 @@ async def get_audit_related_futures(
 
 @router.get("/audit/patterns")
 async def get_audit_patterns(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
     days: int = Query(30, description="Look back period in days"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2370,8 +2371,7 @@ async def get_audit_patterns(
     rules to prevent them. When a pattern appears 3+ times, it's a strong
     signal to add a deterministic rule.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.models import LineMovementAnalysis
 
@@ -2428,11 +2428,11 @@ async def get_audit_patterns(
 
 @router.get("/matching/metrics")
 async def get_matching_metrics(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Get current matching coverage metrics and history for trending."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks.matching_audit import _compute_matching_metrics_impl, get_matching_metrics_history
     from app.tasks.base import run_async as _run_async
@@ -2448,11 +2448,11 @@ async def get_matching_metrics(
 
 @router.post("/matching/metrics/compute")
 async def trigger_matching_metrics(
-    secret: str = Query(..., description="Admin secret for authorization"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
 ):
     """Trigger matching metrics computation as a Celery task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.tasks import compute_matching_metrics
     result = compute_matching_metrics.delay()
@@ -2466,6 +2466,7 @@ async def trigger_matching_metrics(
 
 @router.get("/matching-review/{league_slug}")
 async def get_matching_review(
+    request: Request,
     league_slug: str,
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
@@ -2476,8 +2477,7 @@ async def get_matching_review(
     - Cross-source divergences (>15% between sources for same team+column)
     - Existing overrides (team aliases, exclusions, etc.)
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.config.league_configs import get_league_config
     from app.routes.playoffs import (
@@ -2698,8 +2698,7 @@ async def add_matching_override(
     - source_trust: source_name is "source:column", marks trust level
     - dismiss: mark a divergence as reviewed/acceptable (no grid effect)
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     from app.config.league_configs import get_league_config
     config = get_league_config(league_slug)
     if not config:
@@ -2752,14 +2751,14 @@ async def add_matching_override(
 
 @router.delete("/matching-review/{league_slug}/override/{override_id}")
 async def delete_matching_override(
+    request: Request,
     league_slug: str,
     override_id: int,
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete a matching override."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     stmt = select(MatchingOverride).where(
         MatchingOverride.id == override_id,
         MatchingOverride.league_slug == league_slug,
@@ -2779,13 +2778,13 @@ async def delete_matching_override(
 
 @router.get("/eval/decisions")
 async def get_eval_decisions(
+    request: Request,
     category: Optional[str] = Query(default=None, description="Filter by category: grid, futures"),
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all eval decisions. Used by frontend to check 'already seen' across devices."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     stmt = select(MatchingOverride).where(
         MatchingOverride.override_type.in_(["eval_grid", "eval_futures"])
     )
@@ -2813,6 +2812,7 @@ async def get_eval_decisions(
 
 @router.post("/eval/decision")
 async def save_eval_decision(
+    request: Request,
     source_name: str = Query(..., description="Unique key: 'league:team:column' for grid, 'futures:market_id' for futures"),
     decision: str = Query(..., description="correct, wrong, interesting, skip, never"),
     category: str = Query(default="grid", description="grid or futures"),
@@ -2821,8 +2821,7 @@ async def save_eval_decision(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Save an eval decision to the database. Replaces localStorage persistence."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     valid_decisions = {"correct", "wrong", "interesting", "skip", "never"}
     if decision not in valid_decisions:
         raise HTTPException(400, f"Invalid decision. Must be one of: {valid_decisions}")
@@ -2861,8 +2860,9 @@ async def save_eval_decision(
 
 @router.get("/matching-review/{league_slug}/playoffstatus")
 async def get_playoffstatus_comparison(
+    request: Request,
     league_slug: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
+    secret: str = Query(None, description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Compare our grid against playoffstatus.com reference data.
@@ -2873,8 +2873,7 @@ async def get_playoffstatus_comparison(
     - Teams in our grid but not on playoffstatus
     - Probability divergences between our data and theirs
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # For now, return the stored reference data if available
     # (populated by the scraper task)
@@ -2904,13 +2903,13 @@ async def get_playoffstatus_comparison(
 
 @router.post("/matching-review/{league_slug}/scrape-playoffstatus")
 async def scrape_playoffstatus(
+    request: Request,
     league_slug: str,
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Scrape playoffstatus.com for reference team list and probabilities."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
     import httpx
     import re
     from app.config.league_configs import get_league_config
@@ -3021,7 +3020,8 @@ async def scrape_playoffstatus(
 
 @router.get("/sawtooth-audit")
 async def sawtooth_audit(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     jump_threshold: float = Query(0.03, description="Min |delta| to count as a big jump"),
     rate_threshold: float = Query(0.30, description="Min jump_rate to flag as affected"),
     limit: int = Query(10, description="Number of worst offenders to return"),
@@ -3036,8 +3036,7 @@ async def sawtooth_audit(
     Returns affected event counts, snapshot totals, worst offenders, and a
     post-fix stability check on snapshots from the last 2 hours.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # ── Historical sawtooth detection via window functions ──
     historical_sql = text("""
@@ -3197,7 +3196,8 @@ async def sawtooth_audit(
 
 @router.get("/sawtooth-diagnosis")
 async def sawtooth_diagnosis(
-    secret: str = Query(..., description="Admin secret"),
+    request: Request,
+    secret: str = Query(None, description="Admin secret"),
     jump_threshold: float = Query(0.03, description="Min |delta| to count as a big jump"),
     rate_threshold: float = Query(0.30, description="Min jump_rate to flag"),
     limit: int = Query(52, description="Max events to diagnose"),
@@ -3210,8 +3210,7 @@ async def sawtooth_diagnosis(
     - Distinct market_ids referenced in win_prob_snapshot game_state
     - Classification: multi_game (Type A), dual_market (Type B), or other (Type C)
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Step 1: Find affected events (same query as sawtooth-audit)
     affected_sql = text("""
@@ -3401,7 +3400,7 @@ async def sawtooth_diagnosis(
 
 @router.post("/sawtooth-fix")
 async def sawtooth_fix(
-    secret: str = Query(..., description="Admin secret"),
+    secret: str = Query(None, description="Admin secret"),
     event_id: Optional[int] = Query(None, description="Fix a single event (or all if omitted)"),
     dry_run: bool = Query(True, description="Preview changes without applying"),
     jump_threshold: float = Query(0.03, description="Min |delta| to count as big jump"),
@@ -3420,8 +3419,7 @@ async def sawtooth_fix(
 
     Use dry_run=true (default) to preview, then dry_run=false to apply.
     """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     # Find affected events
     if event_id:
@@ -3798,13 +3796,12 @@ async def sawtooth_fix(
 
 @router.post("/prediction-markets/backfill-wps")
 async def backfill_win_probability_sources(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     limit: int = Query(500),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Backfill win_probability_sources for linked moneyline game markets."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     from app.utils.prediction_market_matching import find_moneyline_outcome, extract_matchup
 
@@ -3884,11 +3881,11 @@ async def backfill_win_probability_sources(
 
 @router.get("/prediction-markets/game-market-counts")
 async def game_market_counts(
-    secret: str = Query(...),
+    request: Request, secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug: count game-winner markets by series prefix."""
-    _check_admin_secret(secret)
+    _check_admin_secret(secret, request=request)
     results = {}
     for prefix in ["KXMLBGAME", "KXNBAGAME", "KXNHLGAME", "KXNFLGAME"]:
         r = await db.execute(

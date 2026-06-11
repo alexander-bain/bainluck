@@ -296,10 +296,10 @@ class TestSportHierarchyDetail:
 class TestSportsAdminAuth:
     """Admin endpoints on /api/sports reject bad secrets before side effects."""
 
-    async def test_available_missing_secret_returns_422(self, client):
+    async def test_available_missing_secret_returns_403(self, client):
         """Secret is a required query param."""
         resp = await client.get("/api/sports/available")
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_available_bad_secret_returns_403(self, client):
         with patch("app.routes.sports.OddsAPIService") as service_cls:
@@ -307,9 +307,9 @@ class TestSportsAdminAuth:
         assert resp.status_code == 403
         service_cls.assert_not_called()
 
-    async def test_sync_missing_secret_returns_422(self, client):
+    async def test_sync_missing_secret_returns_403(self, client):
         resp = await client.post("/api/sports/sync")
-        assert resp.status_code == 422
+        assert resp.status_code == 403
 
     async def test_sync_bad_secret_returns_403(self, client):
         with patch("app.routes.sports.OddsAPIService") as service_cls:

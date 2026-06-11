@@ -15,7 +15,7 @@ import pytest
 class TestMultiHistoryEndpoint:
     """GET /api/futures/multi-history — cross-source history aggregation."""
 
-    async def test_missing_market_ids_returns_422(self, client):
+    async def test_missing_market_ids_returns_403(self, client):
         """Required query param market_ids must be present."""
         resp = await client.get("/api/futures/multi-history")
         assert resp.status_code == 422

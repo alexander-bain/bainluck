@@ -390,7 +390,7 @@ class TestRelatedFuturesEmptyShape:
         resp = await client.get("/api/events/999999/related-futures")
         assert resp.status_code in (200, 404)
 
-    async def test_returns_422_for_invalid_id(self, client):
+    async def test_returns_403_for_invalid_id(self, client):
         resp = await client.get("/api/events/abc/related-futures")
         assert resp.status_code == 422
 
@@ -649,7 +649,7 @@ class TestTeamProgressionEmptyDB:
         resp = await client.get("/api/events/999999/team-progression")
         assert resp.status_code in (200, 404)
 
-    async def test_returns_422_for_invalid_id(self, client):
+    async def test_returns_403_for_invalid_id(self, client):
         resp = await client.get("/api/events/abc/team-progression")
         assert resp.status_code == 422
 

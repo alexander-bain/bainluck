@@ -107,8 +107,8 @@ def _compute_badges(total: int, correct: int, best_streak: int) -> list[dict]:
 
 @router.post("")
 async def submit_prediction(
-    body: PredictionSubmission,
     request: Request,
+    body: PredictionSubmission,
     user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_rw),
 ):
