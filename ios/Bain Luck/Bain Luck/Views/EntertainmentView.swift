@@ -379,10 +379,10 @@ struct EntertainmentView: View {
     private func musicTabBar(_ data: EntThemeMusic) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                tabButton("Spotify Race", tab: .spotify, isActive: musicTab == .spotify) { musicTab = .spotify }
-                tabButton("Billboard", tab: .billboard, isActive: musicTab == .billboard) { musicTab = .billboard }
-                tabButton("Album Drops", tab: .albums, isActive: musicTab == .albums) { musicTab = .albums }
-                tabButton("Streaming", tab: .streaming, isActive: musicTab == .streaming) { musicTab = .streaming }
+                tabButton("Spotify Race", tab: MusicTab.spotify, isActive: musicTab == .spotify) { musicTab = .spotify }
+                tabButton("Billboard", tab: MusicTab.billboard, isActive: musicTab == .billboard) { musicTab = .billboard }
+                tabButton("Album Drops", tab: MusicTab.albums, isActive: musicTab == .albums) { musicTab = .albums }
+                tabButton("Streaming", tab: MusicTab.streaming, isActive: musicTab == .streaming) { musicTab = .streaming }
             }
             .padding(.horizontal)
         }
@@ -517,9 +517,9 @@ struct EntertainmentView: View {
     private func movieTabBar(_ data: EntThemeMoviesTV) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                tabButton("Rotten Tomatoes", tab: .rt, isActive: movieTab == .rt) { movieTab = .rt }
-                tabButton("Box Office", tab: .boxoffice, isActive: movieTab == .boxoffice) { movieTab = .boxoffice }
-                tabButton("Reality TV", tab: .reality, isActive: movieTab == .reality) { movieTab = .reality }
+                tabButton("Rotten Tomatoes", tab: MovieTab.rt, isActive: movieTab == .rt) { movieTab = .rt }
+                tabButton("Box Office", tab: MovieTab.boxoffice, isActive: movieTab == .boxoffice) { movieTab = .boxoffice }
+                tabButton("Reality TV", tab: MovieTab.reality, isActive: movieTab == .reality) { movieTab = .reality }
             }
             .padding(.horizontal)
         }
