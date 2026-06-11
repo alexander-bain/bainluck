@@ -1,27 +1,45 @@
 """Shared utilities for admin endpoints."""
 
+import logging
 import os
 
 from fastapi import Request
 from sqlalchemy import select
 
+_logger = logging.getLogger(__name__)
 
-def _check_admin_secret(secret: str | None) -> bool:
+
+def _check_admin_secret(secret: str | None, *, request: Request | None = None) -> bool:
     """Verify admin secret for protected endpoints.
 
-    Checks ADMIN_TOKEN (canonical, set on Heroku) with ADMIN_SECRET as
-    fallback for backward compatibility. See gotchas-reference.md #40.
+    Accepts the token via:
+    1. Authorization: Bearer <token> header (PREFERRED)
+    2. ?secret= query parameter (DEPRECATED — logs a warning)
+
+    The header path is checked first. If neither is provided, returns False.
     """
-    if not secret:
-        return False
     expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
     if not expected:
         return False
-    return secret == expected
+
+    # Prefer Authorization header
+    if request is not None:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            if token == expected:
+                return True
+
+    # Fall back to query param (deprecated)
+    if secret and secret == expected:
+        _logger.debug("Admin auth via query param (deprecated) — migrate to Authorization header")
+        return True
+
+    return False
 
 
 DEFAULT_ADMIN_USER_IDS = {364}
-DEFAULT_ADMIN_EMAILS = {"alex.bain@gmail.com", "alex.bain@bainluck.com", "olivercbain@gmail.com", "daphnegardinerbain@gmail.com", "dexterhbain@gmail.com", "lisacbain@gmail.com"}
+DEFAULT_ADMIN_EMAILS: set[str] = set()
 
 
 def _admin_user_ids() -> set[int]:

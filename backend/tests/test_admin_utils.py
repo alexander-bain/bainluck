@@ -26,12 +26,13 @@ def _request(token="token"):
 
 
 @pytest.mark.asyncio
-async def test_check_admin_auth_allows_default_admin_email(monkeypatch):
+async def test_check_admin_auth_allows_configured_admin_email_via_env(monkeypatch):
     monkeypatch.setattr(
         admin_utils,
         "_check_admin_secret",
-        lambda secret: False,
+        lambda secret, **kw: False,
     )
+    monkeypatch.setenv("ADMIN_USER_EMAILS", "alex.bain@gmail.com")
     monkeypatch.setattr(
         "app.services.firebase_auth.verify_id_token",
         lambda token: {"uid": "firebase-1", "email": "alex.bain@gmail.com"},
@@ -50,7 +51,7 @@ async def test_check_admin_auth_allows_configured_admin_email(monkeypatch):
     monkeypatch.setattr(
         admin_utils,
         "_check_admin_secret",
-        lambda secret: False,
+        lambda secret, **kw: False,
     )
     monkeypatch.setattr(
         "app.services.firebase_auth.verify_id_token",
@@ -69,7 +70,7 @@ async def test_check_admin_auth_rejects_unlisted_user(monkeypatch):
     monkeypatch.setattr(
         admin_utils,
         "_check_admin_secret",
-        lambda secret: False,
+        lambda secret, **kw: False,
     )
     monkeypatch.setattr(
         "app.services.firebase_auth.verify_id_token",
