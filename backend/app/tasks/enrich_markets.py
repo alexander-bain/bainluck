@@ -998,6 +998,52 @@ async def evaluate_discover_with_llm(limit: int = 50):
     return stats
 
 
+_SNIPPET_REPHRASE_PROMPT = """Rewrite this market context line in wire-service voice.
+Rules: one sentence, under 80 chars, no emoji, no probability numbers,
+no quotation marks, factual not hype. Keep the core signal (direction, magnitude, source).
+
+Market: {market_name}
+Raw: {raw_snippet}
+Rewrite:"""
+
+
+async def _llm_rephrase_snippet(
+    market_name: str, raw_snippet: str, angle_type: str
+) -> str | None:
+    """Call GPT-4o-mini to rephrase a deterministic snippet template.
+
+    Returns the rephrased text, or None if the call fails or no API key.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        import openai
+
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": _SNIPPET_REPHRASE_PROMPT.format(
+                        market_name=market_name, raw_snippet=raw_snippet
+                    ),
+                }
+            ],
+            max_tokens=60,
+            temperature=0.4,
+        )
+        text = response.choices[0].message.content.strip().strip('"').strip("'")
+        if len(text) > 120:
+            text = text[:117] + "..."
+        return text if text else None
+    except Exception as exc:
+        logger.debug("Snippet rephrase failed for %s: %s", market_name[:40], exc)
+        return None
+
+
 async def enrich_snippet_angles(limit: int = 125):
     """Compute snippet angles for feed-shaped markets and cache in market_metadata.
 
@@ -1079,9 +1125,16 @@ async def enrich_snippet_angles(limit: int = 125):
 
             angle = select_angle(ctx)
 
+            phrased_text = None
+            if angle:
+                phrased_text = await _llm_rephrase_snippet(
+                    market.name or "", angle.template, angle.angle_type
+                )
+
             snippet_v2 = {
                 "angle_type": angle.angle_type if angle else None,
-                "snippet_text": angle.template if angle else None,
+                "snippet_raw": angle.template if angle else None,
+                "snippet_text": phrased_text or (angle.template if angle else None),
                 "computed_at": now.isoformat(),
             }
 
