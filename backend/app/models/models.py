@@ -1171,6 +1171,7 @@ class DiscoverReviewDecision(Base):
     archetype: Mapped[Optional[str]] = mapped_column(String(80))
     decision: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     admin_notes: Mapped[Optional[str]] = mapped_column(Text)
+    features: Mapped[Optional[dict]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
