@@ -3726,6 +3726,8 @@ async def _resolve_winners_only(limit: int = 2000):
         from app.tasks.redis_state import get_redis_client
 
         _rc2 = get_redis_client()
+        _kalshi_start = _t.monotonic()
+        _KALSHI_BUDGET_SECONDS = 300
 
         # Dynamically discover series with unresolved outcomes instead of
         # a hardcoded list. Sorted by count DESC so the biggest gaps get
@@ -3746,16 +3748,17 @@ async def _resolve_winners_only(limit: int = 2000):
                 GROUP BY 1
                 HAVING COUNT(*) >= 10
                 ORDER BY 2 DESC
-                LIMIT 50
+                LIMIT 80
             """))
             _top_series = [r[0] for r in _sr.all()]
         logger.info("resolve_winners: discovered %d series with unresolved outcomes", len(_top_series))
-        settled_stats = {"pages": 0, "resolved": 0}
+        settled_stats = {"pages": 0, "resolved": 0, "series_scanned": 0}
         service2 = KalshiAPIService()
         try:
             for series in _top_series:
-                if _t.monotonic() - _start > 420:
+                if _t.monotonic() - _kalshi_start > _KALSHI_BUDGET_SECONDS:
                     break
+                settled_stats["series_scanned"] += 1
                 ck = f"bainluck:settled_cursor:{series}"
                 cursor = _rc2.get(ck)
                 if cursor:
@@ -3811,7 +3814,7 @@ async def _resolve_winners_only(limit: int = 2000):
                     if not cursor:
                         _rc2.delete(ck)
                         break
-                    if empty_pages >= 5:
+                    if empty_pages >= 3:
                         _rc2.setex(ck, 86400 * 7, cursor)
                         break
                     _rc2.setex(ck, 86400 * 7, cursor)
