@@ -60,6 +60,27 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 // MARK: - Feed Item (Polymorphic)
 
 /// Polymorphic feed card wrapper for either a sports event or a futures market.
+nonisolated struct FeedBundle: Decodable, Sendable {
+    let id: String
+    let title: String
+    let items: [FeedItem]
+    let kind: String?
+    let comparisonTheme: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, items, kind, comparisonTheme
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
+    }
+}
+
 nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let type: String
     let score: Int
@@ -71,6 +92,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let event: FeedEventData?
     let futures: FeedFuturesData?
     let tournament: FeedTournamentData?
+    let bundle: FeedBundle?
 
     // Personalization fields
     let personalized: Bool?
@@ -104,7 +126,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, score, reason, headline, contextSummary, data
+        case type, score, reason, headline, contextSummary, data, bundle
         case personalized, baseScore, multiplier, personalizationReasons
     }
 
@@ -119,6 +141,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore = try c.decodeIfPresent(Int.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
+        bundle = try c.decodeIfPresent(FeedBundle.self, forKey: .bundle)
 
         if type == "event" {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
@@ -204,7 +227,7 @@ nonisolated struct FeedDiscoverCard: Decodable, Sendable {
 }
 
 /// Single threshold point for heatmap-style cards.
-nonisolated struct FeedDiscoverThresholdPoint: Decodable, Sendable {
+nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable {
     let source: String?
     let label: String
     let value: Double?
@@ -212,6 +235,8 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Sendable {
     let direction: String?
     let probability: Double?
     let needsSiblingMarkets: Bool?
+
+    var id: String { label }
 }
 
 /// Single outcome row for distribution-style cards.
