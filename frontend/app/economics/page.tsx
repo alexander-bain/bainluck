@@ -146,7 +146,7 @@ export default function EconomicsPage() {
             Economics markets · Live
           </span>
           <span className="font-mono text-xs text-text-muted">
-            {data.total_markets.toLocaleString()} active · Kalshi {data.by_source.kalshi.toLocaleString()} · Polymarket {data.by_source.polymarket.toLocaleString()}
+            {data.total_markets.toLocaleString()} active markets
           </span>
         </div>
         <h1 className="text-[42px] md:text-[56px] font-semibold text-text-primary leading-[1.1] tracking-tight">
@@ -154,7 +154,7 @@ export default function EconomicsPage() {
           <span className="italic text-accent-brand" style={{ fontFamily: "'Georgia', serif" }}>the economy</span>?
         </h1>
         <p className="text-base text-text-secondary mt-4 max-w-[640px]">
-          {data.total_markets.toLocaleString()} economic prediction markets from Kalshi and Polymarket translated into
+          {data.total_markets.toLocaleString()} economic prediction markets translated into
           plain probabilities. Rates, inflation, jobs, GDP — no odds, just percentages.
         </p>
       </div>
@@ -167,7 +167,7 @@ export default function EconomicsPage() {
             <SectionHeader
               kicker="Federal Reserve"
               title="Rate-path dot plot — but from markets, not the Fed"
-              meta={`${t.fed.fomc_meetings?.length || 0} FOMC meetings · Kalshi + Polymarket`}
+              meta={`${t.fed.fomc_meetings?.length || 0} FOMC meetings`}
               count={t.fed.count}
             />
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
@@ -457,7 +457,7 @@ export default function EconomicsPage() {
       {/* Footer */}
       <footer className="border-t border-surface-border bg-surface-card">
         <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
-          <span>Data from Kalshi &amp; Polymarket prediction markets · Not financial advice.</span>
+          <span>Prediction market data · Not financial advice.</span>
           <span className="font-mono">
             bainluck.com/economics · {data.total_markets.toLocaleString()} active
           </span>

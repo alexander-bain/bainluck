@@ -69,7 +69,6 @@ struct WeatherView: View {
                 .foregroundStyle(DS.textSecondary)
             HStack(spacing: 12) {
                 Label("\(totalCount) markets", systemImage: "chart.bar")
-                Label("Kalshi", systemImage: "arrow.triangle.branch")
             }
             .font(.caption2)
             .foregroundStyle(DS.textMuted)
@@ -272,7 +271,7 @@ struct WeatherView: View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
                 .font(.system(size: 10))
-            Text("Data from Kalshi \u{00B7} Not weather advice")
+            Text("Prediction market data \u{00B7} Not weather advice")
         }
         .font(.caption2).foregroundStyle(.tertiary)
         .padding(.horizontal)

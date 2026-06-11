@@ -36,6 +36,9 @@ Bain Luck copy is **quiet, declarative, and trusting the numbers**. The data is 
 - **No betting-industry argot.** Never "juice," "vig," "chalk," "sharp," "action." Say "probability," "favorite," "underdog," "market," "movement."
 - **Confidence without hedging.** "Opened 55/45" > "It looks like this might have opened around 55/45."
 
+**Source Attribution**
+- Source attribution is always quiet — small tags/chips at the data row level, never in headlines, blurbs, or section copy. The product's voice is the aggregate, not the vendors. Individual market rows may show a source chip (Kalshi, Polymarket) for transparency.
+
 **Tone & vibe**
 - **Editorial and dry**, like a wire-service ticker. Closer to Bloomberg/FT than DraftKings.
 - Occasional lightness in ambient UI — the logo is a 🍀 emoji, the category chips use sport emoji, toasts say things like "Showing more golf" — but never in body prose.

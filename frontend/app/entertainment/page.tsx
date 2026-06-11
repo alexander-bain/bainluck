@@ -1380,8 +1380,8 @@ export default function EntertainmentPage() {
           What the markets are betting on in pop culture
         </h1>
         <p className={s.pageSub}>
-          Live probabilities from Kalshi and Polymarket — charts, box office,
-          reality TV, and the moments breaking the internet.
+          Live probabilities on charts, box office, reality TV, and the
+          moments breaking the internet.
         </p>
         <div className={s.pageMeta}>
           <span>
@@ -1442,9 +1442,8 @@ export default function EntertainmentPage() {
         {/* Footer */}
         <div className={s.footer}>
           <span>
-            Markets sourced from Kalshi and Polymarket. Probabilities update on
-            a 30-second cadence. Bain Luck is a discovery platform — we never
-            accept bets.
+            Probabilities update on a 30-second cadence. Bain Luck is a
+            discovery platform — we never accept bets.
           </span>
           <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
             {data.total_markets.toLocaleString()} entertainment ·{" "}

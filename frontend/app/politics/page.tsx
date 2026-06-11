@@ -639,7 +639,7 @@ function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] }) {
           <span className={s.sectionEmoji}>⇄</span>
           Cross-source spotlight
           <span className={s.sectionCount}>
-            Markets where Kalshi and Polymarket disagree
+            Markets where sources disagree
           </span>
         </h2>
       </div>
@@ -1189,8 +1189,8 @@ export default function PoliticsPage() {
 
         {/* Footer */}
         <footer className={s.footer}>
-          Bain Luck translates prediction-market prices into probabilities. Data
-          from Kalshi &amp; Polymarket. Not financial advice.
+          Bain Luck translates prediction-market prices into probabilities.
+          Prediction market data. Not financial advice.
         </footer>
       </div>
     </div>

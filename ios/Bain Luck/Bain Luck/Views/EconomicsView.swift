@@ -146,7 +146,7 @@ struct EconomicsView: View {
                     .tracking(-0.5)
                     .lineSpacing(2)
 
-                Text("Economic prediction markets from Kalshi and Polymarket translated into plain probabilities. Rates, inflation, jobs, GDP -- no odds, just percentages.")
+                Text("Economic prediction markets translated into plain probabilities. Rates, inflation, jobs, GDP -- no odds, just percentages.")
                     .font(.system(size: 15))
                     .foregroundStyle(DS.textSecondary)
                     .lineSpacing(3)
@@ -689,7 +689,7 @@ struct EconomicsView: View {
             HStack(spacing: 6) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 10))
-                Text("Data from Kalshi & Polymarket")
+                Text("Prediction market data")
                 Spacer()
                 Text("Not financial advice")
             }

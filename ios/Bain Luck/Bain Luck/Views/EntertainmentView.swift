@@ -109,7 +109,7 @@ struct EntertainmentView: View {
 
     private func pageHeader(_ data: EntertainmentResponse) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Live probabilities from Kalshi and Polymarket -- charts, box office, reality TV, and the moments breaking the internet.")
+            Text("Live probabilities on charts, box office, reality TV, and the moments breaking the internet.")
                 .font(.subheadline)
                 .foregroundStyle(DS.textSecondary)
 
@@ -881,7 +881,7 @@ struct EntertainmentView: View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
                 .font(.system(size: 10))
-            Text("Kalshi & Polymarket \u{00B7} \(data.totalMarkets) markets \u{00B7} Not financial advice")
+            Text("\(data.totalMarkets) markets \u{00B7} Not financial advice")
         }
         .font(.caption2)
         .foregroundStyle(DS.textMuted)
