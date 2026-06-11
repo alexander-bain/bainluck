@@ -3,12 +3,12 @@ import Combine
 
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
-    case group(title: String, items: [FeedItem])
+    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil)
 
     var id: String {
         switch self {
         case .single(let item): return item.id
-        case .group(let title, _): return "group-\(title)"
+        case .group(let title, _, let kind, let theme): return "group-\(kind ?? "related")-\(theme ?? title)"
         }
     }
 }
@@ -186,6 +186,9 @@ struct DiscoverView: View {
         if item.type == "futures", let f = item.futures {
             return f.llmSportCategory ?? "other"
         }
+        if item.type == "bundle", let bundle = item.bundle, let first = bundle.items.first {
+            return itemCategory(first)
+        }
         return "golf"
     }
 
@@ -216,12 +219,14 @@ struct DiscoverView: View {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
         if let t = item.tournament { return "tournament-\(t.key)" }
+        if let b = item.bundle { return "bundle-\(b.id)" }
         return UUID().uuidString
     }
 
     private func itemType(_ item: FeedItem) -> String {
         if item.event != nil { return "event" }
         if item.futures != nil { return "futures" }
+        if item.bundle != nil { return "bundle" }
         return item.type
     }
 
@@ -229,6 +234,7 @@ struct DiscoverView: View {
         if let e = item.event { return String(e.id) }
         if let f = item.futures { return String(f.id) }
         if let t = item.tournament { return t.key }
+        if let b = item.bundle { return b.id }
         return item.id
     }
 
@@ -236,13 +242,14 @@ struct DiscoverView: View {
         if let e = item.event { return "\(e.awayTeam) vs \(e.homeTeam)" }
         if let f = item.futures { return f.name }
         if let t = item.tournament { return t.name }
+        if let b = item.bundle { return b.title }
         return nil
     }
 
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
-        case .group(_, let items): return items.first
+        case .group(_, let items, _, _): return items.first
         }
     }
 
@@ -394,6 +401,7 @@ struct DiscoverView: View {
         let mixedItems = interleave(filteredItems)
 
         for item in mixedItems {
+            if item.type == "bundle" { continue }
             guard item.type == "futures", let grouping = futuresGrouping(for: item) else { continue }
             if groups[grouping.key] == nil {
                 groupTitles[grouping.key] = grouping.title
@@ -402,6 +410,15 @@ struct DiscoverView: View {
         }
 
         for item in mixedItems {
+            if item.type == "bundle", let bundle = item.bundle {
+                result.append(.group(
+                    title: bundle.title,
+                    items: bundle.items,
+                    kind: bundle.kind,
+                    theme: bundle.comparisonTheme
+                ))
+                continue
+            }
             if item.type != "futures" {
                 result.append(.single(item))
                 continue
@@ -638,10 +655,11 @@ struct DiscoverView: View {
                             let isGuessSlot = (idx + 1) % 5 == 0
                             Group {
                                 switch gi {
-                                case .group(let title, let items):
-                                    NativeGroupCard(title: title, items: items)
+                                case .group(let title, let items, let kind, let theme):
+                                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
                                 case .single(let item):
                                     if isGuessSlot, item.type == "futures", let f = item.futures,
+                                       f.discoverCard?.suggestedFormat != "threshold_heatmap",
                                        f.status != "closed", f.status != "resolved",
                                        let leaderProbability = f.topOutcomes?.first?.probability,
                                        leaderProbability < 0.95 {
@@ -688,6 +706,24 @@ struct DiscoverView: View {
                                                 recordInteraction(for: item, action: .contextExpand, source: "context")
                                             }, onContextCollapse: {
                                                 recordInteraction(for: item, action: .contextCollapse, source: "context")
+                                            })
+                                        }
+                                        .contextMenu { discoverCardMenu(item) }
+                                    } else if item.type == "futures", let f = item.futures,
+                                              f.discoverCard?.suggestedFormat == "threshold_heatmap",
+                                              (f.discoverCard?.thresholdPoints ?? []).filter({ $0.probability != nil }).count >= 2 {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            }
+                                        ) {
+                                            HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
@@ -939,6 +975,8 @@ struct ExpandableNativeContextText: View {
 private struct NativeGroupCard: View {
     let title: String
     let items: [FeedItem]
+    var kind: String? = nil
+    var theme: String? = nil
     @State private var expanded = false
 
     private var category: String {
@@ -982,22 +1020,42 @@ private struct NativeGroupCard: View {
             }
             .buttonStyle(.plain)
 
-            if let primary = items.first, let f = primary.futures {
-                NativeCompactFuturesRow(data: f)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-            }
+            if kind == "comparison" {
+                NativeComparisonBundleRows(
+                    items: expanded ? Array(items.prefix(6)) : Array(items.prefix(3)),
+                    theme: theme
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            } else {
+                if let primary = items.first, let f = primary.futures {
+                    NativeCompactFuturesRow(data: f)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                }
 
-            if expanded {
-                ForEach(items.dropFirst(), id: \.id) { item in
-                    if let f = item.futures {
-                        Divider().padding(.horizontal, 12)
-                        NativeCompactFuturesRow(data: f)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                if expanded {
+                    ForEach(items.dropFirst(), id: \.id) { item in
+                        if let f = item.futures {
+                            Divider().padding(.horizontal, 12)
+                            NativeCompactFuturesRow(data: f)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                        }
                     }
                 }
-            } else if items.count > 1 {
+            }
+
+            if !expanded && items.count > 3 && kind == "comparison" {
+                Button { withAnimation { expanded = true } } label: {
+                    Text("Compare \(items.count - 3) more")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+            } else if !expanded && items.count > 1 && kind != "comparison" {
                 Button { withAnimation { expanded = true } } label: {
                     Text("Show \(items.count - 1) more")
                         .font(.caption.weight(.medium))
@@ -1012,6 +1070,117 @@ private struct NativeGroupCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
+    }
+}
+
+private struct NativeComparisonBundleRows: View {
+    let items: [FeedItem]
+    let theme: String?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(items, id: \.id) { item in
+                if let futures = item.futures {
+                    if theme == "ipo_valuation" {
+                        NativeIPOComparisonRow(data: futures)
+                    } else {
+                        NativeThresholdComparisonRow(data: futures)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct NativeIPOComparisonRow: View {
+    let data: FeedFuturesData
+
+    private var points: [FeedDiscoverThresholdPoint] {
+        (data.discoverCard?.thresholdPoints ?? [])
+            .filter { $0.probability != nil }
+            .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
+    }
+
+    private var likely: FeedDiscoverThresholdPoint? {
+        points.max { ($0.probability ?? -1) < ($1.probability ?? -1) } ?? points.first
+    }
+
+    private var highEnd: FeedDiscoverThresholdPoint? {
+        points.last ?? likely
+    }
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+            GridRow {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(compactMarketName(data.name, theme: "ipo_valuation"))
+                        .font(.caption.weight(.heavy))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                    Text((data.source ?? "market").uppercased())
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                comparisonSummary(title: "Likely", point: likely, emphasized: true)
+                comparisonSummary(title: "High end", point: highEnd, emphasized: false)
+            }
+        }
+    }
+
+    private func comparisonSummary(title: String, point: FeedDiscoverThresholdPoint?, emphasized: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(point.map { compactRangeLabel($0.label) } ?? "-")
+                .font(.caption2.weight(emphasized ? .heavy : .semibold))
+                .foregroundStyle(emphasized ? .primary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+            Text("\(Int(((point?.probability ?? 0) * 100).rounded()))%")
+                .font(.subheadline.weight(.black).monospacedDigit())
+        }
+    }
+}
+
+private struct NativeThresholdComparisonRow: View {
+    let data: FeedFuturesData
+
+    private var points: [FeedDiscoverThresholdPoint] {
+        (data.discoverCard?.thresholdPoints ?? [])
+            .filter { $0.probability != nil }
+            .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(compactMarketName(data.name, theme: data.discoverCard?.comparisonTheme))
+                    .font(.caption.weight(.heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Spacer()
+                Text((data.source ?? "market").uppercased())
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(Array(points.prefix(3))) { point in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(compactRangeLabel(point.label))
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text("\(Int(((point.probability ?? 0) * 100).rounded()))%")
+                            .font(.caption.weight(.black).monospacedDigit())
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }
 
@@ -1045,6 +1214,104 @@ private struct NativeCompactFuturesRow: View {
         .buttonStyle(.plain)
     }
 }
+
+private func compactMarketName(_ name: String, theme: String?) -> String {
+    var compact = name.replacingOccurrences(of: "?", with: "")
+    if theme == "ipo_valuation" {
+        compact = compact.replacingOccurrences(of: "Closing Market Cap", with: "", options: .caseInsensitive)
+        if let range = compact.range(of: "IPO", options: .caseInsensitive) {
+            compact = String(compact[..<range.upperBound])
+        }
+    }
+    return compact.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func compactRangeLabel(_ label: String) -> String {
+    label
+        .replacingOccurrences(of: "Above ", with: ">")
+        .replacingOccurrences(of: "Below ", with: "<")
+        .replacingOccurrences(of: " to ", with: "-")
+        .replacingOccurrences(of: " ", with: "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+#if DEBUG
+private enum NativeDiscoverPreviewFactory {
+    static func feedItem(from json: String) -> FeedItem {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try! decoder.decode(FeedItem.self, from: Data(json.utf8))
+    }
+
+    static var ipoBundleItems: [FeedItem] {
+        [
+            feedItem(from: ipoMarketJSON(id: 101, name: "SpaceX IPO Closing Market Cap", likely: "$2.0T-$2.5T", likelyProb: 0.31, high: "Above $2.5T", highProb: 0.18)),
+            feedItem(from: ipoMarketJSON(id: 102, name: "Stripe IPO Closing Market Cap", likely: "$100B-$125B", likelyProb: 0.34, high: "Above $125B", highProb: 0.16)),
+            feedItem(from: ipoMarketJSON(id: 103, name: "Databricks IPO Closing Market Cap", likely: "$75B-$100B", likelyProb: 0.30, high: "Above $100B", highProb: 0.21)),
+        ]
+    }
+
+    private static func ipoMarketJSON(
+        id: Int,
+        name: String,
+        likely: String,
+        likelyProb: Double,
+        high: String,
+        highProb: Double
+    ) -> String {
+        """
+        {
+          "type": "futures",
+          "score": 98,
+          "reason": "\(name)",
+          "headline": "\(name)",
+          "data": {
+            "id": \(id),
+            "name": "\(name)",
+            "llm_sport_category": "tech",
+            "source": "kalshi",
+            "source_count": 1,
+            "sources": ["kalshi"],
+            "market_tier": 2,
+            "status": "open",
+            "top_outcomes": [
+              {"id": \(id * 10 + 1), "name": "\(likely)", "probability": \(likelyProb), "rank": 1, "movement": null},
+              {"id": \(id * 10 + 2), "name": "\(high)", "probability": \(highProb), "rank": 2, "movement": null},
+              {"id": \(id * 10 + 3), "name": "Below \(likely)", "probability": 0.12, "rank": 3, "movement": null}
+            ],
+            "outcome_count": 3,
+            "discover_card": {
+              "suggested_format": "threshold_heatmap",
+              "bundle_candidate": true,
+              "comparison_theme": "ipo_valuation",
+              "threshold_points": [
+                {"source": "outcome", "label": "Below \(likely)", "value": 1, "unit": "$B", "direction": "below", "probability": 0.12},
+                {"source": "outcome", "label": "\(likely)", "value": 2, "unit": "$B", "direction": "exact", "probability": \(likelyProb)},
+                {"source": "outcome", "label": "\(high)", "value": 3, "unit": "$B", "direction": "above", "probability": \(highProb)}
+              ],
+              "distribution_outcomes": [],
+              "remaining_outcome_count": 0,
+              "qa_signals": [],
+              "public_source_disagreement": false,
+              "reasons": ["threshold_values", "bundle_candidate"]
+            }
+          }
+        }
+        """
+    }
+}
+
+#Preview("IPO Bundle") {
+    NativeGroupCard(
+        title: "IPO valuation ranges",
+        items: NativeDiscoverPreviewFactory.ipoBundleItems,
+        kind: "comparison",
+        theme: "ipo_valuation"
+    )
+    .padding()
+    .background(Color.pageBackground)
+}
+#endif
 
 // MARK: - Guess Card
 
