@@ -910,10 +910,10 @@ struct EntertainmentView: View {
 
 // MARK: - Tab Enums
 
-private enum MusicTab {
+private enum MusicTab: Equatable {
     case spotify, billboard, albums, streaming
 }
 
-private enum MovieTab {
+private enum MovieTab: Equatable {
     case rt, boxoffice, reality
 }
