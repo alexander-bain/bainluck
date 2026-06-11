@@ -178,6 +178,15 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
             if market.resolution_date
             else None
         ),
+        # Honest data-freshness signal: when these probabilities were last
+        # refreshed. Daily-chart markets ("Top artist today") must not imply
+        # more freshness than the data has — the frontend renders an
+        # "as of <time>" label from this rather than implying live updates.
+        "as_of": (
+            _updated_at.isoformat()
+            if (_updated_at := getattr(market, "updated_at", None))
+            else None
+        ),
         "image_url": market.image_url,
         "hook": market.hook_description,
     }

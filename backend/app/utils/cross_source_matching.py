@@ -115,27 +115,55 @@ def _direction_tokens(tokens: set[str]) -> set[str]:
     return tokens & _DIRECTION_TOKENS
 
 
-def _is_conservative_near_match(left: str, right: str) -> bool:
-    """Return True for obvious paraphrases, with guards against false matches."""
-    left_tokens = _near_match_tokens(left)
-    right_tokens = _near_match_tokens(right)
+def _near_match_signature(q: str) -> tuple[set[str], frozenset[str], frozenset[str]]:
+    """Precompute the token sets used for conservative near-matching.
+
+    Returns ``(tokens, numeric_tokens, direction_tokens)`` so the O(n^2)
+    pairing loop in :func:`find_cross_source_markets` can tokenize each row
+    once instead of re-tokenizing both sides on every candidate pair.
+    """
+    tokens = _near_match_tokens(q)
+    return tokens, frozenset(_numeric_tokens(tokens)), frozenset(_direction_tokens(tokens))
+
+
+def _conservative_near_match_score(
+    left_sig: tuple[set[str], frozenset[str], frozenset[str]],
+    right_sig: tuple[set[str], frozenset[str], frozenset[str]],
+) -> float | None:
+    """Jaccard score for obvious paraphrases, or None if not a conservative match.
+
+    Same guards as the public :func:`_is_conservative_near_match`, but operates
+    on precomputed signatures and returns the Jaccard similarity so callers can
+    reuse it for ranking instead of recomputing the token sets.
+    """
+    left_tokens, left_num, left_dir = left_sig
+    right_tokens, right_num, right_dir = right_sig
     if len(left_tokens) < 3 or len(right_tokens) < 3:
-        return False
-    if _numeric_tokens(left_tokens) != _numeric_tokens(right_tokens):
-        return False
-    left_directions = _direction_tokens(left_tokens)
-    right_directions = _direction_tokens(right_tokens)
-    if left_directions or right_directions:
-        if left_directions != right_directions:
-            return False
+        return None
+    if left_num != right_num:
+        return None
+    if (left_dir or right_dir) and left_dir != right_dir:
+        return None
 
     overlap = len(left_tokens & right_tokens)
     union = len(left_tokens | right_tokens)
     if union == 0:
-        return False
+        return None
     jaccard = overlap / union
     containment = overlap / min(len(left_tokens), len(right_tokens))
-    return jaccard >= 0.72 and containment >= 0.85
+    if jaccard >= 0.72 and containment >= 0.85:
+        return jaccard
+    return None
+
+
+def _is_conservative_near_match(left: str, right: str) -> bool:
+    """Return True for obvious paraphrases, with guards against false matches."""
+    return (
+        _conservative_near_match_score(
+            _near_match_signature(left), _near_match_signature(right)
+        )
+        is not None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,20 +239,26 @@ def find_cross_source_markets(
         matched_market_ids.add(k["market_id"])
         matched_market_ids.add(p["market_id"])
 
+    # Precompute token signatures once per row so the conservative near-match
+    # pass below is O(n) tokenization instead of re-tokenizing both sides on
+    # every (kalshi, polymarket) pair. With ~900 markets the naive version did
+    # millions of redundant regex tokenizations and dominated endpoint latency.
+    poly_sigs = [
+        (p_norm, p, _near_match_signature(p["q"]))
+        for p_norm, p in rows_by_source["polymarket"]
+    ]
+
     for k_norm, k in rows_by_source["kalshi"]:
         if k["market_id"] in matched_market_ids:
             continue
+        k_sig = _near_match_signature(k["q"])
         best_poly = None
         best_score = 0.0
-        for p_norm, p in rows_by_source["polymarket"]:
+        for p_norm, p, p_sig in poly_sigs:
             if p["market_id"] in matched_market_ids or k_norm == p_norm:
                 continue
-            if not _is_conservative_near_match(k["q"], p["q"]):
-                continue
-            k_tokens = _near_match_tokens(k["q"])
-            p_tokens = _near_match_tokens(p["q"])
-            score = len(k_tokens & p_tokens) / len(k_tokens | p_tokens)
-            if score > best_score:
+            score = _conservative_near_match_score(k_sig, p_sig)
+            if score is not None and score > best_score:
                 best_poly = p
                 best_score = score
         if not best_poly:
