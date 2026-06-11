@@ -682,3 +682,21 @@
     font-size: 26px;
   }
 }
+
+@media (max-width: 400px) {
+  .pageHead {
+    padding: 16px 12px 4px;
+  }
+
+  .pageContent {
+    padding: 0 12px 64px;
+  }
+
+  .pageTitle {
+    font-size: 22px;
+  }
+
+  .pageSub {
+    font-size: 13px;
+  }
+}
