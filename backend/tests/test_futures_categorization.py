@@ -258,6 +258,67 @@ class TestGolfPatterns:
 
 
 # =============================================================================
+# Non-sport override: political figures must not be filed under a sport just
+# because the market name mentions a venue ("golf club") or an athlete.
+# Regression for Queue #34 part 2 / issue #889 — the "Trump National Golf Club"
+# market was misclassified as golf because the bare \bgolf\b pattern matched
+# the venue name before the politics pattern could run.
+# =============================================================================
+class TestNonSportOverride:
+    def test_trump_golf_club_visit_is_politics(self):
+        # The exact production market that exposed the bug (KXNJGOLFVISITCOUNT).
+        assert (
+            categorize_by_rules(
+                "How many times will Trump visit Trump National Golf Club "
+                "Bedminster in Jun 2026?"
+            )
+            == "politics"
+        )
+        # Must NOT be golf.
+        assert (
+            categorize_by_rules(
+                "How many times will Trump visit Trump National Golf Club "
+                "Bedminster in Jun 2026?"
+            )
+            != "golf"
+        )
+
+    def test_trump_pardon_athlete_is_politics(self):
+        # Pardoning a golfer is a political act, not a golf market.
+        assert categorize_by_rules("Will Trump pardon Tiger Woods by June 30?") == "politics"
+
+    def test_president_visit_golf_course_is_politics(self):
+        assert (
+            categorize_by_rules("Will the President visit a golf course this week?")
+            == "politics"
+        )
+
+    def test_real_golf_markets_unaffected(self):
+        # Legit golf markets that share keywords must still classify as golf.
+        assert (
+            categorize_by_rules(
+                "Semifinals: Jupiter Links Golf Club vs Boston Common Golf"
+            )
+            == "golf"
+        )
+        assert categorize_by_rules("PGA Championship Winner") == "golf"
+        assert categorize_by_rules("Scottie Scheffler to win the Masters") == "golf"
+
+    def test_presidents_cup_not_hijacked_to_politics(self):
+        # "Presidents Cup" contains "president" but has no civic-action verb, so
+        # the override must NOT fire and steal it into politics. (This rules
+        # function returns None for it; classification to golf happens via the
+        # Kalshi category / ticker path — the point is the override stays out.)
+        assert categorize_by_rules("Presidents Cup Winner") != "politics"
+
+    def test_explicit_golf_sport_key_still_wins(self):
+        # An authoritative source sport_key is trusted even with a figure name.
+        assert (
+            categorize_by_rules("Trump charity outing", "golf_pga_tour") == "golf"
+        )
+
+
+# =============================================================================
 # Tennis Patterns
 # =============================================================================
 class TestTennisPatterns:

@@ -7,7 +7,7 @@ nonisolated struct TournamentCompactRow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(tournament.name)
+                    Text(properTitleCase(tournament.name))
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundStyle(.primary)
@@ -22,8 +22,8 @@ nonisolated struct TournamentCompactRow: View {
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
 
-                    if let tour = tournament.tourLabel, !tour.isEmpty {
-                        Text(tour)
+                    if let rawTour = tournament.tourLabel ?? tournament.tour, !rawTour.isEmpty {
+                        Text(golfTourDisplayName(for: rawTour))
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 4)
@@ -74,7 +74,7 @@ nonisolated struct TournamentCompactRow: View {
     }
 
     private var formattedDateRange: String? {
-        guard let start = tournament.startDate, let end = tournament.endDate else { return nil }
-        return "\(start) \u{2013} \(end)"
+        // Shared ISO-aware formatter: renders "Sep 24-27", never raw timestamps.
+        formatDateRange(start: tournament.startDate, end: tournament.endDate)
     }
 }

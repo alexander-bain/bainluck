@@ -7,7 +7,7 @@ nonisolated struct TournamentHeroCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(tournament.name)
+                    Text(properTitleCase(tournament.name))
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundStyle(.primary)
@@ -103,8 +103,7 @@ nonisolated struct TournamentHeroCard: View {
     /// Determine the current round number based on tournament dates.
     /// Returns 1-4 based on which day of the tournament we're in, or nil if unknown.
     private var currentRound: Int? {
-        guard let startStr = tournament.startDate,
-              let startDate = parseSimpleDate(startStr) else { return nil }
+        guard let startDate = parseFlexibleDate(tournament.startDate) else { return nil }
         let now = Date()
         let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: now).day ?? 0
         guard daysSinceStart >= 0 && daysSinceStart < 4 else { return nil }
@@ -131,19 +130,8 @@ nonisolated struct TournamentHeroCard: View {
     }
 
     private var formattedDateRange: String? {
-        guard let start = tournament.startDate, let end = tournament.endDate else { return nil }
-        return "\(start) \u{2013} \(end)"
-    }
-
-    /// Parse a simple date string like "2026-05-08" or "May 8, 2026".
-    private func parseSimpleDate(_ str: String) -> Date? {
-        // Try ISO format first
-        let isoFormatter = DateFormatter()
-        isoFormatter.dateFormat = "yyyy-MM-dd"
-        if let d = isoFormatter.date(from: str) { return d }
-        // Try natural format
-        let naturalFormatter = DateFormatter()
-        naturalFormatter.dateFormat = "MMM d, yyyy"
-        return naturalFormatter.date(from: str)
+        // Uses the shared acronym/ISO-aware formatter so full ISO timestamps
+        // ("2026-09-24T00:00:00+00:00") render as "Sep 24-27", never raw.
+        formatDateRange(start: tournament.startDate, end: tournament.endDate)
     }
 }

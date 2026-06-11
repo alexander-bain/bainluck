@@ -697,6 +697,45 @@ def generate_category_tags(
     return sorted(tags)
 
 
+_POLITICAL_FIGURE_RE = re.compile(
+    r"\b(trump|biden|harris|obama|vance|president|presidential|"
+    r"vice\s+president|potus|first\s+lady|white\s+house)\b",
+    re.I,
+)
+
+# Civic / personal actions that are NEVER sports markets, even when the name
+# coincidentally contains a sport keyword (a venue like "golf club" or an
+# athlete's name like "Tiger Woods"). Used to stop a political figure's
+# activity from being filed under golf/tennis/etc.
+#   - "How many times will Trump visit Trump National Golf Club" → politics
+#   - "Will Trump pardon Tiger Woods" → politics
+_NON_SPORT_ACTION_RE = re.compile(
+    r"\b(pardon|impeach|indict|inaugurat|deport|nominat|appoint|fire[ds]?|"
+    r"resign|sanction|tariff|veto|sign(?:\s+into\s+law)?|"
+    r"visit|tour|rally|campaign|fundrais)\w*\b",
+    re.I,
+)
+
+
+def _non_sport_override(market_name: str) -> Optional[str]:
+    """Detect markets about a political figure's civic action that only mention a
+    sport keyword incidentally (venue name, pardoned athlete, etc.).
+
+    Returns "politics" when a head-of-state name co-occurs with a clearly
+    non-sport action verb; otherwise None. This guards against false golf/tennis
+    classification from venue names ("Trump National Golf Club") or athlete
+    names ("pardon Tiger Woods"). It deliberately does NOT fire on real sports
+    markets (no political figure + civic action pairing there).
+    """
+    if not market_name:
+        return None
+    if _POLITICAL_FIGURE_RE.search(market_name) and _NON_SPORT_ACTION_RE.search(
+        market_name
+    ):
+        return "politics"
+    return None
+
+
 def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Optional[str]:
     """
     Try to categorize a market using regex pattern matching.
@@ -710,6 +749,16 @@ def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Op
     """
     # Build searchable text from sport key and market name
     search_text = " ".join(filter(None, [sport_key, market_name]))
+
+    # Non-sport override: a political figure performing a civic action (visit,
+    # pardon, etc.) is politics even if the name mentions a "golf club" venue or
+    # an athlete. Runs before SPORT_PATTERNS so the incidental sport keyword
+    # ("golf", "Tiger Woods") cannot win. An explicit source sport_key still
+    # takes precedence below — those come from leagues, not free text.
+    if not sport_key:
+        override = _non_sport_override(market_name)
+        if override:
+            return override
 
     # Try prefix matching on sport_key first
     if sport_key:

@@ -19,7 +19,10 @@ struct NativeTournamentDiscoverCard: View {
 
     private var tourBadge: String {
         if data.isMajor == true { return "MAJOR" }
-        return (data.tourLabel ?? data.tour ?? "GOLF").uppercased()
+        guard let raw = data.tourLabel ?? data.tour, !raw.isEmpty else { return "GOLF" }
+        // Map raw enum ("korn_ferry") to a display name, then uppercase for the
+        // badge treatment ("KORN FERRY TOUR") — never leak the underscore enum.
+        return golfTourDisplayName(for: raw).uppercased()
     }
 
     var body: some View {
@@ -51,7 +54,7 @@ struct NativeTournamentDiscoverCard: View {
                         }
                     }
 
-                    Text(data.name)
+                    Text(properTitleCase(data.name))
                         .font(.headline.bold())
                         .foregroundStyle(.white)
                         .lineLimit(2)

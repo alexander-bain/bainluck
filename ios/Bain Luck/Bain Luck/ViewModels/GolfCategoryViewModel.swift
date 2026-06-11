@@ -13,17 +13,10 @@ final class GolfCategoryViewModel: ObservableObject {
     @Published private(set) var liveTournament: GolfTournamentData?
     @Published private(set) var tourSections: [TourSection] = []
 
-    private static let tourOrder = ["pga", "euro", "liv", "kft", "lpga", "opp"]
-    private static let tourNames: [String: String] = [
-        "pga": "PGA Tour",
-        "euro": "DP World Tour",
-        "liv": "LIV Golf",
-        "kft": "Korn Ferry Tour",
-        "lpga": "LPGA Tour",
-        "opp": "PGA Tour Americas",
-        "alt": "Alternate Events",
-        "major": "Majors",
-    ]
+    // Display order for known tours. Keys match the raw `tour` values the
+    // backend sends (lower-cased, underscore-delimited). Display names come
+    // from the shared `golfTourDisplayName` mapper so we never leak raw enums.
+    private static let tourOrder = ["pga", "dp_world", "euro", "liv", "korn_ferry", "kft", "lpga", "opp", "americas"]
 
     @MainActor
     func load() async {
@@ -47,7 +40,7 @@ final class GolfCategoryViewModel: ObservableObject {
             for key in Self.tourOrder where allKeys.contains(key) {
                 sections.append(TourSection(
                     tour: key,
-                    displayName: Self.tourNames[key] ?? key.uppercased(),
+                    displayName: golfTourDisplayName(for: key),
                     isFollowing: key == "pga", // Default: PGA Tour followed
                     tournaments: grouped[key] ?? []
                 ))
@@ -57,7 +50,7 @@ final class GolfCategoryViewModel: ObservableObject {
                 if key == "major" { continue } // Majors listed under their tour
                 sections.append(TourSection(
                     tour: key,
-                    displayName: Self.tourNames[key] ?? key.uppercased(),
+                    displayName: golfTourDisplayName(for: key),
                     isFollowing: false,
                     tournaments: grouped[key] ?? []
                 ))
