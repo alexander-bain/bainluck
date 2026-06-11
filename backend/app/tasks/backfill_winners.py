@@ -3739,7 +3739,7 @@ async def _resolve_winners_only(limit: int = 2000):
 
         _rc2 = get_redis_client()
         _kalshi_start = _t.monotonic()
-        _KALSHI_BUDGET_SECONDS = 300
+        _KALSHI_BUDGET_SECONDS = 180
 
         # Dynamically discover series with unresolved outcomes instead of
         # a hardcoded list. Sorted by count DESC so the biggest gaps get
