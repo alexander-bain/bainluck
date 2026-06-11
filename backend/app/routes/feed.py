@@ -5384,6 +5384,7 @@ async def _score_futures(
             }
             for o in sorted_outcomes
         ]
+        is_effectively_resolved = market.status == "resolved"
         discover_card = classify_discover_card_archetype(
             name=market.name,
             category=market.llm_sport_category,

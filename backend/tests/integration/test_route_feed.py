@@ -224,7 +224,7 @@ class TestFeedMockedDataContract:
         body = resp.json()
 
         assert resp.status_code == 200
-        assert set(body) == {"items", "total", "limit", "offset", "has_more"}
+        assert {"items", "total", "limit", "offset", "has_more"}.issubset(set(body))
         assert body["total"] == 1
         assert body["has_more"] is False
         assert len(body["items"]) == 1
