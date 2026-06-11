@@ -309,10 +309,10 @@ QUOTA_WARNING_THRESHOLD = 1_000_000
 QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
 QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls (except priority sports)
 QUOTA_GUARD_ABSOLUTE_STOP = 500  # Below this: stop ALL Odds API calls, no exceptions
-QUOTA_GUARD_EXPIRY = "2026-04-01T00:00:00+00:00"  # Auto-revert date (UTC)
+QUOTA_GUARD_BILLING_DAY = 1  # Day of month when the Odds API quota resets
 
 # Priority sports: allowed to poll even in FULL_STOP mode with conservation settings.
-# h2h only, single region, slower interval. Remove after April 1 reset.
+# h2h only, single region, slower interval.
 QUOTA_GUARD_PRIORITY_SPORTS = frozenset({
     "basketball_nba",
     "baseball_mlb",
@@ -342,11 +342,6 @@ def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[boo
           "full_stop_<remaining>" — do not proceed
     """
     from datetime import datetime, timezone
-
-    # Auto-expire: after the billing cycle resets, allow everything
-    expiry = datetime.fromisoformat(QUOTA_GUARD_EXPIRY)
-    if datetime.now(timezone.utc) >= expiry:
-        return True, "guard_expired"
 
     r = get_redis_client()
     if not r:

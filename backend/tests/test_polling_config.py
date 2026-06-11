@@ -163,7 +163,7 @@ class TestSportTierQuotaGuardrails:
     def test_live_only_guard_blocks_discovery_and_futures_but_allows_odds_polling(
         self, monkeypatch, remaining
     ):
-        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
+        # No expiry override needed — guard now checks remaining quota directly
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: _FakeQuotaRedis(remaining))
 
         assert redis_state.check_quota_guard("poll_odds") == (True, f"live_only_{remaining}")
@@ -172,7 +172,7 @@ class TestSportTierQuotaGuardrails:
 
     def test_full_stop_guard_only_allows_priority_sports_in_conservation(self, monkeypatch):
         remaining = QUOTA_GUARD_FULL_STOP
-        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
+        # No expiry override needed — guard now checks remaining quota directly
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: _FakeQuotaRedis(remaining))
 
         assert redis_state.check_quota_guard("poll_odds", sport_key="basketball_nba") == (
@@ -187,7 +187,7 @@ class TestSportTierQuotaGuardrails:
 
     def test_absolute_stop_blocks_even_priority_sports(self, monkeypatch):
         remaining = QUOTA_GUARD_ABSOLUTE_STOP
-        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
+        # No expiry override needed — guard now checks remaining quota directly
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: _FakeQuotaRedis(remaining))
 
         assert redis_state.check_quota_guard("poll_odds", sport_key="basketball_nba") == (

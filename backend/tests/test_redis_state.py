@@ -136,13 +136,11 @@ class TestOddsApiQuotaState:
     """Guardrails for quota state fallback and malformed cached values."""
 
     def test_quota_guard_fails_open_when_redis_unavailable(self, monkeypatch):
-        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: None)
 
         assert redis_state.check_quota_guard("poll_futures") == (True, "no_redis")
 
     def test_quota_guard_fails_open_on_malformed_remaining_value(self, monkeypatch):
-        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
         monkeypatch.setattr(
             redis_state,
             "get_redis_client",
