@@ -84,9 +84,9 @@ struct LeagueGridView: View {
 
     private func gridContent(_ grid: ChampionshipGridResponse) -> some View {
         List {
-            // Sources + season
-            Section {
-                if let season = grid.season {
+            // Season info
+            if let season = grid.season {
+                Section {
                     HStack {
                         Text("Season")
                             .foregroundStyle(.secondary)
@@ -95,22 +95,6 @@ struct LeagueGridView: View {
                             .fontWeight(.medium)
                     }
                     .font(.caption)
-                }
-                HStack {
-                    Text("Sources")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    HStack(spacing: 4) {
-                        ForEach(grid.sourcesAvailable, id: \.self) { source in
-                            Text(sourceLabels[source] ?? source.capitalized)
-                                .font(.system(size: 10, weight: .medium))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
-                                .clipShape(Capsule())
-                        }
-                    }
                 }
             }
 
@@ -133,12 +117,13 @@ struct LeagueGridView: View {
                 .listRowBackground(Color.clear)
             }
 
-            // Movers
-            if !grid.movers.isEmpty {
+            // Movers (exclude zero-movement entries)
+            let realMovers = grid.movers.filter { abs($0.change24H) >= 0.001 }
+            if !realMovers.isEmpty {
                 Section("Biggest Movers (24h)") {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(grid.movers) { mover in
+                            ForEach(realMovers) { mover in
                                 moverChip(mover)
                             }
                         }
@@ -310,7 +295,7 @@ struct LeagueGridView: View {
                 VStack(spacing: 1) {
                     Text(formatProb(prob))
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    if let trend = cell?.trend24h, abs(trend) >= 0.005 {
+                    if let trend = cell?.trend24H, abs(trend) >= 0.005 {
                         HStack(spacing: 1) {
                             Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
                                 .font(.system(size: 6))
@@ -346,7 +331,7 @@ struct LeagueGridView: View {
 
     private func moverChip(_ mover: GridMover) -> some View {
         let isUp = mover.direction == "up"
-        let pct = abs(mover.change24h * 100)
+        let pct = abs(mover.change24H * 100)
 
         return HStack(spacing: 4) {
             if let logoUrl = mover.logoUrl, let url = URL(string: logoUrl) {
@@ -360,7 +345,7 @@ struct LeagueGridView: View {
                 }
                 .frame(width: 16, height: 16)
             }
-            Text(mover.shortName ?? String(mover.name.prefix(6)))
+            Text(mover.shortName ?? mover.name)
                 .font(.caption)
                 .fontWeight(.medium)
             Text("\(isUp ? "+" : "-")\(pct >= 1 ? String(format: "%.0f", pct) : String(format: "%.1f", pct))%")
