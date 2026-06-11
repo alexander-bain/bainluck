@@ -2915,6 +2915,7 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
 _GARBAGE_OUTCOME_RE = re.compile(r"^player\s+[A-Z]{1,3}$", re.I)
 
 SOURCE_DISAGREEMENT_THRESHOLD_PP = 5
+SOURCE_STALENESS_DAYS = 7
 
 
 async def _get_source_breakdown(
@@ -2923,10 +2924,11 @@ async def _get_source_breakdown(
     """Get the latest probability per bookmaker for each outcome.
 
     Returns a list of per-source rows sorted alphabetically by bookmaker.
-    Each row includes the latest probability, capture time, and outcome mapping.
+    Sources with ``captured_at`` older than SOURCE_STALENESS_DAYS are flagged
+    ``stale: true`` so the frontend can exclude them from spread math and
+    render them muted.
     """
-    from sqlalchemy import over, desc
-    from sqlalchemy.orm import aliased
+    from sqlalchemy import desc
 
     row_number = func.row_number().over(
         partition_by=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
@@ -2954,13 +2956,17 @@ async def _get_source_breakdown(
         ).where(subq.c.rn == 1)
     )
 
+    staleness_cutoff = datetime.now(timezone.utc) - timedelta(days=SOURCE_STALENESS_DAYS)
+
     by_bookmaker: dict[str, dict] = {}
     for outcome_id, bookmaker, probability, captured_at in rows.all():
         if bookmaker not in by_bookmaker:
+            is_stale = bool(captured_at and captured_at < staleness_cutoff)
             by_bookmaker[bookmaker] = {
                 "source": bookmaker,
                 "outcomes": {},
                 "captured_at": captured_at.isoformat() if captured_at else None,
+                "stale": is_stale,
             }
         by_bookmaker[bookmaker]["outcomes"][outcome_id] = round(
             float(probability) * 100, 1
@@ -2970,6 +2976,7 @@ async def _get_source_breakdown(
             or captured_at.isoformat() > by_bookmaker[bookmaker]["captured_at"]
         ):
             by_bookmaker[bookmaker]["captured_at"] = captured_at.isoformat()
+            by_bookmaker[bookmaker]["stale"] = captured_at < staleness_cutoff
 
     return sorted(by_bookmaker.values(), key=lambda s: s["source"])
 

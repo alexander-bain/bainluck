@@ -5,11 +5,13 @@ import {
   SOURCE_DISAGREEMENT_PP,
 } from "../../components/SourceAggregationBlock";
 
-function makeSources(probs: Record<string, number>) {
+function makeSources(probs: Record<string, number>, opts?: { stale?: string[] }) {
+  const staleSet = new Set(opts?.stale || []);
   return Object.entries(probs).map(([source, prob]) => ({
     source,
     outcomes: { 1: prob },
     captured_at: new Date().toISOString(),
+    stale: staleSet.has(source),
   }));
 }
 
@@ -102,5 +104,54 @@ describe("SourceAggregationBlock", () => {
     );
     expect(html).toContain("Kalshi");
     expect(html).toContain("Polymarket");
+  });
+
+  test("stale sources excluded from spread calculation", () => {
+    // espnbet is 20pp away but stale — spread should be 1pt (fresh only)
+    const html = renderToStaticMarkup(
+      React.createElement(SourceAggregationBlock, {
+        sources: makeSources(
+          { draftkings: 45.0, fanduel: 46.0, espnbet: 25.0 },
+          { stale: ["espnbet"] }
+        ),
+        primaryOutcomeId: 1,
+        aggregatedProbability: 45.5,
+      })
+    );
+    expect(html).toContain("2 sources");
+    expect(html).toContain("within 1 point");
+    // Should NOT trigger disagreement despite 20pp raw spread
+    expect(html).not.toContain("sources disagree");
+  });
+
+  test("stale sources render muted when expanded", () => {
+    // Force expand via disagreement among fresh sources
+    const html = renderToStaticMarkup(
+      React.createElement(SourceAggregationBlock, {
+        sources: makeSources(
+          { draftkings: 40.0, fanduel: 50.0, espnbet: 25.0 },
+          { stale: ["espnbet"] }
+        ),
+        primaryOutcomeId: 1,
+        aggregatedProbability: 45.0,
+      })
+    );
+    expect(html).toContain("ESPN Bet");
+    // Stale row should have opacity-40 class
+    expect(html).toContain("opacity-40");
+  });
+
+  test("all-stale sources → block hidden", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SourceAggregationBlock, {
+        sources: makeSources(
+          { draftkings: 45.0, fanduel: 46.0 },
+          { stale: ["draftkings", "fanduel"] }
+        ),
+        primaryOutcomeId: 1,
+        aggregatedProbability: 45.5,
+      })
+    );
+    expect(html).toBe("");
   });
 });

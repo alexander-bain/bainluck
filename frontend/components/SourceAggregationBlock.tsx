@@ -61,6 +61,7 @@ interface SourceRow {
   source: string;
   outcomes: Record<number, number>; // outcome_id → probability (%)
   captured_at: string | null;
+  stale?: boolean;
 }
 
 interface SourceAggregationBlockProps {
@@ -87,26 +88,31 @@ export function SourceAggregationBlock({
 }: SourceAggregationBlockProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const { spread, isDisagreement, sortedSources } = useMemo(() => {
-    if (!primaryOutcomeId || sources.length < 2) {
-      return { spread: 0, isDisagreement: false, sortedSources: sources };
+  const { spread, isDisagreement, freshCount, sortedSources } = useMemo(() => {
+    const fresh = sources.filter((s) => !s.stale);
+    if (!primaryOutcomeId || fresh.length < 2) {
+      return { spread: 0, isDisagreement: false, freshCount: fresh.length, sortedSources: sources };
     }
-    const probs = sources
+    const probs = fresh
       .map((s) => s.outcomes[primaryOutcomeId])
       .filter((p): p is number => p != null);
     const max = Math.max(...probs);
     const min = Math.min(...probs);
     const sp = Math.round((max - min) * 10) / 10;
+    // Sort: fresh alphabetically, then stale alphabetically
+    const sorted = [...sources].sort((a, b) => {
+      if (a.stale !== b.stale) return a.stale ? 1 : -1;
+      return a.source.localeCompare(b.source);
+    });
     return {
       spread: sp,
       isDisagreement: sp >= SOURCE_DISAGREEMENT_PP,
-      sortedSources: [...sources].sort((a, b) =>
-        a.source.localeCompare(b.source)
-      ),
+      freshCount: fresh.length,
+      sortedSources: sorted,
     };
   }, [sources, primaryOutcomeId]);
 
-  if (sources.length < 2) return null;
+  if (freshCount < 2) return null;
 
   const autoExpand = isDisagreement;
   const isOpen = expanded || autoExpand;
@@ -128,7 +134,7 @@ export function SourceAggregationBlock({
           <span className="text-text-muted">
             Aggregated from{" "}
             <span className="font-semibold text-text-secondary">
-              {sources.length} sources
+              {freshCount} sources
             </span>
           </span>
           {spread > 0 && (
@@ -174,20 +180,20 @@ export function SourceAggregationBlock({
               return (
                 <div
                   key={src.source}
-                  className="flex items-center justify-between py-1.5"
+                  className={`flex items-center justify-between py-1.5 ${src.stale ? "opacity-40" : ""}`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: color }}
+                      style={{ backgroundColor: src.stale ? "#aaa" : color }}
                     />
-                    <span className="text-[13px] text-text-primary truncate">
+                    <span className={`text-[13px] truncate ${src.stale ? "text-text-muted" : "text-text-primary"}`}>
                       {label}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     {prob != null && (
-                      <span className="font-mono text-[13px] font-semibold text-text-primary tabular-nums">
+                      <span className={`font-mono text-[13px] font-semibold tabular-nums ${src.stale ? "text-text-muted" : "text-text-primary"}`}>
                         {prob.toFixed(1)}%
                       </span>
                     )}
