@@ -265,6 +265,9 @@ private func heatmapPreviewData(
         canonicalMarketKey: nil,
         groupId: nil,
         groupType: nil,
+        imageUrl: nil,
+        hookDescription: nil,
+        matchedOutcomes: nil,
         discoverCard: FeedDiscoverCard(
             suggestedFormat: "threshold_heatmap",
             bundleCandidate: false,
@@ -275,10 +278,7 @@ private func heatmapPreviewData(
             qaSignals: nil,
             publicSourceDisagreement: nil,
             reasons: nil
-        ),
-        imageUrl: nil,
-        hookDescription: nil,
-        matchedOutcomes: nil
+        )
     )
 }
 #endif
