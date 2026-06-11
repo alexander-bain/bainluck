@@ -21,6 +21,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
+import { SourceAggregationBlock } from "@/components/SourceAggregationBlock";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
@@ -574,6 +575,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               stepInterpolation={historyData.sparse}
             />
           )}
+        </div>
+      )}
+
+      {/* Source Aggregation Block — per-bookmaker breakdown */}
+      {market.source_breakdown && market.source_breakdown.length >= 2 && leader && (
+        <div className="mb-4">
+          <SourceAggregationBlock
+            sources={market.source_breakdown}
+            primaryOutcomeId={leader.id}
+            aggregatedProbability={leader.probability != null ? leader.probability * 100 : null}
+          />
         </div>
       )}
 

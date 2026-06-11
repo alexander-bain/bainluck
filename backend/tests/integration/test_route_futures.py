@@ -180,16 +180,19 @@ class TestFuturesMarketDetail:
                 _outcome(2, "Celtics", probability=0.64, rank=1, movement=0.04),
             ],
         )
+        ts = datetime(2026, 6, 1, tzinfo=timezone.utc)
         mock_db.execute.side_effect = [
             _result_scalar_one_or_none(market),
             _result_all([("Kalshi",), ("Polymarket",)]),
+            # source_breakdown: latest per (outcome, bookmaker) with rn=1
+            _result_all([(2, "Kalshi", 0.62, ts), (2, "Polymarket", 0.66, ts)]),
         ]
 
         resp = await client.get("/api/futures/42")
 
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body) == {
+        expected_keys = {
             "id",
             "name",
             "description",
@@ -213,11 +216,16 @@ class TestFuturesMarketDetail:
             "canonical_market_key",
             "hook_description",
             "image_url",
+            "source_breakdown",
         }
+        assert set(body) == expected_keys
         assert body["id"] == 42
         assert body["bookmakers"] == ["Kalshi", "Polymarket"]
         assert body["outcome_count"] == 1
         assert body["outcomes"][0]["name"] == "Celtics"
+        assert len(body["source_breakdown"]) == 2
+        assert body["source_breakdown"][0]["source"] == "Kalshi"
+        assert body["source_breakdown"][1]["source"] == "Polymarket"
 
     async def test_nonexistent_market_returns_404(self, client):
         resp = await client.get("/api/futures/999999")

@@ -1843,6 +1843,7 @@ async def get_futures_market(
     # Get distinct bookmakers that have contributed odds for this market
     outcome_ids = [o.id for o in market.outcomes]
     bookmakers = []
+    source_breakdown = []
     if outcome_ids:
         bookmakers_result = await db.execute(
             select(FuturesOddsSnapshot.bookmaker)
@@ -1852,7 +1853,13 @@ async def get_futures_market(
         )
         bookmakers = [row[0] for row in bookmakers_result.all()]
 
-    return _format_market_detail(market, bookmakers)
+        if len(bookmakers) > 1:
+            source_breakdown = await _get_source_breakdown(db, outcome_ids)
+
+    detail = _format_market_detail(market, bookmakers)
+    if source_breakdown:
+        detail["source_breakdown"] = source_breakdown
+    return detail
 
 
 @router.get("/{market_id}/related-events")
@@ -2906,6 +2913,65 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
 
 
 _GARBAGE_OUTCOME_RE = re.compile(r"^player\s+[A-Z]{1,3}$", re.I)
+
+SOURCE_DISAGREEMENT_THRESHOLD_PP = 5
+
+
+async def _get_source_breakdown(
+    db: AsyncSession, outcome_ids: list[int]
+) -> list[dict]:
+    """Get the latest probability per bookmaker for each outcome.
+
+    Returns a list of per-source rows sorted alphabetically by bookmaker.
+    Each row includes the latest probability, capture time, and outcome mapping.
+    """
+    from sqlalchemy import over, desc
+    from sqlalchemy.orm import aliased
+
+    row_number = func.row_number().over(
+        partition_by=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
+        order_by=desc(FuturesOddsSnapshot.captured_at),
+    ).label("rn")
+
+    subq = (
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            FuturesOddsSnapshot.bookmaker,
+            FuturesOddsSnapshot.probability,
+            FuturesOddsSnapshot.captured_at,
+            row_number,
+        )
+        .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
+        .subquery()
+    )
+
+    rows = await db.execute(
+        select(
+            subq.c.outcome_id,
+            subq.c.bookmaker,
+            subq.c.probability,
+            subq.c.captured_at,
+        ).where(subq.c.rn == 1)
+    )
+
+    by_bookmaker: dict[str, dict] = {}
+    for outcome_id, bookmaker, probability, captured_at in rows.all():
+        if bookmaker not in by_bookmaker:
+            by_bookmaker[bookmaker] = {
+                "source": bookmaker,
+                "outcomes": {},
+                "captured_at": captured_at.isoformat() if captured_at else None,
+            }
+        by_bookmaker[bookmaker]["outcomes"][outcome_id] = round(
+            float(probability) * 100, 1
+        )
+        if captured_at and (
+            by_bookmaker[bookmaker]["captured_at"] is None
+            or captured_at.isoformat() > by_bookmaker[bookmaker]["captured_at"]
+        ):
+            by_bookmaker[bookmaker]["captured_at"] = captured_at.isoformat()
+
+    return sorted(by_bookmaker.values(), key=lambda s: s["source"])
 
 
 def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:
