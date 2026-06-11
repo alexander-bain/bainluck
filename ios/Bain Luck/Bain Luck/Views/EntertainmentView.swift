@@ -31,6 +31,14 @@ struct EntertainmentView: View {
     @StateObject private var viewModel = EntertainmentViewModel()
     @Environment(\.horizontalSizeClass) private var sizeClass
 
+    private var isCompact: Bool {
+        #if os(macOS)
+        return false
+        #else
+        return sizeClass == .compact
+        #endif
+    }
+
     private var contentMaxWidth: CGFloat {
         #if os(macOS)
         return 900
@@ -66,7 +74,7 @@ struct EntertainmentView: View {
 
     private func entertainmentContent(_ data: EntertainmentResponse) -> some View {
         ScrollView {
-            VStack(spacing: 32) {
+            VStack(spacing: 28) {
                 pageHeader(data)
 
                 if let trending = data.trending, !trending.isEmpty {
@@ -101,7 +109,7 @@ struct EntertainmentView: View {
 
     private func pageHeader(_ data: EntertainmentResponse) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Live probabilities from Kalshi and Polymarket — charts, box office, reality TV, and the moments breaking the internet.")
+            Text("Live probabilities from Kalshi and Polymarket -- charts, box office, reality TV, and the moments breaking the internet.")
                 .font(.subheadline)
                 .foregroundStyle(DS.textSecondary)
 
@@ -133,7 +141,7 @@ struct EntertainmentView: View {
             }
             .padding(.horizontal)
 
-            // Lead card (first market) + stack
+            // Lead card (first market)
             if let lead = markets.first {
                 NavigationLink(value: Route.futuresDetail(id: lead.marketId)) {
                     heroCard(lead, isLead: true)
@@ -141,11 +149,30 @@ struct EntertainmentView: View {
                 .buttonStyle(.plain)
             }
 
-            ForEach(markets.dropFirst().prefix(4)) { market in
-                NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
-                    heroCard(market, isLead: false)
+            // Secondary cards in a 2-col grid on iPad, stacked on iPhone
+            let secondaryMarkets = Array(markets.dropFirst().prefix(4))
+            if !secondaryMarkets.isEmpty {
+                if isCompact {
+                    ForEach(secondaryMarkets) { market in
+                        NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
+                            heroCard(market, isLead: false)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                        spacing: 12
+                    ) {
+                        ForEach(secondaryMarkets) { market in
+                            NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
+                                heroCard(market, isLead: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -153,24 +180,21 @@ struct EntertainmentView: View {
     private func heroCard(_ m: EntMarketRow, isLead: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                // Cover art or placeholder
                 coverArt(
                     imageUrl: m.imageUrl,
                     title: m.q,
                     kind: m.kind,
-                    size: isLead ? 72 : 44
+                    size: isLead ? 64 : 44
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        kindTag(m.kind ?? "binary")
-                    }
+                    kindTag(m.kind ?? "binary")
 
                     Text(m.q)
-                        .font(.system(size: isLead ? 18 : 14, weight: .semibold))
-                        .lineHeight(multiplier: 1.25)
+                        .font(.system(size: isLead ? 17 : 14, weight: .semibold))
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(isLead ? 3 : 2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let hook = m.hook {
                         Text(hook)
@@ -181,14 +205,18 @@ struct EntertainmentView: View {
                 }
             }
 
-            Spacer(minLength: 0)
-
             // Kind-specific rendering
             heroCardBody(m, isLead: isLead)
 
-            // Meta row: source + resolution date
+            // Meta row: source + volume + resolution date
             HStack(spacing: 8) {
                 SourceChip(source: m.src)
+                if let vol = m.volume24h, vol > 0 {
+                    Text(formatVolume(vol))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(DS.textMuted)
+                }
+                Spacer()
                 if let resolves = m.resolutionDate {
                     Text("Resolves \(formatDate(resolves))")
                         .font(.system(size: 11))
@@ -197,7 +225,6 @@ struct EntertainmentView: View {
             }
         }
         .padding(isLead ? 18 : 14)
-        .frame(minHeight: isLead ? 240 : 0, alignment: .top)
         .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(DS.border, lineWidth: 0.5))
@@ -228,13 +255,13 @@ struct EntertainmentView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(leader.name)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(1)
                 }
                 Spacer()
                 HStack(spacing: 6) {
-                    ProbabilityNumber(value: leader.prob, size: isLead ? 28 : 20)
+                    ProbabilityNumber(value: leader.prob, size: isLead ? 26 : 18)
                     if let delta = leader.delta24h {
                         DeltaBadge(value: delta)
                     }
@@ -250,7 +277,7 @@ struct EntertainmentView: View {
             // Runner-up
             HStack {
                 Text(runnerUp.name)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
                 Spacer()
@@ -266,34 +293,24 @@ struct EntertainmentView: View {
 
     private func binaryHeroBody(a: EntOutcome, b: EntOutcome, isLead: Bool) -> some View {
         let aLeads = a.prob >= b.prob
-        return VStack(spacing: 6) {
+        return VStack(spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(a.name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(aLeads ? DS.textPrimary : DS.textMuted)
-                    ProbabilityNumber(value: a.prob, size: isLead ? 24 : 18)
+                    ProbabilityNumber(value: a.prob, size: isLead ? 22 : 16)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(b.name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(!aLeads ? DS.textPrimary : DS.textMuted)
-                    ProbabilityNumber(value: b.prob, size: isLead ? 24 : 18)
+                    ProbabilityNumber(value: b.prob, size: isLead ? 22 : 16)
                 }
             }
 
-            GeometryReader { geo in
-                HStack(spacing: 1.5) {
-                    RoundedRectangle(cornerRadius: 999)
-                        .fill(aLeads ? DS.purple : DS.purple.opacity(0.35))
-                        .frame(width: geo.size.width * a.prob / 100)
-                    RoundedRectangle(cornerRadius: 999)
-                        .fill(!aLeads ? DS.purple : DS.purple.opacity(0.35))
-                        .frame(width: geo.size.width * b.prob / 100)
-                }
-            }
-            .frame(height: 6)
+            splitBar(leftPct: a.prob, rightPct: b.prob, leftLeads: aLeads)
         }
     }
 
@@ -305,6 +322,7 @@ struct EntertainmentView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textSecondary)
                         .lineLimit(1)
+                        .frame(minWidth: 60, alignment: .leading)
                     DSProbabilityBar(value: o.prob, height: 4)
                     ProbabilityNumber(value: o.prob, size: 12)
                 }
@@ -314,6 +332,8 @@ struct EntertainmentView: View {
 
     // MARK: - Music Section
 
+    @State private var musicTab: MusicTab = .spotify
+
     private func musicSection(_ data: EntThemeMusic) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
@@ -322,46 +342,49 @@ struct EntertainmentView: View {
             }
             .padding(.horizontal)
 
-            // Spotify race (horse-race variant)
-            if let spotify = data.spotifyRace, !spotify.isEmpty {
-                spotifyRaceCard(spotify)
-            }
+            // Tabbed navigation like web
+            musicTabBar(data)
 
-            // Billboard watch
-            if let billboard = data.billboardWatch, !billboard.isEmpty {
-                marketSubsection(
-                    title: "Billboard",
-                    emoji: "📊",
-                    markets: billboard
-                )
+            switch musicTab {
+            case .spotify:
+                if let spotify = data.spotifyRace, !spotify.isEmpty {
+                    spotifyRaceCard(spotify)
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
+            case .billboard:
+                if let groups = data.billboardGroups, !groups.isEmpty {
+                    thresholdGroupSection(title: "Billboard", groups: groups)
+                } else if let billboard = data.billboardWatch, !billboard.isEmpty {
+                    marketGrid(Array(billboard.prefix(6)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
+            case .albums:
+                if let albums = data.albumDrops, !albums.isEmpty {
+                    marketGrid(Array(albums.prefix(8)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
+            case .streaming:
+                if let streaming = data.artistStreaming, !streaming.isEmpty {
+                    marketGrid(Array(streaming.prefix(8)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
             }
+        }
+    }
 
-            // Album drops
-            if let albums = data.albumDrops, !albums.isEmpty {
-                marketSubsection(
-                    title: "Album Drops",
-                    emoji: "💿",
-                    markets: albums
-                )
+    private func musicTabBar(_ data: EntThemeMusic) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                tabButton("Spotify Race", tab: .spotify, isActive: musicTab == .spotify) { musicTab = .spotify }
+                tabButton("Billboard", tab: .billboard, isActive: musicTab == .billboard) { musicTab = .billboard }
+                tabButton("Album Drops", tab: .albums, isActive: musicTab == .albums) { musicTab = .albums }
+                tabButton("Streaming", tab: .streaming, isActive: musicTab == .streaming) { musicTab = .streaming }
             }
-
-            // Artist streaming
-            if let streaming = data.artistStreaming, !streaming.isEmpty {
-                marketSubsection(
-                    title: "Artist Streaming",
-                    emoji: "📈",
-                    markets: streaming
-                )
-            }
-
-            // Side markets
-            if let side = data.sideMarkets, !side.isEmpty {
-                marketSubsection(
-                    title: "Other Music Markets",
-                    emoji: "🎵",
-                    markets: side
-                )
-            }
+            .padding(.horizontal)
         }
     }
 
@@ -376,7 +399,7 @@ struct EntertainmentView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 4) {
                             Text("🎧")
-                                .font(.system(size: 11))
+                                .font(.system(size: 12))
                             Text("Spotify Chart Race")
                                 .font(.system(size: 11, weight: .heavy))
                                 .tracking(0.5)
@@ -384,11 +407,12 @@ struct EntertainmentView: View {
                                 .foregroundStyle(spotifyGreen)
                         }
                         Text(best.q)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(DS.textPrimary)
                             .lineLimit(2)
                     }
                     Spacer()
+                    SourceChip(source: best.src)
                 }
                 .padding(.bottom, 10)
 
@@ -402,17 +426,17 @@ struct EntertainmentView: View {
                                 .frame(width: 24, alignment: .trailing)
                                 .monospacedDigit()
 
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(o.name)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(DS.textPrimary)
-                                    .lineLimit(1)
-                            }
+                            coverArt(imageUrl: nil, title: o.name, kind: "spotify", size: 32)
+
+                            Text(o.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DS.textPrimary)
+                                .lineLimit(1)
 
                             Spacer()
 
                             VStack(alignment: .trailing, spacing: 2) {
-                                ProbabilityNumber(value: o.prob, size: 16, color: DS.textPrimary)
+                                ProbabilityNumber(value: o.prob, size: 15, color: DS.textPrimary)
                                 if let delta = o.delta24h, abs(delta) > 0.1 {
                                     DeltaBadge(value: delta)
                                 }
@@ -424,7 +448,7 @@ struct EntertainmentView: View {
                         // Probability track under each contender
                         DSProbabilityBar(
                             value: o.prob,
-                            height: 3,
+                            height: 4,
                             color: idx == 0
                                 ? spotifyGreen
                                 : spotifyGreen.opacity(0.35)
@@ -450,6 +474,8 @@ struct EntertainmentView: View {
 
     // MARK: - Movies & TV Section
 
+    @State private var movieTab: MovieTab = .rt
+
     private func moviesTVSection(_ data: EntThemeMoviesTV) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
@@ -458,35 +484,44 @@ struct EntertainmentView: View {
             }
             .padding(.horizontal)
 
-            // RT markets
-            if let rt = data.rtMarkets, !rt.isEmpty {
-                marketSubsection(title: "Rotten Tomatoes", emoji: "🍅", markets: rt)
-            }
+            // Tabbed navigation like web
+            movieTabBar(data)
 
-            // RT threshold groups
-            if let groups = data.rtGroups, !groups.isEmpty {
-                thresholdGroupSection(title: "RT Score Thresholds", groups: groups)
+            switch movieTab {
+            case .rt:
+                if let groups = data.rtGroups, !groups.isEmpty {
+                    thresholdGroupSection(title: "RT Score Thresholds", groups: groups)
+                } else if let rt = data.rtMarkets, !rt.isEmpty {
+                    marketGrid(Array(rt.prefix(6)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
+            case .boxoffice:
+                if let groups = data.boxOfficeGroups, !groups.isEmpty {
+                    thresholdGroupSection(title: "Box Office Ranges", groups: groups)
+                } else if let box = data.boxOffice, !box.isEmpty {
+                    marketGrid(Array(box.prefix(6)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
+            case .reality:
+                if let reality = data.realityTv, !reality.isEmpty {
+                    marketGrid(Array(reality.prefix(8)))
+                } else if let side = data.sideMarkets, !side.isEmpty {
+                    marketGrid(Array(side.prefix(6)))
+                }
             }
+        }
+    }
 
-            // Box office
-            if let box = data.boxOffice, !box.isEmpty {
-                marketSubsection(title: "Box Office", emoji: "🎟", markets: box)
+    private func movieTabBar(_ data: EntThemeMoviesTV) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                tabButton("Rotten Tomatoes", tab: .rt, isActive: movieTab == .rt) { movieTab = .rt }
+                tabButton("Box Office", tab: .boxoffice, isActive: movieTab == .boxoffice) { movieTab = .boxoffice }
+                tabButton("Reality TV", tab: .reality, isActive: movieTab == .reality) { movieTab = .reality }
             }
-
-            // Box office threshold groups
-            if let groups = data.boxOfficeGroups, !groups.isEmpty {
-                thresholdGroupSection(title: "Box Office Ranges", groups: groups)
-            }
-
-            // Reality TV
-            if let reality = data.realityTv, !reality.isEmpty {
-                marketSubsection(title: "Reality TV", emoji: "📺", markets: reality)
-            }
-
-            // Side markets
-            if let side = data.sideMarkets, !side.isEmpty {
-                marketSubsection(title: "Other Movie & TV", emoji: "🎬", markets: side)
-            }
+            .padding(.horizontal)
         }
     }
 
@@ -501,7 +536,7 @@ struct EntertainmentView: View {
             .padding(.horizontal)
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 260, maximum: 400))],
+                columns: [GridItem(.adaptive(minimum: isCompact ? 300 : 280, maximum: 400))],
                 spacing: 12
             ) {
                 ForEach(markets.prefix(12)) { m in
@@ -516,7 +551,7 @@ struct EntertainmentView: View {
     }
 
     private func culturalCard(_ m: EntMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // Tag + resolution date
             HStack {
                 kindTag(m.kind ?? "binary")
@@ -530,10 +565,10 @@ struct EntertainmentView: View {
 
             // Headline
             Text(m.q)
-                .font(.system(size: 14, weight: .bold))
-                .lineHeight(multiplier: 1.3)
+                .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(DS.textPrimary)
                 .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let hook = m.hook {
                 Text(hook)
@@ -546,13 +581,14 @@ struct EntertainmentView: View {
             if m.outcomeCount <= 2 {
                 yesNoBar(yes: m.prob, no: 100 - m.prob)
             } else {
-                VStack(spacing: 5) {
+                VStack(spacing: 6) {
                     ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
                         HStack(spacing: 8) {
                             Text(o.name)
                                 .font(.system(size: 12))
                                 .foregroundStyle(DS.textSecondary)
                                 .lineLimit(1)
+                                .frame(minWidth: 50, alignment: .leading)
                             DSProbabilityBar(value: o.prob, height: 4)
                             ProbabilityNumber(value: o.prob, size: 12)
                         }
@@ -563,16 +599,21 @@ struct EntertainmentView: View {
             // Footer
             HStack(spacing: 8) {
                 SourceChip(source: m.src)
+                if let vol = m.volume24h, vol > 0 {
+                    Text(formatVolume(vol))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(DS.textMuted)
+                }
                 Spacer()
             }
-            .padding(.top, 4)
+            .padding(.top, 6)
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(DS.border)
                     .frame(height: 0.5)
             }
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -596,29 +637,26 @@ struct EntertainmentView: View {
         }
     }
 
-    // MARK: - Shared: Market Subsection
+    // MARK: - Shared: Tab Button
 
-    private func marketSubsection(title: String, emoji: String, markets: [EntMarketRow]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
-                Text(emoji).font(.system(size: 12))
-                Text(title)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(DS.textSecondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-            }
-            .padding(.horizontal)
-
-            marketGrid(Array(markets.prefix(8)))
+    private func tabButton<T: Equatable>(_ label: String, tab: T, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? .white : DS.textSecondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(isActive ? DS.purple : DS.trackBg)
+                .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Shared: Market Grid
 
     private func marketGrid(_ markets: [EntMarketRow]) -> some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 260, maximum: 400))],
+            columns: [GridItem(.adaptive(minimum: isCompact ? 300 : 280, maximum: 400))],
             spacing: 12
         ) {
             ForEach(markets) { m in
@@ -634,7 +672,7 @@ struct EntertainmentView: View {
     // MARK: - Shared: Entertainment Market Card
 
     private func entertainmentMarketCard(_ m: EntMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // Cover art + question
             HStack(alignment: .top, spacing: 10) {
                 if m.imageUrl != nil {
@@ -650,14 +688,12 @@ struct EntertainmentView: View {
                     kindTag(m.kind ?? "binary")
 
                     Text(m.q)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 14, weight: .semibold))
                         .lineLimit(2)
                         .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            Spacer(minLength: 0)
 
             // Probability display
             if m.outcomeCount <= 2 {
@@ -671,32 +707,17 @@ struct EntertainmentView: View {
                     ProbabilityNumber(value: m.prob, size: 14)
                 }
             } else {
-                // Multi-outcome: top 2
-                VStack(spacing: 5) {
-                    ForEach(Array(m.topOutcomes.prefix(2).enumerated()), id: \.offset) { _, o in
-                        HStack(spacing: 6) {
+                // Multi-outcome: top 3 with proper bars
+                VStack(spacing: 6) {
+                    ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                        HStack(spacing: 8) {
                             Text(o.name)
-                                .font(.caption2)
+                                .font(.system(size: 12))
                                 .foregroundStyle(DS.textSecondary)
                                 .lineLimit(1)
-                            Spacer()
+                                .frame(minWidth: 50, alignment: .leading)
+                            DSProbabilityBar(value: o.prob, height: 4)
                             ProbabilityNumber(value: o.prob, size: 11)
-                        }
-                        .overlay(alignment: .bottom) {
-                            GeometryReader { geo in
-                                let accent = kindAccent[m.kind ?? "binary"] ?? DS.purple
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(o.prob > 50
-                                          ? accent.opacity(0.18)
-                                          : DS.textMuted.opacity(0.10))
-                                    .frame(
-                                        width: geo.size.width * o.prob / 100,
-                                        height: 2
-                                    )
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(height: 2)
-                            .offset(y: 3)
                         }
                     }
                 }
@@ -707,13 +728,17 @@ struct EntertainmentView: View {
                 if let delta = m.topOutcomes.first?.delta24h, abs(delta) >= 1 {
                     DeltaBadge(value: delta)
                 }
+                if let vol = m.volume24h, vol > 0 {
+                    Text(formatVolume(vol))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(DS.textMuted)
+                }
                 Spacer()
                 SourceChip(source: m.src)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 110)
         .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.border, lineWidth: 0.5))
@@ -749,10 +774,10 @@ struct EntertainmentView: View {
                             NavigationLink(value: Route.futuresDetail(id: t.marketId)) {
                                 HStack(spacing: 8) {
                                     Text(t.label)
-                                        .font(.system(size: 11))
+                                        .font(.system(size: 12))
                                         .foregroundStyle(DS.textSecondary)
-                                        .frame(width: 50, alignment: .leading)
-                                    DSProbabilityBar(value: t.prob, height: 4)
+                                        .frame(width: 60, alignment: .leading)
+                                    DSProbabilityBar(value: t.prob, height: 5)
                                     ProbabilityNumber(value: t.prob, size: 12)
                                 }
                             }
@@ -807,11 +832,11 @@ struct EntertainmentView: View {
         let accent = kindAccent[kind] ?? DS.purple
         return HStack(spacing: 3) {
             Text(kindEmoji[kind] ?? "✦")
-                .font(.system(size: 10))
+                .font(.system(size: 11))
             Text(kindLabel[kind] ?? "Market")
         }
-        .font(.system(size: 9, weight: .semibold))
-        .padding(.horizontal, 6)
+        .font(.system(size: 10, weight: .semibold))
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(accent.opacity(0.10))
         .foregroundStyle(accent)
@@ -819,31 +844,37 @@ struct EntertainmentView: View {
     }
 
     private func yesNoBar(yes: Double, no: Double) -> some View {
-        GeometryReader { geo in
-            HStack(spacing: 0) {
-                Text("YES \(Int(yes))%")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(DS.emerald)
-                    .frame(
-                        width: max(geo.size.width * yes / 100, 44),
-                        alignment: .leading
-                    )
-                    .padding(.leading, 8)
-                    .background(DS.emerald.opacity(0.10))
+        HStack(spacing: 1.5) {
+            Text("YES \(Int(yes))%")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(DS.emerald)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(DS.emerald.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                Text("NO \(Int(no))%")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(
-                        width: max(geo.size.width * no / 100, 44),
-                        alignment: .trailing
-                    )
-                    .padding(.trailing, 8)
-                    .background(DS.textMuted.opacity(0.06))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text("NO \(Int(no))%")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(DS.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(DS.textMuted.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .frame(height: 28)
+    }
+
+    private func splitBar(leftPct: Double, rightPct: Double, leftLeads: Bool) -> some View {
+        GeometryReader { geo in
+            HStack(spacing: 1.5) {
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(leftLeads ? DS.purple : DS.purple.opacity(0.35))
+                    .frame(width: max(geo.size.width * leftPct / 100, 4))
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(!leftLeads ? DS.purple : DS.purple.opacity(0.35))
+                    .frame(width: max(geo.size.width * rightPct / 100, 4))
+            }
+        }
+        .frame(height: 6)
     }
 
     private func footer(_ data: EntertainmentResponse) -> some View {
@@ -868,20 +899,21 @@ struct EntertainmentView: View {
         df.dateFormat = "MMM d"
         return df.string(from: date)
     }
-}
 
-// MARK: - Line Height Modifier
-
-private struct LineHeightModifier: ViewModifier {
-    let multiplier: CGFloat
-
-    func body(content: Content) -> some View {
-        content.lineSpacing((multiplier - 1) * 14)
+    private func formatVolume(_ vol: Int) -> String {
+        if vol >= 1000 {
+            return "Vol $\(vol / 1000)k"
+        }
+        return "Vol $\(vol)"
     }
 }
 
-private extension View {
-    func lineHeight(multiplier: CGFloat) -> some View {
-        modifier(LineHeightModifier(multiplier: multiplier))
-    }
+// MARK: - Tab Enums
+
+private enum MusicTab {
+    case spotify, billboard, albums, streaming
+}
+
+private enum MovieTab {
+    case rt, boxoffice, reality
 }
