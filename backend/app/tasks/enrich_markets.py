@@ -26,6 +26,12 @@ DISCOVER_LLM_METADATA_KEY = "discover_llm"
 DISCOVER_LLM_SCHEMA_VERSION = 1
 DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 
+# CU v2 writer revision. Bump this (NOT schema_version) to force a re-tag of
+# existing schema_version=2 profiles when the writer logic changes but the
+# schema shape does not. Consumers still gate on schema_version; re-tag
+# freshness gates on writer_rev so a logic fix re-runs over already-tagged rows.
+CU_WRITER_REV = 2
+
 
 def _json_from_llm_response(text: str) -> dict[str, Any]:
     """Parse a JSON object from common LLM response wrappers."""
@@ -747,14 +753,25 @@ JSON schema:
 }}"""
 
 
-def _compute_liveness(leader_prob: float | None, status: str | None) -> str:
+def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> str:
+    """Computed liveness signal — is anything in this market still in play?
+
+    Derived from the MOST COMPETITIVE outcome (closest to a coin flip), not the
+    rank-1 outcome. On bundled markets (esports, prop-heavy events) the rank-1
+    outcome is frequently a settled side-prop pinned at 0%/100% — e.g. "First
+    Blood in Game 2?" at 100% for an open match — which falsely read as "dead".
+    The most-competitive outcome reflects whether the market's real question is
+    still undecided.
+    """
     if status and status != "open":
         return "resolved"
-    if leader_prob is None:
+    probs = [p for p in (outcome_probs or []) if p is not None]
+    if not probs:
         return "unknown"
-    if leader_prob < 0.02 or leader_prob > 0.98:
+    best = min(probs, key=lambda p: abs(p - 0.5))
+    if best <= 0.02 or best >= 0.98:
         return "dead"
-    if leader_prob < 0.05 or leader_prob > 0.95:
+    if best <= 0.05 or best >= 0.95:
         return "extreme"
     return "active"
 
@@ -818,7 +835,15 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             if isinstance(meta, str):
                 meta = json.loads(meta)
             existing = meta.get(DISCOVER_LLM_METADATA_KEY)
-            if existing and isinstance(existing, dict) and existing.get("schema_version") == 2:
+            if (
+                existing
+                and isinstance(existing, dict)
+                and existing.get("schema_version") == 2
+                and existing.get("writer_rev") == CU_WRITER_REV
+            ):
+                # Only honor the freshness skip when the profile was produced by
+                # the current writer revision. A writer_rev bump forces a re-tag
+                # of older rev profiles even if they are <24h old.
                 ts = existing.get("generated_at", "")
                 if ts:
                     try:
@@ -834,6 +859,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 outcomes_raw = json.loads(outcomes_raw)
             outcome_lines = []
             leader_prob = None
+            all_probs: list[float] = []
             for i, o in enumerate(outcomes_raw[:8]):
                 prob = float(o.get("prob") or 0)
                 if i == 0:
@@ -841,6 +867,11 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 move = float(o.get("move") or 0)
                 move_text = f", 24h {move * 100:+.1f}pp" if abs(move) >= 0.01 else ""
                 outcome_lines.append(f"- {o.get('name', '?')}: {int(prob * 100)}%{move_text}")
+            # Liveness is computed from the full outcome set (not just the 8 shown
+            # to the LLM) so bundled prop markets are classified correctly.
+            for o in outcomes_raw:
+                if o.get("prob") is not None:
+                    all_probs.append(float(o.get("prob")))
 
             work_items.append({
                 "id": r["id"],
@@ -852,6 +883,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 "metadata": dict(meta),
                 "outcome_lines": outcome_lines,
                 "leader_prob": leader_prob,
+                "outcome_probs": all_probs,
             })
             if len(work_items) >= limit:
                 break
@@ -892,9 +924,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     stats["output_tokens"] += out
                     stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
 
-                liveness = _compute_liveness(item["leader_prob"], item["status"])
+                liveness = _compute_liveness(item["outcome_probs"], item["status"])
                 profile = {
                     "schema_version": 2,
+                    "writer_rev": CU_WRITER_REV,
                     "model": DISCOVER_LLM_MODEL,
                     "generated_at": now.isoformat(),
                     "topic": raw.get("topic"),
@@ -903,7 +936,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "geography": raw.get("geography"),
                     "story_key": raw.get("story_key"),
                     "series_key": raw.get("series_key"),
-                    "temporal": raw.get("temporal"),
+                    "temporal_class": raw.get("temporal"),
                     "event_date": raw.get("event_date"),
                     "recurrence": raw.get("recurrence"),
                     "stakes": raw.get("stakes"),
