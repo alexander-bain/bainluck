@@ -1,10 +1,15 @@
-#!/usr/bin/env python3
+#!/opt/homebrew/bin/python3.12
 """Manus verify: launch a single targeted Manus task to verify a shipped fix.
 
+Requires Python >=3.10 + httpx. The shebang pins the Homebrew 3.12 interpreter
+because the machine default `python3` resolves to 3.9.6 in some shell/cron
+contexts, which lacks the required runtime. Run as `./scripts/manus_verify.py ...`
+to use the pinned interpreter, or call `/opt/homebrew/bin/python3.12 scripts/manus_verify.py ...`.
+
 Usage:
-    python3 scripts/manus_verify.py --brief "On bainluck.com, click 10 See more buttons..."
-    python3 scripts/manus_verify.py --brief "..." --timeout 300
-    python3 scripts/manus_verify.py --poll <task_id>   # re-poll an existing task
+    ./scripts/manus_verify.py --brief "On bainluck.com, click 10 See more buttons..."
+    ./scripts/manus_verify.py --brief "..." --timeout 300
+    ./scripts/manus_verify.py --poll <task_id>   # re-poll an existing task
 
 The poller speaks the Manus v2 API the same way the health suite does:
 `task.detail` returns ``{"task": {"status": ..., "credit_usage": ...}}`` where the
@@ -19,6 +24,12 @@ import json
 import os
 import sys
 import time
+
+if sys.version_info < (3, 10):
+    sys.exit(
+        f"manus_verify.py requires Python >=3.10 (got {sys.version.split()[0]}). "
+        "Run as ./scripts/manus_verify.py or with /opt/homebrew/bin/python3.12."
+    )
 
 import httpx
 
