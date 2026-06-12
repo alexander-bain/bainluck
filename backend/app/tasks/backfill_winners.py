@@ -3881,6 +3881,7 @@ async def _resolve_winners_only(limit: int = 2000):
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     import time as _t
+    import gc
 
     _phase_times = {}
 
@@ -3966,6 +3967,15 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         poly_api_stats.get("losers_set", 0),
     )
 
+    # The authoritative-resolution phases above fetch and materialize tens of
+    # thousands of Kalshi/Polymarket API objects (limits 20K + 10K + 5K). Those
+    # references would otherwise persist for the rest of this ~14-min task and
+    # stack on top of the maintenance phases' memory, pushing the 512MB
+    # worker-background dyno (concurrency=2) into an R14/R15 OOM mid-cycle
+    # (#899). Release them before maintenance begins. gc here is the same
+    # "free between heavy phases" pattern used by the volume/trade backfills.
+    gc.collect()
+
     # Phase 0-fix-categories: DataGolf markets must always be golf.
     # LLM enrichment sometimes reclassifies them (e.g. "Volvo China Open"
     # ended up as hockey, adding 3K+ golf outcomes to hockey calibration).
@@ -4023,6 +4033,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         trade_stats["errors"].append(str(e))
         logger.warning("Trade history backfill failed: %s", e)
+
+    # Candlestick + trade-history backfills above pull API response payloads
+    # into memory; release them before the calibration/DataGolf phases (#899).
+    gc.collect()
 
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
@@ -4324,6 +4338,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 logger.info("No-pregame-trading: %d outcomes tagged", npt.rowcount)
     except Exception as e:
         logger.warning("No-pregame-trading tag failed: %s", e)
+
+    # DataGolf leaderboard backfill above materializes full leaderboards
+    # (100+ players each) across many resolved markets; release before the
+    # remaining resolution passes (#899).
+    gc.collect()
 
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
