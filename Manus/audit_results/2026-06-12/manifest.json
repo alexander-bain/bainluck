@@ -1,41 +1,34 @@
 {
   "date": "2026-06-12",
   "mode": "light",
-  "new_findings_count": 3,
+  "new_findings_count": 2,
   "tasks": {
     "feed": {
-      "task_id": "mWGfU2ebCWwkVnEMth9YAH",
+      "task_id": "DYNSiyArCnSe2VMsPWyan9",
       "status": "complete",
-      "task_url": "https://manus.im/app/mWGfU2ebCWwkVnEMth9YAH",
+      "task_url": "https://manus.im/app/DYNSiyArCnSe2VMsPWyan9",
       "credits": 0
     },
     "event_detail": {
-      "task_id": "HQm8j4NH3BN53G3RRHp46m",
+      "task_id": "mSx27xhixpxz8V5hXrBF7k",
       "status": "complete",
-      "task_url": "https://manus.im/app/HQm8j4NH3BN53G3RRHp46m",
+      "task_url": "https://manus.im/app/mSx27xhixpxz8V5hXrBF7k",
       "credits": 0
     },
     "league_page": {
-      "task_id": "YWRMco2nopre53GGPgJGn9",
-      "status": "complete",
-      "task_url": "https://manus.im/app/YWRMco2nopre53GGPgJGn9",
-      "credits": 1253
+      "task_id": "mNaPaGLkgXJRVLF7zYEjjE",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/mNaPaGLkgXJRVLF7zYEjjE",
+      "credits": 0
     }
   },
   "diagnostics": {
     "feed": {
-      "critical": 2,
-      "0%": 1,
-      "fail": 1,
-      "error": 1
+      "critical": 1
     },
     "event_detail": {
       "critical": 1,
       "fail": 1
-    },
-    "league_page": {
-      "critical": 1,
-      "0%": 2
     }
   }
 }
