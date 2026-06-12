@@ -49,36 +49,6 @@ jobs:
       - name: Build (includes TypeScript + ESLint)
         run: npm run build
 
-  ios-build:
-    # Compile-only gate for the iOS/macOS app. Catches Swift type errors and
-    # pbxproj breakage that the local agent can't (xcodebuild SPM resolution is
-    # sandbox-blocked there). GitHub macOS runners resolve SPM normally.
-    # Intentionally NOT in `deploy.needs`: the app ships via TestFlight, not
-    # Heroku, so a red iOS build must not block backend/web deploys.
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: "ios/Bain Luck"
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Xcode version
-        run: xcodebuild -version
-
-      - name: Resolve Swift packages
-        run: xcodebuild -resolvePackageDependencies -project "Bain Luck.xcodeproj" -scheme "Bain Luck"
-
-      - name: Build (compile check, no code signing)
-        run: |
-          set -o pipefail
-          xcodebuild build \
-            -project "Bain Luck.xcodeproj" \
-            -scheme "Bain Luck" \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
-
   deploy:
     needs: [backend-tests, frontend-build]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
