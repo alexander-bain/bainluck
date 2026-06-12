@@ -423,6 +423,248 @@ async def _create_snapshot(
     return snapshot
 
 
+async def _ingest_event_odds(
+    session,
+    event,
+    event_data: dict,
+    commence_time: datetime,
+    snapshot_cache: dict,
+) -> int:
+    """Create odds snapshots for every bookmaker of one event, then update the
+    event's opening-odds consensus and win_probability_sources['betting'].
+
+    Extracted from the _poll_all_odds inner loop so the MLB pre-game polling
+    task (_poll_mlb_pregame, issue #892) reuses identical snapshot/consensus
+    logic and the two paths cannot drift. Returns the number of bookmaker
+    snapshots processed.
+    """
+    event_id = event.id
+
+    # Collect all bookmaker values for opening-odds consensus.
+    all_home_probs: list[float] = []
+    all_away_probs: list[float] = []
+    all_spreads: list[float] = []
+    all_ous: list[float] = []
+    snapshots_processed = 0
+
+    for bookmaker in event_data.get("bookmakers", []):
+        snapshot, is_new = await _create_or_update_snapshot(
+            session,
+            event_id,
+            bookmaker,
+            event_data,
+            snapshot_cache=snapshot_cache,
+        )
+        if is_new:
+            session.add(snapshot)
+        # Collect values from ALL bookmakers (new or existing) for consensus.
+        if snapshot.home_win_probability:
+            all_home_probs.append(float(snapshot.home_win_probability))
+            if snapshot.away_win_probability:
+                all_away_probs.append(float(snapshot.away_win_probability))
+            if snapshot.home_spread is not None:
+                all_spreads.append(float(snapshot.home_spread))
+            if snapshot.over_under is not None:
+                all_ous.append(float(snapshot.over_under))
+        snapshots_processed += 1
+
+    # Update opening odds with consensus across all bookmakers
+    # (keeps updating on every poll while the game is scheduled).
+    if all_home_probs:
+        avg_home = sum(all_home_probs) / len(all_home_probs)
+        avg_away = sum(all_away_probs) / len(all_away_probs) if all_away_probs else (1 - avg_home)
+        avg_spread = sum(all_spreads) / len(all_spreads) if all_spreads else None
+        avg_ou = sum(all_ous) / len(all_ous) if all_ous else None
+        await _maybe_set_opening_odds(
+            session, event_id,
+            avg_home, avg_away,
+            avg_spread, avg_ou,
+            commence_time=commence_time,
+        )
+
+        # Write betting consensus to win_probability_sources so the multi-source
+        # aggregation system sees it. Reuse the loaded event object (N+1 fix).
+        from sqlalchemy import update as _update
+        betting_val = round(avg_home, 4)
+        _current = dict(event.win_probability_sources or {})
+        _current["betting"] = betting_val
+        await session.execute(
+            _update(Event)
+            .where(Event.id == event_id)
+            .values(win_probability_sources=_current)
+        )
+
+    return snapshots_processed
+
+
+# MLB pre-game polling tier (issue #892) — config.
+# The main _poll_all_odds loop only selects sports with a game within 6h and
+# drops to h2h-only beyond 2h out, so MLB's pitcher/lineup/weather-driven line
+# moves 12-48h before first pitch (on ~64% of games per the #892 eval) get
+# recorded as coarse multi-hour steps. This tier densely samples that dark
+# window. Hard-scoped to MLB, us region, full game markets, 30-min cadence
+# (~2.48%/mo per the #892 cost sizing — do NOT add us2).
+MLB_PREGAME_SPORT_KEY = "baseball_mlb"
+MLB_PREGAME_WINDOW_START_H = 2    # T-2h: hand off to the "soon" tier (no overlap)
+MLB_PREGAME_WINDOW_END_H = 48     # T-48h: far edge of the pre-game window
+MLB_PREGAME_MIN_INTERVAL = 1740   # ~29 min floor (beat fires every 30 min)
+MLB_PREGAME_REGIONS = "us"        # us ONLY — adding us2 would double the cost (#892)
+MLB_PREGAME_MARKETS = "h2h,spreads,totals"  # full game markets
+
+
+async def _poll_mlb_pregame():
+    """Densely poll MLB game odds in the T-48h..T-2h pre-game window (issue #892).
+
+    MLB only, full game markets (h2h+spreads+totals), us region only, every
+    30 min. The window ends at T-2h precisely so it never double-polls the
+    "soon" tier (0-2h, full markets, every 5 min) which takes over at T-2h.
+
+    Double-poll guard: the main _poll_all_odds loop polls MLB (full slate, all
+    upcoming games in one call) whenever an MLB game sits inside its ±6h
+    lookahead. When that's true it already covers the pre-game window, so this
+    task skips. It only fires when the main loop is dormant for MLB — i.e. the
+    dark window where pre-game sampling is otherwise sparse. This also keeps the
+    tier strictly at-or-under the sized 2.48%/mo cost.
+    """
+    # Quota guard: pre-game enrichment is non-essential. Skip under any
+    # conservation/live-only/full-stop pressure — live polling has priority.
+    guard_ok, guard_reason = check_quota_guard(
+        "poll_odds", sport_key=MLB_PREGAME_SPORT_KEY
+    )
+    if not guard_ok or "live_only" in guard_reason or "conservation" in guard_reason:
+        return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
+
+    try:
+        r = get_redis_client()
+    except Exception:
+        r = None
+
+    now = datetime.now(timezone.utc)
+
+    # Per-sport interval gate (belt-and-suspenders with the 30-min beat).
+    if r:
+        try:
+            last_key = f"bainluck:last_pregame_poll:{MLB_PREGAME_SPORT_KEY}"
+            last = r.get(last_key)
+            if last and (now.timestamp() - float(last.decode())) < MLB_PREGAME_MIN_INTERVAL:
+                return {"skipped": True, "reason": "interval"}
+        except Exception:
+            pass
+
+    window_start = now + timedelta(hours=MLB_PREGAME_WINDOW_START_H)
+    window_end = now + timedelta(hours=MLB_PREGAME_WINDOW_END_H)
+
+    service = OddsAPIService()
+    total_events = 0
+    total_snapshots = 0
+
+    async with get_task_session() as session:
+        # Double-poll guard: if the main loop is active for MLB (any MLB game in
+        # [-6h, +6h]), it already polls the full slate — skip to avoid redundant
+        # billing and double-writes.
+        main_loop_active = await session.execute(
+            select(func.count(Event.id))
+            .join(Sport)
+            .where(
+                Sport.key == MLB_PREGAME_SPORT_KEY,
+                Event.status.in_(["scheduled", "live"]),
+                Event.commence_time <= now + timedelta(hours=6),
+                Event.commence_time >= now - timedelta(hours=6),
+            )
+        )
+        if (main_loop_active.scalar() or 0) > 0:
+            return {"skipped": True, "reason": "main_loop_active"}
+
+        # Only spend quota when MLB actually has games in the pre-game window.
+        pregame_count = await session.execute(
+            select(func.count(Event.id))
+            .join(Sport)
+            .where(
+                Sport.key == MLB_PREGAME_SPORT_KEY,
+                Event.status == "scheduled",
+                Event.commence_time >= window_start,
+                Event.commence_time <= window_end,
+            )
+        )
+        if (pregame_count.scalar() or 0) == 0:
+            return {"skipped": True, "reason": "no_pregame_games"}
+
+        # Full game markets, us region only (per #892 cost sizing — no us2).
+        try:
+            pre_used = service.last_requests_used
+            events_data = await service.get_odds(
+                MLB_PREGAME_SPORT_KEY,
+                regions=MLB_PREGAME_REGIONS,
+                markets=MLB_PREGAME_MARKETS,
+            )
+        except Exception as e:
+            logger.warning("MLB pre-game poll failed: %s", e)
+            return {"skipped": True, "reason": "api_error", "error": str(e)}
+
+        # Record quota from response headers.
+        if service.last_requests_remaining is not None:
+            from app.tasks.redis_state import record_odds_api_quota
+            record_odds_api_quota(
+                service.last_requests_remaining,
+                service.last_requests_used or 0,
+                "poll_odds_pregame",
+                pre_call_used=pre_used,
+                sport_key=MLB_PREGAME_SPORT_KEY,
+            )
+
+        if r:
+            try:
+                r.set(
+                    f"bainluck:last_pregame_poll:{MLB_PREGAME_SPORT_KEY}",
+                    str(now.timestamp()), ex=7200,
+                )
+            except Exception:
+                pass
+
+        from app.services.event_registry import (
+            find_or_create_event, EventIdentity, EventClaim,
+        )
+        snapshot_cache: dict = {}
+        for event_data in events_data:
+            commence_time = datetime.fromisoformat(
+                event_data["commence_time"].replace("Z", "+00:00")
+            )
+            # The API returns the full MLB slate; only ingest games inside the
+            # pre-game window so we never touch live/soon games owned by the
+            # main loop (no double-write).
+            if not (window_start <= commence_time <= window_end):
+                continue
+
+            identity = EventIdentity(
+                sport_key=MLB_PREGAME_SPORT_KEY,
+                home_team_name=event_data["home_team"],
+                away_team_name=event_data["away_team"],
+                commence_time=commence_time,
+                claim=EventClaim("odds_api", event_data["id"]),
+                commence_time_source="odds_api",
+                status="scheduled",
+            )
+            event, was_created = await find_or_create_event(session, identity)
+            if was_created:
+                total_events += 1
+            total_snapshots += await _ingest_event_odds(
+                session, event, event_data, commence_time, snapshot_cache,
+            )
+
+        await session.commit()
+
+    logger.info(
+        "MLB pre-game poll: %d new events, %d snapshots in T-%dh..T-%dh window",
+        total_events, total_snapshots,
+        MLB_PREGAME_WINDOW_END_H, MLB_PREGAME_WINDOW_START_H,
+    )
+    return {
+        "events": total_events,
+        "snapshots": total_snapshots,
+        "window_hours": [MLB_PREGAME_WINDOW_START_H, MLB_PREGAME_WINDOW_END_H],
+    }
+
+
 async def _poll_all_odds():
     """
     Async implementation of poll_all_odds with tiered per-sport polling.
@@ -702,67 +944,15 @@ async def _poll_all_odds():
                         event, was_created = await find_or_create_event(
                             session, identity,
                         )
-                        event_id = event.id
                         if was_created:
                             total_events += 1
 
-                        # Create odds snapshots (with deduplication)
-                        # Collect all bookmaker values for opening odds consensus
-                        all_home_probs = []
-                        all_away_probs = []
-                        all_spreads = []
-                        all_ous = []
-
-                        for bookmaker in event_data.get("bookmakers", []):
-                            snapshot, is_new = await _create_or_update_snapshot(
-                                session,
-                                event_id,
-                                bookmaker,
-                                event_data,
-                                snapshot_cache=snapshot_cache,
-                            )
-                            if is_new:
-                                session.add(snapshot)
-                            # Collect values from ALL bookmakers (new or existing)
-                            # for computing opening odds consensus
-                            if snapshot.home_win_probability:
-                                all_home_probs.append(float(snapshot.home_win_probability))
-                                if snapshot.away_win_probability:
-                                    all_away_probs.append(float(snapshot.away_win_probability))
-                                if snapshot.home_spread is not None:
-                                    all_spreads.append(float(snapshot.home_spread))
-                                if snapshot.over_under is not None:
-                                    all_ous.append(float(snapshot.over_under))
-                            total_snapshots += 1
-
-                        # Update opening odds with consensus across all bookmakers
-                        # (keeps updating on every poll while game is scheduled)
-                        if all_home_probs:
-                            avg_home = sum(all_home_probs) / len(all_home_probs)
-                            avg_away = sum(all_away_probs) / len(all_away_probs) if all_away_probs else (1 - avg_home)
-                            avg_spread = sum(all_spreads) / len(all_spreads) if all_spreads else None
-                            avg_ou = sum(all_ous) / len(all_ous) if all_ous else None
-                            await _maybe_set_opening_odds(
-                                session, event_id,
-                                avg_home, avg_away,
-                                avg_spread, avg_ou,
-                                commence_time=commence_time,
-                            )
-
-                            # Write betting consensus to win_probability_sources
-                            # so the multi-source aggregation system sees it.
-                            # Write betting consensus to win_probability_sources.
-                            # Use the event object already loaded by find_or_create_event
-                            # to avoid an extra SELECT per event (N+1 fix).
-                            from sqlalchemy import update as _update
-                            betting_val = round(avg_home, 4)
-                            _current = dict(event.win_probability_sources or {})
-                            _current["betting"] = betting_val
-                            await session.execute(
-                                _update(Event)
-                                .where(Event.id == event_id)
-                                .values(win_probability_sources=_current)
-                            )
+                        # Create snapshots + opening-odds/betting consensus.
+                        # Shared with the MLB pre-game tier via _ingest_event_odds
+                        # so the two polling paths stay identical (issue #892).
+                        total_snapshots += await _ingest_event_odds(
+                            session, event, event_data, commence_time, snapshot_cache,
+                        )
 
                 except Exception as e:
                     # Cache 404 sports to avoid retrying for 24h

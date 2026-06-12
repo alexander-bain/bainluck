@@ -265,6 +265,14 @@ def poll_sport_odds(self, sport_key: str):
     return run_async(_poll_sport_odds(sport_key))
 
 
+@celery_app.task(bind=True, name="app.tasks.poll_mlb_pregame")
+def poll_mlb_pregame(self):
+    """MLB pre-game odds polling tier — densely samples the T-48h..T-2h dark
+    window the main loop misses (issue #892)."""
+    from app.tasks.odds_polling import _poll_mlb_pregame
+    return _tracked_run("poll_mlb_pregame", _poll_mlb_pregame())
+
+
 # --- Excitement Index (EI) ---
 
 @celery_app.task(bind=True, name="app.tasks.compute_gei_for_event")
@@ -1319,6 +1327,13 @@ celery_app.conf.beat_schedule = {
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
         "schedule": 30.0,
+    },
+    "poll-mlb-pregame": {
+        # MLB-only pre-game tier (issue #892): fills the T-48h..T-2h dark
+        # window the 6h-lookahead main loop misses. Self-gates (quota guard,
+        # main-loop-active check, no-games check) so most fires are cheap skips.
+        "task": "app.tasks.poll_mlb_pregame",
+        "schedule": crontab(minute="*/30"),
     },
     "sync-sports-hourly": {
         "task": "app.tasks.sync_sports",

@@ -153,6 +153,7 @@ class TestBeatScheduleCompleteness:
 
     EXPECTED_ENTRIES = {
         "poll-odds-adaptive",
+        "poll-mlb-pregame",
         "sync-sports-hourly",
         "discover-new-events",
         "compute-gei-batch",
