@@ -3894,6 +3894,78 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
 
     _pipeline_start = _t.monotonic()
 
+    # ========================================================================
+    # AUTHORITATIVE WINNER RESOLUTION — RUNS FIRST (see issue #898)
+    #
+    # The expensive pre-API maintenance phases (calibration prices touching
+    # ~450K rows, DataGolf 429-throttled fetches) were consuming the entire
+    # 840s soft_time_limit BEFORE the Kalshi/Polymarket winner-resolution
+    # phases ran, so the task SoftTimeLimitExceeded'd on every run since
+    # 2026-06-08 and resolved ZERO Kalshi winners for days. Winner resolution
+    # is the task's primary purpose, so it MUST run before any maintenance
+    # work and is no longer at the mercy of upstream-phase timing.
+    # ========================================================================
+    _start_phase("score_resolution")
+    score_stats = await _resolve_kalshi_from_scores()
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    period_prop_stats = await _resolve_kalshi_period_props()
+    _end_phase("score_resolution")
+
+    # Authoritative API settlement — run BEFORE probability passes so API
+    # results take priority over arbitrary Pass 2 picks.
+    _start_phase("kalshi_api")
+    kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
+    _end_phase("kalshi_api")
+    _start_phase("kalshi_markets_api")
+    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
+    _end_phase("kalshi_markets_api")
+    _start_phase("polymarket_api")
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
+    _end_phase("polymarket_api")
+
+    # Set is_winner from current_probability (all sources, fast). Only
+    # handles markets not already resolved by API settlement above.
+    prob_stats = await _backfill_from_current_probability()
+
+    # Upgrade pass2_guess LOSERS → clean_resolution where current_probability
+    # reached settlement extreme. Only losers — winners at extremes might be
+    # wrong guesses.
+    guess_upgrade_stats = {"upgraded": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'clean_resolution'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fo.resolution_source = 'pass2_guess'
+                      AND fo.is_winner = false
+                      AND fo.current_probability <= 0.05
+                """))
+            guess_upgrade_stats["upgraded"] = r.rowcount
+            await session.commit()
+            if r.rowcount > 0:
+                logger.info(
+                    "pass2_guess upgrade: %d outcomes → clean_resolution", r.rowcount
+                )
+    except Exception as e:
+        guess_upgrade_stats["errors"].append(str(e))
+
+    _winner_resolution_elapsed = round(_t.monotonic() - _pipeline_start, 1)
+    logger.info(
+        "Winner resolution complete in %.1fs (kalshi_api winners=%d losers=%d, "
+        "kalshi_markets winners=%d losers=%d, poly winners=%d losers=%d)",
+        _winner_resolution_elapsed,
+        kalshi_stats.get("winners_set", 0),
+        kalshi_stats.get("losers_set", 0),
+        kalshi_markets_stats.get("winners_set", 0),
+        kalshi_markets_stats.get("losers_set", 0),
+        poly_api_stats.get("winners_set", 0),
+        poly_api_stats.get("losers_set", 0),
+    )
+
     # Phase 0-fix-categories: DataGolf markets must always be golf.
     # LLM enrichment sometimes reclassifies them (e.g. "Volvo China Open"
     # ended up as hockey, adding 3K+ golf outcomes to hockey calibration).
@@ -4322,56 +4394,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _pre_api_elapsed = round(_t.monotonic() - _pipeline_start, 1)
     logger.info("Backfill phases 0-0i complete in %.1fs", _pre_api_elapsed)
 
-    # Phase 1a: Kalshi score-based resolution for game markets linked to
-    # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
-    # game scores even when the Kalshi API has purged the market data.
-    _start_phase("score_resolution")
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
-    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
-    period_prop_stats = await _resolve_kalshi_period_props()
-    _end_phase("score_resolution")
-
-    # Phase 1b: Authoritative API settlement data — run BEFORE probability
-    # passes so API results take priority over arbitrary Pass 2 picks.
-    _start_phase("kalshi_api")
-    kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
-    _end_phase("kalshi_api")
-    _start_phase("kalshi_markets_api")
-    kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
-    _end_phase("kalshi_markets_api")
-    _start_phase("polymarket_api")
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
-    _end_phase("polymarket_api")
-
-    # Phase 2: Set is_winner from current_probability (all sources, fast)
-    # Only handles markets not already resolved by API settlement above.
-    prob_stats = await _backfill_from_current_probability()
-
-    # Phase 2b: Upgrade pass2_guess LOSERS → clean_resolution where
-    # current_probability reached settlement extreme. Only losers —
-    # winners at extremes might be wrong guesses.
-    guess_upgrade_stats = {"upgraded": 0, "errors": []}
-    try:
-        async with get_task_session() as session:
-            r = await session.execute(text("""
-                    UPDATE futures_outcomes fo
-                    SET resolution_source = 'clean_resolution'
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.status = 'resolved'
-                      AND fo.resolution_source = 'pass2_guess'
-                      AND fo.is_winner = false
-                      AND fo.current_probability <= 0.05
-                """))
-            guess_upgrade_stats["upgraded"] = r.rowcount
-            await session.commit()
-            if r.rowcount > 0:
-                logger.info(
-                    "pass2_guess upgrade: %d outcomes → clean_resolution", r.rowcount
-                )
-    except Exception as e:
-        guess_upgrade_stats["errors"].append(str(e))
+    # NOTE (#898): Authoritative winner resolution (score-based, Kalshi API,
+    # Kalshi markets API, Polymarket API, current_probability, pass2_guess
+    # loser upgrade) now runs at the TOP of this function, before the
+    # expensive calibration/DataGolf maintenance phases above. It used to run
+    # here, last, and was starved to zero by the 840s soft time limit.
 
     return {
         "link_sports_props": link_props_stats,
