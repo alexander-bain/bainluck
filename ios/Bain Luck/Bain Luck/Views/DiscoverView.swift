@@ -567,10 +567,17 @@ struct DiscoverView: View {
         VStack(spacing: 0) {
         ScrollView {
             VStack(spacing: 0) {
-                // Resolution cards
-                ForEach(resolutions.prefix(3), id: \.marketName) { res in
-                    NativeResolutionCard(resolution: res)
-                        .padding(.horizontal)
+                // Resolution digest — collapse N resolution notes into ONE
+                // card (#902 item 8) instead of stacking up to 3 at feed top.
+                if !resolutions.isEmpty {
+                    NavigationLink(value: Route.predictionStats) {
+                        NativeResolutionDigestCard(
+                            total: resolutions.count,
+                            correct: resolutions.filter { $0.correct }.count
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal)
                 }
 
                 // Daily Challenge card
@@ -809,6 +816,22 @@ struct DiscoverView: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom)
+
+                // Feed footer (#902 item 9): pagination already loads more as
+                // cards appear; surface a spinner while it fetches and an honest
+                // end-of-feed card once the API has no more pages, instead of a
+                // silent dead bottom.
+                if !vm.items.isEmpty {
+                    if vm.loadingMore {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    } else if !vm.hasMore {
+                        NativeFeedEndCard()
+                            .padding(.horizontal)
+                            .padding(.bottom, 24)
+                    }
+                }
             }
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)

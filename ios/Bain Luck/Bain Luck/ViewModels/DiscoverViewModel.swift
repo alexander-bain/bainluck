@@ -6,8 +6,11 @@ final class DiscoverViewModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var loadingMore = false
+    /// Exposed so the feed can show an honest end-of-feed card once pagination
+    /// is exhausted (#902 item 9). Stays true until loadMoreIfNeeded confirms
+    /// the API has no more pages.
+    @Published private(set) var hasMore = true
 
-    private var hasMore = true
     private var nextOffset = 0
 
     private static let sportsCategories: Set<String> = [
