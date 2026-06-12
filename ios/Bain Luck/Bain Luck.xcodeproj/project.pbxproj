@@ -266,6 +266,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		A7C839030001000000000001 /* Upload Crashlytics dSYMs */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
