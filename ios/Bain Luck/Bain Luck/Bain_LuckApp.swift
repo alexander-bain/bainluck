@@ -81,7 +81,7 @@ struct Bain_LuckApp: App {
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
                     pinManager.setAuthenticated(isAuth)
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
-                    Crashlytics.crashlytics().setUserID(isAuth ? (authManager.user?.id.map { String($0) } ?? "") : "")
+                    Crashlytics.crashlytics().setUserID(isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : "")
                     Task {
                         if isAuth {
                             await pinManager.syncLocalToServer()
