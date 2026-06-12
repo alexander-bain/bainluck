@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 
 from app.tasks.base import get_task_session
 
@@ -983,7 +983,24 @@ async def enrich_cu_v2_profiles(limit: int = 125):
     return stats
 
 
-def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
+def _get_cu_v2_profile(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the discover_llm profile only when it is a CU v2 (schema_version=2)
+    profile. The judge consumes v2 fields (temporal_class, liveness); the v1
+    reader (_get_discover_llm_metadata) intentionally rejects v2, so this is a
+    separate accessor (#596)."""
+    if not isinstance(market_metadata, dict):
+        return None
+    metadata = market_metadata.get(DISCOVER_LLM_METADATA_KEY)
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("schema_version") != 2:
+        return None
+    return metadata
+
+
+def _compact_feed_item_for_llm(
+    item: dict[str, Any], profile: dict[str, Any] | None = None
+) -> dict[str, Any]:
     data = item.get("data") or {}
     top = data.get("top_outcomes") or []
     leader_prob = top[0].get("probability") if top else None
@@ -992,7 +1009,7 @@ def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
     if leader_prob is not None:
         is_extreme = leader_prob < 0.02 or leader_prob > 0.98
 
-    return {
+    compact = {
         "id": data.get("id"),
         "name": data.get("name"),
         "category": data.get("llm_sport_category"),
@@ -1005,6 +1022,116 @@ def _compact_feed_item_for_llm(item: dict[str, Any]) -> dict[str, Any]:
         "probability_extreme": is_extreme,
         "resolution_date": data.get("resolution_date"),
     }
+    # CU v2 profile context (temporal_class + liveness) as first-class judge
+    # signals (#596). Degrade gracefully when a card has no v2 profile.
+    if profile:
+        compact["temporal_class"] = profile.get("temporal_class")
+        compact["liveness"] = profile.get("liveness")
+        compact["cu_profile"] = True
+    else:
+        compact["cu_profile"] = False
+    return compact
+
+
+# Fallback few-shots when no human verdicts exist yet in discover_review_decisions.
+_JUDGE_FALLBACK_FEW_SHOTS = (
+    "- 'NHL Stanley Cup Champion' during Finals week -> keep (live major sport)\n"
+    "- 'Will Nathalie Arthaud run for French president?' at 78% -> downrank (obscure foreign election)\n"
+    "- 'Emmy nominations: Outstanding Television Movie' -> keep (broad entertainment)\n"
+    "- 'Tudor Black Bay watch price Up or Down: June' -> downrank (narrow commodity ladder)\n"
+    "- 'US-Iran nuclear deal by June 30?' -> promote (major geopolitical)\n"
+    "- Market at 99.2% -> downrank (dead probability, resolved in practice)"
+)
+
+
+def _format_live_sports_context(league_rows: list[tuple]) -> str:
+    """Render a 'what is live/imminent this week' block from REAL event counts.
+
+    league_rows: iterable of (sport_key, game_count) for scheduled/live games in
+    the next ~7 days. Pure/testable. Fixes the judge's live-sports blindness —
+    it downranked hockey/basketball/mma/soccer DURING their Finals/Cup because
+    the old static block didn't tell it what was actually playing (#596).
+    """
+    rows = [(k, c) for k, c in (league_rows or []) if k and c]
+    if not rows:
+        return (
+            "LIVE/IMMINENT SPORTS THIS WEEK: none detected. Treat sports futures "
+            "with no active season as low-value."
+        )
+    parts = ", ".join(f"{k} ({c})" for k, c in rows)
+    return (
+        "LIVE/IMMINENT SPORTS THIS WEEK (real game counts, next 7 days): "
+        f"{parts}. Markets about these leagues' current games/series are HIGH-VALUE "
+        "— do NOT downrank them as 'no active season'. Leagues NOT in this list have "
+        "no games this week; their futures are lower-value."
+    )
+
+
+def _format_judge_few_shots(human_decisions: list[dict[str, Any]]) -> str:
+    """Build corrective few-shots from the human reviewer's own verdicts (#596).
+
+    rejected_* verdicts are the precision-improving signal (the judge's past
+    mistakes); accepted_* confirm correct calls. Pure/testable. Falls back to a
+    static set when no human verdicts exist yet.
+    """
+    lines: list[str] = []
+    for d in human_decisions or []:
+        name = (d.get("name") or "").strip()
+        if not name:
+            continue
+        dec = d.get("decision")
+        if dec == "rejected_promote":
+            lines.append(f"- '{name}' -> do NOT promote (keep/downrank); reviewer rejected a promote here")
+        elif dec == "rejected_downrank":
+            lines.append(f"- '{name}' -> do NOT downrank (keep); reviewer rejected a downrank here")
+        elif dec == "accepted_promote":
+            lines.append(f"- '{name}' -> promote (reviewer confirmed)")
+        elif dec == "accepted_downrank":
+            lines.append(f"- '{name}' -> downrank (reviewer confirmed)")
+        if len(lines) >= 6:
+            break
+    return "\n".join(lines) if lines else _JUDGE_FALLBACK_FEW_SHOTS
+
+
+def _assemble_judge_prompt(
+    date_str: str,
+    sports_context: str,
+    few_shots: str,
+    compact: list[dict[str, Any]],
+    email_misses: list[dict[str, Any]],
+) -> str:
+    """Assemble the Discover judge prompt. Pure/testable (#596)."""
+    return (
+        f"Today is {date_str}. You are reviewing the top Discover prediction-market "
+        "cards for a casual audience's feed quality.\n\n"
+        f"{sports_context}\n\n"
+        "EACH CARD MAY INCLUDE A CONTENT-UNDERSTANDING PROFILE:\n"
+        "- temporal_class: deadline | event_tied | periodic | evergreen (how it resolves in time).\n"
+        "- liveness: active | extreme | dead | resolved | unknown (derived from the MOST "
+        "COMPETITIVE outcome). 'dead'/'resolved' = the real question is already decided; "
+        "'extreme' = nearly decided. Cards with cu_profile=false must be judged on "
+        "probability/status alone.\n\n"
+        "RULES:\n"
+        "- HARD RULE: never 'promote' a card whose liveness is 'dead'/'resolved'/'extreme', "
+        "or probability_extreme=true, or leader <2% / >98%. A decided market has zero "
+        "discovery value — at most 'keep', usually 'downrank'.\n"
+        "- status='resolved' or past resolution_date is stale -> downrank.\n"
+        "- Use temporal_class: a 'deadline'/'event_tied' market whose event already passed is "
+        "stale; an upcoming dated event is timely.\n"
+        "- LIVE major-sport games/series for the leagues listed above are high-value -> keep or promote.\n"
+        "- Downrank: minor local elections, narrow commodity/index/KPI ladders, repetitive "
+        "threshold buckets, low-tier sports with NO active season this week.\n"
+        "- Promote: broad public interest, surprising/odd questions, timely cultural moments, "
+        "geopolitical developments, cross-category oddities — but only when liveness is 'active'.\n\n"
+        "FEW-SHOT EXAMPLES (from the human reviewer's own verdicts — match this judgment):\n"
+        f"{few_shots}\n\n"
+        "Return JSON only: "
+        "{\"reviews\":[{\"id\":123,\"grade\":1-5,\"action\":\"keep|promote|downrank|investigate\","
+        "\"reason\":\"short reason\"}]}\n\n"
+        f"Top cards:\n{json.dumps(compact, separators=(',', ':'))}\n\n"
+        f"Polymarket email highlights missing from top feed:\n"
+        f"{json.dumps(email_misses[:10], separators=(',', ':'))}"
+    )
 
 
 async def generate_discover_comparison_candidates(limit: int = 60):
@@ -1143,7 +1270,68 @@ async def evaluate_discover_with_llm(limit: int = 50):
             my_teams_only=False,
         )
         items = sorted(items, key=lambda item: item.get("score") or 0, reverse=True)[:limit]
-        compact = [_compact_feed_item_for_llm(item) for item in items]
+
+        # CU v2 profiles (temporal_class + liveness) for the graded markets,
+        # fetched in one query and merged into the compact cards (#596).
+        from app.models.models import FuturesMarket, Event, Sport
+        market_ids = [
+            int((it.get("data") or {}).get("id"))
+            for it in items
+            if (it.get("data") or {}).get("id") is not None
+        ]
+        profiles_by_id: dict[int, dict] = {}
+        if market_ids:
+            prof_rows = await session.execute(
+                select(FuturesMarket.id, FuturesMarket.market_metadata)
+                .where(FuturesMarket.id.in_(market_ids))
+            )
+            for mid, meta in prof_rows.all():
+                prof = _get_cu_v2_profile(meta)
+                if prof:
+                    profiles_by_id[mid] = prof
+        cu_hits = len(profiles_by_id)
+        if market_ids and cu_hits < len(market_ids):
+            logger.info(
+                "Judge CU v2 coverage: %d/%d profiles present (%d missing — judged on prob/status)",
+                cu_hits, len(market_ids), len(market_ids) - cu_hits,
+            )
+
+        compact = []
+        for it in items:
+            mid = (it.get("data") or {}).get("id")
+            prof = profiles_by_id.get(int(mid)) if mid is not None else None
+            compact.append(_compact_feed_item_for_llm(it, prof))
+
+        # Dynamic "what's live this week" sports context from real event counts.
+        week_ahead = now + timedelta(days=7)
+        sport_rows = await session.execute(
+            select(Sport.key, func.count(Event.id))
+            .join(Event)
+            .where(
+                Event.status.in_(["scheduled", "live"]),
+                Event.commence_time >= now - timedelta(hours=6),
+                Event.commence_time <= week_ahead,
+            )
+            .group_by(Sport.key)
+            .order_by(func.count(Event.id).desc())
+        )
+        sports_context = _format_live_sports_context(sport_rows.all())
+
+        # Corrective few-shots from the human reviewer's own verdicts; rejections
+        # (the judge's past mistakes) ranked first, then accepted confirmations.
+        fs_rows = await session.execute(
+            select(DiscoverReviewDecision.item_name, DiscoverReviewDecision.decision)
+            .where(DiscoverReviewDecision.decision.in_([
+                "rejected_promote", "rejected_downrank",
+                "accepted_promote", "accepted_downrank",
+            ]))
+            .order_by(DiscoverReviewDecision.created_at.desc())
+            .limit(60)
+        )
+        _human = [{"name": n, "decision": d} for n, d in fs_rows.all() if n]
+        _human.sort(key=lambda r: 0 if str(r["decision"]).startswith("rejected_") else 1)
+        few_shots = _format_judge_few_shots(_human)
+
         diagnosed = [
             {
                 "name": card.get("name"),
@@ -1161,34 +1349,8 @@ async def evaluate_discover_with_llm(limit: int = 50):
         stats["email_misses"] = len(email_misses)
 
         date_str = now.strftime("%B %d, %Y")
-        prompt = (
-            f"Today is {date_str}. You are reviewing the top Discover prediction-market cards "
-            "for a casual audience's feed quality.\n\n"
-            "CONTEXT: Sports seasons currently active may include NHL Stanley Cup Finals, "
-            "MLB regular season, PGA Tour events, UFC cards, MLS, and international soccer. "
-            "Markets about LIVE or IMMINENT major sports events (playoffs, finals, championship "
-            "rounds happening THIS WEEK) are high-value — do NOT downrank them.\n\n"
-            "RULES:\n"
-            "- Cards with probability_extreme=true (leader <2% or >98%) are DEAD content. "
-            "Always downrank — a resolved-in-all-but-name market has zero discovery value.\n"
-            "- Cards with status='resolved' or past resolution_date are stale. Downrank.\n"
-            "- LIVE major-sport playoff/championship/finals markets are high-value. Keep or promote.\n"
-            "- Downrank: minor local elections, narrow commodity/index ladders, repetitive threshold buckets, "
-            "low-tier sports with no active season.\n"
-            "- Promote: broad public interest, surprising questions, timely cultural moments, "
-            "geopolitical developments, cross-category oddities.\n\n"
-            "FEW-SHOT EXAMPLES (from human reviewer):\n"
-            "- 'NHL Stanley Cup Champion' during Finals week → keep (live major sport)\n"
-            "- 'Will Nathalie Arthaud run for French president?' at 78% → downrank (obscure foreign election)\n"
-            "- 'Emmy nominations: Outstanding Television Movie' → keep (broad entertainment)\n"
-            "- 'Tudor Black Bay watch price Up or Down: June' → downrank (narrow commodity)\n"
-            "- 'US-Iran nuclear deal by June 30?' → promote (major geopolitical)\n"
-            "- Market at 99.2% → downrank (dead probability, resolved in practice)\n\n"
-            "Return JSON only: "
-            "{\"reviews\":[{\"id\":123,\"grade\":1-5,\"action\":\"keep|promote|downrank|investigate\","
-            "\"reason\":\"short reason\"}]}\n\n"
-            f"Top cards:\n{json.dumps(compact, separators=(',', ':'))}\n\n"
-            f"Polymarket email highlights missing from top feed:\n{json.dumps(email_misses[:10], separators=(',', ':'))}"
+        prompt = _assemble_judge_prompt(
+            date_str, sports_context, few_shots, compact, email_misses
         )
 
         try:
