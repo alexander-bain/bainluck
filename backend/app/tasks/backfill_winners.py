@@ -1276,7 +1276,14 @@ async def _resolve_kalshi_from_scores():
                     continue
 
                 # Skip non-moneyline market types — these are handled by
-                # the spread/total/player prop resolvers
+                # the spread/total/player prop resolvers. Half/period WINNER
+                # markets (1hwinner/2hwinner) must be skipped too: this branch
+                # resolves from FINAL game scores, but a half/period winner needs
+                # the HALFTIME/period score (handled by the spread/total resolver's
+                # team-name fallback via _get_halftime_score). Without this guard,
+                # once box-score backfill populates final scores, a team that won
+                # the game but lost the 1st half would be mis-resolved as the 1H
+                # winner — corrupting calibration (#816, gotcha #21).
                 _non_ml = (
                     "total",
                     "spread",
@@ -1296,8 +1303,10 @@ async def _resolve_kalshi_from_scores():
                     "mention",
                     "1htotal",
                     "1hspread",
+                    "1hwinner",
                     "2htotal",
                     "2hspread",
+                    "2hwinner",
                 )
                 if any(t in ticker_lower for t in _non_ml):
                     stats["skipped"] += 1

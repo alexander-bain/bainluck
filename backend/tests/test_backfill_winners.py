@@ -1415,3 +1415,28 @@ class TestWinnerWritesBumpLastUpdated:
             "is_winner resolution writes missing a last_updated bump "
             f"(metric would go blind for the affected source): {misses}"
         )
+
+
+class TestMoneylineSkipsHalfWinnerMarkets:
+    """Guard for #816 / gotcha #21: the moneyline score resolver
+    (_resolve_kalshi_from_scores) resolves from FINAL game scores, so it MUST
+    skip half/period WINNER markets (1hwinner/2hwinner) — those need halftime/
+    period scores and are owned by the spread/total resolver's team-name
+    fallback. Once box-score backfill populates final scores, omitting these
+    from the skip list would mis-resolve any game where the half winner differs
+    from the game winner, corrupting calibration.
+    """
+
+    def test_non_ml_skip_list_includes_half_winner(self):
+        from pathlib import Path
+
+        src = (
+            Path(__file__).parent.parent
+            / "app"
+            / "tasks"
+            / "backfill_winners.py"
+        ).read_text()
+        # The _non_ml tuple lives inside _resolve_kalshi_from_scores; assert the
+        # half/period winner tokens are present in source.
+        assert '"1hwinner"' in src, "moneyline resolver must skip 1hwinner"
+        assert '"2hwinner"' in src, "moneyline resolver must skip 2hwinner"
