@@ -30,7 +30,7 @@ DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 # existing schema_version=2 profiles when the writer logic changes but the
 # schema shape does not. Consumers still gate on schema_version; re-tag
 # freshness gates on writer_rev so a logic fix re-runs over already-tagged rows.
-CU_WRITER_REV = 2
+CU_WRITER_REV = 3
 
 
 def _json_from_llm_response(text: str) -> dict[str, Any]:
@@ -732,9 +732,25 @@ Resolution date: {resolution_date}
 Outcomes:
 {outcomes}
 
+CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
+1. temporal: recurring institutional decisions and scheduled measurements are "periodic" (Fed decisions, daily high-temperature markets, weekly tweet counts). Any "by [date]?" phrasing is "deadline" even when an event underlies it (ceasefires, IPOs). Reserve "event_tied" for a singular real-world event with its own date (a match, an election, a tournament). Do NOT over-use event_tied.
+2. topic boundaries: armed-conflict / international-relations markets are "geopolitics" regardless of the countries involved (Russia–Ukraine included). ALL esports content — matches AND tournament winners (e.g. IEM Cologne) — is "esports", never entertainment or sports. Celebrity-business stunts (e.g. Musk/OnlyFans) are "entertainment", not economics.
+3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
+4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
+5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
+6. event_date sanity: for an in-progress series/season, an event_tied date more than 13 months out is almost certainly wrong — re-derive it.
+
+CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
+- "CS: NaVi vs Legacy (BO3)" -> esports / event_tied / S1 B1 O1
+- "Israel–Hezbollah ceasefire by…?" -> geopolitics / deadline / S4 B4 O1
+- "Fed Decision in June?" -> economics / periodic / S3 B4 O1
+- "Love Island USA: Winning Couple" -> entertainment / event_tied / S5 B3 O2
+- "Clavicular pregnancy in 2026?" -> health / deadline / S1 B1 O5
+- "Highest temp in Seoul, June 12" -> weather / periodic / S1 B3 O1
+
 JSON schema:
 {{
-  "topic": "sports|politics|geopolitics|economics|tech|entertainment|culture|health|weather|crypto",
+  "topic": "sports|esports|politics|geopolitics|economics|tech|entertainment|culture|health|weather|crypto",
   "subtopic": "<lowercase open vocab, e.g. basketball, elections, fed, ai, awards>",
   "entities": [{{"name": "<lowercase>", "type": "team|person|org|place|work|event"}}],
   "geography": "us|global|local|country:<XX>",
@@ -743,9 +759,9 @@ JSON schema:
   "temporal": "event_tied|deadline|evergreen|periodic",
   "event_date": "<YYYY-MM-DD or null — the real-world moment, NOT resolution_date>",
   "recurrence": "one_off|annual|weekly|daily|null",
-  "stakes": <1-5, magnitude of outcome: champion=5, prop=1>,
-  "breadth": <1-5, who's heard of this: mainstream=5, niche=1>,
-  "oddity": <1-5, novelty/absurdity: Joe Rogan + 60 Minutes = 5>,
+  "stakes": <1-5, real-world consequence magnitude per rule 3>,
+  "breadth": <1-5, reach of THIS market's subject per rule 4>,
+  "oddity": <1-5, baseline 1 per rule 5>,
   "arc": "race|comeback|collapse|milestone|upset_watch|none",
   "hook_facts": [{{"type": "stat|context|comparison", "text": "<one falsifiable claim>"}}],
   "junk_flags": ["<ladder|dated_bucket|social_count|duplicate_phrasing — empty array if none>"],

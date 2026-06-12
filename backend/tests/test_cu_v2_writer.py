@@ -9,7 +9,12 @@ Covers the two writer bugs caught in CU-1 validation:
 
 import inspect
 
-from app.tasks.enrich_markets import _compute_liveness, enrich_cu_v2_profiles, CU_WRITER_REV
+from app.tasks.enrich_markets import (
+    _compute_liveness,
+    enrich_cu_v2_profiles,
+    CU_WRITER_REV,
+    _CU_V2_PROMPT,
+)
 
 
 class TestComputeLiveness:
@@ -57,3 +62,39 @@ class TestProfileShape:
         assert '"temporal_class": raw.get("temporal")' in src
         assert '"writer_rev": CU_WRITER_REV' in src
         assert '"temporal":' not in src
+
+
+class TestWriterV3Rubric:
+    """Round-1 grading verdict (#891, cu_grading_round1.md): the v3 prompt must
+    carry the explicit rubric rules + calibrated anchors that fixed the failing
+    fields (topic 88.5%, temporal 69%, stakes 69%, breadth 69%, oddity 54%).
+    """
+
+    def test_writer_rev_is_v3(self):
+        # v3 ships with the round-1 rubric; the bump forces a re-tag of rev-2 rows.
+        assert CU_WRITER_REV >= 3
+
+    def test_esports_is_a_first_class_topic(self):
+        # Rule 2: ALL esports is topic 'esports', never entertainment/sports —
+        # so it must be in the topic enum or the model can't emit it.
+        assert "esports" in _CU_V2_PROMPT
+
+    def test_prompt_encodes_the_failing_field_rules(self):
+        p = _CU_V2_PROMPT
+        # oddity baseline 1 (was drifting to 2)
+        assert "oddity baseline is 1" in p
+        # stakes = real-world consequence, not volume (geopolitics vs esports inversion)
+        assert "real-world consequence" in p and "NOT market volume" in p
+        # breadth = THIS market's reach, not the topic's fame
+        assert "THIS market" in p
+        # temporal: deadline for "by [date]?", periodic for recurring, reserve event_tied
+        assert "periodic" in p and "deadline" in p and "event_tied" in p
+        # geopolitics covers armed conflict regardless of countries
+        assert "geopolitics" in p
+
+    def test_prompt_carries_calibrated_anchors(self):
+        p = _CU_V2_PROMPT
+        # A representative subset of Alex's verbatim anchors.
+        assert "ceasefire" in p           # geopolitics / deadline / S4 B4 O1
+        assert "Fed Decision" in p        # economics / periodic / S3 B4 O1
+        assert "Clavicular pregnancy" in p  # health / oddity 5
