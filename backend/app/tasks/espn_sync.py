@@ -868,6 +868,17 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                         or_(
                             Event.box_score_data.is_(None),
                             Event.home_score.is_(None),
+                            # Re-select events that were box-scored BEFORE period
+                            # extraction existed: they have box_score_data but no
+                            # home_period_scores, so the 1H resolver's halftime
+                            # fallback has nothing to read (#816). The
+                            # period_scores_checked_at marker stops us re-fetching
+                            # events ESPN has no period data for on every run.
+                            and_(
+                                Event.box_score_data.isnot(None),
+                                ~Event.box_score_data.op("?")("home_period_scores"),
+                                ~Event.box_score_data.op("?")("period_scores_checked_at"),
+                            ),
                         ),
                         Event.id.in_(
                             select(FuturesMarket.event_id).where(
@@ -945,6 +956,18 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                                 "fetched_at": now_str,
                             }
                             stats["skipped_no_data"] += 1
+
+                        # Anti-thrash (#816): stamp a period-check marker on every
+                        # processed event so the re-fetch gate cannot re-select it
+                        # forever when ESPN has no period data. Reassign a NEW dict
+                        # so SQLAlchemy detects the JSONB change.
+                        if (
+                            isinstance(event.box_score_data, dict)
+                            and "period_scores_checked_at" not in event.box_score_data
+                        ):
+                            _bsd = dict(event.box_score_data)
+                            _bsd["period_scores_checked_at"] = now_str
+                            event.box_score_data = _bsd
 
                         # Rate limit between requests
                         await _asyncio.sleep(0.5)

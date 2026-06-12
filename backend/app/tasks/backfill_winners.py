@@ -1714,7 +1714,10 @@ async def _get_halftime_score(session, event_id: int):
     if box and isinstance(box, dict):
         h_periods = box.get("home_period_scores", [])
         a_periods = box.get("away_period_scores", [])
-        if h_periods and a_periods:
+        # Require >=2 periods so period[0] is a genuinely COMPLETED first half,
+        # not a single in-progress/malformed linescore (#816). A finished 2-half
+        # game has >=2 entries ([H1, H2, ...OT]); OT periods don't move index 0.
+        if len(h_periods) >= 2 and len(a_periods) >= 2:
             return (h_periods[0], a_periods[0])
 
     return None

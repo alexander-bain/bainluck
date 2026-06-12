@@ -742,3 +742,38 @@ class TestTeamNameMatchScore:
         # "Brown Bears" vs "Brown Bears" → 1.0 — well above threshold
         score = _team_name_match_score("Brown Bears", "Brown Bears")
         assert score > 0.5
+
+
+class TestParseHeaderPeriodScores:
+    """Period-score extraction underpins the NCAAB 1H resolver halftime fallback
+    (#816). period[0] must be the first half for both 2-half and OT shapes."""
+
+    def _data(self, home_ls, away_ls):
+        return {
+            "header": {
+                "competitions": [{
+                    "competitors": [
+                        {"homeAway": "home", "score": str(sum(home_ls)),
+                         "linescores": [{"displayValue": str(v)} for v in home_ls]},
+                        {"homeAway": "away", "score": str(sum(away_ls)),
+                         "linescores": [{"displayValue": str(v)} for v in away_ls]},
+                    ]
+                }]
+            }
+        }
+
+    def test_two_half_shape(self, client):
+        out = client._parse_header_scores(self._data([47, 48], [57, 38]))
+        assert out["home_period_scores"] == [47, 48]
+        assert out["away_period_scores"] == [57, 38]
+        # First half = index 0.
+        assert out["home_period_scores"][0] == 47
+
+    def test_overtime_shape_keeps_first_half_at_index_0(self, client):
+        # OT game: [H1, H2, OT1, OT2] — index 0 is still the first half.
+        out = client._parse_header_scores(self._data([47, 48, 10, 12], [57, 38, 10, 10]))
+        assert out["home_period_scores"][0] == 47
+        assert len(out["home_period_scores"]) == 4
+
+    def test_no_competitions_returns_empty(self, client):
+        assert client._parse_header_scores({"header": {"competitions": []}}) == {}
