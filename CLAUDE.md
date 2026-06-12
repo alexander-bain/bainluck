@@ -200,6 +200,16 @@ Device-token registration, token listing, and admin send-test are covered with F
 
 **Work tracking split**: `docs/backlog.md` is the strategic backlog; GitHub Issues are the execution queue for scoped work.
 
+## Agent Execution Lanes (read before doing ANY repo work)
+
+There is a queue-based execution system in `.claude/handoff/` (protocol: `.claude/handoff/README.md`). Before starting work in ANY session — interactive or headless:
+
+1. Check `.claude/handoff/QUEUE.md`. If `status: approved`, that queue IS the next work — execute it via the /triage handoff mode rather than inventing a plan. If `status: running`, another session owns the lane: do NOT do repo work that could collide.
+2. Check `.claude/handoff/SEQUENCE.md` for the agreed priority order. Don't execute sequence items ad-hoc from an interactive plan — they get staged as queues with briefs, gates, and live-proof requirements. If you ship something outside the lane anyway, you MUST move it to SEQUENCE.md's Consumed section and post the same session-end evidence (clean git status, CI run ID quoted green, live proofs, board sync) the queue lane requires.
+3. Whoever ships, updates: the board, `docs/backlog.md`, and SEQUENCE.md must not drift.
+
+This section exists because parallel lanes (interactive sessions, the headless crank, subagents) collided on 2026-06-11: stashed WIP, skipped priorities, and unverified "shipped" claims. The queue lane's gates are the source of truth.
+
 ## GitHub Issues + Project Workflow
 
 `docs/backlog.md` is the strategic source of truth for priorities, rationale, and workstream context. GitHub Issues are the execution queue for scoped work packets. The GitHub Project board is status and ownership tracking.
