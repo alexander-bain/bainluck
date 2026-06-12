@@ -1364,3 +1364,54 @@ class TestPlayerPropBoxScoreStructure:
         assert "Luka Doncic" in box_score
         assert box_score["Luka Doncic"]["points"] == 30
         assert "source" not in box_score
+
+
+class TestWinnerWritesBumpLastUpdated:
+    """Regression guard for #898 (Kalshi winner-backfill observability).
+
+    The winners-touched-24h metric reads ``is_winner=true AND last_updated<24h``
+    grouped by source. Settled Kalshi outcomes stop being repolled (gotcha #33),
+    so a resolution write is the ONLY thing that can touch them — if the resolver
+    sets ``is_winner`` without bumping ``last_updated`` the metric is structurally
+    blind to Kalshi (it read 0 for weeks despite ~1,050 markets/cycle resolving,
+    causing the ops r5/r6 false stall alarms). Every determined-value
+    ``is_winner`` write in the resolver must bump ``last_updated`` in the SAME
+    statement (gotchas #4-6: Core update, not a second write). NULL-reset
+    cleanups are intentionally exempt.
+    """
+
+    def _resolver_source(self):
+        from pathlib import Path
+
+        path = (
+            Path(__file__).parent.parent
+            / "app"
+            / "tasks"
+            / "backfill_winners.py"
+        )
+        return path.read_text().split("\n")
+
+    def test_every_determined_is_winner_write_bumps_last_updated(self):
+        lines = self._resolver_source()
+        misses = []
+        for i, ln in enumerate(lines, start=1):
+            s = ln.strip()
+            # Raw SQL: "SET is_winner = ..." (skip NULL-reset cleanups).
+            if s.startswith("SET is_winner") and "NULL" not in s:
+                window = "\n".join(lines[i - 1 : i + 4])
+                if "last_updated" not in window:
+                    misses.append((i, s[:80]))
+            # Core update().values(...) and multi-column SET continuations.
+            if (
+                s.startswith("is_winner =") or s.startswith("is_winner=")
+            ) and "NULL" not in s:
+                ctx = "\n".join(lines[max(0, i - 4) : i + 5])
+                is_resolution_write = (".values(" in ctx) or (
+                    "SET " in ctx and "UPDATE futures_outcomes" in ctx
+                )
+                if is_resolution_write and "last_updated" not in ctx:
+                    misses.append((i, s[:80]))
+        assert not misses, (
+            "is_winner resolution writes missing a last_updated bump "
+            f"(metric would go blind for the affected source): {misses}"
+        )
