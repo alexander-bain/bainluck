@@ -141,3 +141,24 @@ class TestEspnTeamMatches:
             location="Boston",
         )
         assert not espn_team_matches(["Los Angeles Lakers"], team)
+
+
+class TestBoxScoreDrainMode:
+    """Guard for the #816 one-shot cohort-drain knob on _backfill_box_scores.
+
+    The period-score re-fetch gate is newest-first by default, so the oldest
+    stuck cohort (Feb/Mar NCAAB 1H espn_id events) never gets reached by bounded
+    runs. oldest_first=True flips the gate to ascending for a one-shot drain.
+    The default MUST stay False so the live beat keeps its newest-first behavior.
+    """
+
+    def test_oldest_first_param_exists_and_defaults_false(self):
+        import inspect
+        from app.tasks.espn_sync import _backfill_box_scores
+
+        sig = inspect.signature(_backfill_box_scores)
+        assert "oldest_first" in sig.parameters
+        assert sig.parameters["oldest_first"].default is False
+        # The live beat calls priority_calibration without oldest_first; that
+        # path must remain newest-first.
+        assert sig.parameters["priority_calibration"].default is False

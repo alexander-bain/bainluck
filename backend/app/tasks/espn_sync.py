@@ -832,13 +832,25 @@ async def _cleanup_bad_espn_matches():
     return stats
 
 
-async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = False):
+async def _backfill_box_scores(
+    limit: int = 100,
+    priority_calibration: bool = False,
+    oldest_first: bool = False,
+):
     """Fetch ESPN box scores for completed/live events missing box_score_data.
 
     When priority_calibration=True, prioritizes events that have Kalshi
     player prop markets needing is_winner resolution. This ensures the
     first box scores backfilled are the ones that directly improve
     calibration accuracy.
+
+    When oldest_first=True, the re-fetch gate is ordered ascending by
+    commence_time instead of the default newest-first. This is a one-shot
+    drain mode (#816): the period-score re-fetch backlog is processed
+    newest-first by the beat, so the oldest stuck cohort (e.g. the Feb/Mar
+    NCAAB 1H espn_id events) never gets reached by bounded runs while fresh
+    daily games keep entering at the top. An ascending one-shot drains the
+    tail first.
 
     Also backfills game scores (home_score/away_score) from the same
     ESPN summary response when they are missing.
@@ -857,6 +869,13 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
 
     try:
         async with get_task_session() as session:
+            # #816 drain mode: process the oldest stuck events first so the
+            # Feb/Mar cohort at the tail of the newest-first backlog is reached.
+            _order = (
+                Event.commence_time.asc()
+                if oldest_first
+                else Event.commence_time.desc()
+            )
             if priority_calibration:
                 from app.models.models import FuturesMarket
                 result = await session.execute(
@@ -888,7 +907,7 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                             )
                         ),
                     )
-                    .order_by(Event.commence_time.desc())
+                    .order_by(_order)
                     .limit(limit)
                 )
             else:
@@ -908,7 +927,7 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
                             ),
                         )
                     )
-                    .order_by(Event.commence_time.desc())
+                    .order_by(_order)
                     .limit(limit)
                 )
             events = result.scalars().all()
