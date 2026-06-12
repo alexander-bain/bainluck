@@ -36,6 +36,26 @@ import FeedCard from "@/components/FeedCard";
 import MoversRibbon from "@/components/MoversRibbon";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
+// Some inbound URLs use the Odds API sport-key prefix (e.g. "icehockey",
+// "americanfootball") while the /api/sports/hierarchy endpoint keys off the
+// friendly sport slug ("hockey", "football"). Fetching the hierarchy with the
+// raw prefix 404s, which previously surfaced as "Failed to load league data".
+// Map known prefixes to their hierarchy slug so both URL forms resolve.
+const SPORT_SLUG_ALIASES: Record<string, string> = {
+  icehockey: "hockey",
+  americanfootball: "football",
+  mixed_martial_arts: "mma",
+  aussierules: "aussie-rules",
+};
+
+/** Candidate hierarchy slugs to try, in order, for a given URL sport slug. */
+function hierarchySlugCandidates(sportSlug: string): string[] {
+  const candidates = [sportSlug];
+  const aliased = SPORT_SLUG_ALIASES[sportSlug];
+  if (aliased && aliased !== sportSlug) candidates.push(aliased);
+  return candidates;
+}
+
 const SECTION_META: Record<string, { label: string; order: number }> = {
   series: { label: "Playoff Series", order: 0 },
   matches: { label: "Upcoming Matches", order: 0 },
@@ -161,8 +181,25 @@ export default function LeagueShowcasePage() {
       setLoading(true);
       setError(null);
       try {
-        const h = await fetchSportHierarchyDetail(sportSlug);
+        // Resolve the sport hierarchy. Inbound URLs may use the sport-key
+        // prefix (e.g. "icehockey") instead of the hierarchy slug ("hockey"),
+        // so try known aliases before giving up. A failure here is the only
+        // hard failure for the page — everything below degrades gracefully.
+        let h: SportHierarchy | null = null;
+        for (const candidate of hierarchySlugCandidates(sportSlug)) {
+          try {
+            h = await fetchSportHierarchyDetail(candidate);
+            if (h) break;
+          } catch {
+            // Try the next candidate slug.
+          }
+        }
         if (cancelled) return;
+        if (!h) {
+          setError(`Sport "${sportSlug}" not found`);
+          setLoading(false);
+          return;
+        }
         setHierarchy(h);
         const l = h.leagues.find((lg) => lg.slug === leagueSlug);
         if (!l) {

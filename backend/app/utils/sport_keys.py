@@ -1439,9 +1439,16 @@ SPORT_HIERARCHY: dict[str, dict] = {
 }
 
 
+_SPORT_SLUG_ALIASES: dict[str, str] = {
+    "icehockey": "hockey",
+    "americanfootball": "football",
+}
+
+
 def get_sport_hierarchy(sport_slug: str) -> Optional[dict]:
-    """Get hierarchy data for a sport by its URL slug."""
-    return SPORT_HIERARCHY.get(sport_slug)
+    """Get hierarchy data for a sport by its URL slug (with aliases)."""
+    canonical = _SPORT_SLUG_ALIASES.get(sport_slug, sport_slug)
+    return SPORT_HIERARCHY.get(canonical)
 
 
 def get_all_sport_slugs() -> list[str]:

@@ -78,6 +78,17 @@ export function EvolutionView({
     return marketId;
   }, [positionOptions, selectedPosition, marketId]);
 
+  // All source market IDs for the active position (cross-source aggregation).
+  // Falls back to the single active market ID when a position has no explicit
+  // marketIds array. Always non-empty so downstream .length / .join are safe.
+  const activeMarketIds = useMemo(() => {
+    if (positionOptions) {
+      const pos = positionOptions.find((p) => p.key === selectedPosition);
+      if (pos?.marketIds && pos.marketIds.length > 0) return pos.marketIds;
+    }
+    return [activeMarketId];
+  }, [positionOptions, selectedPosition, activeMarketId]);
+
   // Reset selected outcomes when position changes
   useEffect(() => {
     setSelectedOutcomeIds(null);
