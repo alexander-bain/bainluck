@@ -279,7 +279,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\n";
+			shellScript = "# Only upload dSYMs for Release builds (archive/TestFlight/App Store).\n# Debug builds produce no dSYM; the Firebase run script's own \"set\n# DEBUG_INFORMATION_FORMAT to dwarf-with-dsym\" warning fires only when it runs\n# in Debug, so gating to Release silences it (#902-follow-up / #839).\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  \"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

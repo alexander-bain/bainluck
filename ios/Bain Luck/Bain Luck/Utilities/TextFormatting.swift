@@ -36,13 +36,13 @@ private let brandCasing: [String: String] = [
 ///
 /// This intentionally does NOT lower-case tokens it does not recognise, so
 /// genuinely correct mixed-case input ("U.S. Open") is left untouched.
-func properTitleCase(_ raw: String) -> String {
+nonisolated func properTitleCase(_ raw: String) -> String {
     let words = raw.split(separator: " ", omittingEmptySubsequences: false)
     let fixed = words.map { fixWord(String($0)) }
     return fixed.joined(separator: " ")
 }
 
-private func fixWord(_ word: String) -> String {
+nonisolated private func fixWord(_ word: String) -> String {
     guard !word.isEmpty else { return word }
 
     // Preserve trailing punctuation (e.g. "Open," or "RBC.").
@@ -62,13 +62,13 @@ private func fixWord(_ word: String) -> String {
 
 // MARK: - Date formatting
 
-private let _isoFractional: ISO8601DateFormatter = {
+nonisolated(unsafe) private let _isoFractional: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return f
 }()
 
-private let _isoPlain: ISO8601DateFormatter = {
+nonisolated(unsafe) private let _isoPlain: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime]
     return f
@@ -94,7 +94,7 @@ private let _dayOnly: DateFormatter = {
 
 /// Parse a backend date string. Handles full ISO-8601 with offset and optional
 /// fractional seconds (e.g. "2026-09-24T00:00:00+00:00") and bare "yyyy-MM-dd".
-func parseFlexibleDate(_ raw: String?) -> Date? {
+nonisolated func parseFlexibleDate(_ raw: String?) -> Date? {
     guard let raw, !raw.isEmpty else { return nil }
     if let d = _isoFractional.date(from: raw) { return d }
     if let d = _isoPlain.date(from: raw) { return d }
@@ -102,7 +102,7 @@ func parseFlexibleDate(_ raw: String?) -> Date? {
 }
 
 /// Format a single backend date string as a compact "MMM d" (e.g. "Sep 24").
-func formattedShortDate(_ raw: String?) -> String? {
+nonisolated func formattedShortDate(_ raw: String?) -> String? {
     guard let date = parseFlexibleDate(raw) else { return nil }
     return _monthDay.string(from: date)
 }
@@ -110,7 +110,7 @@ func formattedShortDate(_ raw: String?) -> String? {
 /// Format a start/end backend date range as a compact design-system string:
 /// "Sep 24-27" (same month), "Sep 24 - Oct 1" (cross-month), or just the
 /// single end that is present. Returns nil when neither end parses.
-func formatDateRange(start: String?, end: String?) -> String? {
+nonisolated func formatDateRange(start: String?, end: String?) -> String? {
     let startDate = parseFlexibleDate(start)
     let endDate = parseFlexibleDate(end)
 

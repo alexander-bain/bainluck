@@ -10,18 +10,34 @@ struct HeatMapCardView: View {
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
 
+    /// Cap visible cells so each is wide enough to read at 375pt phone width
+    /// (#902-follow-up: 8 cells crammed the labels to ~7pt and truncated them).
+    /// Overflow is surfaced as "+N more" rather than shrinking everything.
+    private let maxCells = 5
+
+    /// Dynamic-type-aware label size so the threshold labels respect the user's
+    /// text-size setting instead of a hardcoded 11pt.
+    @ScaledMetric(relativeTo: .caption) private var labelFontSize: CGFloat = 12
+
     // MARK: - Derived data
 
-    private var cells: [HeatMapCell] {
-        let points = (data.discoverCard?.thresholdPoints ?? [])
+    private var sortedPoints: [FeedDiscoverThresholdPoint] {
+        (data.discoverCard?.thresholdPoints ?? [])
             .filter { $0.probability != nil }
             .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
-        return Array(points.prefix(8)).map { point in
+    }
+
+    private var cells: [HeatMapCell] {
+        Array(sortedPoints.prefix(maxCells)).map { point in
             HeatMapCell(
                 label: compactThresholdLabel(point.label),
                 probability: point.probability ?? 0
             )
         }
+    }
+
+    private var overflowCount: Int {
+        max(0, sortedPoints.count - maxCells)
     }
 
     private var categoryLabel: String {
@@ -36,8 +52,11 @@ struct HeatMapCardView: View {
     }
 
     private var lastAbove50Label: String? {
-        let above = cells.filter { $0.probability >= 0.50 }
-        return above.last?.label
+        // Derive from ALL thresholds (not the capped cells) so the crossover
+        // summary stays correct even when cells overflow past maxCells.
+        let above = sortedPoints.filter { ($0.probability ?? 0) >= 0.50 }
+        guard let last = above.last else { return nil }
+        return compactThresholdLabel(last.label)
     }
 
     // MARK: - Body
@@ -73,15 +92,17 @@ struct HeatMapCardView: View {
                 }
             }
 
-            // Threshold labels
-            HStack(spacing: 3) {
+            // Threshold labels — readable size, wrap to 2 lines instead of
+            // truncating, and respect Dynamic Type (#902-follow-up).
+            HStack(alignment: .top, spacing: 3) {
                 ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
                     Text(cell.label)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: labelFontSize, weight: .medium, design: .monospaced))
                         .foregroundStyle(DS.textSecondary)
+                        .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
                 }
             }
             .padding(.top, 7)
@@ -102,6 +123,11 @@ struct HeatMapCardView: View {
                     Text("All below 50%")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textSecondary)
+                }
+                if overflowCount > 0 {
+                    Text("+\(overflowCount) more")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
                 }
                 Spacer()
                 if let src = data.source {
