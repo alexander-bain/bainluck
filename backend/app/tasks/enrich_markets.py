@@ -30,7 +30,7 @@ DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 # existing schema_version=2 profiles when the writer logic changes but the
 # schema shape does not. Consumers still gate on schema_version; re-tag
 # freshness gates on writer_rev so a logic fix re-runs over already-tagged rows.
-CU_WRITER_REV = 3
+CU_WRITER_REV = 4
 
 
 def _json_from_llm_response(text: str) -> dict[str, Any]:
@@ -734,14 +734,15 @@ Outcomes:
 
 CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
 1. temporal: recurring institutional decisions and scheduled measurements are "periodic" (Fed decisions, daily high-temperature markets, weekly tweet counts). Any "by [date]?" phrasing is "deadline" even when an event underlies it (ceasefires, IPOs). Reserve "event_tied" for a singular real-world event with its own date (a match, an election, a tournament). Do NOT over-use event_tied.
-2. topic boundaries: armed-conflict / international-relations markets are "geopolitics" regardless of the countries involved (Russia–Ukraine included). ALL esports content — matches AND tournament winners (e.g. IEM Cologne) — is "esports", never entertainment or sports. Celebrity-business stunts (e.g. Musk/OnlyFans) are "entertainment", not economics.
+2. topic boundaries: armed-conflict / international-relations markets are "geopolitics" regardless of the countries involved (Russia–Ukraine included). "esports" means VIDEO-GAME competitions ONLY (Counter-Strike/CS2, Dota, League of Legends, Valorant, Overwatch, Rocket League, Call of Duty, StarCraft, etc.) — matches AND tournament winners (e.g. IEM Cologne) are "esports". A "X vs Y" matchup is NOT automatically esports: traditional/physical sports played by humans (tennis, table tennis, badminton, snooker, darts, cricket, soccer, basketball, etc.) are "sports" even when phrased as "Tournament: Player A vs Player B" (e.g. an ATP tennis match is "sports", never "esports"). Celebrity-business stunts (e.g. Musk/OnlyFans) are "entertainment", not economics.
 3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
 4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
 5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
-6. event_date sanity: for an in-progress series/season, an event_tied date more than 13 months out is almost certainly wrong — re-derive it.
+6. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
 
 CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
 - "CS: NaVi vs Legacy (BO3)" -> esports / event_tied / S1 B1 O1
+- "Stuttgart Open: Kyrgios vs Moutet" -> sports (tennis) / event_tied / S1 B1 O1   (a human-played match is NOT esports)
 - "Israel–Hezbollah ceasefire by…?" -> geopolitics / deadline / S4 B4 O1
 - "Fed Decision in June?" -> economics / periodic / S3 B4 O1
 - "Love Island USA: Winning Couple" -> entertainment / event_tied / S5 B3 O2

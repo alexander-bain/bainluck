@@ -98,3 +98,33 @@ class TestWriterV3Rubric:
         assert "ceasefire" in p           # geopolitics / deadline / S4 B4 O1
         assert "Fed Decision" in p        # economics / periodic / S3 B4 O1
         assert "Clavicular pregnancy" in p  # health / oddity 5
+
+
+class TestWriterV4Rubric:
+    """Round-2 sample findings (#891, Queue #47): v3 mis-tagged ATP tennis as
+    topic=esports and emitted wild-year event_dates. v4 must guard both.
+    """
+
+    def test_writer_rev_is_v4(self):
+        # The bump forces a re-tag of rev-3 rows with the corrected prompt.
+        assert CU_WRITER_REV >= 4
+
+    def test_esports_is_video_games_only(self):
+        p = _CU_V2_PROMPT
+        # Rule 2 must scope esports to video games and exclude human-played sports.
+        assert "VIDEO-GAME" in p or "video-game" in p
+        # tennis (and physical sports) must be called out as NOT esports
+        assert "tennis" in p.lower()
+        assert "not esports" in p.lower() or "never \"esports\"" in p.lower() \
+            or "is NOT automatically esports" in p
+
+    def test_tennis_anchor_present(self):
+        # A human-played "X vs Y" match anchored to sports, not esports.
+        p = _CU_V2_PROMPT
+        assert "Stuttgart Open" in p
+
+    def test_event_date_sanity_guards_past_and_wild_years(self):
+        p = _CU_V2_PROMPT
+        # Rule 6 must reject distant-past dates, not just far-future ones.
+        assert "distant past" in p or "in the past" in p
+        assert "13 months" in p
