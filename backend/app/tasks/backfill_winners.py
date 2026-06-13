@@ -1426,6 +1426,46 @@ _FIRST_HALF_PERIODS = {
 }
 
 
+def _decide_three_way_winner(outcome_names, home_team_name, away_team_name,
+                             h_score, a_score):
+    """Decide is_winner per outcome for a 3-outcome Team/Team/Tie winner market.
+
+    Used for markets like KXNCAAMB1HWINNER which carry three outcomes
+    (Home team / Away team / Tie); the 2-outcome team-name fallback skips them.
+
+    h_score/a_score are home/away scores (half-time scores for 1H markets).
+    Returns a {index: bool} map aligned to ``outcome_names`` order, or ``None``
+    when the outcomes are not a clean Team/Team/Tie triple or scores are missing.
+    """
+    if len(outcome_names) != 3 or h_score is None or a_score is None:
+        return None
+    home_tokens = set((home_team_name or "").lower().split())
+    away_tokens = set((away_team_name or "").lower().split())
+    kinds = []
+    for nm in outcome_names:
+        n = (nm or "").lower().strip()
+        toks = set(n.split())
+        is_home = bool(toks & home_tokens) and not bool(toks & away_tokens)
+        is_away = bool(toks & away_tokens) and not bool(toks & home_tokens)
+        if is_home and not is_away:
+            kinds.append("home")
+        elif is_away and not is_home:
+            kinds.append("away")
+        elif n in ("tie", "draw"):
+            kinds.append("tie")
+        else:
+            return None
+    if set(kinds) != {"home", "away", "tie"}:
+        return None
+    if h_score > a_score:
+        winner = "home"
+    elif a_score > h_score:
+        winner = "away"
+    else:
+        winner = "tie"
+    return {i: (kinds[i] == winner) for i in range(3)}
+
+
 async def _resolve_kalshi_spread_total_from_scores():
     """Resolve Kalshi spread and total markets from actual game scores.
 
@@ -1679,6 +1719,36 @@ async def _resolve_kalshi_spread_total_from_scores():
                             resolved_st = True
                         if resolved_st:
                             stats["spread"] += 1
+
+                # Fallback: 3-outcome winner markets with a Tie (Team A / Team B / Tie)
+                # e.g. KXNCAAMB1HWINNER has 3 outcomes, so the len==2 fallback above
+                # skips it entirely and these sit at pass2_guess. Resolve from
+                # (half-time, for 1H) scores including the tie case. Purely additive —
+                # the 2-outcome path is untouched.
+                if not resolved_st and len(outcomes_list) == 3:
+                    if is_1h:
+                        h1_scores = await _get_halftime_score(session, row.event_id)
+                        h_score, a_score = h1_scores if h1_scores else (None, None)
+                    else:
+                        h_score, a_score = row.home_score, row.away_score
+
+                    decision = _decide_three_way_winner(
+                        [oc.name for oc in outcomes_list],
+                        row.home_team_name,
+                        row.away_team_name,
+                        h_score,
+                        a_score,
+                    )
+                    if decision is not None:
+                        for idx, oc in enumerate(outcomes_list):
+                            await session.execute(
+                                text(
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                ),
+                                {"won": decision[idx], "oid": oc.id},
+                            )
+                        resolved_st = True
+                        stats["spread"] += 1
 
                 if not resolved_st:
                     stats["no_parse"] += 1

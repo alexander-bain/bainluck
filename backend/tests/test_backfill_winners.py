@@ -270,6 +270,67 @@ class TestSpreadTotalParsing:
         assert _TOTAL_RE.search("Yes") is None
 
 
+class TestThreeWayWinnerResolution:
+    """3-outcome Team/Team/Tie winner markets (e.g. KXNCAAMB1HWINNER, #816)."""
+
+    def _d(self, names, home, away, h, a):
+        from app.tasks.backfill_winners import _decide_three_way_winner
+        return _decide_three_way_winner(names, home, away, h, a)
+
+    def test_home_team_wins_half(self):
+        # Nebraska (home) 33, Maryland (away) 27 at half → Nebraska wins
+        d = self._d(
+            ["Tie", "Nebraska", "Maryland"],
+            "Nebraska Cornhuskers", "Maryland Terrapins", 33, 27,
+        )
+        assert d == {0: False, 1: True, 2: False}
+
+    def test_away_team_wins_half(self):
+        # Marquette (home) 33, UConn (away) 35 → UConn (away) wins
+        d = self._d(
+            ["Tie", "UConn", "Marquette"],
+            "Marquette Golden Eagles", "UConn Huskies", 33, 35,
+        )
+        assert d == {0: False, 1: True, 2: False}
+
+    def test_tie_wins_when_scores_equal(self):
+        d = self._d(
+            ["Tie", "UConn", "Marquette"],
+            "Marquette Golden Eagles", "UConn Huskies", 35, 35,
+        )
+        assert d == {0: True, 1: False, 2: False}
+
+    def test_abbreviated_team_name_token_match(self):
+        # "Texas A&M" outcome vs "Texas A&M Aggies" event team
+        d = self._d(
+            ["Tie", "Arkansas", "Texas A&M"],
+            "Arkansas Razorbacks", "Texas A&M Aggies", 37, 28,
+        )
+        assert d == {0: False, 1: True, 2: False}
+
+    def test_returns_none_for_two_outcomes(self):
+        # 2-outcome markets are handled by the existing fallback, not here
+        assert self._d(["A", "B"], "A team", "B team", 10, 5) is None
+
+    def test_returns_none_for_missing_scores(self):
+        assert self._d(["Tie", "Nebraska", "Maryland"],
+                       "Nebraska", "Maryland", None, 27) is None
+
+    def test_returns_none_without_clean_triple(self):
+        # No tie outcome and an unmatched 3rd outcome → not a clean triple
+        assert self._d(["Yes", "No", "Maybe"],
+                       "Nebraska", "Maryland", 33, 27) is None
+
+    def test_branch_wired_into_resolver(self):
+        import inspect
+        from app.tasks.backfill_winners import (
+            _resolve_kalshi_spread_total_from_scores,
+        )
+        src = inspect.getsource(_resolve_kalshi_spread_total_from_scores)
+        assert "_decide_three_way_winner" in src
+        assert "len(outcomes_list) == 3" in src
+
+
 class TestPhase2LimitIncrease:
     """Tests for the Kalshi Phase 2 limit increase."""
 
