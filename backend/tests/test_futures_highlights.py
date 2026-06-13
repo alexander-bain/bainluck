@@ -38,6 +38,25 @@ class TestComputeFuturesHighlight:
         assert basketball.flags.league_tier == 1
         assert other.flags.league_tier == 3
 
+    def test_esports_demoted_below_sports_floor(self):
+        """esports is a near-zero-interest category (Alex policy, SEQUENCE 0b1b).
+
+        It must get an explicit base BELOW the sports floor so it never
+        out-bases an ordinary sports market (e.g. darts), and at/below crypto.
+        """
+        from app.utils.futures_highlights import (
+            CATEGORY_BASE_SCORES,
+            SPORTS_CATEGORY_BASE,
+        )
+        assert "esports" in CATEGORY_BASE_SCORES
+        assert CATEGORY_BASE_SCORES["esports"] <= CATEGORY_BASE_SCORES["crypto"]
+        assert CATEGORY_BASE_SCORES["esports"] < SPORTS_CATEGORY_BASE
+
+        esports = compute_futures_highlight(sport_category="esports")
+        darts = compute_futures_highlight(sport_category="darts")  # sports floor
+        assert esports.score < darts.score
+        assert "category_base_esports" in esports.reasons
+
     def test_major_postseason_path_scores_like_discover_story(self):
         """NBA Finals path markets are strong Discover sports stories."""
         now = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)

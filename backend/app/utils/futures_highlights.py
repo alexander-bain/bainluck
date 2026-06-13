@@ -94,6 +94,14 @@ CATEGORY_BASE_SCORES: dict[str, float] = {
     "health": 38.0,
     "weather": 32.0,
     "crypto": 28.0,
+    # esports + crypto are near-zero-interest categories for Bain Luck users
+    # (Alex product policy, 2026-06-12, SEQUENCE 0b1b). Without an explicit entry
+    # esports falls through to SPORTS_CATEGORY_BASE (18.5) and rides the sports
+    # bonus path; pinning it below the sports floor makes the bottom-of-feed
+    # placement data-driven rather than relying solely on the quality-classifier
+    # low_signal_sport cap. Kept below crypto/sports so esports never out-bases an
+    # ordinary sports market ("no esports in top-20 absent extraordinary signals").
+    "esports": 14.0,
 }
 SPORTS_CATEGORY_BASE = 18.5
 
