@@ -331,6 +331,41 @@ class TestThreeWayWinnerResolution:
         assert "len(outcomes_list) == 3" in src
 
 
+class TestResolverThroughput:
+    """Score resolvers must not be starved by LIMIT 10000 vs the ~41K backlog,
+    and must commit incrementally so a long run drains it (#907)."""
+
+    def _src(self, fn_name):
+        import inspect
+        import app.tasks.backfill_winners as m
+        return inspect.getsource(getattr(m, fn_name))
+
+    def test_spread_total_resolver_limit_raised(self):
+        import re
+        src = self._src("_resolve_kalshi_spread_total_from_scores")
+        assert re.search(r"LIMIT 10000(?!\d)", src) is None  # no bare 10000
+        assert "LIMIT 100000" in src
+
+    def test_moneyline_resolver_limit_raised(self):
+        import re
+        src = self._src("_resolve_kalshi_from_scores")
+        assert re.search(r"LIMIT 10000(?!\d)", src) is None
+        assert "LIMIT 100000" in src
+
+    def test_spread_total_resolver_commits_incrementally(self):
+        src = self._src("_resolve_kalshi_spread_total_from_scores")
+        # enumerate + periodic commit inside the loop (not just one end-commit)
+        assert "enumerate(markets)" in src
+        assert "i % 500 == 0" in src
+        assert src.count("await session.commit()") >= 2
+
+    def test_moneyline_resolver_commits_incrementally(self):
+        src = self._src("_resolve_kalshi_from_scores")
+        assert "enumerate(markets)" in src
+        assert "i % 500 == 0" in src
+        assert src.count("await session.commit()") >= 2
+
+
 class TestPhase2LimitIncrease:
     """Tests for the Kalshi Phase 2 limit increase."""
 

@@ -1255,11 +1255,18 @@ async def _resolve_kalshi_from_scores():
                                    ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
-                    LIMIT 10000
+                    LIMIT 100000
                 """))
             markets = result.all()
 
-            for row in markets:
+            # Commit incrementally so a long run drains the full backlog (was
+            # starved by a 10K row cap vs ~41K selectable, #907) and partial
+            # progress survives a timeout/error instead of rolling back the
+            # whole batch (gotcha #6). Check is at the top of the loop so the
+            # body's many `continue` paths can't skip it.
+            for i, row in enumerate(markets):
+                if i and i % 500 == 0:
+                    await session.commit()
                 ticker_lower = (row.ticker or "").lower()
 
                 # BTTS: both teams to score
@@ -1510,11 +1517,18 @@ async def _resolve_kalshi_spread_total_from_scores():
                                    ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                                THEN 1 ELSE 0 END) = 0
-                    LIMIT 10000
+                    LIMIT 100000
                 """))
             markets = result.all()
 
-            for row in markets:
+            # Commit incrementally so a long run drains the full backlog (was
+            # starved by a 10K row cap vs ~41K selectable, #907) and partial
+            # progress survives a timeout/error instead of rolling back the
+            # whole batch (gotcha #6). Check is at the top of the loop so the
+            # body's many `continue` paths can't skip it.
+            for i, row in enumerate(markets):
+                if i and i % 500 == 0:
+                    await session.commit()
                 ticker_lower = (row.ticker or "").lower()
                 is_1h = "1h" in ticker_lower or "1half" in ticker_lower
 
