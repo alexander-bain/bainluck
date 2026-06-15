@@ -124,6 +124,55 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# --- Card recycling for exhausted feeds (heavy users hit a hard "all caught up"
+# wall once they've impressioned the fresh candidate pool; user_seen_markets is
+# empty in prod, so the wall is the DiscoverInteraction impression suppression at
+# seen_suppression_hours). Recycling re-shows a previously-seen card ONLY if it
+# went stale enough to read as new again (FEED_RECYCLE_AFTER_HOURS) AND is still
+# worth it (live/contested or moved materially in 24h). Recycled cards carry a
+# score penalty so fresh un-seen cards always outrank them — recycling therefore
+# only surfaces when the fresh pool can't fill the page (an implicit serving
+# floor). Fresh users (no impressions) are unaffected. All tunable via env. ---
+FEED_RECYCLE_ENABLED = os.getenv("FEED_RECYCLE_ENABLED", "true").lower() == "true"
+FEED_RECYCLE_AFTER_HOURS = float(os.getenv("FEED_RECYCLE_AFTER_HOURS", "12"))
+FEED_RECYCLE_MATERIALITY = float(os.getenv("FEED_RECYCLE_MATERIALITY", "0.08"))
+FEED_RECYCLE_PENALTY = float(os.getenv("FEED_RECYCLE_PENALTY", "25"))
+# An outcome probability in this band counts the market as still "live"/contested.
+_FEED_RECYCLE_LIVE_LO = 0.12
+_FEED_RECYCLE_LIVE_HI = 0.88
+
+
+def _futures_recycle_eligible(market, ctx, now) -> bool:
+    """Whether a previously-seen futures market may be recycled into an exhausted
+    feed.
+
+    True only if it was last seen at least FEED_RECYCLE_AFTER_HOURS ago (so it
+    reads as new again — a soft recycle, not infinite repetition) AND is still
+    worth re-showing: a contested/live outcome OR a material 24h move. Returns
+    False when recycling is disabled. Missing last-seen timestamps (e.g. from the
+    user_seen_markets supplement) skip only the age guard.
+    """
+    if not FEED_RECYCLE_ENABLED:
+        return False
+    last_seen = ctx.recent_seen_futures_at.get(market.id)
+    if last_seen is not None:
+        age_hours = (now - last_seen).total_seconds() / 3600.0
+        if age_hours < FEED_RECYCLE_AFTER_HOURS:
+            return False
+    moved = False
+    competitive = False
+    for o in market.outcomes:
+        ch = o.probability_change_24h
+        if ch is not None and abs(float(ch)) >= FEED_RECYCLE_MATERIALITY:
+            moved = True
+        p = o.current_probability
+        if p is not None and _FEED_RECYCLE_LIVE_LO <= float(p) <= _FEED_RECYCLE_LIVE_HI:
+            competitive = True
+        if moved and competitive:
+            break
+    return moved or competitive
+
+
 _DISCOVER_ACTIONS = {
     "impression",
     "detail_click",
@@ -2900,6 +2949,8 @@ async def _load_personalization_context(
     )
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
+    recent_seen_event_at: dict[int, datetime] = {}
+    recent_seen_futures_at: dict[int, datetime] = {}
     recent_dismissed_event_ids: set[int] = set()
     recent_dismissed_futures_ids: set[int] = set()
     recent_dismissed_story_keys: set[str] = set()
@@ -2941,8 +2992,10 @@ async def _load_personalization_context(
             ):
                 if item_type == "event":
                     recent_seen_event_ids.add(item_id)
+                    recent_seen_event_at[item_id] = last_seen_dt
                 elif item_type == "futures":
                     recent_seen_futures_ids.add(item_id)
+                    recent_seen_futures_at[item_id] = last_seen_dt
 
     # Supplement seen IDs from user_seen_markets table (written by the
     # predictions/Higher-Lower flow). This table tracks markets the user
@@ -3016,6 +3069,8 @@ async def _load_personalization_context(
         discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
+        recent_seen_event_at=recent_seen_event_at,
+        recent_seen_futures_at=recent_seen_futures_at,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
         recent_dismissed_futures_ids=recent_dismissed_futures_ids,
         recent_dismissed_story_keys=recent_dismissed_story_keys,
@@ -4832,11 +4887,18 @@ async def _score_futures(
 
     scored_items = []
     for market in markets:
+        is_recycled = False
         if not my_teams_only:
             if market.id in ctx.recent_dismissed_futures_ids:
                 continue
             if market.id in ctx.recent_seen_futures_ids:
-                continue
+                # Exhausted-feed recycling: re-show a stale-but-still-relevant
+                # seen card (penalized below fresh) instead of walling. Otherwise
+                # keep the hard skip that fresh users rely on.
+                if _futures_recycle_eligible(market, ctx, now):
+                    is_recycled = True
+                else:
+                    continue
             if _should_skip_futures_for_recent_dismissal(
                 market=market,
                 ctx=ctx,
@@ -5183,6 +5245,11 @@ async def _score_futures(
         )
         personalized_score = min(98, int(base_score * p_result.multiplier))
 
+        # Recycled (previously-seen) cards rank below fresh ones, so they only
+        # surface when the fresh pool can't fill the page (implicit serving floor).
+        if is_recycled:
+            personalized_score = max(1, int(personalized_score - FEED_RECYCLE_PENALTY))
+
         # --- "Nah" category hard filter for futures ---
         is_nah = any("sport_nah" in r for r in p_result.reasons)
         if is_nah and not my_teams_only:
@@ -5389,6 +5456,9 @@ async def _score_futures(
             item["base_score"] = base_score
             item["multiplier"] = round(p_result.multiplier, 2)
             item["personalization_reasons"] = p_result.reasons
+
+        if is_recycled:
+            item["recycled"] = True
 
         scored_items.append(item)
     mark_timing("scoring_loop")

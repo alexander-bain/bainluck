@@ -796,7 +796,7 @@ export default function DiscoverPage() {
               All caught up!
             </p>
             <p className="text-sm mt-1">
-              Check back later for new markets
+              New markets open throughout the day — check back soon
             </p>
           </div>
         )}

@@ -27,6 +27,7 @@ Multiplier sources (applied additively, then clamped):
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 from app.utils.league_classification import get_league_class
@@ -99,6 +100,12 @@ class PersonalizationContext:
     # broad ranking: avoid showing the same stale card repeatedly.
     recent_seen_event_ids: set[int] = field(default_factory=set)
     recent_seen_futures_ids: set[int] = field(default_factory=set)
+    # item_id → last-impression timestamp (within the seen window). Powers bounded
+    # card recycling for exhausted feeds: a seen card can be re-shown after
+    # FEED_RECYCLE_AFTER_HOURS if it's still live or has moved materially, instead
+    # of walling heavy users at "all caught up".
+    recent_seen_event_at: dict[int, datetime] = field(default_factory=dict)
+    recent_seen_futures_at: dict[int, datetime] = field(default_factory=dict)
     recent_dismissed_event_ids: set[int] = field(default_factory=set)
     recent_dismissed_futures_ids: set[int] = field(default_factory=set)
     recent_dismissed_story_keys: set[str] = field(default_factory=set)
