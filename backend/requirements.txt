@@ -4,7 +4,7 @@
 # iteration (test_startup route count + test_mlb_api path scans) repo-wide — CI
 # went red on unrelated commits with no code change. This pair is the validated
 # known-good combo (full backend suite green locally). Re-evaluate before bumping.
-fastapi==0.136.3
+fastapi==0.137.1
 starlette==1.1.0
 uvicorn[standard]>=0.27.0
 python-dotenv>=1.2.2
