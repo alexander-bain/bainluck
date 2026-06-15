@@ -4808,6 +4808,55 @@ async def get_team_progression(
     return _response
 
 
+def _extend_win_prob_history_to_live_edge(
+    win_prob_history: dict,
+    win_prob_sources_meta: dict,
+    *,
+    is_live: bool,
+    now: datetime,
+    min_stale_seconds: float = 30.0,
+) -> int:
+    """Carry each win-prob series forward to ``now`` on a live game (#920).
+
+    The snapshot dedup (``_create_or_update_win_prob_snapshot``) only writes a new
+    row when the probability VALUE changes, so a stable live game (a blowout, or a
+    quiet stretch) emits no new points and the chart's win-prob right edge freezes
+    while the hero (odds/aggregate) keeps moving. Append a synthetic point at
+    ``now`` carrying each source's last known value so the line tracks the live
+    clock. Spend-free: no snapshots written, no API calls. No-op when not live or
+    when the real edge is already within ``min_stale_seconds`` of now. Mutates
+    ``win_prob_history`` in place; returns the number of series extended.
+    """
+    if not is_live:
+        return 0
+    live_now = now.replace(microsecond=0)
+    extended = 0
+    for source_key, pts in win_prob_history.items():
+        if not pts:
+            continue
+        last = pts[-1]
+        try:
+            last_ts = datetime.fromisoformat(last["timestamp"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=timezone.utc)
+        if (live_now - last_ts).total_seconds() < min_stale_seconds:
+            continue
+        pts.append({
+            "timestamp": live_now.isoformat(),
+            "home_probability": last.get("home_probability"),
+            "away_probability": last.get("away_probability"),
+            "draw_probability": last.get("draw_probability"),
+            "game_state": last.get("game_state"),
+            "live_edge": True,
+        })
+        if source_key in win_prob_sources_meta:
+            win_prob_sources_meta[source_key]["snapshot_count"] = len(pts)
+        extended += 1
+    return extended
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,
@@ -5388,6 +5437,17 @@ async def get_event_odds_history(
     # ── Compute backend aggregate line using the aggregation engine ──
     # Combines sportsbook consensus + all win prob sources into a single
     # weighted-median time series with staleness decay and smoothing.
+    # Live-edge: carry each win-prob series forward to "now" on a live game (#920)
+    # so the chart tracks the live clock instead of freezing at the last value-
+    # change (the snapshot dedup only emits a row on a probability change). Placed
+    # before aggregate_line (computed from win_prob_history) so it propagates there.
+    _extend_win_prob_history_to_live_edge(
+        win_prob_history,
+        win_prob_sources_meta,
+        is_live=(not is_finished and (event.status or "").lower() == "live"),
+        now=now,
+    )
+
     aggregate_line = []
     try:
         from app.utils.aggregation import compute_aggregated_probability, TimestampedProb
