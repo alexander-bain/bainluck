@@ -21,9 +21,11 @@ interface TournamentCardProps {
 
 export default function TournamentCard({ tournament, leaderboard, href: hrefOverride }: TournamentCardProps) {
   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
-  const tour = tournament.tour?.toLowerCase() || "pga";
-  const tourSlug = tour === "dp_world" ? "dpworld" : tour === "korn_ferry" ? "kft" : tour;
-  const href = hrefOverride || `/sport/golf/${tourSlug}/${slug}`;
+  // Golf tournament rows must land on the golf tournament detail surface
+  // (/categories/golf/tournaments/[slug]), NOT the generic /sport market page —
+  // the latter is a generic event/market template that doesn't render the golf
+  // tournament view (leaderboard, outrights, props). (#926, SEQUENCE 000b)
+  const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
 
   // Cup events (Ryder Cup, Presidents Cup, etc.) with exactly 2 teams
   // get a head-to-head layout instead of leader + chasers
