@@ -1,5 +1,11 @@
 # Core Framework
-fastapi>=0.109.0
+# Pinned 2026-06-15: an unpinned fastapi/starlette upgrade (>starlette 1.1.0)
+# introduced a lazy `_IncludedRouter` in `router.routes`, breaking app route
+# iteration (test_startup route count + test_mlb_api path scans) repo-wide — CI
+# went red on unrelated commits with no code change. This pair is the validated
+# known-good combo (full backend suite green locally). Re-evaluate before bumping.
+fastapi==0.136.3
+starlette==1.1.0
 uvicorn[standard]>=0.27.0
 python-dotenv>=1.2.2
 
