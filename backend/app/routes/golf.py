@@ -285,6 +285,37 @@ _NON_WINNER_MARKET_RE = re.compile(
     re.I,
 )
 
+# Positive outright-winner signal — paired with _NON_WINNER_MARKET_RE (which
+# excludes props like "Nationality of Winner") to detect a true winner field.
+_WINNER_MARKET_RE = re.compile(r"\b(?:winner|to\s+win)\b", re.I)
+
+
+def _golf_winner_renorm_factor(
+    market_name: str, n_outcomes: int, prob_sum: float
+) -> float | None:
+    """Renormalization factor for a golf winner market, or None to skip it (#926).
+
+    Kalshi tournament-WINNER markets are independent per-golfer binaries that sum
+    well over 100% (gotcha #23). They represent a real field, so we renormalize
+    them to sum 1.0 (factor = 1/sum) instead of dropping them at the >1.5
+    participation-market skip — but ONLY when there's a positive winner signal,
+    ≥4 candidates, and it isn't a participation/threshold/prop market. Markets
+    summing <=1.5 are returned with factor 1.0 (used as-is, unchanged — keeps the
+    existing majors like the 1.483-sum U.S. Open winner identical). Genuine
+    participation markets (make-cut, top-N, round-leader, scores) return None.
+    """
+    if prob_sum <= 1.5:
+        return 1.0
+    is_winner_field = (
+        n_outcomes >= 4
+        and bool(_WINNER_MARKET_RE.search(market_name))
+        and not _NON_WINNER_MARKET_RE.search(market_name)
+    )
+    if is_winner_field and prob_sum > 0:
+        return 1.0 / prob_sum
+    return None
+
+
 # Women's / LPGA detection
 _WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies)\b", re.I)
 
@@ -911,10 +942,15 @@ def _extract_prop_market(market, source_label: str) -> dict | None:
 
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
-    prob_24h_ago: dict[int, float],
+    prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
 ) -> None:
-    """Aggregate a single outcome into golfer_data, tracking sources and movement."""
-    prob = float(outcome.current_probability)
+    """Aggregate a single outcome into golfer_data, tracking sources and movement.
+
+    `prob_scale` renormalizes independent-binary winner fields (gotcha #23, #926)
+    to sum 1.0; it is applied consistently to the stored probability, the 24h
+    delta, and the opening probability so movement isn't distorted.
+    """
+    prob = float(outcome.current_probability) * prob_scale
     raw_name = outcome.name.strip()
 
     if raw_name.lower() in ("tie", "field", "other", "the field"):
@@ -938,19 +974,21 @@ def _aggregate_golfer_outcome(
     golfer_data[key]["sources"][source_label] = round(prob, 3)
 
     if outcome.id in prob_24h_ago:
-        delta = prob - prob_24h_ago[outcome.id]
+        delta = prob - prob_24h_ago[outcome.id] * prob_scale
         if abs(delta) >= 0.001:
             existing = golfer_data[key]["movement_24h"]
             if existing is None or abs(delta) > abs(existing):
                 golfer_data[key]["movement_24h"] = round(delta, 4)
 
     if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
-        change = float(outcome.probability_change_24h)
+        change = float(outcome.probability_change_24h) * prob_scale
         if abs(change) >= 0.001:
             golfer_data[key]["movement_24h"] = round(change, 4)
 
     if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
-        golfer_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
+        golfer_data[key]["opening_probability"] = round(
+            float(outcome.opening_probability) * prob_scale, 3
+        )
 
 
 def _build_tournament_entry(
@@ -1309,13 +1347,19 @@ async def get_golf(
                 if outcome_names & {"yes", "no"}:
                     continue
 
-            # Skip participation/field markets (prob sum >> 1)
+            # Skip participation/field markets (prob sum >> 1) — EXCEPT Kalshi
+            # tournament-WINNER fields, which are independent per-golfer binaries
+            # that also sum >100% (gotcha #23); those get renormalized to a real
+            # field instead of dropped (#926). Markets summing <=1.5 are unchanged.
             outcome_prob_sum = sum(
                 float(o.current_probability)
                 for o in market.outcomes
                 if o.current_probability is not None
             )
-            if outcome_prob_sum > 1.5:
+            renorm_factor = _golf_winner_renorm_factor(
+                market.name, len(market.outcomes), outcome_prob_sum
+            )
+            if renorm_factor is None:
                 continue
 
             # Non-winner markets go to props
@@ -1329,10 +1373,13 @@ async def get_golf(
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
                     continue
-                prob = float(outcome.current_probability)
-                if source == "kalshi" and prob == 0.5:
+                # Skip Kalshi untraded mid (raw 0.5) before any renormalization.
+                if source == "kalshi" and float(outcome.current_probability) == 0.5:
                     continue
-                _aggregate_golfer_outcome(outcome, source_label, golfer_data, prob_24h_ago)
+                _aggregate_golfer_outcome(
+                    outcome, source_label, golfer_data, prob_24h_ago,
+                    prob_scale=renorm_factor,
+                )
 
         entry = _build_tournament_entry(
             tourn_key, tourn_markets, golfer_data, prop_markets_list,
