@@ -246,10 +246,14 @@ export default function TournamentProgressionTable({
                 </span>
               </th>
               {/* Stage columns */}
-              {data.stages.map((stage) => (
+              {data.stages.map((stage) => {
+                // Resolved (season-state decided) columns are de-emphasized so
+                // they no longer read as live probability bars (#927).
+                const isResolved = !!stage.resolved;
+                return (
                 <th
                   key={stage.key}
-                  className="py-2 px-2 text-center text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors whitespace-nowrap"
+                  className={`py-2 px-2 text-center font-medium cursor-pointer transition-colors whitespace-nowrap ${isResolved ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}
                   onClick={() => handleSort(stage.key)}
                 >
                   {stage.market_id ? (
@@ -276,8 +280,14 @@ export default function TournamentProgressionTable({
                       )}
                     </span>
                   )}
+                  {isResolved && (
+                    <span className="block text-[9px] font-normal text-text-muted uppercase tracking-wide mt-0.5">
+                      decided
+                    </span>
+                  )}
                 </th>
-              ))}
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -340,12 +350,15 @@ export default function TournamentProgressionTable({
                         return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
                       }).join(" · ")
                     : undefined;
-                  const bw = barWidth(prob);
+                  const isResolved = !!stage.resolved;
+                  // Resolved columns: no live bar, no change indicator — a muted
+                  // decided glyph (in@✓ / out@—) so it can't read as a live bar.
+                  const bw = isResolved ? 0 : barWidth(prob);
                   return (
                     <td
                       key={stage.key}
                       className="py-1.5 px-2 text-center relative"
-                      title={tooltip}
+                      title={isResolved ? "Decided" : tooltip}
                     >
                       {/* Inline data bar — scaled width, single-hue accent */}
                       {bw > 0 && (
@@ -355,11 +368,19 @@ export default function TournamentProgressionTable({
                         />
                       )}
                       <div className="flex flex-col items-center relative">
-                        <span className={`font-mono text-sm ${probTextClass(prob, status)}`}>
-                          {status === "clinched" ? "✓" : formatProb(prob)}
-                        </span>
-                        <SourceBreakdown sources={sources ?? []} />
-                        <ChangeIndicator change={change} />
+                        {isResolved ? (
+                          <span className="font-mono text-sm text-text-muted">
+                            {prob != null && prob >= 0.5 ? "✓" : "—"}
+                          </span>
+                        ) : (
+                          <>
+                            <span className={`font-mono text-sm ${probTextClass(prob, status)}`}>
+                              {status === "clinched" ? "✓" : formatProb(prob)}
+                            </span>
+                            <SourceBreakdown sources={sources ?? []} />
+                            <ChangeIndicator change={change} />
+                          </>
+                        )}
                       </div>
                     </td>
                   );

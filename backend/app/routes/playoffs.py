@@ -2246,6 +2246,26 @@ async def get_playoff_grid_cached(
     return result
 
 
+def _grid_column_resolved(teams: list, key: str, eps: float = 0.01) -> bool:
+    """Whether a grid column is season-state RESOLVED (#927).
+
+    A column is resolved when every team that has a cell for it is decided —
+    its merged_probability is within ε of 0 (eliminated) or 1 (clinched). This is
+    a DERIVED display signal only: it reads the existing probabilities and never
+    mutates them or the column set, so grid accuracy is untouched. Empty columns
+    are treated as not-resolved (nothing to collapse). E.g. mid-June NBA
+    make_playoffs/division resolve; MLB make_playoffs (live spread) does not.
+    """
+    probs = []
+    for t in teams:
+        cell = (t.get("cells") or {}).get(key)
+        if cell and cell.get("merged_probability") is not None:
+            probs.append(float(cell["merged_probability"]))
+    if not probs:
+        return False
+    return all(p <= eps or p >= 1.0 - eps for p in probs)
+
+
 async def get_playoff_grid(
     league_slug: str,
     hours: int = None,
@@ -3103,6 +3123,10 @@ async def get_playoff_grid(
                 "sequential": col.sequential,
                 "market_id": col_market_id,
                 "market_ids": col_market_ids_unique,
+                # Derived display signal (#927): true when every team is decided
+                # (0/1) for this column, so the frontend can de-emphasize it instead
+                # of showing dead "live" bars. Does not change probabilities/columns.
+                "resolved": _grid_column_resolved(teams, col.key),
             })
 
     # Group teams by conference if configured

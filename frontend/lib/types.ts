@@ -1227,6 +1227,9 @@ export interface ProgressionStage {
   order: number;
   market_id: number | null;
   market_name: string | null;
+  /** Derived (#927): championship-grid column where every team is decided (0/1);
+   *  rendered de-emphasized as "decided" instead of live bars. */
+  resolved?: boolean;
 }
 
 export interface ProgressionParticipant {
@@ -1309,6 +1312,9 @@ export interface ChampionshipGridColumn {
   market_id?: number | null;
   /** All market IDs for this column (cross-source aggregation) */
   market_ids?: number[];
+  /** Derived (#927): true when every team is decided (0/1) for this column, so
+   *  it can be de-emphasized instead of rendered as live probability bars. */
+  resolved?: boolean;
 }
 
 export interface ChampionshipGridCellSource {

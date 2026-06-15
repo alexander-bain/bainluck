@@ -77,6 +77,7 @@ function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse 
     order: c.order,
     market_id: null,
     market_name: null,
+    resolved: c.resolved ?? false,
   }));
 
   const participants: ProgressionParticipant[] = (grid.teams || []).map((t) => {

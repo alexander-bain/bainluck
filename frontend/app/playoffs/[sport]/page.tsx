@@ -81,6 +81,7 @@ function teamsToProgression(
     order: c.order,
     market_id: null,
     market_name: null,
+    resolved: c.resolved ?? false,
   }));
 
   const participants: ProgressionParticipant[] = teams.map((t) => {
