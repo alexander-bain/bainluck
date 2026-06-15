@@ -171,6 +171,104 @@ def _build_digest(findings: list[dict], date: str, mode: str) -> str:
     return body
 
 
+REPO = "alexander-bain/bainluck"
+
+# Module → theme-tracker issue. Deduped findings are appended as COMMENTS to these
+# trackers instead of spawning a fresh dated digest issue every sweep (the board-
+# bloat source, SEQUENCE 000d-filer). Modules with no mapped tracker fall through
+# to the single rolling "Manus digest log" issue. Discovery is unchanged — only
+# WHERE findings land changes; fingerprints are preserved so dedup keeps working.
+MODULE_TRACKERS: dict[str, int] = {
+    "feed": 921,
+    "event_detail": 921,
+    "cross_page": 871,
+    "chart_timing": 922,
+    "grid": 923,
+    "market_completeness": 826,
+    "league_page": 901,
+    "category_page": 884,
+}
+ROLLING_LOG_TITLE = "Manus digest log (rolling)"
+
+
+def _tracker_for_module(module: str) -> int | None:
+    return MODULE_TRACKERS.get((module or "").strip().lower())
+
+
+def _find_or_create_rolling_log(gh_run=subprocess.run) -> int | None:
+    """Find the single rolling 'Manus digest log' issue, or create it once.
+
+    The create is the ONLY `gh issue create` this filer ever does, and only when
+    the rolling log doesn't yet exist (or for unmapped-module findings) — never a
+    per-sweep digest issue.
+    """
+    try:
+        r = gh_run(
+            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+             "--search", f"{ROLLING_LOG_TITLE} in:title", "--json", "number", "--limit", "1"],
+            capture_output=True, text=True, timeout=15,
+        )
+        items = json.loads(r.stdout or "[]")
+        if items:
+            return items[0]["number"]
+    except Exception:
+        pass
+    try:
+        gh_run(
+            ["gh", "label", "create", "manus-digest", "--repo", REPO,
+             "--description", "Automated Manus sweep digest", "--color", "d4c5f9"],
+            capture_output=True, timeout=10,
+        )
+    except Exception:
+        pass
+    r = gh_run(
+        ["gh", "issue", "create", "--repo", REPO, "--title", ROLLING_LOG_TITLE,
+         "--label", "alert-intake,type:ops,manus-digest",
+         "--body", "Rolling home for Manus sweep findings without a theme tracker. "
+                   "Each sweep appends a deduped comment here (fingerprints preserved)."],
+        capture_output=True, text=True, timeout=15,
+    )
+    if getattr(r, "returncode", 1) == 0 and r.stdout:
+        m = re.search(r"/issues/(\d+)", r.stdout)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _file_findings(new_findings: list[dict], date: str, mode: str, *,
+                   dry_run: bool = False, gh_run=subprocess.run) -> dict:
+    """Route deduped findings to theme trackers (comments) + a rolling log for
+    unmapped modules, instead of one new issue per sweep. Returns a routing plan."""
+    by_tracker: dict[int, list] = {}
+    unmapped: list[dict] = []
+    for f in new_findings:
+        tn = _tracker_for_module(f.get("module", ""))
+        if tn:
+            by_tracker.setdefault(tn, []).append(f)
+        else:
+            unmapped.append(f)
+
+    plan = {
+        "trackers": {tn: len(items) for tn, items in sorted(by_tracker.items())},
+        "unmapped": len(unmapped),
+    }
+    if dry_run:
+        return plan
+
+    for tn, items in sorted(by_tracker.items()):
+        body = _build_digest(items, date, mode)
+        gh_run(["gh", "issue", "comment", str(tn), "--repo", REPO, "--body", body],
+               capture_output=True, text=True, timeout=15)
+    if unmapped:
+        log_num = _find_or_create_rolling_log(gh_run=gh_run)
+        if log_num:
+            gh_run(["gh", "issue", "comment", str(log_num), "--repo", REPO,
+                    "--body", _build_digest(unmapped, date, mode)],
+                   capture_output=True, text=True, timeout=15)
+            plan["rolling_log"] = log_num
+    return plan
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manus intake: parse + dedup + digest")
     parser.add_argument("--date", help="Process specific date (YYYY-MM-DD)")
@@ -221,37 +319,26 @@ def main():
         print("No new findings — no digest to file")
         return
 
-    digest = _build_digest(new_findings, date, mode)
-
     if args.dry_run:
+        plan = _file_findings(new_findings, date, mode, dry_run=True)
         print("\n" + "=" * 60)
-        print("DRY RUN — would file this digest:")
+        print("DRY RUN — routing plan (NO new per-day issue):")
         print("=" * 60)
-        print(digest)
+        for tn, n in plan["trackers"].items():
+            print(f"  → comment {n} finding(s) on theme tracker #{tn}")
+        if plan["unmapped"]:
+            print(f"  → comment {plan['unmapped']} unmapped finding(s) on the rolling '{ROLLING_LOG_TITLE}'")
+        if not plan["trackers"] and not plan["unmapped"]:
+            print("  (nothing to route)")
+        print("\n--- digest preview ---")
+        print(_build_digest(new_findings, date, mode))
         return
 
-    # File the digest issue
-    try:
-        # Create manus-digest label if needed
-        subprocess.run(
-            ["gh", "label", "create", "manus-digest", "--repo", "alexander-bain/bainluck",
-             "--description", "Automated Manus sweep digest", "--color", "d4c5f9"],
-            capture_output=True, timeout=10,
-        )
-    except Exception:
-        pass
-
-    result = subprocess.run(
-        ["gh", "issue", "create", "--repo", "alexander-bain/bainluck",
-         "--title", f"Manus digest — {date} ({mode}): {len(new_findings)} findings",
-         "--label", "alert-intake,type:ops,manus-digest",
-         "--body", digest],
-        capture_output=True, text=True, timeout=15,
-    )
-    if result.returncode == 0:
-        print(f"Filed: {result.stdout.strip()}")
-    else:
-        print(f"Failed to file: {result.stderr[:200]}")
+    # Route to theme trackers + rolling log (no per-sweep digest issue).
+    plan = _file_findings(new_findings, date, mode)
+    routed = sum(plan["trackers"].values()) + plan["unmapped"]
+    print(f"Routed {routed} findings: trackers={plan['trackers']}"
+          + (f", rolling_log=#{plan.get('rolling_log')}" if plan.get("rolling_log") else ""))
 
 
 if __name__ == "__main__":
