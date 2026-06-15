@@ -314,6 +314,9 @@ export interface ActiveChartPoint {
   awayScore?: number | null;
   period?: string | null;
   clock?: string | null;
+  /** True when `clock` was carried forward from an earlier snapshot (gap-filled
+   * minute) rather than observed at this point — render it as approximate (#925). */
+  clockApprox?: boolean;
   scoringPlay?: ScoringPlay | null;
 }
 

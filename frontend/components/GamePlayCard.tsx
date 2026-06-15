@@ -1,5 +1,6 @@
 "use client";
 
+import { format, parseISO } from "date-fns";
 import type { ActiveChartPoint } from "@/lib/types";
 
 interface GamePlayCardProps {
@@ -57,16 +58,35 @@ export default function GamePlayCard({
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
   const periodDisplay = formatPeriod(point.period);
-  const clockDisplay = point.clock || "";
-  const timeDisplay = [periodDisplay, clockDisplay].filter(Boolean).join(" · ");
+  // Game clock is shown only when genuinely observed; a value carried forward from
+  // an earlier snapshot is marked approximate ("~") rather than shown as exact, and
+  // when there's no clock at all we fall back to the period, then to "—" (#925).
+  const clockText = point.clock ? `${point.clockApprox ? "~" : ""}${point.clock}` : "";
+  const gameState =
+    [periodDisplay, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
+  let timeOfDay = "";
+  try {
+    timeOfDay = format(parseISO(point.timestamp), "h:mm a");
+  } catch {
+    timeOfDay = "";
+  }
 
   return (
     <div className="mt-3 border-t border-surface-border pt-3">
       <div className="flex items-start gap-3">
-        {/* Time/Period badge */}
-        {timeDisplay && (
-          <div className="shrink-0 text-xs text-text-muted font-medium bg-surface-secondary px-2 py-1 rounded">
-            {timeDisplay}
+        {/* Game-state badge: period + clock (top), time of day (bottom) */}
+        {(gameState || timeOfDay) && (
+          <div className="shrink-0 flex flex-col items-start gap-0.5">
+            {gameState && (
+              <span className="text-xs text-text-primary font-semibold tabular-nums bg-surface-secondary px-2 py-1 rounded">
+                {gameState}
+              </span>
+            )}
+            {timeOfDay && (
+              <span className="text-[10px] text-text-muted px-2 tabular-nums">
+                {timeOfDay}
+              </span>
+            )}
           </div>
         )}
 

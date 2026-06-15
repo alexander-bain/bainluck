@@ -118,8 +118,10 @@ interface ChartDataPoint {
   _awayScore?: number | null;
   _period?: string | null;
   _clock?: string | null;
+  /** True when `_clock` was carried forward from an earlier snapshot (#925). */
+  _clockApprox?: boolean;
   _scoringPlay?: ScoringPlay | null;
-  [key: string]: string | number | null | undefined | ScoringPlay;
+  [key: string]: string | number | boolean | null | undefined | ScoringPlay;
 }
 
 /** Resolved source info used for rendering */
@@ -732,8 +734,16 @@ export default function OddsChart({
       else pt._awayScore = lastScore.away;
       if (pt._period) lastPeriod = pt._period as string;
       else pt._period = lastPeriod;
-      if (pt._clock) lastClock = pt._clock as string;
-      else pt._clock = lastClock;
+      // Track clock exactness: a point that carries its OWN clock is exact; a
+      // gap-filled minute inherits the last clock and must be flagged approximate
+      // so the readout never shows a stale carry-forward as if live (#925).
+      if (pt._clock) {
+        lastClock = pt._clock as string;
+        pt._clockApprox = false;
+      } else {
+        pt._clock = lastClock;
+        pt._clockApprox = lastClock != null;
+      }
     }
 
     return sorted;
@@ -983,10 +993,10 @@ export default function OddsChart({
         : [];
 
       return (
-        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-white/10 max-w-sm">
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-surface-border max-w-sm">
           {/* Game state header — score, period, clock */}
           {hasGameState ? (
-            <div className="mb-2 pb-2 border-b border-white/10">
+            <div className="mb-2 pb-2 border-b border-surface-border">
               <div className="flex items-center justify-between gap-3">
                 {matchingPoint._homeScore != null && matchingPoint._awayScore != null ? (
                   <span className="text-sm font-bold text-text-primary font-mono">
@@ -1013,7 +1023,7 @@ export default function OddsChart({
           {matchingPoint?._scoringPlay && (() => {
             const play = matchingPoint._scoringPlay as ScoringPlay;
             return (
-              <div className="mb-2 pb-2 border-b border-white/10">
+              <div className="mb-2 pb-2 border-b border-surface-border">
                 <p className="text-xs font-semibold text-amber-400 flex items-center gap-1">
                   <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
                   {play.description || play.type}
@@ -1024,7 +1034,7 @@ export default function OddsChart({
 
           {/* Multi-source mode: Bain Luck aggregated first, then individual sources */}
           {isMultiSource && bainLuckEntry && (
-            <div className="mb-2 pb-2 border-b border-white/10">
+            <div className="mb-2 pb-2 border-b border-surface-border">
               <p className="text-xs text-text-muted mb-0.5">
                 {BAIN_LUCK_CONFIG.displayName}
                 <span className="text-text-muted ml-1">(aggregated)</span>
@@ -1070,7 +1080,7 @@ export default function OddsChart({
 
           {/* Bookmaker breakdown (sportsbooks-only mode) */}
           {bookmakerEntries.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-white/10">
+            <div className="mt-2 pt-2 border-t border-surface-border">
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
@@ -1186,6 +1196,7 @@ export default function OddsChart({
                 awayScore: pt._awayScore as number | null | undefined,
                 period: pt._period as string | null | undefined,
                 clock: pt._clock as string | null | undefined,
+                clockApprox: pt._clockApprox as boolean | undefined,
                 scoringPlay: pt._scoringPlay as ScoringPlay | null | undefined,
               });
             }}
