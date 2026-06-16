@@ -1,25 +1,15 @@
-Starting the Event Detail Deep Audit for bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit of each event detail page.
+Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then systematically audit each event detail page against the full checklist.
 
-Events selected. Now auditing each event detail page. I've selected:
-1. LIVE: Helsingborgs IF vs IFK Värnamo (Soccer)
-2. LIVE: U.S. Open Golf
-3. COMPLETED: Minnesota Twins vs Texas Rangers (MLB)
-4. COMPLETED: Las Vegas Aces vs Dallas Wings (WNBA)
-5. UPCOMING: New York Mets vs Cincinnati Reds (MLB)
-6. UPCOMING: San Francisco Giants vs Atlanta Braves (MLB)
+Events selected. Now auditing each of the 6 event detail pages against the full checklist. Starting with Event 1 (Toronto Blue Jays at Boston Red Sox - LIVE).
 
-Beginning detailed audit of each page now.
+I have completed the deep audit of the 6 event detail pages on bainluck.com according to your instructions. 
 
-The event detail deep audit is complete. I have audited 6 events across Soccer, MLB, WNBA, and Golf (covering LIVE, FINAL, and UPCOMING statuses). 
+The audit covered 2 live events, 2 completed events, and 2 upcoming events across 3 different sports (MLB, Soccer, and Tennis). I have compiled the findings into the structured report you requested and captured both desktop and mobile screenshots for all 6 events.
 
-The detailed audit report has been compiled and is attached as a Markdown file, following your exact required format and scoring rubric. I have also attached a ZIP file containing all the desktop and mobile screenshots taken during the audit.
-
-The overall health score for the event detail pages came out to **52 / 100**, primarily due to some critical chart rendering issues on the golf page and missing score differential charts on some completed MLB games, as well as a UX disconnect between pre-game odds shown in the hero versus the final odds in the chart.
-
-Please review the attached report for the complete breakdown of passes, fails, warnings, and suggested improvements.
+Please find the complete audit report and the ZIP file containing all the screenshots attached. The overall health score calculated based on your rubric is 52/100, primarily due to discrepancies between hero and chart probabilities on completed games, and incorrect basketball terminology appearing on player props for other sports.
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/3YembUpNrUr6nFdH2ukThG/sandbox/An232epH4oPymOk1NsgZsf_1781635345393_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvM1llbWJVcE5yVXI2bkZkSDJ1a1RoRy9zYW5kYm94L0FuMjMyZXBING9QeW1PazFOc2dac2ZfMTc4MTYzNTM0NTM5M19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJGMVpHbDBYM0psY0c5eWRBLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=q7ChboB4TciIZWxUZbk6H4Sl8EnUelRt95d2MnPTt84EgIaEs~6VXccn7g4u0Fr8QSmxJL5IjgqE1Iu0EqPLHJILbUjN~I8wGiGoUnmsXy4Ob-Z43dlCXZ8K4TISop~QOmOcB02p2gHon7l5mo9dGLZe1vtae8DGKqC8f5Dr0roi1E9Ka0fqFFr0du-m6cmJlWoYQBfgiqPesUCR2zIezLPfgjUtBTrSMjhQAzn1-1drOtY5rAO0bB-vNpKCQO0tcBbnfMmBZUD-NKW2-NyxJmFVC-m86o4x3CQTKq~n9Y6RJVyh9rd6SlnKlxBX6UJhs7huo28jWbTXizCWLc4hZw__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/eurEK9uBkLDDgAja5UnWsw/sandbox/3Xe1uM1y6WkoBmtuTvIjb7_1781652910487_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZXVyRUs5dUJrTEREZ0FqYTVVbldzdy9zYW5kYm94LzNYZTF1TTF5Nldrb0JtdHVUdklqYjdfMTc4MTY1MjkxMDQ4N19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJGMVpHbDBYM0psY0c5eWRBLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=HBp2uSa4ZpedK1UQ3xi-dJTCuVB53Z3QmHyz8B47KnwbrhYDqQcDDFAKQfh3Une~5uEqbMLc7721dRFgy5bg-C~I3x-1PUq-9ejNbPJmK~djSos41YlsKQmLjR3PJZdoNoYkfN2rnGTQDbWbqS1JLTZjbKGW-dzKXm8fsEWDyzrle0tBlSbwU~QXtjMByXXXkxIaHwiO-KTwum3yR5mzQCnZRAP7WJAxIRgh60N8HLrS~mXJMkU2fpF6apOs2BnQF5kyzLEM3ITWJifHe5M2f9RbkC~51IMZmXMtU9IiEeoQ5kMbJuuMchb1pOhJuOOug912eKmKCKlDtdD3rWwpoQ__
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/3YembUpNrUr6nFdH2ukThG/sandbox/An232epH4oPymOk1NsgZsf_1781635345393_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvM1llbWJVcE5yVXI2bkZkSDJ1a1RoRy9zYW5kYm94L0FuMjMyZXBING9QeW1PazFOc2dac2ZfMTc4MTYzNTM0NTM5M19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=hFAGJulHj8dpWIi9qPeYxvVT1mqy6AzT0GKGXtu4kMDVjsahC0yue7Vr1bjzwrd6m2Mas~fYgxLEcsYW~afWiijmTMoX0IRa7yt-kgqjbUSte-piGvsdD2p1dBJfgrpphBKw8lTsWwnC~g8hJeJ4roe8YFuHeky5DU1aNnjB-gPgzmvOqJ-v5tMW-Wyr2EuYqkx1cFqZTk6Njc4tVQ7fO00mqwPnvt~LuoXxQeyx~p6a2n2wyUJ7bmHeFyDaXLw~jB1oHBBLJc-21d3t81X35NE8knleLCAEhALysYqydlr-cvxpsghveMnwreOTv5a28UDg9iX~rhnKj4QlkWRcdw__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/eurEK9uBkLDDgAja5UnWsw/sandbox/3Xe1uM1y6WkoBmtuTvIjb7_1781652910487_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZXVyRUs5dUJrTEREZ0FqYTVVbldzdy9zYW5kYm94LzNYZTF1TTF5Nldrb0JtdHVUdklqYjdfMTc4MTY1MjkxMDQ4N19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=F~MOkWDqPGcOHcWQKVNVC4ilvv4f2-1CxXWNgoFucCvxiczpOiiDINbwNwOqudSnm6Vf1OeL0VB5aU-M0Rbhn8DLfCBTSZ7gTlWBZwvzh~yziLziXMS3rjlTdZajZaYrOZ1IgglqLQCLnR378hEfHZrYT~SCP2S5uFgl97dMAQ~A9aho2JciCh5bBxO3wrbLxLfEA1XgtTYhzbG~n~RNX2VRdtDcGkCcjIuS3ILXwiTvyLU2MexFw91S7SntU2kw0gJ6bzFn6Uwi64YIEyeS4h-57mfJxI30pTOzRExHau1j1FJjh~lInWuvfz8RHq7rz4HG1CKQLB1TuCIme0jljw__
