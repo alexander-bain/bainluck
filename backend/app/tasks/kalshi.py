@@ -637,6 +637,15 @@ async def _poll_kalshi_markets():
                     # Kalshi returns no pricing (bid/ask/last all NULL), its probability
                     # is stale from a previous poll. Clear it to prevent phantom data
                     # (e.g., Game 2's 1H total pricing showing on Game 3's page).
+                    #
+                    # BUT never wipe a RESOLVED/closed outcome: a settled Kalshi market
+                    # stops returning bid/ask (gotcha #33: it also stays status='open'
+                    # in our DB) and aged-out markets return empty pricing (gotcha #35),
+                    # so without this guard every settled market's final price gets
+                    # nulled on re-poll — corrupting resolved state and masking the
+                    # #898 backlog metric (gotcha #21: never clear resolved data). An
+                    # outcome with is_winner set OR a captured closing line
+                    # (calibration_probability) is past resolution — preserve its price.
                     priced_tickers = {od["market"].ticker for od in outcome_data}
                     all_tickers = {m.ticker for m in event.markets}
                     unpriced_tickers = all_tickers - priced_tickers
@@ -646,6 +655,8 @@ async def _poll_kalshi_markets():
                             .where(
                                 FuturesOutcome.market_id == futures_market_id,
                                 FuturesOutcome.external_id.in_(list(unpriced_tickers)),
+                                FuturesOutcome.is_winner.is_(None),
+                                FuturesOutcome.calibration_probability.is_(None),
                             )
                             .values(
                                 current_probability=None,

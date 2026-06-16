@@ -368,3 +368,43 @@ class TestKalshiPollMetadataBuilding:
             "Undefined variable 'has_multiple_markets' found in "
             "_poll_kalshi_markets — likely a dangling reference after refactor"
         )
+
+
+class TestNullOutStaleOutcomesPreservesResolved:
+    """Regression guard for Queue #63 / gotcha #21 (calibration-corrupting).
+
+    `_poll_kalshi_markets` nulls `current_probability` on outcomes whose Kalshi
+    market returns no pricing (the "phantom data" prevention for active events).
+    But settled Kalshi markets stop returning bid/ask and stay status='open'
+    (gotcha #33), and aged-out markets return empty pricing (gotcha #35) — so
+    without a resolved-state guard, every settled market's final price gets
+    nulled on re-poll, wiping resolved data and masking the #898 backlog metric.
+    The null-out UPDATE MUST exclude outcomes that are already resolved
+    (is_winner set) or have a captured closing line (calibration_probability set).
+    """
+
+    def _kalshi_source(self) -> str:
+        from pathlib import Path
+
+        path = Path(__file__).parent.parent / "app" / "tasks" / "kalshi.py"
+        return path.read_text()
+
+    def test_null_out_stale_excludes_resolved_outcomes(self):
+        src = self._kalshi_source()
+        # Isolate the null-out-stale block (the UPDATE that nulls pricing on
+        # unpriced_tickers) and assert the resolved-state guards are present.
+        assert "unpriced_tickers = all_tickers - priced_tickers" in src, (
+            "null-out-stale block not found — test anchor moved"
+        )
+        start = src.index("unpriced_tickers = all_tickers - priced_tickers")
+        # Window covers the if-block + the sa_update through .values(...).
+        block = src[start : start + 1200]
+        assert "current_probability=None" in block, "null-out block anchor moved"
+        assert "FuturesOutcome.is_winner.is_(None)" in block, (
+            "null-out-stale must NOT clear resolved outcomes (is_winner set) — "
+            "gotcha #21: never wipe resolved Kalshi state on re-poll"
+        )
+        assert "FuturesOutcome.calibration_probability.is_(None)" in block, (
+            "null-out-stale must preserve outcomes with a captured closing line "
+            "(calibration_probability) — they are past resolution"
+        )
