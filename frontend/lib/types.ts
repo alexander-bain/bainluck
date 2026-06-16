@@ -904,10 +904,12 @@ export interface FeedTournamentData {
 export interface FeedBundleData {
   id: string;
   title: string;
-  // "comparison" = numeric range heat-strip; "theme" = geopolitics story cluster.
+  // "comparison" = numeric range heat-strip; "theme" = story/group cluster
+  // (geopolitics story_key — slice 1; awards/competition group_id — slice 3).
   kind: "comparison" | "theme";
   comparison_theme?: string | null;
   story_key?: string | null;
+  group_id?: string | null;
   item_count: number;
   member_ids: (number | string | null)[];
   // Member feed items, ranked — rendered as the mini-ranked-peek + on expand.

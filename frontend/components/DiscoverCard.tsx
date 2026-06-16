@@ -111,7 +111,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
           <ThemeBundleCard
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}
-            storyKey={(item.data as FeedBundleData).story_key}
+            storyKey={(item.data as FeedBundleData).story_key ?? (item.data as FeedBundleData).group_id}
             positionIndex={positionIndex}
           />
         ) : item.type === "bundle" ? (

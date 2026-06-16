@@ -335,3 +335,168 @@ def assemble_geopolitics_theme_bundles(
         output.append(bundle_by_story[story_key])
 
     return output
+
+
+# ── Theme bundles (awards / competition archetype — Phase 1, slice 3) ──────────
+#
+# Entertainment award/competition futures (e.g. "Who wins Best Picture?" with N
+# nominee sub-markets) already share a ``FuturesMarket.group_id`` (set during
+# Polymarket polling as ``polymarket:{event_id}``). Today ``_dedupe_futures_by_
+# group_id`` collapses the whole race to ONE surviving card and DROPS the rest —
+# the multi-angle richness is lost. This bundler folds the full race into one
+# expandable ``type:bundle`` ``kind="theme"`` item (same shape slice 1 emits),
+# keyed on ``group_id`` instead of ``story_key``.
+#
+# The dropped same-group siblings are preserved by the dedupe step on the
+# surviving item under the private ``_grouped_members`` key (stripped from the
+# default-feed response); this bundler reconstructs the full race from the
+# survivor + its stashed siblings. Discover-mode only, like slice 1.
+
+
+def _is_entertainment(item: dict[str, Any]) -> bool:
+    data = _futures_data(item)
+    category = data.get("llm_sport_category") or data.get("sport") or ""
+    return str(category).strip().lower() == "entertainment"
+
+
+def _grouped_members(item: dict[str, Any]) -> list[dict[str, Any]]:
+    members = item.get("_grouped_members")
+    return members if isinstance(members, list) else []
+
+
+def _award_members_for(item: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Full race member set for an entertainment group_id survivor, or None.
+
+    Returns ``[survivor] + dropped_siblings`` when this item is the surviving
+    card of an entertainment ``group_id`` cluster with at least one dropped
+    sibling (≥2 members total). Non-entertainment / no-group / single-member
+    items return None.
+    """
+    if not _is_entertainment(item):
+        return None
+    data = _futures_data(item)
+    if not data.get("group_id"):
+        return None
+    siblings = _grouped_members(item)
+    if not siblings:
+        return None
+    return [item, *siblings]
+
+
+_LABEL_LEAD_RE = re.compile(r"^(will|the|a|an)\s+", re.I)
+
+
+def _name_tokens(name: str) -> list[str]:
+    return re.sub(r"[^\w\s]", " ", (name or "").lower()).split()
+
+
+def _contains_subseq(tokens: list[str], seq: list[str]) -> bool:
+    n = len(seq)
+    if n == 0 or n > len(tokens):
+        return False
+    return any(tokens[i : i + n] == seq for i in range(len(tokens) - n + 1))
+
+
+def _derive_race_label(names: list[str]) -> str:
+    """Derive a race/group label from member names.
+
+    Uses the longest contiguous word run shared by ALL member names (the common
+    race phrase, e.g. "best actor at the 99th academy awards"); falls back to the
+    shortest member name. Best-effort — the mini-ranked-peek members disambiguate.
+    """
+    cleaned = [n.strip() for n in names if n and n.strip()]
+    if not cleaned:
+        return "Related markets"
+    token_lists = [_name_tokens(n) for n in cleaned]
+    base = min(token_lists, key=len)
+    best: list[str] = []
+    for i in range(len(base)):
+        for j in range(len(base), i + len(best), -1):
+            seq = base[i:j]
+            if len(seq) <= len(best):
+                break
+            if all(_contains_subseq(tl, seq) for tl in token_lists):
+                best = seq
+                break
+    if len(best) >= 2:
+        label = " ".join(best)
+    else:
+        label = min(cleaned, key=len)
+        label = _LABEL_LEAD_RE.sub("", label).rstrip("? ").strip()
+    label = _LABEL_LEAD_RE.sub("", label).rstrip("? ").strip()
+    if not label:
+        return "Related markets"
+    label = label[:80].strip()
+    return label[:1].upper() + label[1:]
+
+
+def _make_awards_bundle_item(
+    group_id: str, members: list[dict[str, Any]]
+) -> dict[str, Any]:
+    ranked = sorted(members, key=lambda it: float(it.get("score") or 0), reverse=True)
+    score = max(float(item.get("score") or 0) for item in ranked)
+    sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
+    member_ids = [_futures_data(item).get("id") for item in ranked]
+    names = [str(_futures_data(item).get("name") or "") for item in ranked]
+    label = _derive_race_label(names)
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": f"{len(ranked)} related markets",
+        "headline": label,
+        "data": {
+            "id": f"theme:{group_id}:{'-'.join(str(m) for m in member_ids)}",
+            "title": label,
+            "kind": "theme",
+            "group_id": group_id,
+            "item_count": len(ranked),
+            "member_ids": member_ids,
+            "items": [_public_member_item(item) for item in ranked],
+            "debug_bundles": {
+                "grouped_by": "group_id",
+                "group_id": group_id,
+                "member_ids": member_ids,
+                "member_names": names,
+            },
+        },
+        "_sort_time": sort_time,
+    }
+
+
+def assemble_awards_theme_bundles(
+    items: list[dict[str, Any]],
+    *,
+    min_items: int = 2,
+    max_items_per_bundle: int = 8,
+) -> list[dict[str, Any]]:
+    """Cap-and-FOLD entertainment award/competition group_id clusters into one
+    expandable theme bundle.
+
+    Mirrors :func:`assemble_geopolitics_theme_bundles` but keys on ``group_id``
+    (reconstructed from the dedupe-preserved ``_grouped_members``) and is scoped
+    to entertainment award/competition futures. Orthogonal to the geopolitics
+    bundler (that keys on ``story_key``); a market belongs to at most one.
+    """
+    bundle_by_group: dict[str, dict[str, Any]] = {}
+    survivor_ids: set[str] = set()
+    for item in items:
+        members = _award_members_for(item)
+        if members is None or len(members) < min_items:
+            continue
+        group_id = str(_futures_data(item).get("group_id"))
+        chosen = members[:max_items_per_bundle]
+        bundle_by_group[group_id] = _make_awards_bundle_item(group_id, chosen)
+        survivor_ids.add(_item_id(item))
+
+    if not bundle_by_group:
+        return items
+
+    output: list[dict[str, Any]] = []
+    for item in items:
+        if _item_id(item) not in survivor_ids:
+            output.append(item)
+            continue
+        group_id = str(_futures_data(item).get("group_id"))
+        output.append(bundle_by_group[group_id])
+
+    return output

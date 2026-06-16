@@ -82,7 +82,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
 - **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (590+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
-- **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
+- **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — this is the **ESLint gate** (rules-of-hooks, etc.); Vercel runs this exact command. Note: `next.config.mjs` sets `typescript.ignoreBuildErrors: true`, so `npm run build` does **NOT** fail on TS *type* errors — run `tsc --noEmit` separately if you need type-checking enforced (this is why a missing type can deploy green).
 - **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
 - **Procfile validates imports**: Release phase runs `python3 -c "from app.main import app"` before Alembic. If the app can't import, the release fails and the broken code never reaches the web dyno.
 - **CI runs both**: GitHub Actions runs backend pytest + frontend `npm run build` on every push to master, then serializes Heroku deploys with deploy-job concurrency.
@@ -298,7 +298,7 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 7. **Python 3.12+ redundant imports can cause `UnboundLocalError`** when a local import shadows a module-level name.
 8. **Never delete a migration file that has already run on Heroku**; missing migration files can block every later release.
 9. **GitHub Actions cannot use `secrets.*` in step-level `if`**. Put secret checks inside the shell `run` block.
-10. **Vercel runs `next build`, not just TypeScript**. Always run `npm run build` for frontend changes because ESLint/rules-of-hooks failures deploy-block.
+10. **`npm run build` is the ESLint gate, NOT a TypeScript gate**. `next.config.mjs` sets `typescript.ignoreBuildErrors: true`, so `next build` deploy-blocks on ESLint/rules-of-hooks failures but **passes through TS type errors** (a missing/wrong type can deploy green). Run `tsc --noEmit` separately when type correctness matters. (Flipping `ignoreBuildErrors` to false is an infra decision — flagged, not done here.)
 11. **The Odds API bills per `events * market_types * regions`**, not per HTTP request. Check quota behavior before widening markets or regions.
 12. **Celery beat schedule test has an allowlist**. When adding scheduled tasks, update `tests/test_tasks_wiring.py`.
 13. **Phase 2 prediction-market matching commits per market** to avoid deadlocks with live polling. After rollback boundaries, do not keep using live ORM objects.

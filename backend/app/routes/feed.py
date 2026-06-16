@@ -46,6 +46,7 @@ from app.utils.aggregation import (
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
 from app.utils.discover_bundles import (
+    assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
     assemble_geopolitics_theme_bundles,
 )
@@ -759,16 +760,22 @@ def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
         key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
         reverse=True,
     )
-    seen_groups: set[str] = set()
+    survivor_by_group: dict[str, dict] = {}
     kept: list[dict] = []
     for item in sorted_items:
         data = item.get("data") or {}
         group_id = data.get("group_id")
         if group_id is not None:
             gid_str = str(group_id)
-            if gid_str in seen_groups:
+            survivor = survivor_by_group.get(gid_str)
+            if survivor is not None:
+                # Preserve the dropped same-group sibling on the surviving card
+                # under a private key so the Discover-mode awards theme bundler
+                # (assemble_awards_theme_bundles) can reconstruct the full race.
+                # Stripped from the default-feed response in the serving path.
+                survivor.setdefault("_grouped_members", []).append(item)
                 continue
-            seen_groups.add(gid_str)
+            survivor_by_group[gid_str] = item
         kept.append(item)
     return kept
 
@@ -1336,6 +1343,7 @@ async def get_feed(
     ):
         feed_items = assemble_discover_comparison_bundles(feed_items)
         feed_items = assemble_geopolitics_theme_bundles(feed_items)
+        feed_items = assemble_awards_theme_bundles(feed_items)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
 
     total = len(feed_items)
@@ -1468,6 +1476,7 @@ async def get_feed(
         item.pop("_review_decision_scope", None)
         item.pop("_review_decision_scope_key", None)
         item.pop("_review_decision_penalty", None)
+        item.pop("_grouped_members", None)
 
     payload = {
         "items": paginated,

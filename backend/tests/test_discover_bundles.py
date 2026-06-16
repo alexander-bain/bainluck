@@ -201,3 +201,145 @@ def test_non_geopolitics_feed_untouched():
     ]
 
     assert assemble_geopolitics_theme_bundles(items) == items
+
+
+# ── Awards / competition theme bundles (Phase 1, slice 3) ─────────────────────
+
+from app.utils.discover_bundles import assemble_awards_theme_bundles
+
+
+def _award_survivor(
+    market_id: int,
+    name: str,
+    group_id: str,
+    siblings: list[dict],
+    *,
+    score: float | None = None,
+    category: str = "entertainment",
+) -> dict:
+    """A post-dedupe group survivor carrying its dropped siblings (slice-3 shape)."""
+    return {
+        "type": "futures",
+        "score": 95 - market_id if score is None else score,
+        "reason": "reason",
+        "headline": name,
+        "data": {
+            "id": market_id,
+            "name": name,
+            "llm_sport_category": category,
+            "group_id": group_id,
+            "source": "polymarket",
+        },
+        "_sort_time": 1000 + market_id,
+        "_quality_story_key": "internal-should-not-leak",
+        "_grouped_members": siblings,
+    }
+
+
+def _award_member(market_id: int, name: str, group_id: str, *, score: float) -> dict:
+    return {
+        "type": "futures",
+        "score": score,
+        "reason": "reason",
+        "headline": name,
+        "data": {
+            "id": market_id,
+            "name": name,
+            "llm_sport_category": "entertainment",
+            "group_id": group_id,
+            "source": "polymarket",
+        },
+        "_sort_time": 1000 + market_id,
+        "_quality_story_key": "internal-should-not-leak",
+    }
+
+
+def test_folds_award_race_group_into_one_bundle():
+    gid = "polymarket:531533"
+    siblings = [
+        _award_member(2, "Will Andrew Scott be nominated for Best Actor?", gid, score=80),
+        _award_member(3, "Will Brad Pitt be nominated for Best Actor?", gid, score=70),
+    ]
+    survivor = _award_survivor(
+        1, "Will Adam Driver be nominated for Best Actor?", gid, siblings, score=90
+    )
+    items = [survivor, {"type": "event", "score": 50, "data": {"id": 9}}]
+
+    result = assemble_awards_theme_bundles(items)
+
+    assert [it["type"] for it in result] == ["bundle", "event"]
+    bundle = result[0]
+    assert bundle["data"]["kind"] == "theme"
+    assert bundle["data"]["group_id"] == gid
+    assert bundle["data"]["item_count"] == 3
+    assert sorted(bundle["data"]["member_ids"]) == [1, 2, 3]
+    # Bundle competes for one slot scored by its best member.
+    assert bundle["score"] == 90
+    # Members ranked by score for the mini-ranked-peek.
+    assert bundle["data"]["member_ids"] == [1, 2, 3]
+    # Internal underscore fields must not leak into public members.
+    assert all("_quality_story_key" not in m for m in bundle["data"]["items"])
+    assert all("_grouped_members" not in m for m in bundle["data"]["items"])
+
+
+def test_award_bundle_score_is_max_member():
+    gid = "polymarket:149775"
+    siblings = [_award_member(2, "Will B win album of the year?", gid, score=88)]
+    survivor = _award_survivor(1, "Will A win album of the year?", gid, siblings, score=40)
+    bundle = assemble_awards_theme_bundles([survivor])[0]
+    assert bundle["score"] == 88
+    assert bundle["data"]["member_ids"] == [2, 1]  # ranked by score desc
+
+
+def test_single_member_group_does_not_bundle():
+    # No dropped siblings (group had only one feed-eligible member) -> untouched.
+    survivor = _award_survivor(
+        1, "Will A be nominated for Best Actor?", "polymarket:1", []
+    )
+    result = assemble_awards_theme_bundles([survivor])
+    assert [it["type"] for it in result] == ["futures"]
+    assert result == [survivor]
+
+
+def test_non_entertainment_group_is_not_bundled():
+    gid = "polymarket:777"
+    siblings = [
+        _award_member(2, "Team B to win", gid, score=80),
+    ]
+    survivor = _award_survivor(
+        1, "Team A to win", gid, siblings, score=90, category="basketball"
+    )
+    result = assemble_awards_theme_bundles([survivor])
+    assert [it["type"] for it in result] == ["futures"]
+
+
+def test_separate_award_races_make_separate_bundles():
+    g1, g2 = "polymarket:1", "polymarket:2"
+    items = [
+        _award_survivor(1, "Will A win Best Picture?", g1,
+                        [_award_member(2, "Will B win Best Picture?", g1, score=80)]),
+        _award_survivor(3, "Will C be Person of the Year?", g2,
+                        [_award_member(4, "Will D be Person of the Year?", g2, score=60)]),
+    ]
+    result = assemble_awards_theme_bundles(items)
+    bundles = [it for it in result if it["type"] == "bundle"]
+    assert {b["data"]["group_id"] for b in bundles} == {g1, g2}
+
+
+def test_dedupe_stashes_grouped_members_for_bundler():
+    from app.routes.feed import _dedupe_futures_by_group_id
+
+    gid = "polymarket:531533"
+    items = [
+        _award_member(1, "Will A be nominated?", gid, score=90),
+        _award_member(2, "Will B be nominated?", gid, score=80),
+        _award_member(3, "Will C be nominated?", gid, score=70),
+    ]
+    kept = _dedupe_futures_by_group_id(items)
+    # Default-feed behavior unchanged: one survivor per group.
+    assert len(kept) == 1
+    survivor = kept[0]
+    assert survivor["data"]["id"] == 1  # highest score survives
+    # Dropped siblings preserved for the awards bundler.
+    assert len(survivor["_grouped_members"]) == 2
+    assert {m["data"]["id"] for m in survivor["_grouped_members"]} == {2, 3}
