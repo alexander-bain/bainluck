@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import LoadingState from "@/components/LoadingState";
 import { useParams } from "next/navigation";
@@ -31,10 +32,22 @@ import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
-import { EvolutionView, type PositionOption } from "@/components/EvolutionView";
+import type { PositionOption } from "@/components/EvolutionView";
 import FeedCard from "@/components/FeedCard";
 import MoversRibbon from "@/components/MoversRibbon";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+
+// Lazy-load the recharts-backed EvolutionView so recharts + date-fns are not in
+// this page's initial bundle (they parsed/evaluated on first load, stalling the
+// league page 6–15s while its APIs returned <0.4s — #901). Mirrors the
+// event-detail page's chart code-splitting (app/events/[id]/page.tsx). The
+// component SWR-fetches its own data and shows its own loader, so deferring it
+// has no data-correctness impact.
+const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
+const EvolutionView = dynamic(
+  () => import("@/components/EvolutionView").then((m) => m.EvolutionView),
+  { ssr: false, loading: ChartSkeleton },
+);
 
 // Some inbound URLs use the Odds API sport-key prefix (e.g. "icehockey",
 // "americanfootball") while the /api/sports/hierarchy endpoint keys off the
