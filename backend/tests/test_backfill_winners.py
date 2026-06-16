@@ -1536,3 +1536,44 @@ class TestMoneylineSkipsHalfWinnerMarkets:
         # half/period winner tokens are present in source.
         assert '"1hwinner"' in src, "moneyline resolver must skip 1hwinner"
         assert '"2hwinner"' in src, "moneyline resolver must skip 2hwinner"
+
+
+class TestTotalBasesBoundVerdict:
+    """#802 — Kalshi MLB total-bases (KXMLBTB) resolved by deterministic bounds.
+
+    ESPN gives hits + home runs but not doubles/triples, so total bases is only
+    bounded: TB_min = hits + 3*HR, TB_max = 3*hits + HR. A 'N+' outcome is a
+    certain loser when TB_max < N, a certain winner when TB_min >= N, else
+    indeterminate.
+    """
+
+    def _verdict(self, hits, hr, threshold):
+        from app.tasks.backfill_winners import _total_bases_verdict
+        return _total_bases_verdict(hits, hr, threshold)
+
+    def test_zero_hits_is_certain_loser_for_any_positive_threshold(self):
+        # The trivial case from the issue: no hits -> 0 total bases.
+        assert self._verdict(0, 0, 1) is False
+        assert self._verdict(0, 0, 5) is False
+
+    def test_certain_loser_when_max_below_threshold(self):
+        # 1 hit, 0 HR -> TB_max = 3 < 4 -> loser even if it were a triple.
+        assert self._verdict(1, 0, 4) is False
+
+    def test_certain_winner_when_min_at_or_above_threshold(self):
+        # 2 hits incl 1 HR -> TB_min = 2 + 3 = 5 >= 5 -> winner even worst case.
+        assert self._verdict(2, 1, 5) is True
+        # 3 plain hits -> TB_min = 3 >= 2 -> winner for 2+.
+        assert self._verdict(3, 0, 2) is True
+
+    def test_indeterminate_when_threshold_between_bounds(self):
+        # 2 hits, 0 HR -> TB_min=2, TB_max=6; a 4+ outcome is unknowable.
+        assert self._verdict(2, 0, 4) is None
+        # 1 hit, 0 HR -> TB_min=1, TB_max=3; a 2+ or 3+ is unknowable.
+        assert self._verdict(1, 0, 2) is None
+        assert self._verdict(1, 0, 3) is None
+
+    def test_all_home_runs_resolve_high_thresholds(self):
+        # 2 hits both HR -> TB_min = 2 + 6 = 8, exact TB = 8 -> winner up to 8.
+        assert self._verdict(2, 2, 8) is True
+        assert self._verdict(2, 2, 9) is False  # TB_max = 6 + 2 = 8 < 9

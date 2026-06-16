@@ -1997,6 +1997,144 @@ async def _resolve_kalshi_player_props_from_boxscore():
     return stats
 
 
+def _total_bases_verdict(hits: int, hr: int, threshold: int) -> bool | None:
+    """Resolve a 'total bases >= threshold' outcome from hits + HR alone.
+
+    ESPN gives hits (H) and home runs (R, a subset of hits) but not
+    doubles/triples, so exact total bases is unknown. It is bounded by:
+        TB_min = H + 3*R   (non-HR hits all singles)
+        TB_max = 3*H + R   (non-HR hits all triples)
+    Returns True (certain winner), False (certain loser), or None
+    (indeterminate — leave unresolved).
+    """
+    tb_min = hits + 3 * hr
+    tb_max = 3 * hits + hr
+    if tb_max < threshold:
+        return False
+    if tb_min >= threshold:
+        return True
+    return None
+
+
+async def _resolve_kalshi_total_bases_from_boxscore():
+    """Resolve Kalshi MLB total-bases (KXMLBTB) props by deterministic bounds.
+
+    ESPN box scores give hits + home runs but NOT doubles/triples, so exact
+    total bases can't be computed (#802). But total bases is bounded by what we
+    DO have: with H hits and R home runs (HR are a subset of hits),
+
+        TB_min = H + 3*R   (every non-HR hit is a single)
+        TB_max = 3*H + R   (every non-HR hit is a triple)
+
+    For a "Player: N+" outcome (TB >= N):
+      * TB_max < N  -> certain LOSER  (even the best case can't reach N)
+      * TB_min >= N -> certain WINNER (even the worst case reaches N)
+      * otherwise   -> indeterminate, leave unresolved.
+
+    This safely resolves the determinable fraction of the 861 KXMLBTB outcomes
+    (e.g. 0-hit games are certain losers for any N>=1; multi-hit/HR games are
+    certain winners for low N) without doubles/triples. Marked
+    resolution_source='box_score_bound' so it's auditable as a bound, not exact.
+    """
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fo.id AS outcome_id, fo.name AS outcome_name,
+                           e.box_score_data
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    JOIN events e ON e.id = fm.event_id
+                    WHERE fm.status = 'resolved'
+                      AND e.box_score_data IS NOT NULL
+                      AND fo.is_winner IS NULL
+                      AND LOWER(fm.external_id) LIKE 'kxmlbtb%'
+                    ORDER BY fm.id
+                    LIMIT 50000
+                """),
+            )
+            rows = result.all()
+
+            winner_ids = []
+            loser_ids = []
+            _bs_cache = {}
+            for row in rows:
+                m = _PROP_RE.match(row.outcome_name or "")
+                if not m:
+                    stats["no_parse"] += 1
+                    continue
+                player_name = m.group(1).strip()
+                threshold = int(m.group(2))
+
+                bs_id = id(row.box_score_data)
+                if bs_id not in _bs_cache:
+                    raw_bs = row.box_score_data or {}
+                    raw_players = (
+                        raw_bs.get("players", raw_bs)
+                        if isinstance(raw_bs, dict)
+                        else {}
+                    )
+                    _bs_cache[bs_id] = {
+                        _normalize_player_name(k): v for k, v in raw_players.items()
+                    }
+                norm_box = _bs_cache[bs_id]
+
+                player_norm = _normalize_player_name(player_name)
+                player_stats = norm_box.get(player_norm)
+                if player_stats is None and "," in player_name:
+                    parts = player_name.split(",", 1)
+                    player_stats = norm_box.get(
+                        _normalize_player_name(f"{parts[1].strip()} {parts[0].strip()}")
+                    )
+                if player_stats is None:
+                    stats["no_player"] += 1
+                    continue
+
+                hits = player_stats.get("hits") or 0
+                hr = player_stats.get("home runs") or 0
+                verdict = _total_bases_verdict(hits, hr, threshold)
+
+                if verdict is False:
+                    loser_ids.append(row.outcome_id)
+                elif verdict is True:
+                    winner_ids.append(row.outcome_id)
+                else:
+                    stats["indeterminate"] += 1
+
+            if winner_ids:
+                await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = true, resolution_source = 'box_score_bound', last_updated = NOW() WHERE id = ANY(:ids)"
+                    ),
+                    {"ids": winner_ids},
+                )
+            if loser_ids:
+                await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = false, resolution_source = 'box_score_bound', last_updated = NOW() WHERE id = ANY(:ids)"
+                    ),
+                    {"ids": loser_ids},
+                )
+            stats["resolved"] = len(winner_ids) + len(loser_ids)
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Total-bases bound resolution error: %s", e)
+
+    logger.info(
+        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d errors",
+        stats["resolved"],
+        stats["indeterminate"],
+        stats["no_player"],
+        stats["no_parse"],
+        len(stats["errors"]),
+    )
+    return stats
+
+
 async def _resolve_kalshi_period_props():
     """Resolve Kalshi 1H/2H/quarter/F5 markets from scoring_plays data.
 
@@ -3826,12 +3964,14 @@ async def _resolve_winners_only(limit: int = 2000):
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
     stats["score"] = {
         "moneyline": score_stats.get("moneyline", 0),
         "btts": score_stats.get("btts", 0),
         "total": spread_total_stats.get("total", 0),
         "player_props": player_prop_stats.get("resolved", 0),
+        "total_bases": total_bases_stats.get("resolved", 0),
     }
 
     # Polymarket API settlement (concurrent condition_id lookups)
@@ -4023,6 +4163,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
     _end_phase("score_resolution")
 
