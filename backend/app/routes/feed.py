@@ -45,7 +45,10 @@ from app.utils.aggregation import (
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
-from app.utils.discover_bundles import assemble_discover_comparison_bundles
+from app.utils.discover_bundles import (
+    assemble_discover_comparison_bundles,
+    assemble_geopolitics_theme_bundles,
+)
 from app.utils import (
     compute_highlight,
     get_highlight_label,
@@ -1332,6 +1335,7 @@ async def get_feed(
         (event_pct is not None and event_pct < 0.3) or not include_events
     ):
         feed_items = assemble_discover_comparison_bundles(feed_items)
+        feed_items = assemble_geopolitics_theme_bundles(feed_items)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
 
     total = len(feed_items)

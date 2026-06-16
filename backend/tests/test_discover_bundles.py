@@ -106,3 +106,98 @@ def test_dedupes_same_entity_inside_bundle():
     assert result[0]["type"] == "bundle"
     assert result[0]["data"]["member_ids"] == [1, 3]
     assert result[1]["data"]["id"] == 2
+
+
+# ── Geopolitics theme bundles (Phase 1, slice 1) ──────────────────────────────
+
+from app.utils.discover_bundles import assemble_geopolitics_theme_bundles
+
+
+def _geo_item(market_id: int, name: str, *, score: float | None = None) -> dict:
+    return {
+        "type": "futures",
+        "score": 95 - market_id if score is None else score,
+        "reason": "reason",
+        "headline": name,
+        "data": {
+            "id": market_id,
+            "name": name,
+            "llm_sport_category": "politics",
+            "source": "kalshi",
+        },
+        "_sort_time": 1000 + market_id,
+        "_quality_story_key": "internal-should-not-leak",
+    }
+
+
+def test_folds_scattered_middle_east_markets_into_one_bundle():
+    items = [
+        _geo_item(1, "Will Iran close the Strait of Hormuz?"),
+        _geo_item(2, "Iran agrees to end enrichment of uranium by June?"),
+        _geo_item(3, "Trump announces US x Iran ceasefire?"),
+        _geo_item(4, "Will Iran close its airspace?"),
+        {"type": "event", "score": 50, "data": {"id": 9}},
+    ]
+
+    result = assemble_geopolitics_theme_bundles(items)
+
+    assert [it["type"] for it in result] == ["bundle", "event"]
+    bundle = result[0]
+    assert bundle["headline"] == "Middle East"
+    assert bundle["data"]["kind"] == "theme"
+    assert bundle["data"]["story_key"] == "story:middle_east_conflict"
+    assert bundle["data"]["item_count"] == 4
+    assert sorted(bundle["data"]["member_ids"]) == [1, 2, 3, 4]
+    # Bundle competes for one slot scored by its best member (max score = id 1).
+    assert bundle["score"] == 94
+    # Internal underscore-prefixed fields must not leak into public members.
+    assert all("_quality_story_key" not in m for m in bundle["data"]["items"])
+
+
+def test_members_ranked_by_score_for_mini_peek():
+    items = [
+        _geo_item(1, "Iran enrichment deal?", score=30),
+        _geo_item(2, "Hormuz closure?", score=70),
+        _geo_item(3, "Iran ceasefire?", score=50),
+    ]
+
+    bundle = assemble_geopolitics_theme_bundles(items)[0]
+
+    assert bundle["data"]["member_ids"] == [2, 3, 1]
+    assert bundle["score"] == 70
+
+
+def test_separate_conflicts_make_separate_bundles():
+    items = [
+        _geo_item(1, "Will Iran close the Strait of Hormuz?"),
+        _geo_item(2, "Iran enrichment deal?"),
+        _geo_item(3, "Will Russia capture Pokrovsk in Ukraine?"),
+        _geo_item(4, "Russia Ukraine ceasefire by year end?"),
+    ]
+
+    result = assemble_geopolitics_theme_bundles(items)
+
+    bundles = [it for it in result if it["type"] == "bundle"]
+    keys = {b["data"]["story_key"] for b in bundles}
+    assert keys == {"story:middle_east_conflict", "story:russia_ukraine"}
+
+
+def test_singleton_conflict_left_as_individual_card():
+    items = [
+        _geo_item(1, "Will Iran close the Strait of Hormuz?"),
+        _geo_item(2, "Will the Lakers make the playoffs?"),
+    ]
+
+    result = assemble_geopolitics_theme_bundles(items)
+
+    assert [it["type"] for it in result] == ["futures", "futures"]
+    assert result == items
+
+
+def test_non_geopolitics_feed_untouched():
+    items = [
+        _geo_item(1, "Will the Lakers make the playoffs?"),
+        {"type": "event", "score": 50, "data": {"id": 9}},
+    ]
+
+    assert assemble_geopolitics_theme_bundles(items) == items

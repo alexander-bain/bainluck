@@ -899,13 +899,29 @@ export interface FeedTournamentData {
   source_count: number;
 }
 
+// Theme/comparison bundle: one feed slot that folds several same-theme markets
+// into a single expandable card (geopolitics story clusters, comparison ranges).
+export interface FeedBundleData {
+  id: string;
+  title: string;
+  // "comparison" = numeric range heat-strip; "theme" = geopolitics story cluster.
+  kind: "comparison" | "theme";
+  comparison_theme?: string | null;
+  story_key?: string | null;
+  item_count: number;
+  member_ids: (number | string | null)[];
+  // Member feed items, ranked — rendered as the mini-ranked-peek + on expand.
+  items: FeedItem[];
+  entities?: string[];
+}
+
 export interface FeedItem {
-  type: "event" | "futures" | "tournament";
+  type: "event" | "futures" | "tournament" | "bundle";
   score: number;
   reason: string;
   headline: string | null;
   context_summary?: string | null;
-  data: FeedEventData | FeedFuturesData | FeedTournamentData;
+  data: FeedEventData | FeedFuturesData | FeedTournamentData | FeedBundleData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
   base_score?: number;

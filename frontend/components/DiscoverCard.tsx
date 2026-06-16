@@ -12,6 +12,7 @@ import { FuturesCard } from "./discover/FuturesCard";
 import { ComparisonCard } from "./discover/ComparisonCard";
 import { TournamentCard } from "./discover/TournamentCard";
 import { GroupCard } from "./discover/GroupCard";
+import { ThemeBundleCard } from "./discover/ThemeBundleCard";
 
 // ── Re-exports (public API) ──
 // Consumer code (discover/page.tsx) imports these from this file for backward compat.
@@ -106,15 +107,20 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
           <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : null}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
-        {item.type === "bundle" && (
+        {item.type === "bundle" && (item.data as FeedBundleData).kind === "theme" ? (
+          <ThemeBundleCard
+            items={(item.data as FeedBundleData).items}
+            title={(item.data as FeedBundleData).title}
+            storyKey={(item.data as FeedBundleData).story_key}
+            positionIndex={positionIndex}
+          />
+        ) : item.type === "bundle" ? (
           <GroupCard
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}
-            kind={(item.data as FeedBundleData).kind}
-            theme={(item.data as FeedBundleData).comparison_theme}
             positionIndex={positionIndex}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );
