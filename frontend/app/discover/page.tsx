@@ -5,7 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -82,6 +82,10 @@ function saveDismissed(items: Set<string>) {
 function getItemId(item: FeedItem): string {
   if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
   if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
+  // Theme/comparison bundles carry a stable unique `id` (story_key/group_id +
+  // member ids). Without this case bundles fell through to `tournament-undefined`,
+  // collided, and got dropped by the dedup pass (Queue #62 / OPS-88).
+  if (item.type === "bundle") return `bundle-${(item.data as FeedBundleData).id}`;
   return `tournament-${(item.data as any).key}`;
 }
 
@@ -92,6 +96,12 @@ function getItemCategory(item: FeedItem): string {
   }
   if (item.type === "futures") {
     return (item.data as FeedFuturesData).llm_sport_category || "other";
+  }
+  // Bundle: use the first ranked member's category (never the "golf"
+  // fallthrough, which mis-suppressed bundles via the category cooldown).
+  if (item.type === "bundle") {
+    const first = (item.data as FeedBundleData).items?.[0];
+    return first ? getItemCategory(first) : "other";
   }
   return "golf";
 }
