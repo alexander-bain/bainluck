@@ -311,9 +311,11 @@ def main():
     new_findings = [f for f in all_findings if f["fingerprint"] not in known_fps]
     print(f"After dedup: {len(new_findings)} new findings ({len(all_findings) - len(new_findings)} suppressed)")
 
-    # Update manifest with new_findings_count
-    manifest["new_findings_count"] = len(new_findings)
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    # Update manifest with new_findings_count — but never on a dry-run, which must
+    # leave the sweep dir byte-unchanged (Queue #57 cleanup B).
+    if not args.dry_run:
+        manifest["new_findings_count"] = len(new_findings)
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
     if not new_findings:
         print("No new findings — no digest to file")

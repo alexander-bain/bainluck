@@ -116,9 +116,12 @@ describe("EventCard", () => {
       })
     );
 
+    // Completed games display the OPENING odds (0.55/0.45 from makeEvent) as
+    // separate "55%"/"45%" probability values — not a "Pre-game:" label or a
+    // combined "55%/45%" string (both removed in a prior EventCard redesign).
     expect(html).toContain("Final");
-    expect(html).toContain("Pre-game:");
-    expect(html).toContain("55%/45%");
+    expect(html).toContain("55%");
+    expect(html).toContain("45%");
     expect(html).toContain("102");
     expect(html).toContain("99");
   });
