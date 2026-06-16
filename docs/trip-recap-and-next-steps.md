@@ -229,4 +229,4 @@ Comparing against the original trip plan's success criteria:
 
 - [ ] **May 1**: Review and delete `frontend/_to-delete/` if nothing broke
 - [ ] **May 1**: Review and delete `docs/archive/` if nothing was referenced
-- [ ] **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
+- [x] **Done (2026-06-15)**: Quota guard no longer needs monthly maintenance — the `QUOTA_GUARD_EXPIRY` date concept was removed; the guard is now purely `remaining`-driven and auto-recovers on billing reset.

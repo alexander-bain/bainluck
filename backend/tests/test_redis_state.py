@@ -5,6 +5,8 @@ Covers:
 - Task metrics: module-level constants and import validation
 """
 
+import inspect
+
 import pytest
 
 from app.tasks import redis_state
@@ -157,3 +159,64 @@ class TestOddsApiQuotaState:
         )
 
         assert get_odds_api_quota() == {"status": "error"}
+
+
+class TestQuotaGuardDateIndependence:
+    """Regression: the quota guard must never silently disable on a date rollover.
+
+    A hardcoded QUOTA_GUARD_EXPIRY date once disabled the guard the moment the
+    clock rolled past it (it expired 2026-04-01 and stopped protecting the
+    quota). The guard is now purely `remaining`-driven and auto-recovers when
+    the billing cycle refills `remaining`. These tests lock that in: no expiry
+    constant may exist, the verdict logic must contain no date-based disable,
+    and the verdict must depend only on `remaining`.
+    """
+
+    def _guard_with_remaining(self, monkeypatch, remaining):
+        monkeypatch.setattr(
+            redis_state,
+            "get_redis_client",
+            lambda: _FakeQuotaRedis({b"remaining": str(remaining).encode()}),
+        )
+        return redis_state.check_quota_guard
+
+    def test_no_expiry_constant_exists(self):
+        # The date-expiry constant that silently disabled the guard must never
+        # be reintroduced in any form.
+        assert not hasattr(redis_state, "QUOTA_GUARD_EXPIRY")
+        assert not hasattr(redis_state, "QUOTA_GUARD_BILLING_DAY")
+
+    def test_guard_source_has_no_date_based_disable(self):
+        # The verdict logic must gate on `remaining` only — no expiry symbol and
+        # no calendar comparison that could turn the guard off as time passes.
+        src = inspect.getsource(redis_state.check_quota_guard)
+        assert "QUOTA_GUARD_EXPIRY" not in src
+        assert ".day" not in src  # no day-of-month based enable/disable
+
+    def test_guard_trips_on_low_quota_independent_of_when_called(self, monkeypatch):
+        # Below FULL_STOP: non-essential tasks are blocked regardless of date.
+        guard = self._guard_with_remaining(monkeypatch, 10_000)
+        assert guard("discover_events") == (False, "full_stop_10000")
+        assert guard("poll_futures") == (False, "full_stop_10000")
+
+    def test_guard_trips_at_absolute_stop(self, monkeypatch):
+        guard = self._guard_with_remaining(monkeypatch, 100)
+        assert guard("poll_odds", sport_key="baseball_mlb") == (
+            False,
+            "absolute_stop_100",
+        )
+
+    def test_guard_normal_at_current_summer_headroom(self, monkeypatch):
+        # Live summer headroom (~4.78M/5M): guard stays in Normal mode — re-enabling
+        # the (always-active) guard must not change behavior at high quota.
+        guard = self._guard_with_remaining(monkeypatch, 4_779_372)
+        assert guard("discover_events") == (True, "ok_4779372")
+        assert guard("poll_futures") == (True, "ok_4779372")
+        assert guard("poll_odds", sport_key="baseball_mlb") == (True, "ok_4779372")
+
+    def test_verdict_depends_only_on_remaining(self, monkeypatch):
+        # Same `remaining` → same verdict on every call (no time-varying state).
+        guard = self._guard_with_remaining(monkeypatch, 35_000)
+        first = guard("poll_odds", sport_key="baseball_mlb")
+        second = guard("poll_odds", sport_key="baseball_mlb")
+        assert first == second == (True, "live_only_35000")

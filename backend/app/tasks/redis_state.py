@@ -305,11 +305,18 @@ QUOTA_WARNING_THRESHOLD = 1_000_000
 # Emergency quota guard thresholds — TRUE EMERGENCIES ONLY.
 # This is a last-resort circuit breaker, not a routine optimization tool.
 # Prefer rate-limiting, tier adjustments, and region trimming first.
-# Guard auto-expires on QUOTA_GUARD_EXPIRY (next billing cycle reset).
+#
+# The guard is purely remaining-driven: check_quota_guard() compares the live
+# `remaining` reading (refreshed on every Odds API response via
+# record_odds_api_quota) against these thresholds. There is NO date/expiry
+# constant and there must never be one — a hardcoded expiry date silently
+# disabled the guard once it rolled past (the QUOTA_GUARD_EXPIRY regression).
+# Recovery is automatic: when the billing cycle resets, the API returns a
+# refilled `remaining` and the guard stops tripping with no code change. Do not
+# reintroduce a date-based enable/disable; gate only on `remaining`.
 QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
 QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls (except priority sports)
 QUOTA_GUARD_ABSOLUTE_STOP = 500  # Below this: stop ALL Odds API calls, no exceptions
-QUOTA_GUARD_BILLING_DAY = 1  # Day of month when the Odds API quota resets
 
 # Priority sports: allowed to poll even in FULL_STOP mode with conservation settings.
 # h2h only, single region, slower interval.

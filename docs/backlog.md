@@ -1301,7 +1301,7 @@ Last sweep: May 11 (10 modules, 10/14 resolved). Time for a fresh sweep to catch
 ## Housekeeping
 
 ### Other Housekeeping
-- **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
+- ~~**Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`~~ — removed 2026-06-15; quota guard is now purely `remaining`-driven (auto-recovers on billing reset), no monthly maintenance needed.
 - Clean up ~90 remote git branches
 
 ### Mystery Shopper Findings (April 22, 2026 — Manus AI Audit)

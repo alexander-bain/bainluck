@@ -8,7 +8,7 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 16. **Deleting events requires FK cleanup** — must delete from 8+ tables before removing the event row. Use raw SQL, not ORM `db.delete()`, to avoid autoflush FK violations.
 17. **Kalshi auto-creates pm_ events** when no matching event exists. Guard added to prevent new duplicates, but historical orphans need cleanup via admin endpoints.
-18. **Quota guard expiry date** must be updated monthly in `redis_state.py` (`QUOTA_GUARD_EXPIRY`).
+18. **Quota guard is `remaining`-driven, never date-gated** — `check_quota_guard` in `redis_state.py` gates only on the live `remaining` reading and auto-recovers when the billing cycle refills it. Do NOT add a `QUOTA_GUARD_EXPIRY`/date constant; a hardcoded expiry once silently disabled the guard when the clock rolled past it (expired 2026-04-01). No monthly maintenance is needed.
 19. **Name normalization** — ALL team name matching goes through `utils/name_normalization.py`. City abbreviations (LA->Los Angeles, NY->New York, etc.) are expanded before token overlap scoring.
 20. **Championship grid data quality** — Kalshi 0.45-0.65 noise filter, monotonicity enforcement (P(round N) >= P(round N+1)), esports "Masters" pattern can leak into golf.
 21. **Frontend-only changes don't need Heroku work** — Only `git push origin master` is needed. Vercel deploys frontend from GitHub, and backend Heroku deploys are handled by CI after tests for backend changes.
