@@ -66,14 +66,17 @@ class TestMarketQualityClassification:
         assert quality.quality_class == "compelling"
         assert quality.is_ladder_or_bucket is False
 
-    def test_broad_crypto_milestone_not_treated_as_price_bucket(self):
+    def test_crypto_price_level_milestone_is_low_quality(self):
+        # Policy reversal (Alex interview 2026-06-15, R2): asset price-LEVEL
+        # markets — including crypto "$150k" milestones — are never interesting.
+        # Supersedes the prior "broad crypto milestone is compelling" carve-out.
         quality = classify_market_quality(
             "Will Bitcoin hit $150k before the end of 2026?",
             sport_category="crypto",
         )
 
-        assert quality.quality_class == "compelling"
-        assert quality.is_ladder_or_bucket is False
+        assert quality.quality_class == "low_quality"
+        assert "asset_price_level" in quality.reasons
 
     def test_dated_oil_price_market_is_low_quality(self):
         quality = classify_market_quality(
@@ -176,27 +179,28 @@ class TestMarketQualityClassification:
         assert all(q.quality_class == "low_quality" for q in boring_qualities)
         assert all("entertainment_metric" in q.reasons for q in boring_qualities)
 
-    def test_chart_ranking_markets_are_not_suppressed(self):
-        # "Who's #1?" and "Top Artist on Spotify?" are genuinely interesting
-        # prediction markets, not raw chart metrics. BR56: user complained
-        # about never seeing Spotify content.
-        interesting_examples = [
+    def test_number_one_chart_markets_eligible_runner_up_downranked(self):
+        # "#1 / Top Artist" stay eligible (BR56: user wanted Spotify content).
+        # R8 (Alex 2026-06-15, "#1 yes, #2 no"): runner-up / #2 are downranked.
+        eligible = [
             "Top USA Artist on Spotify on Apr 29, 2026?",
             "#1 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
+        ]
+        for name in eligible:
+            q = classify_market_quality(name, sport_category="entertainment")
+            assert q.quality_class == "normal", name
+            assert "runner_up_rank" not in q.reasons
+
+        runner_up = classify_market_quality(
             "#2 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
-        ]
-
-        qualities = [
-            classify_market_quality(name, sport_category="entertainment")
-            for name in interesting_examples
-        ]
-
-        assert all(q.quality_class == "normal" for q in qualities)
-        assert all("entertainment_metric" not in q.reasons for q in qualities)
+            sport_category="entertainment",
+        )
+        assert runner_up.quality_class == "low_quality"
+        assert "runner_up_rank" in runner_up.reasons
 
     def test_netflix_rank_one_and_two_get_distinct_family_keys(self):
-        # BR56: #1 and #2 Netflix Show markets must not be deduped into the
-        # same family, or whichever has less movement gets killed.
+        # BR56: #1 and #2 Netflix Show markets must not be deduped into the same
+        # family. R8: #1 eligible, #2 downranked — but family keys stay distinct.
         q1 = classify_market_quality("#1 US Netflix Show: May 12-18", "entertainment")
         q2 = classify_market_quality("#2 US Netflix Show: May 12-18", "entertainment")
 
@@ -204,7 +208,7 @@ class TestMarketQualityClassification:
         assert "rankone" in q1.family_key
         assert "ranktwo" in q2.family_key
         assert q1.quality_class == "normal"
-        assert q2.quality_class == "normal"
+        assert q2.quality_class == "low_quality"  # R8: runner-up downranked
 
     def test_spotify_song_rank_markets_get_distinct_family_keys(self):
         q1 = classify_market_quality(
@@ -216,7 +220,7 @@ class TestMarketQualityClassification:
 
         assert q1.family_key != q2.family_key
         assert q1.quality_class == "normal"
-        assert q2.quality_class == "normal"
+        assert q2.quality_class == "low_quality"  # R8: runner-up downranked
 
     def test_regional_us_elections_are_low_quality_and_story_capped(self):
         examples = [

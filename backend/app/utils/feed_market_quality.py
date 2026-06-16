@@ -138,6 +138,88 @@ _ENTERTAINMENT_METRIC_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --- Alex interview 2026-06-15 rules (R2/R6/R8), audit-verifiable ----------
+# R2: asset price-LEVEL markets are never interesting — "will <asset> close/
+# trade/hit above/below $X" on stocks/crypto/commodities. Broader than the
+# named-asset lists above (catches single tickers like META not listed there).
+# A market must have BOTH an asset context AND a price threshold, and must NOT
+# be a macro policy/EVENT market (those stay eligible per Alex).
+_ASSET_CONTEXT_RE = re.compile(
+    r"\b("
+    r"stock|shares?|share price|etf|"
+    r"bitcoin|btc|ethereum|eth|solana|sol|crypto|dogecoin|doge|xrp|cardano|ada|"
+    r"oil|crude|brent|wti|gas|gold|silver|copper|cattle|livestock|corn|wheat|"
+    r"soybeans?|coffee|cocoa|"
+    r"s&p|s\s*&\s*p|spx|spy|nasdaq|qqq|dow|russell|iwm|"
+    r"nvidia|nvda|tesla|tsla|apple|aapl|microsoft|msft|alphabet|googl|google|"
+    r"amazon|amzn|meta|netflix|nflx|palantir|pltr|gamestop|gme|coinbase|coin|"
+    r"microstrategy|mstr|robinhood|hood|rocket lab|rklb|strategy"
+    r")\b",
+    re.IGNORECASE,
+)
+_PRICE_THRESHOLD_RE = re.compile(
+    r"(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|bn|b|trillion|t)?\b"  # a $ amount
+    r"|\b(above|below|over|under|past|exceeds?|reach(?:es)?|hit)\b\s+\$?\s?[\d,]+"  # 'above 6000'
+    r"|\b(close|closing|trade|trading|finish|end|settle|reach|hit|be|stay|go|top)\b"
+    r"[^?]{0,30}\b(above|below|over|under|past|at)\b[^?]{0,15}\d)",
+    re.IGNORECASE,
+)
+# Macro policy/EVENT markets are a DIFFERENT category and stay eligible.
+_MACRO_EVENT_RE = re.compile(
+    r"\b("
+    r"fed (rate|funds|decision|meeting|cut|hike|hold|chair)|"
+    r"rate (cut|hike|decision|hold)|recession|soft landing|hard landing|"
+    r"jobs report|unemployment rate|nonfarm|payrolls|gdp|"
+    r"cpi (surprise|print|come|release|report)|inflation (surprise|print|report)|"
+    r"debt ceiling|government shutdown|tariff|emergency rate"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_asset_price_level(name: str) -> bool:
+    """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X')."""
+    if _MACRO_EVENT_RE.search(name):
+        return False
+    return bool(_ASSET_CONTEXT_RE.search(name)) and bool(_PRICE_THRESHOLD_RE.search(name))
+
+
+# R8: "#1 yes, #2 no." A "will X be number one" market is eligible; runner-up /
+# "#2" / non-winning-rank markets are downranked.
+_NUMBER_ONE_RE = re.compile(
+    r"(#\s?1\b|\bnumber one\b|\bno\.?\s?1\b|\btop of\b|\b(reach|hit|be|stay)\s+#?\s?1\b)",
+    re.IGNORECASE,
+)
+_RUNNER_UP_RE = re.compile(
+    r"(#\s?[2-9]\d*\b|\bnumber (two|three|four|five)\b|\bno\.?\s?[2-9]\b|"
+    r"\brunner.?up\b|\bfinish (second|third|fourth|2nd|3rd|4th)\b|"
+    r"\b(come|finish|place)\s+(in\s+)?(second|2nd)\b|\bsecond place\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_runner_up_rank(name: str) -> bool:
+    """R8 — non-#1 ranking market (runner-up / #2+); not a 'number one' market."""
+    return bool(_RUNNER_UP_RE.search(name)) and not bool(_NUMBER_ONE_RE.search(name))
+
+
+# R6: resolved SPORTS scores never surface (Alex gets them from ESPN). Needs the
+# market/event status (threaded in from the scoring path).
+_SPORTS_CATEGORIES = {
+    "basketball", "football", "baseball", "hockey", "soccer", "golf", "tennis",
+    "mma", "boxing", "cricket", "rugby", "motorsports", "esports", "lacrosse",
+    "wrestling", "olympics", "cycling", "rodeo", "pickleball",
+}
+
+
+def _is_resolved_sports(status: str | None, category: str) -> bool:
+    """R6 — a resolved/closed market in a sports category."""
+    if (status or "").lower() not in ("resolved", "completed", "closed", "settled"):
+        return False
+    cat = (category or "").lower()
+    return cat in _SPORTS_CATEGORIES or bool(_LOW_SIGNAL_SPORT_RE.search(cat))
+
+
 _OBSCURE_PROCEDURAL_RE = re.compile(
     r"\b("
     r"reauthorize|committee|subcommittee|cloture|filibuster|"
@@ -568,6 +650,7 @@ def classify_market_quality(
     outcome_names: list[str] | None = None,
     external_id: str | None = None,
     persisted_story_key: str | None = None,
+    status: str | None = None,
 ) -> MarketQuality:
     """Classify whether a futures market is good generic Discover material."""
     name = market_name or ""
@@ -587,10 +670,14 @@ def classify_market_quality(
     if ticker_boost:
         reasons.append("ticker_boost")
 
+    asset_price_level = _is_asset_price_level(name)  # R2
+    runner_up_rank = _is_runner_up_rank(name)  # R8
+    resolved_sports = _is_resolved_sports(status, category)  # R6
     price_bucket = bool(
         _PRICE_BUCKET_RE.search(name)
         or _COMMODITY_DATED_PRICE_RE.search(name)
         or _DATED_FINANCE_METRIC_RE.search(name)
+        or asset_price_level
     )
     weather_bucket = bool(_WEATHER_BUCKET_RE.search(name))
     daily_equity_direction = bool(_DAILY_EQUITY_DIRECTION_RE.search(name))
@@ -633,6 +720,12 @@ def classify_market_quality(
         reasons.append("low_signal_sport")
     if episode_level:
         reasons.append("episode_level")
+    if asset_price_level:
+        reasons.append("asset_price_level")
+    if runner_up_rank:
+        reasons.append("runner_up_rank")
+    if resolved_sports:
+        reasons.append("resolved_sports")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
@@ -655,7 +748,8 @@ def classify_market_quality(
         ladder_or_bucket = True
         reasons.append("numeric_outcome_ladder")
 
-    if social_filler or (obscure and not compelling):
+    if social_filler or (obscure and not compelling) or resolved_sports:
+        # R6: resolved sports never surface as live cards.
         quality: QualityClass = "suppress"
     elif ticker_suppress:
         quality = "low_quality"
@@ -666,6 +760,8 @@ def classify_market_quality(
         or regional_election
         or low_signal_sport
         or episode_level
+        or asset_price_level  # R2: asset price-levels are never interesting
+        or runner_up_rank  # R8: non-#1 ranking markets
     ):
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):

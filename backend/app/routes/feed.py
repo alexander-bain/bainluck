@@ -2482,6 +2482,7 @@ def _score_market_trace(
         outcome_names=[outcome.name for outcome in market.outcomes if outcome.name],
         external_id=market.external_id,
         persisted_story_key=market.__dict__.get("story_key"),
+        status=market.__dict__.get("status"),  # R6: resolved sports never surface
     )
     quality_score = apply_quality_score(highlight_result.score, quality)
     explanation_score = apply_explanation_quality_score(
@@ -4292,6 +4293,7 @@ async def _score_sports_mode_futures(
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
             external_id=market.external_id,
+            status=market.status,  # R6: resolved sports never surface
         )
         if quality.quality_class == "suppress":
             continue
@@ -5062,6 +5064,7 @@ async def _score_futures(
             sport_category=market.llm_sport_category,
             outcome_names=[o.name for o in market.outcomes if o.name],
             external_id=market.external_id,
+            status=market.status,  # R6: resolved sports never surface
         )
         if quality.quality_class == "suppress":
             continue
