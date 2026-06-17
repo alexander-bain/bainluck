@@ -384,6 +384,37 @@ class TestSpreadOutcomeIndependentGrading:
         )
 
 
+class TestGolfSettlementSyncSingleWinner:
+    """#938: settlement_sync must not clobber an authoritative golf winner with
+    stale 99%-ask extras (it was marking up to 5 'winners' on single-winner
+    fields), and must re-grade the extras it already wrote."""
+
+    def _src(self):
+        import inspect
+        from app.tasks.backfill_winners import _backfill_all_winners
+        return inspect.getsource(_backfill_all_winners)
+
+    def test_settlement_sync_will_not_promote_winner_over_authoritative(self):
+        src = self._src()
+        # The promote (>=0.95) branch must be guarded so it can't add a winner
+        # to a market that already has a leaderboard/api/datagolf/score winner.
+        assert "resolution_source = 'settlement_sync'" in src
+        assert "NOT EXISTS (" in src
+        for auth in ("'leaderboard'", "'api_settlement'", "'datagolf'", "'game_score'"):
+            assert auth in src, f"authoritative source {auth} missing from guard"
+        # Confirming a loser stays unconditional.
+        assert "fo.current_probability <= 0.05" in src
+
+    def test_settlement_sync_extra_winner_regrade_present(self):
+        src = self._src()
+        # The re-grade flips ONLY settlement_sync extras to False, and only on
+        # markets that still hold an authoritative winner (never winner-less,
+        # never bulk-reset — gotcha #21).
+        assert "regraded_extra_winners" in src
+        assert "SET is_winner = false" in src
+        assert "fo.resolution_source = 'settlement_sync'" in src
+
+
 class TestThreeWayWinnerResolution:
     """3-outcome Team/Team/Tie winner markets (e.g. KXNCAAMB1HWINNER, #816)."""
 

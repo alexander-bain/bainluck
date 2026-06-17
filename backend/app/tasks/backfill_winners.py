@@ -4758,9 +4758,61 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fo.current_probability IS NOT NULL
                       AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
                       AND fo.is_winner != (fo.current_probability >= 0.95)
+                      -- #938: settlement_sync trusts current_probability, but on
+                      -- illiquid multi-candidate golf fields that "price" is a stale
+                      -- one-sided YES-ask (e.g. 4 candidates frozen at 99% with no
+                      -- bid and no trade — not a real settlement signal). It must NOT
+                      -- promote a NEW winner on a market that already has an
+                      -- authoritative leaderboard/API/score winner, which clobbered
+                      -- DataGolf's single correct winner with stale extras (e.g. one
+                      -- R3-leader market with 5 "winners"). Confirming a LOSER
+                      -- (<=0.05) is always safe.
+                      AND (
+                          fo.current_probability <= 0.05
+                          OR NOT EXISTS (
+                              SELECT 1 FROM futures_outcomes fo2
+                              WHERE fo2.market_id = fm.id
+                                AND fo2.is_winner = true
+                                AND fo2.resolution_source IN
+                                    ('leaderboard', 'api_settlement', 'datagolf',
+                                     'datagolf_matchup', 'game_score')
+                          )
+                      )
                 """))
             golf_sync_stats["synced"] = r.rowcount
+
+            # #938 re-grade: remove the stale settlement_sync EXTRA winners that
+            # were already written on top of an authoritative winner. Flip only
+            # the settlement_sync extras to False; never touch the authoritative
+            # winner itself (gotcha #21 — no bulk reset, the leaderboard/API/score
+            # winner stays). Scoped to golf fields that have an authoritative
+            # winner, so a market is never left winner-less.
+            regrade = await session.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = false, last_updated = NOW()
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.llm_sport_category = 'golf'
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner = true
+                      AND fo.resolution_source = 'settlement_sync'
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes fo2
+                          WHERE fo2.market_id = fm.id
+                            AND fo2.is_winner = true
+                            AND fo2.resolution_source IN
+                                ('leaderboard', 'api_settlement', 'datagolf',
+                                 'datagolf_matchup', 'game_score')
+                      )
+                """))
+            golf_sync_stats["regraded_extra_winners"] = regrade.rowcount
             await session.commit()
+            if regrade.rowcount:
+                logger.info(
+                    "Golf settlement_sync re-grade (#938): cleared %d stale extra winners",
+                    regrade.rowcount,
+                )
     except Exception as e:
         golf_sync_stats["errors"].append(str(e))
 
