@@ -270,6 +270,103 @@ class TestSpreadTotalParsing:
         assert _TOTAL_RE.search("Yes") is None
 
 
+class TestSpreadOutcomeIndependentGrading:
+    """#939: each "{team} wins by over N" spread outcome is graded on its OWN
+    team + line, never as a complementary Yes/No pair.
+
+    The old resolver computed `won` for the first matching outcome and flipped
+    every sibling to `not won`, then broke — so whole KXNHLSPREAD markets landed
+    all-True or all-False by insertion order (game_score: pred 25% / actual 72%).
+    """
+
+    def _w(self, name, home, away, hs, as_):
+        from app.tasks.backfill_winners import _spread_outcome_is_winner
+        return _spread_outcome_is_winner(name, home, away, hs, as_)
+
+    def test_home_favorite_covers(self):
+        # Carolina (home) beats Montreal 6-1, margin +5.
+        assert self._w("Carolina wins by over 1.5 goals",
+                       "Carolina Hurricanes", "Montreal Canadiens", 6, 1) is True
+        assert self._w("Carolina wins by over 2.5 goals",
+                       "Carolina Hurricanes", "Montreal Canadiens", 6, 1) is True
+
+    def test_losing_side_never_wins_a_spread(self):
+        # The team that LOST can never win a "wins by over N" outcome —
+        # this is the exact production bug (Montreal lost 1-6 yet was marked True).
+        assert self._w("Montreal wins by over 1.5 goals",
+                       "Carolina Hurricanes", "Montreal Canadiens", 6, 1) is False
+        assert self._w("Montreal wins by over 2.5 goals",
+                       "Carolina Hurricanes", "Montreal Canadiens", 6, 1) is False
+
+    def test_away_favorite_covers_line_sign(self):
+        # Away team wins big: margin computed as away-home, must stay positive.
+        assert self._w("Nashville wins by over 1.5 goals",
+                       "Los Angeles Kings", "Nashville Predators", 1, 5) is True
+        # ...but the home loser does not.
+        assert self._w("Los Angeles wins by over 1.5 goals",
+                       "Los Angeles Kings", "Nashville Predators", 1, 5) is False
+
+    def test_one_goal_game_nobody_covers_1_5(self):
+        # San Jose 4-3 Anaheim: a 1-goal game — NO "wins by over 1.5" is True.
+        # Production showed all four True; correct answer is all four False.
+        for nm in ("San Jose wins by over 1.5 goals",
+                   "San Jose wins by over 2.5 goals",
+                   "Anaheim wins by over 1.5 goals",
+                   "Anaheim wins by over 2.5 goals"):
+            assert self._w(nm, "San Jose Sharks", "Anaheim Ducks", 4, 3) is False
+
+    def test_winner_covers_low_line_but_not_high_line(self):
+        # Florida wins by exactly 2: covers 1.5 but not 2.5 (independent lines).
+        assert self._w("Florida wins by over 1.5 goals",
+                       "Florida Panthers", "Boston Bruins", 3, 1) is True
+        assert self._w("Florida wins by over 2.5 goals",
+                       "Florida Panthers", "Boston Bruins", 3, 1) is False
+
+    def test_blowout_only_winner_side_true(self):
+        # 7-0 blowout: every winner-side line True, every loser-side line False.
+        assert self._w("Boston wins by over 2.5 goals",
+                       "Boston Bruins", "Buffalo Sabres", 7, 0) is True
+        assert self._w("Buffalo wins by over 1.5 goals",
+                       "Boston Bruins", "Buffalo Sabres", 7, 0) is False
+
+    def test_unmatched_team_or_non_spread_returns_none(self):
+        assert self._w("Over 5.5 goals scored",
+                       "Boston Bruins", "Buffalo Sabres", 7, 0) is None
+        assert self._w("Tampa wins by over 1.5 goals",
+                       "Boston Bruins", "Buffalo Sabres", 7, 0) is None
+
+    def test_resolver_no_longer_flips_siblings(self):
+        # The complementary flip + break that caused the inversion must be gone.
+        import inspect
+        from app.tasks.backfill_winners import (
+            _resolve_kalshi_spread_total_from_scores,
+        )
+        src = inspect.getsource(_resolve_kalshi_spread_total_from_scores)
+        # The spread branch must use the independent grader. Isolate it: from the
+        # spread-pattern match up to the total-pattern branch. The complementary
+        # sibling-flip (still legitimately used by the TOTAL branch) must NOT
+        # appear inside the spread branch.
+        spread_branch = src.split("# Try total pattern")[0]
+        assert "_spread_outcome_is_winner(" in spread_branch
+        assert "oc_won = won if oc.id == outcome.id else not won" not in spread_branch
+
+    def test_regrade_is_wired_and_scoped(self):
+        import inspect
+        from app.tasks.backfill_winners import (
+            _regrade_kalshi_nhl_spread_inversions,
+            _resolve_winners_only,
+        )
+        rg = inspect.getsource(_regrade_kalshi_nhl_spread_inversions)
+        # Scoped to the small NHL spread cohort (#899 OOM caution) + write-on-change.
+        assert "KXNHLSPREAD%" in rg
+        assert "bool(r.cur) == won" in rg  # write-on-change guard
+        assert "_spread_outcome_is_winner(" in rg
+        # ...and actually invoked by the frequent resolve_winners task.
+        assert "_regrade_kalshi_nhl_spread_inversions(" in inspect.getsource(
+            _resolve_winners_only
+        )
+
+
 class TestThreeWayWinnerResolution:
     """3-outcome Team/Team/Tie winner markets (e.g. KXNCAAMB1HWINNER, #816)."""
 

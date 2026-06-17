@@ -1473,6 +1473,39 @@ def _decide_three_way_winner(outcome_names, home_team_name, away_team_name,
     return {i: (kinds[i] == winner) for i in range(3)}
 
 
+def _spread_outcome_is_winner(
+    outcome_name, home_team_name, away_team_name, home_score, away_score
+):
+    """#939: grade ONE "{team} wins by over N" spread outcome independently.
+
+    NHL/NBA spread markets carry several such outcomes (home@1.5, home@2.5,
+    away@1.5, away@2.5) that are NOT a complementary Yes/No pair (gotchas #17,
+    #23). Each wins iff its OWN named team's actual margin exceeds its OWN line.
+    A loss yields a negative margin, which never exceeds a positive line, so
+    ``margin > line`` correctly encodes "named team won AND covered".
+
+    Returns True/False, or None when the name isn't a spread outcome or the
+    named team can't be matched to either side (caller should skip).
+    """
+    sm = _SPREAD_RE.search(outcome_name or "")
+    if not sm:
+        return None
+    if home_score is None or away_score is None:
+        return None
+    team_name = sm.group(1).strip()
+    line = float(sm.group(2))
+    home_tokens = set((home_team_name or "").lower().split())
+    away_tokens = set((away_team_name or "").lower().split())
+    team_tokens = set(team_name.lower().split())
+    if team_tokens & home_tokens:
+        margin = home_score - away_score
+    elif team_tokens & away_tokens:
+        margin = away_score - home_score
+    else:
+        return None
+    return margin > line
+
+
 async def _resolve_kalshi_spread_total_from_scores():
     """Resolve Kalshi spread and total markets from actual game scores.
 
@@ -1599,53 +1632,49 @@ async def _resolve_kalshi_spread_total_from_scores():
                 for outcome in outcomes_list:
                     name = outcome.name or ""
 
-                    # Try spread pattern
+                    # Try spread pattern.
+                    #
+                    # #939: NHL/NBA spread markets carry MULTIPLE independent
+                    # "{team} wins by over N" outcomes (e.g. home@1.5, home@2.5,
+                    # away@1.5, away@2.5) — they are NOT a complementary Yes/No
+                    # pair (gotchas #17, #23). Each outcome wins iff THAT named
+                    # team's actual margin exceeds ITS OWN line. The old code
+                    # resolved only the first matching outcome, blindly flipped
+                    # every sibling to `not won`, and broke — so whole markets
+                    # landed all-True or all-False by insertion order (KXNHLSPREAD
+                    # game_score: pred 25% but actual 72%). Resolve each outcome
+                    # on its own terms; never flip siblings, never break.
                     sm = _SPREAD_RE.search(name)
                     if sm:
-                        team_name = sm.group(1).strip()
-                        line = float(sm.group(2))
-
                         if is_1h:
                             h1_scores = await _get_halftime_score(session, row.event_id)
                             if h1_scores is None:
                                 stats["no_plays"] += 1
                                 resolved_st = True
                                 break
-                            h1_home, h1_away = h1_scores
+                            h_for_spread, a_for_spread = h1_scores
                         else:
-                            h1_home, h1_away = row.home_score, row.away_score
+                            h_for_spread, a_for_spread = row.home_score, row.away_score
 
-                        home_tokens = (
-                            set(row.home_team_name.lower().split())
-                            if row.home_team_name
-                            else set()
+                        # Grade THIS outcome on its own named team + line.
+                        won = _spread_outcome_is_winner(
+                            name,
+                            row.home_team_name,
+                            row.away_team_name,
+                            h_for_spread,
+                            a_for_spread,
                         )
-                        away_tokens = (
-                            set(row.away_team_name.lower().split())
-                            if row.away_team_name
-                            else set()
-                        )
-                        team_tokens = set(team_name.lower().split())
-
-                        if team_tokens & home_tokens:
-                            margin = h1_home - h1_away
-                        elif team_tokens & away_tokens:
-                            margin = h1_away - h1_home
-                        else:
+                        if won is None:
                             continue
-
-                        won = margin > line
-                        for oc in outcomes_list:
-                            oc_won = won if oc.id == outcome.id else not won
-                            await session.execute(
-                                text(
-                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
-                                ),
-                                {"won": oc_won, "oid": oc.id},
-                            )
+                        await session.execute(
+                            text(
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                            ),
+                            {"won": won, "oid": outcome.id},
+                        )
                         stats["h1_spread" if is_1h else "spread"] += 1
                         resolved_st = True
-                        break
+                        continue
 
                     # Try total pattern
                     tm = _TOTAL_RE.search(name)
@@ -1786,6 +1815,71 @@ async def _resolve_kalshi_spread_total_from_scores():
         stats["no_parse"],
         len(stats["errors"]),
     )
+    return stats
+
+
+async def _regrade_kalshi_nhl_spread_inversions():
+    """#939: One-shot, idempotent re-grade of NHL spread outcomes left inverted
+    by the OLD complementary spread resolver.
+
+    The prior logic resolved only the first matching "{team} wins by over N"
+    outcome, flipped every sibling to ``not won``, and broke — so whole
+    KXNHLSPREAD markets were marked all-True or all-False by insertion order
+    (game_score cohort: predicted 25% but actual win rate ~72%). The resolver
+    is now fixed to grade each outcome independently, but the already-resolved
+    rows are pinned True/False and the main resolver's HAVING clause skips any
+    market that still holds a game_score ``is_winner=True`` — so they never get
+    re-pulled. This corrects them directly.
+
+    Each outcome wins iff the named team's actual margin exceeds ITS OWN line.
+    Scoped to the small ``KXNHLSPREAD%`` game_score cohort (~1.2k outcomes, no
+    OOM risk per gotcha #899) and write-on-change. resolution_source stays
+    ``game_score`` — we re-resolve from authoritative scores in place, never a
+    bare ``is_winner`` reset (gotcha #21).
+    """
+    stats = {"checked": 0, "flipped": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            rows = await session.execute(text("""
+                SELECT fo.id AS oid, fo.name AS oc_name, fo.is_winner AS cur,
+                       e.home_team_name AS home, e.away_team_name AS away,
+                       e.home_score AS hs, e.away_score AS as_
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                JOIN events e ON e.id = fm.event_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.external_id ILIKE 'KXNHLSPREAD%'
+                  AND fo.resolution_source = 'game_score'
+                  AND e.home_score IS NOT NULL
+                  AND e.away_score IS NOT NULL
+            """))
+            for r in rows.all():
+                stats["checked"] += 1
+                won = _spread_outcome_is_winner(
+                    r.oc_name, r.home, r.away, r.hs, r.as_
+                )
+                if won is None:
+                    continue
+                # write-on-change: skip rows already on the correct side
+                if r.cur is not None and bool(r.cur) == won:
+                    continue
+                await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = :won, last_updated = NOW() WHERE id = :oid"
+                    ),
+                    {"won": won, "oid": r.oid},
+                )
+                stats["flipped"] += 1
+            await session.commit()
+        if stats["flipped"]:
+            logger.info(
+                "NHL spread inversion re-grade (#939): flipped %d of %d game_score outcomes",
+                stats["flipped"],
+                stats["checked"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("NHL spread inversion re-grade error: %s", e)
     return stats
 
 
@@ -3983,6 +4077,14 @@ async def _resolve_winners_only(limit: int = 2000):
     # Score-based resolution
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # #939: correct NHL spread outcomes pinned True/False by the old
+    # complementary resolver (the fixed resolver above can't reach them — the
+    # HAVING clause skips markets that still hold a game_score is_winner=True).
+    nhl_spread_regrade_stats = await _regrade_kalshi_nhl_spread_inversions()
+    stats["nhl_spread_regrade"] = {
+        "checked": nhl_spread_regrade_stats.get("checked", 0),
+        "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+    }
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
