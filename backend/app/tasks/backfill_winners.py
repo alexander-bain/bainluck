@@ -1889,12 +1889,15 @@ async def _resolve_kalshi_player_props_from_boxscore():
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold',
-                                         -- re-grade already box_score-resolved rows so a
-                                         -- mapping fix (e.g. #937 NHL points) self-heals;
-                                         -- idempotent: we only write when the verdict CHANGES
-                                         -- (authoritative recompute, gotcha #21-safe).
-                                         'box_score'))
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                           -- Targeted re-grade for the #937 mapping fix ONLY: re-process
+                           -- already box_score-resolved NHL points props (they were all
+                           -- wrongly graded losers). Scoped to kxnhlpts so we do NOT pull the
+                           -- full ~45k box_score set + heavy JSONB into this query — that
+                           -- OOM-crashed the 200MB worker child (#899). Idempotent: we only
+                           -- write when the verdict CHANGES (gotcha #21-safe recompute).
+                           OR (fo.resolution_source = 'box_score'
+                               AND LOWER(fm.external_id) LIKE 'kxnhlpts%'))
                       AND LOWER(fm.external_id) LIKE ANY(:prefixes)
                     ORDER BY fm.id
                     LIMIT 50000
