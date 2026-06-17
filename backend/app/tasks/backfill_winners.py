@@ -1494,9 +1494,14 @@ def _spread_outcome_is_winner(
         return None
     team_name = sm.group(1).strip()
     line = float(sm.group(2))
-    home_tokens = set((home_team_name or "").lower().split())
-    away_tokens = set((away_team_name or "").lower().split())
-    team_tokens = set(team_name.lower().split())
+    # Normalize for matching: strips diacritics ("Montréal" -> "montreal") and
+    # periods ("St. Louis" -> "st louis"). Without this, accented event names
+    # never token-match the ASCII Kalshi outcome name and the outcome was left
+    # at its old (inverted) value (#939: ~17 Montréal rows stayed wrong).
+    from app.utils.name_normalization import normalize_team_name
+    home_tokens = set(normalize_team_name(home_team_name or "").split())
+    away_tokens = set(normalize_team_name(away_team_name or "").split())
+    team_tokens = set(normalize_team_name(team_name).split())
     if team_tokens & home_tokens:
         margin = home_score - away_score
     elif team_tokens & away_tokens:

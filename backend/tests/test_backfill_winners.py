@@ -329,6 +329,23 @@ class TestSpreadOutcomeIndependentGrading:
         assert self._w("Buffalo wins by over 1.5 goals",
                        "Boston Bruins", "Buffalo Sabres", 7, 0) is False
 
+    def test_accented_team_name_matches(self):
+        # #939 residual: "Montreal" (ASCII outcome) must match "Montréal"
+        # (accented event name) — else the outcome is left at its old value.
+        # Montreal (away) lost 3-4, so neither "wins by over" line is True.
+        assert self._w("Montreal wins by over 1.5 goals",
+                       "Los Angeles Kings", "Montréal Canadiens", 4, 3) is False
+        # Montreal (home) wins by 2 -> covers 1.5, not 2.5.
+        assert self._w("Montreal wins by over 1.5 goals",
+                       "Montréal Canadiens", "Toronto Maple Leafs", 3, 1) is True
+        assert self._w("Montreal wins by over 2.5 goals",
+                       "Montréal Canadiens", "Toronto Maple Leafs", 3, 1) is False
+
+    def test_punctuated_team_name_matches(self):
+        # "St. Louis" (event) vs "St. Louis" outcome — periods normalized.
+        assert self._w("St. Louis wins by over 1.5 goals",
+                       "Chicago Blackhawks", "St. Louis Blues", 1, 4) is True
+
     def test_unmatched_team_or_non_spread_returns_none(self):
         assert self._w("Over 5.5 goals scored",
                        "Boston Bruins", "Buffalo Sabres", 7, 0) is None
