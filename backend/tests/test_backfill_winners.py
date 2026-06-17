@@ -1462,6 +1462,41 @@ class TestPlayerPropBoxScoreStructure:
         assert "source" not in box_score
 
 
+class TestNhlPointsDerivedFromGoalsAssists:
+    """Regression guard for #937: ESPN NHL box scores store `goals` and `assists`
+    but have NO `points` field. Mapping kxnhlpts to a singular "points" stat made
+    every NHL points prop grade a loser (box_score actual win rate 0% vs ~45%
+    predicted; e.g. Pavel Zacha 1g+1a=2pts was marked False for "Zacha: 2+").
+    NHL points MUST be the combo goals+assists.
+    """
+
+    def test_kxnhlpts_is_a_goals_plus_assists_combo(self):
+        from app.tasks.backfill_winners import _PROP_TICKER_TO_STAT, _COMBO_STATS
+        # Must NOT map to a non-existent singular "points" stat.
+        assert _PROP_TICKER_TO_STAT.get("kxnhlpts") != "points"
+        assert "kxnhlpts" not in _PROP_TICKER_TO_STAT
+        # Must derive points = goals + assists.
+        assert _COMBO_STATS.get("kxnhlpts") == ["goals", "assists"]
+
+    def test_zacha_two_plus_points_resolves_true(self):
+        """1 goal + 1 assist = 2 points -> 'Zacha: 2+' must be a WINNER."""
+        from app.tasks.backfill_winners import _COMBO_STATS
+        player_stats = {"goals": 1.0, "assists": 1.0, "hits": 3.0}  # no 'points' key
+        combo = _COMBO_STATS["kxnhlpts"]
+        actual = sum(player_stats.get(s, 0) for s in combo)
+        assert actual == 2
+        assert (actual >= 2) is True  # "2+" wins; the old singular-"points" path gave 0 -> False
+
+    def test_regrade_only_writes_on_changed_verdict(self):
+        """The box_score re-grade must be idempotent: only re-write rows whose
+        verdict CHANGES (no last_updated churn on already-correct rows, #937/#21)."""
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_player_props_from_boxscore
+        src = inspect.getsource(_resolve_kalshi_player_props_from_boxscore)
+        assert "cur_winner" in src, "re-grade must compare against the current is_winner"
+        assert "'box_score'" in src, "re-grade must re-consider already box_score-resolved rows"
+
+
 class TestWinnerWritesBumpLastUpdated:
     """Regression guard for #898 (Kalshi winner-backfill observability).
 

@@ -1832,7 +1832,6 @@ _PROP_TICKER_TO_STAT = {
     "kxnba3pt": "three pointers",
     "kxnhlgoal": "goals",
     "kxnhlanygoal": "goals",
-    "kxnhlpts": "points",
     "kxnhlast": "assists",
     "kxnhlsaves": "saves",
     "kxmlbhit": "hits",
@@ -1858,6 +1857,10 @@ _COMBO_STATS = {
     "kxnbapr": ["points", "rebounds"],
     "kxnbapra": ["points", "rebounds", "assists"],
     "kxnbara": ["rebounds", "assists"],
+    # NHL points = goals + assists. ESPN box scores store goals and assists
+    # separately and have NO "points" field, so mapping kxnhlpts to a singular
+    # "points" stat always returned 0 -> every points prop graded a loser (#937).
+    "kxnhlpts": ["goals", "assists"],
 }
 
 
@@ -1876,7 +1879,8 @@ async def _resolve_kalshi_player_props_from_boxscore():
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
-                           fm.external_id AS ticker, e.box_score_data
+                           fm.external_id AS ticker, e.box_score_data,
+                           fo.is_winner AS cur_winner
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
@@ -1885,7 +1889,12 @@ async def _resolve_kalshi_player_props_from_boxscore():
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold'))
+                                         'clean_resolution', 'pass2_loser', 'pass3_threshold',
+                                         -- re-grade already box_score-resolved rows so a
+                                         -- mapping fix (e.g. #937 NHL points) self-heals;
+                                         -- idempotent: we only write when the verdict CHANGES
+                                         -- (authoritative recompute, gotcha #21-safe).
+                                         'box_score'))
                       AND LOWER(fm.external_id) LIKE ANY(:prefixes)
                     ORDER BY fm.id
                     LIMIT 50000
@@ -1961,7 +1970,15 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                if actual >= threshold:
+                verdict = actual >= threshold
+                # Skip rows already correct (idempotent re-grade): only write when
+                # the authoritative verdict differs from the stored value. This
+                # avoids re-touching the ~thousands of already-correct box_score
+                # rows every cycle (no last_updated churn) while letting a mapping
+                # fix flip the genuinely mis-resolved rows (e.g. #937 NHL points).
+                if row.cur_winner is not None and bool(row.cur_winner) == verdict:
+                    continue
+                if verdict:
                     winner_ids.append(row.outcome_id)
                 else:
                     loser_ids.append(row.outcome_id)
