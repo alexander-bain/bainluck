@@ -2527,3 +2527,46 @@ class TestTennisMatchupExtraction:
         assert m is not None
         assert m.team_a == "Player A"
         assert m.team_b == "Player B"
+
+
+class TestRelinkCollapsedGameMarkets:
+    """#944: re-link Kalshi multi-game-series game markets that collapsed onto
+    the last game's event (commence_time = resolution date, gotcha #14)."""
+
+    def _src(self):
+        import inspect
+        from app.tasks.prediction_market_matching import _relink_collapsed_game_markets
+        return inspect.getsource(_relink_collapsed_game_markets)
+
+    def test_relinks_on_ticker_derived_date(self):
+        src = self._src()
+        # Derives the real game date from the ticker, not commence_time.
+        assert "to_date(substring(fm.external_id" in src
+        assert "YYMONDD" in src
+
+    def test_matches_team_set_either_orientation(self):
+        src = self._src()
+        # Kalshi ticker order differs from our home/away — match the unordered
+        # team set (gotcha #16/#32).
+        assert "e2.home_team_name = ml.h AND e2.away_team_name = ml.a" in src
+        assert "e2.home_team_name = ml.a AND e2.away_team_name = ml.h" in src
+
+    def test_includes_completed_events_and_tiebreaker(self):
+        src = self._src()
+        assert "'completed','closed'" in src  # gotcha #32
+        assert "ORDER BY ABS(e2.commence_time::date - ml.tdate)" in src  # closest-by-date
+
+    def test_moves_only_link_never_winner_or_calprob(self):
+        src = self._src()
+        # Moves event_id + commence_time ONLY — never is_winner/cal_prob (gotcha #21).
+        # Check the SQL, not the docstring (which names them as DO-NOT-TOUCH).
+        sql = src[src.index("text("):]
+        assert "SET event_id = tgt.id, commence_time = tgt.commence_time" in sql
+        assert "is_winner" not in sql
+        assert "calibration_probability" not in sql
+        assert "fm.event_id <> tgt.id" in sql  # write-on-change
+
+    def test_wired_into_matching_task_as_forward_fix(self):
+        import inspect
+        from app.tasks.prediction_market_matching import _match_prediction_markets
+        assert "_relink_collapsed_game_markets(" in inspect.getsource(_match_prediction_markets)

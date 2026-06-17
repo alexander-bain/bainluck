@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, or_, and_, func, delete, case, update
+from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
@@ -539,6 +539,70 @@ async def _phase1_pass2_general_scan(
                 pass
 
 
+async def _relink_collapsed_game_markets(session) -> int:
+    """#944: re-link Kalshi multi-game-series GAME markets that collapsed onto
+    the LAST game's event.
+
+    Kalshi ``commence_time`` is the resolution/close date (gotcha #14), so every
+    game in a series shares one commence_time and the registry's structured
+    match collapses all of that series' game markets onto the last game's event
+    (e.g. 7 MIN-COL ``KXNHLSPREAD`` games all linked to the single May-14 event).
+    The real game date lives in the TICKER (``KXNHLSPREAD-26MAY03MINCOL`` ->
+    May 3); the currently-linked event already has the correct TEAMS (right
+    matchup, wrong date), so we find the event with the same team-set — either
+    home/away orientation, since Kalshi ticker order differs from our home/away
+    (gotchas #16/#32) — on the ticker date and move ``event_id`` +
+    ``commence_time`` there. Completed/closed events are eligible (gotcha #32),
+    closest-by-ticker-date tiebreaker.
+
+    Idempotent + write-on-change (so this ALSO serves as the forward-fix on each
+    matching run — cheap no-op once clean). It moves ONLY ``event_id`` and the
+    derived ``commence_time`` — it NEVER touches ``is_winner`` /
+    ``calibration_probability`` (those live on futures_outcomes; the stored
+    Kalshi settlements are correct, only the link was wrong — gotcha #21).
+    Bounded to the game-market cohort (no broad in-memory pull, gotcha #899).
+    """
+    try:
+        r = await session.execute(text(r"""
+            WITH mislinked AS (
+                SELECT fm.id AS mid, fm.event_id AS cur_eid,
+                       to_date(substring(fm.external_id from '^KX[A-Z]+-(\d{2}[A-Z]{3}\d{2})'),'YYMONDD') AS tdate,
+                       cur.home_team_name AS h, cur.away_team_name AS a
+                FROM futures_markets fm
+                JOIN events cur ON cur.id = fm.event_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)(SPREAD|TOTAL|GAME|MONEYLINE)'
+                  AND substring(fm.external_id from '^KX[A-Z]+-(\d{2}[A-Z]{3}\d{2})') IS NOT NULL
+                  AND ABS(cur.commence_time::date - to_date(substring(fm.external_id from '^KX[A-Z]+-(\d{2}[A-Z]{3}\d{2})'),'YYMONDD')) > 1
+            )
+            UPDATE futures_markets fm
+            SET event_id = tgt.id, commence_time = tgt.commence_time, updated_at = NOW()
+            FROM mislinked ml
+            JOIN LATERAL (
+                SELECT e2.id, e2.commence_time
+                FROM events e2
+                WHERE ((e2.home_team_name = ml.h AND e2.away_team_name = ml.a)
+                    OR (e2.home_team_name = ml.a AND e2.away_team_name = ml.h))
+                  AND e2.commence_time::date BETWEEN ml.tdate - 1 AND ml.tdate + 1
+                  AND e2.id <> ml.cur_eid
+                  AND e2.status IN ('scheduled','live','completed','closed')
+                ORDER BY ABS(e2.commence_time::date - ml.tdate), e2.id
+                LIMIT 1
+            ) tgt ON true
+            WHERE fm.id = ml.mid AND fm.event_id <> tgt.id
+        """))
+        n = r.rowcount or 0
+        await session.commit()
+        if n:
+            logger.info(
+                "Relink collapsed game markets (#944): moved %d markets to correct-date events", n
+            )
+        return n
+    except Exception as e:
+        logger.error("Relink collapsed game markets error: %s", e)
+        return 0
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
 ) -> None:
@@ -780,6 +844,11 @@ async def _match_prediction_markets(limit: int = 500):
         await _phase15_revalidate(session, stats, now, _time_remaining)
 
         await session.commit()
+
+        # #944: correct Kalshi game markets that collapsed onto the last game's
+        # event (commence_time = resolution date). Idempotent + write-on-change,
+        # so this is both the forward-fix and the one-shot historical relink.
+        stats["funnel"]["game_markets_relinked"] = await _relink_collapsed_game_markets(session)
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
