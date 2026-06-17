@@ -374,8 +374,9 @@ class TestSpreadOutcomeIndependentGrading:
             _resolve_winners_only,
         )
         rg = inspect.getsource(_regrade_kalshi_nhl_spread_inversions)
-        # Scoped to the small NHL spread cohort (#899 OOM caution) + write-on-change.
-        assert "KXNHLSPREAD%" in rg
+        # Scoped to the Kalshi NHL/NBA/MLB spread cohort (#944: broadened from
+        # NHL-only) + write-on-change.
+        assert "KX(NHL|NBA|MLB)SPREAD" in rg
         assert "bool(r.cur) == won" in rg  # write-on-change guard
         assert "_spread_outcome_is_winner(" in rg
         # ...and actually invoked by the frequent resolve_winners task.

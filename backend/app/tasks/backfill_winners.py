@@ -1891,10 +1891,14 @@ async def _regrade_kalshi_nhl_spread_inversions():
     re-pulled. This corrects them directly.
 
     Each outcome wins iff the named team's actual margin exceeds ITS OWN line.
-    Scoped to the small ``KXNHLSPREAD%`` game_score cohort (~1.2k outcomes, no
-    OOM risk per gotcha #899) and write-on-change. resolution_source stays
-    ``game_score`` — we re-resolve from authoritative scores in place, never a
-    bare ``is_winner`` reset (gotcha #21).
+    Scoped to the Kalshi NHL/NBA/MLB SPREAD game_score cohort and write-on-change.
+    (#944: broadened from NHL-only — the #939 complementary-flip fix shipped the
+    generic resolver but only NHL got this targeted re-grade, so NBA/MLB spread
+    game_score stayed inverted ~63-72%; the main resolver's HAVING clause skips
+    already-resolved markets, so they were never re-pulled. This also re-resolves
+    markets whose event_id was corrected by the #944 relink against the now-right
+    game.) resolution_source stays ``game_score`` — re-resolve from authoritative
+    scores in place, never a bare ``is_winner`` reset (gotcha #21, #899 cohort scope).
     """
     stats = {"checked": 0, "flipped": 0, "errors": []}
     try:
@@ -1907,7 +1911,7 @@ async def _regrade_kalshi_nhl_spread_inversions():
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
-                  AND fm.external_id ILIKE 'KXNHLSPREAD%'
+                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)SPREAD'
                   AND fo.resolution_source = 'game_score'
                   AND e.home_score IS NOT NULL
                   AND e.away_score IS NOT NULL
