@@ -414,6 +414,20 @@ class TestGolfSettlementSyncSingleWinner:
         assert "SET is_winner = false" in src
         assert "fo.resolution_source = 'settlement_sync'" in src
 
+    def test_extra_winner_regrade_runs_in_fast_resolve_task(self):
+        # The deep settlement_sync block is starved (#898), so the idempotent
+        # re-grade must ALSO run in the fast resolve_winners task to take effect.
+        import inspect
+        from app.tasks.backfill_winners import (
+            _regrade_golf_extra_winners,
+            _resolve_winners_only,
+        )
+        helper = inspect.getsource(_regrade_golf_extra_winners)
+        assert "SET is_winner = false" in helper
+        assert "fo.resolution_source = 'settlement_sync'" in helper
+        assert "datagolf" in helper and "leaderboard" in helper  # auth-winner guard
+        assert "_regrade_golf_extra_winners(" in inspect.getsource(_resolve_winners_only)
+
 
 class TestThreeWayWinnerResolution:
     """3-outcome Team/Team/Tie winner markets (e.g. KXNCAAMB1HWINNER, #816)."""

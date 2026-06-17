@@ -1823,6 +1823,60 @@ async def _resolve_kalshi_spread_total_from_scores():
     return stats
 
 
+async def _regrade_golf_extra_winners():
+    """#938: Clear stale settlement_sync EXTRA winners on golf field markets.
+
+    settlement_sync set is_winner=(current_probability>=0.95) for ALL golf
+    outcomes; on illiquid multi-candidate fields the "price" is a stale one-
+    sided YES-ask (candidates frozen at 99% with no bid/trade), so it promoted
+    bogus extra winners ON TOP of DataGolf's correct winner(s). The settlement_
+    sync block in _backfill_all_winners now guards against this AND re-grades,
+    but that block lives deep in the 14-min pipeline and is starved before it
+    runs (same #898 starvation that forced authoritative resolution to the top).
+    Running the idempotent re-grade here, in the fast resolve_winners task,
+    guarantees it executes.
+
+    Flips ONLY settlement_sync extras to False, and only on markets that retain
+    an authoritative (leaderboard/api/datagolf/score) winner — never the
+    authoritative winner itself, never winner-less (gotcha #21: no bulk reset).
+    Write-on-change; scoped to the golf field cohort (no broad in-memory pull,
+    #899 OOM caution).
+    """
+    stats = {"cleared": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = false, last_updated = NOW()
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.llm_sport_category = 'golf'
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner = true
+                      AND fo.resolution_source = 'settlement_sync'
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes fo2
+                          WHERE fo2.market_id = fm.id
+                            AND fo2.is_winner = true
+                            AND fo2.resolution_source IN
+                                ('leaderboard', 'api_settlement', 'datagolf',
+                                 'datagolf_matchup', 'game_score')
+                      )
+                """))
+            stats["cleared"] = r.rowcount
+            await session.commit()
+        if stats["cleared"]:
+            logger.info(
+                "Golf extra-winner re-grade (#938): cleared %d stale settlement_sync winners",
+                stats["cleared"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Golf extra-winner re-grade error: %s", e)
+    return stats
+
+
 async def _regrade_kalshi_nhl_spread_inversions():
     """#939: One-shot, idempotent re-grade of NHL spread outcomes left inverted
     by the OLD complementary spread resolver.
@@ -4089,6 +4143,13 @@ async def _resolve_winners_only(limit: int = 2000):
     stats["nhl_spread_regrade"] = {
         "checked": nhl_spread_regrade_stats.get("checked", 0),
         "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+    }
+    # #938: clear stale settlement_sync extra winners on golf field markets here
+    # (the settlement_sync block in _backfill_all_winners is starved before it
+    # runs — #898). Idempotent + write-on-change.
+    golf_extra_winner_stats = await _regrade_golf_extra_winners()
+    stats["golf_extra_winner_regrade"] = {
+        "cleared": golf_extra_winner_stats.get("cleared", 0),
     }
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
