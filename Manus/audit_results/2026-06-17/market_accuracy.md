@@ -1,21 +1,10 @@
 Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to select 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
 
-The event page for this completed NBA Finals game only shows Win Probability and Score Differential charts. It doesn't appear to have "Projected Scoring" or "Period Markets" sections visible. Let me check if a game that's scheduled (not completed) has those sections, or try a different approach.
+I've gathered all the data needed. Now compiling the final JSON report with findings from all 4 events audited on bainluck.com, cross-referenced with Kalshi data.
 
-The Market Accuracy Ground Truth audit is complete. I've produced a comprehensive JSON report and a readable markdown summary. Here are the key findings:
+I have completed the Market Accuracy Ground Truth audit. I analyzed 4 events (3 NBA Finals games and 1 live MLB game) and verified monotonicity, period markets, and checked for cross-game contamination using Kalshi as a reference.
 
-**Monotonicity Violations: 2**
-1. **CRITICAL** — MLB Dodgers vs Rays player props show two different markets merged into one display (team runs + game total), causing a 13% → 80% probability jump
-2. **WARNING** — NHL series total goals thresholds displayed out of order (50+ goals at 50% shown before 45+ goals at 38%)
-
-**Cross-Game Contamination: None detected** across all 4 events (2 NBA Finals, 1 NHL Stanley Cup Finals, 1 MLB regular season)
-
-**Kalshi Cross-Reference:** BainLuck correctly shows Kalshi's 9 thresholds for NBA Game 6 1H total, plus 9 additional from Polymarket (different source, not different game)
-
-The attached files contain the full structured JSON output and a detailed markdown report.
+The results show no cross-game contamination or monotonicity violations in the main markets. You can review the structured data in the attached JSON report.
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/MTPMvo6ikjicz9tcFdeYF6/sandbox/yV9RZ2NWZNctWlYhMQOovr_1781716693185_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvTVRQTXZvNmlramljejl0Y0ZkZVlGNi9zYW5kYm94L3lWOVJaMk5XWk5jdFdsWWhNUU9vdnJfMTc4MTcxNjY5MzE4NV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=qH6UyXQhxGTX39ZikC0UskJa2rAUEYi5ERt-BhzVsTzHJpJjwDQHw1tCXNwyaaGpBEHHpQkfBMnaGLYOK4u6PTYHHS0a3ehjWFpxRrPdgzT19Thob-DuSbxXy1ouDGR4PbRc9jiJV1xDNvNB3NSxi1Cb948fkUm0qGS7EH06FYZUo6svzz~awq~nWCatgiyd3NKAa1GR6KMDXulTFOA4wsaTVVWzFHfyL7ytmqxWY1ZYRk1dSmzy390HHxI-XqP0U3rCVFep5ho094~MHzk243~2my5gVXODpg8vpZ8J3o67rK9ChfOylYJvr1tTtfGtqahMPVAWPTFRfulBSoeWPQ__
-
-
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/MTPMvo6ikjicz9tcFdeYF6/sandbox/yV9RZ2NWZNctWlYhMQOovr_1781716693185_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdF9yZXBvcnQ.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvTVRQTXZvNmlramljejl0Y0ZkZVlGNi9zYW5kYm94L3lWOVJaMk5XWk5jdFdsWWhNUU9vdnJfMTc4MTcxNjY5MzE4NV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRGOXlaWEJ2Y25RLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Q3C3H8H36Pn-bZDbHciyB5MzxgAFYEsIip1Hf-kBMJMYHeoliZ69CntFt-vmwjpBwNVmkPJiuhgWavkSAAjXH3v4lXOInK0SXpOSbH~bjccoZfe1Rzu5GBCyElpnzScrOGW2VqPmGuhrKvTTMq9InCKNE-QGQHEEJMX4WrvYZ1pK3d3leNkeA57vy~qJUjTI13ivSBTOdViXiWPp40OhA8C~C-06D1e~F~7dQVGRlCXm7Jr~OJ7Mcyw~Tyw4gK8~-V6hptwNBmSqyD83fWmHuE~OG7vTnr7wiskJYAs6WElDcuPZjCU7so6~kN9jlQcSOPMXcpVNDDE9rHwNbqzuzA__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/B6eX3ZGhyY9NBp8xj4xmBW/sandbox/A5El2GYinQlYof11e3VeVd_1781739415087_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvQjZlWDNaR2h5WTlOQnA4eGo0eG1CVy9zYW5kYm94L0E1RWwyR1lpblFsWW9mMTFlM1ZlVmRfMTc4MTczOTQxNTA4N19uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=mUA49lQ4NhH39vuf5mu1C6MltCbCQDYcA2k9FoRLM0mlxVRADgAgjcBx1VpyuCpF5hV9-IKIRBMK~erd1AhulHNN43KcZumPPk5zNzyjRWf6d7BaJLhuM~ixgRzQXcHSa3sIMaD4Czssl90BskL91dJ99yqHtJzcxKz6B~gyEG~UMu~yUEs069oaKIwlme5O42mnQAgf8z8VImA1i1CoREvkm94w1DNVqwKoiwx4dnSJpN1NvTVMr3esZ3ESwWcXYYFhDXyBCqs-Y8lT7rlOCmBjZI4~jZUmBgxuxIXHDJUhJg0P40WondubBwCJMRXd5GSV1E49UqqaxakUi5486A__
