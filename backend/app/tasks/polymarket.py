@@ -700,6 +700,16 @@ async def _process_event_batch(
                         sub_opening_am = over_american if sub_has_trading else None
                         sub_opening_at = now if sub_has_trading else None
 
+                        # Forward-capture per-outcome volume so the traded/untraded
+                        # calibration tag stays populated without a re-backfill.
+                        # fo.volume is Integer — cap to avoid overflow on the
+                        # multi-billion-dollar markets.
+                        sub_vol = (
+                            min(int(market.volume), 2_000_000_000)
+                            if getattr(market, "volume", None)
+                            else None
+                        )
+
                         over_update: dict = {
                             "current_probability": prob,
                             "current_american_odds": over_american,
@@ -707,6 +717,7 @@ async def _process_event_batch(
                             "current_yes_ask": market.best_ask,
                             "rank": 1,
                             "probability_change_24h": prob - FuturesOutcome.current_probability,
+                            "volume": sub_vol,
                             "last_updated": func.now(),
                         }
                         if sub_has_trading:
@@ -726,6 +737,7 @@ async def _process_event_batch(
                             opening_american_odds=sub_opening_am,
                             opening_captured_at=sub_opening_at,
                             rank=1,
+                            volume=sub_vol,
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
                             set_=over_update,
@@ -756,6 +768,7 @@ async def _process_event_batch(
                                 "current_probability": under_prob,
                                 "current_american_odds": under_american,
                                 "rank": 2,
+                                "volume": sub_vol,
                                 "last_updated": func.now(),
                             }
                             if sub_has_trading:
@@ -773,6 +786,7 @@ async def _process_event_batch(
                                 opening_american_odds=under_american if sub_has_trading else None,
                                 opening_captured_at=sub_opening_at,
                                 rank=2,
+                                volume=sub_vol,
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_=under_update,
@@ -1419,4 +1433,107 @@ async def _sync_polymarket_resolved_status():
         "Polymarket status sync: %d events fetched, %d markets resolved, %d outcomes updated",
         stats["events_fetched"], stats["markets_resolved"], stats["outcomes_updated"],
     )
+    return stats
+
+
+async def _backfill_polymarket_volume(max_pages: int = 200):
+    """Backfill per-outcome volume for Polymarket from the Gamma API.
+
+    Polymarket polling stored only event-level AGGREGATE volume; per-outcome
+    (per-condition) volume was never written, so ~all resolved Polymarket
+    outcomes have NULL ``volume`` — which blocks the traded/untraded
+    calibration tag for that source. This pages CLOSED markets from Gamma
+    (each carries ``conditionId`` + ``volume``) high-volume-first and
+    bulk-updates ``fo.volume`` keyed on condition_id / _yes / _no.
+
+    VP-efficient + queue-safe: bulk set-based writes (one ``UPDATE ... FROM
+    unnest`` per page, not per row), Redis offset cursor (resumable),
+    time-boxed at 480s, 429-backoff, write-on-change. Run OUT-OF-BAND (its own
+    dyno / low-priority queue) — never contend with live polling. Gotchas: #6
+    (commit per batch), #899 (no broad in-memory pull), #36 (don't catch-all —
+    distinguish 429 from real errors). fo.volume is an Integer column, so cap
+    at ~2B to avoid overflow on the handful of multi-billion-dollar markets
+    (the magnitude beyond that is irrelevant to a traded/threshold tag).
+    """
+    import asyncio
+    import time as _time
+    from app.services.polymarket_api import PolymarketAPIService
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {"pages": 0, "markets": 0, "rows_updated": 0, "wrapped": False, "errors": []}
+    _CAP = 2_000_000_000
+
+    _rc = get_redis_client()
+    cursor_key = "bainluck:poly_volume_backfill"
+    offset = int(_rc.get(cursor_key) or 0)
+    svc = PolymarketAPIService()
+    _start = _time.monotonic()
+
+    try:
+        for _ in range(max_pages):
+            if (_time.monotonic() - _start) > 480:
+                break
+            try:
+                markets = await svc.get_markets(
+                    active=None, closed=True, limit=100, offset=offset,
+                    order="volume", ascending=False,
+                )
+            except Exception as e:
+                if "429" in str(e):
+                    await asyncio.sleep(5)
+                    continue
+                stats["errors"].append(str(e)[:200])
+                break
+
+            if not markets:
+                # Reached the end — reset cursor so a later run restarts and
+                # picks up newly-resolved markets.
+                _rc.delete(cursor_key)
+                stats["wrapped"] = True
+                break
+
+            offset += len(markets)
+            _rc.setex(cursor_key, 86400 * 7, str(offset))
+            stats["pages"] += 1
+
+            cids, vols = [], []
+            for m in markets:
+                cid = m.get("conditionId") or m.get("condition_id")
+                vraw = m.get("volume")
+                if vraw is None:
+                    vraw = m.get("volumeNum")
+                if cid and vraw is not None:
+                    try:
+                        cids.append(cid)
+                        vols.append(min(int(float(vraw)), _CAP))
+                    except (ValueError, TypeError):
+                        pass
+
+            if not cids:
+                continue
+            stats["markets"] += len(cids)
+
+            async with get_task_session() as session:
+                r = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET volume = v.vol, last_updated = NOW()
+                        FROM unnest(CAST(:cids AS text[]), CAST(:vols AS bigint[])) AS v(cid, vol)
+                        WHERE fo.external_id IN (v.cid, v.cid || '_yes', v.cid || '_no')
+                          AND fo.volume IS DISTINCT FROM v.vol
+                    """),
+                    {"cids": cids, "vols": vols},
+                )
+                stats["rows_updated"] += r.rowcount
+                await session.commit()
+
+        logger.info(
+            "Polymarket volume backfill: %d pages, %d markets, %d rows updated (wrapped=%s, %d errors)",
+            stats["pages"], stats["markets"], stats["rows_updated"],
+            stats["wrapped"], len(stats["errors"]),
+        )
+    except Exception as e:
+        stats["errors"].append(str(e)[:200])
+        logger.error("Polymarket volume backfill error: %s", e)
+
     return stats

@@ -218,8 +218,16 @@ class PolymarketAPIService:
         tag_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        order: Optional[str] = None,
+        ascending: Optional[bool] = None,
     ) -> list[dict]:
-        """Get markets from Gamma API."""
+        """Get markets from Gamma API.
+
+        ``order`` (e.g. "volume") + ``ascending`` let callers fetch
+        high-volume markets first — used by the per-outcome volume backfill so
+        the meaningful-volume markets (which overlap our traded cohort) are
+        filled before the long tail.
+        """
         params: dict = {"limit": min(limit, 100), "offset": offset}
         if active is not None:
             params["active"] = str(active).lower()
@@ -227,6 +235,10 @@ class PolymarketAPIService:
             params["closed"] = str(closed).lower()
         if tag_id:
             params["tag_id"] = tag_id
+        if order:
+            params["order"] = order
+        if ascending is not None:
+            params["ascending"] = str(ascending).lower()
 
         response = await self.gamma_client.get("/markets", params=params)
         response.raise_for_status()

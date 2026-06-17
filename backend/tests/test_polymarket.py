@@ -805,3 +805,32 @@ class TestIsPlaceholderOutcome:
         )
         m.group_item_title = "Other"
         assert _is_placeholder_outcome(m) is False
+
+
+class TestPolymarketVolumeBackfill:
+    """#940 prep: per-outcome volume backfill (the calibration traded/untraded tag)."""
+
+    def test_backfill_volume_fn_shape(self):
+        import inspect
+        from app.tasks.polymarket import _backfill_polymarket_volume
+        src = inspect.getsource(_backfill_polymarket_volume)
+        # bulk set-based write (one UPDATE...unnest per page), not per-row
+        assert "unnest" in src.lower()
+        assert "_yes" in src and "_no" in src          # matches binary outcome keys
+        assert "IS DISTINCT FROM" in src               # write-on-change
+        assert "bainluck:poly_volume_backfill" in src  # resumable cursor
+        assert "429" in src                            # rate-limit backoff
+        assert "2_000_000_000" in src or "2000000000" in src  # int overflow cap
+
+    def test_get_markets_supports_order(self):
+        import inspect
+        from app.services.polymarket_api import PolymarketAPIService
+        sig = inspect.signature(PolymarketAPIService.get_markets)
+        assert "order" in sig.parameters and "ascending" in sig.parameters
+
+    def test_poll_forward_captures_volume(self):
+        # The poll must write per-outcome volume so the gap can't reopen.
+        import inspect
+        from app.tasks.polymarket import _process_event_batch
+        src = inspect.getsource(_process_event_batch)
+        assert "sub_vol" in src and "volume" in src
