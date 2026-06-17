@@ -1,16 +1,21 @@
-Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to pick 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
+Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to select 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
 
-I've examined the NBA Finals events on bainluck.com. The page structure uses "Total maps" and "Margin maps" rather than "Projected Scoring" and "Spread" sections as described in the instructions. I'm now going to look at MLB games and then cross-reference with Kalshi. Let me continue with the audit using the actual page structure.
+The event page for this completed NBA Finals game only shows Win Probability and Score Differential charts. It doesn't appear to have "Projected Scoring" or "Period Markets" sections visible. Let me check if a game that's scheduled (not completed) has those sections, or try a different approach.
 
-I have completed the Market Accuracy Ground Truth audit for the 4 events on bainluck.com and cross-referenced with Kalshi. The findings have been compiled into the attached JSON report.
+The Market Accuracy Ground Truth audit is complete. I've produced a comprehensive JSON report and a readable markdown summary. Here are the key findings:
 
-Here is a brief summary of the audit:
-1. **NBA Finals Game 6 (Knicks at Spurs)**: Monotonicity passed for all totals. No cross-game contamination found.
-2. **MLB Game (Angels at Diamondbacks)**: Monotonicity passed for full game and 1st 5 innings totals.
-3. **NBA Finals Game 5 (Spurs at Knicks)**: Monotonicity passed. Kalshi cross-reference showed exactly 9 thresholds for 1H totals matching Bainluck's 9 thresholds.
-4. **NHL Western Conference Finals Game 5 (Hurricanes at Golden Knights)**: Monotonicity passed in the main totals map. However, in the "Additional Markets" section, there were two groups of markets ("Hurricanes vs. Golden Knights" and "Golden Knights vs. Hurricanes") showing contradictory probabilities. Group 2 showed O/U 3.5, 4.5, and 5.5 at 100%, despite the final score being 3-0 (total 3). This strongly suggests **cross-game contamination**, likely pulling markets from Game 3 (where the total was 8 goals).
+**Monotonicity Violations: 2**
+1. **CRITICAL** — MLB Dodgers vs Rays player props show two different markets merged into one display (team runs + game total), causing a 13% → 80% probability jump
+2. **WARNING** — NHL series total goals thresholds displayed out of order (50+ goals at 50% shown before 45+ goals at 38%)
 
-The detailed JSON report is attached.
+**Cross-Game Contamination: None detected** across all 4 events (2 NBA Finals, 1 NHL Stanley Cup Finals, 1 MLB regular season)
+
+**Kalshi Cross-Reference:** BainLuck correctly shows Kalshi's 9 thresholds for NBA Game 6 1H total, plus 9 additional from Polymarket (different source, not different game)
+
+The attached files contain the full structured JSON output and a detailed markdown report.
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/ne2Dz3Ar7HJqkmncdWkYPW/sandbox/AbBuumjVqZIcDwSkVllD79_1781694327755_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvbmUyRHozQXI3SEpxa21uY2RXa1lQVy9zYW5kYm94L0FiQnV1bWpWcVpJY0R3U2tWbGxENzlfMTc4MTY5NDMyNzc1NV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=TvtLkrOFKy5fmfaeu7c6iCP4xaQ5mbIP9npUc3e9xYWOUibHTHU7ikw5i9ja0TtVd073Pj7Hig2LcQxHSm9Ri~uV3Opzlzrc-digUVdQmHT20Xv0KmwBc3zONP~hiR1Y9E5Fb7ISoQ7biaIDQQcVDNGxQRNqWPrV4aTGQNPaQZeFEb6P3SbboG7TXpLwoPTVqumDrs8N2P88T23rJJ1rExKO8SUof77gPH9AfhJd77dZ9v60ozp6lx7ny1w27M57WMnydjrOKgoBLcwXl3P2UgIZ~xkCqs9U4ZN50EfQ~Unnt2eXdLCqotQSAgPIF0wFeDrfc9qLUAhYB-bZhEeNmA__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/MTPMvo6ikjicz9tcFdeYF6/sandbox/yV9RZ2NWZNctWlYhMQOovr_1781716693185_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvTVRQTXZvNmlramljejl0Y0ZkZVlGNi9zYW5kYm94L3lWOVJaMk5XWk5jdFdsWWhNUU9vdnJfMTc4MTcxNjY5MzE4NV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=qH6UyXQhxGTX39ZikC0UskJa2rAUEYi5ERt-BhzVsTzHJpJjwDQHw1tCXNwyaaGpBEHHpQkfBMnaGLYOK4u6PTYHHS0a3ehjWFpxRrPdgzT19Thob-DuSbxXy1ouDGR4PbRc9jiJV1xDNvNB3NSxi1Cb948fkUm0qGS7EH06FYZUo6svzz~awq~nWCatgiyd3NKAa1GR6KMDXulTFOA4wsaTVVWzFHfyL7ytmqxWY1ZYRk1dSmzy390HHxI-XqP0U3rCVFep5ho094~MHzk243~2my5gVXODpg8vpZ8J3o67rK9ChfOylYJvr1tTtfGtqahMPVAWPTFRfulBSoeWPQ__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/MTPMvo6ikjicz9tcFdeYF6/sandbox/yV9RZ2NWZNctWlYhMQOovr_1781716693185_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdF9yZXBvcnQ.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvTVRQTXZvNmlramljejl0Y0ZkZVlGNi9zYW5kYm94L3lWOVJaMk5XWk5jdFdsWWhNUU9vdnJfMTc4MTcxNjY5MzE4NV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRGOXlaWEJ2Y25RLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Q3C3H8H36Pn-bZDbHciyB5MzxgAFYEsIip1Hf-kBMJMYHeoliZ69CntFt-vmwjpBwNVmkPJiuhgWavkSAAjXH3v4lXOInK0SXpOSbH~bjccoZfe1Rzu5GBCyElpnzScrOGW2VqPmGuhrKvTTMq9InCKNE-QGQHEEJMX4WrvYZ1pK3d3leNkeA57vy~qJUjTI13ivSBTOdViXiWPp40OhA8C~C-06D1e~F~7dQVGRlCXm7Jr~OJ7Mcyw~Tyw4gK8~-V6hptwNBmSqyD83fWmHuE~OG7vTnr7wiskJYAs6WElDcuPZjCU7so6~kN9jlQcSOPMXcpVNDDE9rHwNbqzuzA__
