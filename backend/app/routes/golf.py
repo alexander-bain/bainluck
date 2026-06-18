@@ -979,6 +979,38 @@ def _extract_prop_market(market, source_label: str) -> dict | None:
     }
 
 
+def _extract_yes_no_prop(market, source_label: str) -> dict | None:
+    """#952: surface a non-winner yes/no market as a single-probability prop.
+
+    Markets like "U.S. Open: Playoff", "First Time Winner?", "Hole-in-One" are
+    binary yes/no questions that were dropped at the <=2-outcome gate, so
+    albatross/hole-in-one/playoff/first-time-winner/record-low-round never
+    surfaced. Represent each as the YES probability (e.g. "Playoff: 22% Yes")
+    with ``kind="binary"``; the frontend renders a single bar, not a Yes/No pair.
+    """
+    yes_p: float | None = None
+    for o in market.outcomes:
+        if o.current_probability is None:
+            continue
+        nm = (o.name or "").strip().lower()
+        if nm == "yes":
+            yes_p = float(o.current_probability)
+        elif nm == "no" and yes_p is None:
+            yes_p = 1.0 - float(o.current_probability)
+    if yes_p is None:
+        return None
+    # Kalshi untraded mid (raw 0.5) is a placeholder, not a real price (#23).
+    if (market.source or "") == "kalshi" and yes_p == 0.5:
+        return None
+    return {
+        "name": market.name,
+        "source": source_label,
+        "kind": "binary",
+        "yes_probability": round(yes_p, 3),
+        "outcomes": [{"name": "Yes", "probability": round(yes_p, 3)}],
+    }
+
+
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
@@ -1380,10 +1412,17 @@ async def get_golf(
             if market.id in dedup_candidates and market.id != source_best.get(source):
                 continue
 
-            # Skip per-golfer binary markets
+            # Per-golfer binary markets: drop the winner-field fragments, but
+            # surface NON-winner yes/no questions (playoff, hole-in-one,
+            # first-time winner, albatross, record-low-round) as single-prob
+            # props instead of dropping them entirely (#952).
             if len(market.outcomes) <= 2:
                 outcome_names = {o.name.strip().lower() for o in market.outcomes if o.name}
                 if outcome_names & {"yes", "no"}:
+                    if _NON_WINNER_MARKET_RE.search(market.name):
+                        prop = _extract_yes_no_prop(market, source_label)
+                        if prop:
+                            prop_markets_list.append(prop)
                     continue
 
             # Skip participation/field markets (prob sum >> 1) — EXCEPT Kalshi
@@ -1724,9 +1763,16 @@ def _build_current_event(t: dict) -> dict:
 # Tournament detail page
 # ============================================================================
 
-# Market type detection patterns for sub-grouping
+# Market type detection patterns for sub-grouping.
+# ORDER MATTERS — checked top-to-bottom, first match wins.
 _MARKET_TYPE_PATTERNS = [
     (re.compile(r"\b(?:Winner|Champion)\b(?!.*Round)", re.I), "winner", "Winner"),
+    # #951: "Round N Top M Finishers" must be caught BEFORE the bare Top-N
+    # patterns — otherwise "Round 2 Top 5 Finishers" classifies as tournament
+    # "top_5" and gets AVERAGED into the tournament Top-5 grid column
+    # (data corruption). Round-specific Top-N is its own type, excluded from the
+    # tournament placement columns (a dedicated rounds panel is a follow-up).
+    (re.compile(r"\bRound\s+\d+\s+Top\s+\d+\b", re.I), "round_top", "Round Top N"),
     (re.compile(r"\bTop\s+5\b", re.I), "top_5", "Top 5"),
     (re.compile(r"\bTop\s+10\b", re.I), "top_10", "Top 10"),
     (re.compile(r"\bTop\s+20\b", re.I), "top_20", "Top 20"),
