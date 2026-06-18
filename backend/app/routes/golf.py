@@ -309,6 +309,22 @@ _NON_WINNER_MARKET_RE = re.compile(
 # excludes props like "Nationality of Winner") to detect a true winner field.
 _WINNER_MARKET_RE = re.compile(r"\b(?:winner|to\s+win)\b", re.I)
 
+# Chart-specific exclusion for the contenders Win chart (#955): drop winner-PROP
+# markets (nationality / country-of-winner / tour-of-winner / winning margin)
+# that classify as type "winner" but hold no golfers. Unlike _NON_WINNER_MARKET_RE,
+# this must NOT match a real field like "PGA Tour: U.S. Open Winner", so it uses
+# the "X of (the) winner" prop phrasing and explicit prop nouns rather than a
+# broad "tour .* winner".
+_NON_CONTENDER_WINNER_RE = re.compile(
+    r"\bnationality\b"
+    r"|\bcontinent\b"
+    r"|\b(?:country|tour|region|state)\s+of\s+(?:the\s+)?winner\b"
+    r"|\bwinning\s+(?:country|nationality|tour|score|margin)\b"
+    r"|\bwinner'?s?\s+(?:tour|nationality|country)\b"
+    r"|\bmargin\s+of\s+victory\b",
+    re.I,
+)
+
 
 def _golf_winner_renorm_factor(
     market_name: str, n_outcomes: int, prob_sum: float
@@ -1727,6 +1743,32 @@ def _detect_market_type(market_name: str) -> tuple[str, str]:
     return "other", "Other"
 
 
+def _prefer_datagolf_merge(
+    existing: float | None,
+    existing_is_dg: bool,
+    incoming: float,
+    incoming_is_dg: bool,
+) -> tuple[float, bool]:
+    """Combine two probabilities for the same (golfer, placement type), preferring
+    DataGolf over one-sided Polymarket/Kalshi placeholders (#954).
+
+    DataGolf is the authoritative in-play model. A blind cross-source average
+    blended DataGolf's well-differentiated make_cut (Scheffler 0.85, Puig 0.40)
+    with the compressed ~0.5 "To Make the Cut" placeholder markets, flattening
+    Bubble Watch to ~50% for everyone. Rules: DataGolf wins over non-DataGolf;
+    two same-class values average (preserving prior behavior).
+
+    Returns (value, is_datagolf).
+    """
+    if existing is None:
+        return incoming, incoming_is_dg
+    if existing_is_dg and not incoming_is_dg:
+        return existing, True              # keep DataGolf, drop placeholder
+    if incoming_is_dg and not existing_is_dg:
+        return incoming, True              # DataGolf overrides placeholder
+    return (existing + incoming) / 2, existing_is_dg  # same source class → average
+
+
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
@@ -1916,9 +1958,17 @@ async def get_golf_tournament(
     evolution_market_id = None
     for g in sorted_groups:
         if g["type"] == "winner" and g["market_ids"]:
-            best_id = g["market_ids"][0]
-            best_count = 0
+            best_id = None
+            best_count = -1
             for mid in g["market_ids"]:
+                # #955: "Winner Nationality"/"Tour of Winner"/"Country of Winner"
+                # classify as type "winner" (they contain "Winner") but are PROPS,
+                # not golfer winner fields. The 26-outcome nationality market
+                # passes the >5 filter and was plotted as the contenders chart
+                # (US/England/Spain/Other). Exclude any non-winner prop by name.
+                mname = id_to_name.get(mid, "")
+                if _NON_CONTENDER_WINNER_RE.search(mname):
+                    continue
                 # Check outcome count to filter non-golfer markets
                 outcome_count = await db.execute(
                     select(sqlfunc.count(FuturesOutcome.id))
@@ -1926,7 +1976,7 @@ async def get_golf_tournament(
                 )
                 n_outcomes = outcome_count.scalar() or 0
                 if n_outcomes < 5:
-                    continue  # Skip "League of Winner" (3 outcomes), nationality, etc.
+                    continue  # Skip "League of Winner" (3 outcomes), Yes/No binaries, etc.
                 snap_count = await db.execute(
                     select(sqlfunc.count(FuturesOddsSnapshot.id))
                     .where(FuturesOddsSnapshot.outcome_id.in_(
@@ -1982,8 +2032,23 @@ async def get_golf_tournament(
             for mid in mids:
                 mid_to_type[mid] = type_key
 
-        # Build match_key -> {type_key: probability} from placement outcomes
+        # market_id -> source, so placement probs can prefer DataGolf (#954).
+        src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(all_placement_ids)
+            )
+        )
+        mid_to_source: dict[int, str] = {row[0]: row[1] for row in src_result.all()}
+
+        # Build match_key -> {type_key: probability} from placement outcomes.
+        # DataGolf is the authoritative in-play model; a blind cross-source
+        # average blended its well-differentiated make_cut (Scheffler 0.85,
+        # Puig 0.40) with the one-sided Polymarket/Kalshi "To Make the Cut"
+        # placeholders (compressed ~0.5), flattening Bubble Watch to ~50% for
+        # everyone (#954). Prefer DataGolf when present; otherwise keep the
+        # prior pairwise-average behavior across non-DataGolf sources.
         placement_probs: dict[str, dict[str, float]] = defaultdict(dict)
+        _from_datagolf: dict[str, dict[str, bool]] = defaultdict(dict)
         for o in placement_outcomes:
             type_key = mid_to_type.get(o.market_id)
             if not type_key:
@@ -1992,11 +2057,15 @@ async def get_golf_tournament(
             if not key:
                 continue
             prob = float(o.current_probability)
-            # Per-source average: if multiple markets for same type, average
-            if type_key in placement_probs[key]:
-                placement_probs[key][type_key] = (placement_probs[key][type_key] + prob) / 2
-            else:
-                placement_probs[key][type_key] = prob
+            is_dg = mid_to_source.get(o.market_id) == "datagolf"
+            val, val_dg = _prefer_datagolf_merge(
+                placement_probs[key].get(type_key),
+                _from_datagolf[key].get(type_key, False),
+                prob,
+                is_dg,
+            )
+            placement_probs[key][type_key] = val
+            _from_datagolf[key][type_key] = val_dg
 
         # Merge into golfers
         for g in golfers:
