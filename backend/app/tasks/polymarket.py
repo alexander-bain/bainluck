@@ -284,6 +284,56 @@ async def _poll_polymarket_markets():
         except Exception as e:
             logger.warning("Polymarket orphan cleanup failed (non-fatal): %s", e)
 
+        # Cleanup: delete anonymized "Player XX" reserved-slot outcomes (#953).
+        # Polymarket pre-creates empty slots named "Player AD"/"Player AG" with no
+        # recoverable name (verified in the raw payload: groupItemTitle="Player AD",
+        # prices=None, bid=0, lastTrade=0). The broadened _is_placeholder_outcome
+        # now skips them at ingestion, but rows ingested before that fix persist and
+        # render at ~0.5 across ~44 award/round-leader markets. Remove them so they
+        # stop surfacing everywhere (idempotent — re-runs find none; real named
+        # candidates in the same markets are untouched). Display fix only; these are
+        # OPEN, unresolved, NULL cal_prob/volume rows — not an is_winner mutation
+        # (gotcha #21).
+        try:
+            async with get_task_session() as session:
+                from sqlalchemy import delete as sa_delete
+                from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+                # Scope to OPEN/active markets only: that is where placeholders
+                # render, and it keeps the cleanup away from resolved-market rows
+                # (gotcha #21 — never disturb settled data).
+                placeholder_sub = select(FuturesOutcome.id).where(
+                    FuturesOutcome.name.op("~")(r"^Player [A-Z]+$"),
+                    FuturesOutcome.market_id.in_(
+                        select(FuturesMarket.id).where(
+                            FuturesMarket.source == "polymarket",
+                            FuturesMarket.status.in_(["open", "active"]),
+                        )
+                    ),
+                )
+                placeholder_ids = (await session.execute(placeholder_sub)).scalars().all()
+                if placeholder_ids:
+                    logger.info(
+                        "Cleanup: deleting %d Polymarket 'Player XX' placeholder outcomes (#953)",
+                        len(placeholder_ids),
+                    )
+                    await session.execute(
+                        sa_delete(FuturesOddsSnapshot).where(
+                            FuturesOddsSnapshot.outcome_id.in_(placeholder_ids)
+                        )
+                    )
+                    await session.execute(
+                        sa_delete(FuturesOutcome).where(
+                            FuturesOutcome.id.in_(placeholder_ids)
+                        )
+                    )
+                    await session.commit()
+                    logger.info(
+                        "Polymarket placeholder cleanup complete: %d deleted",
+                        len(placeholder_ids),
+                    )
+        except Exception as e:
+            logger.warning("Polymarket placeholder cleanup failed (non-fatal): %s", e)
+
         # Stream events page-by-page instead of loading all into memory.
         # Each page is processed and committed in batches.
         max_pages = 130  # 13,000 events — Polymarket has 10,500+ active events
@@ -1139,12 +1189,17 @@ def _is_placeholder_outcome(market) -> bool:
     # Check question or groupItemTitle for placeholder patterns
     name = market.group_item_title or market.question or ""
 
-    # "Player X" where X is a single letter — Polymarket placeholder pattern
-    if re.match(r"^Player\s+[A-Z]$", name.strip()):
+    # "Player XX" reserved-slot pattern — one OR MORE uppercase letters.
+    # Polymarket switches to 2-letter suffixes ("Player AD", "Player AG") once a
+    # field exceeds 26 slots; the original single-letter regex missed those, so
+    # ~44 OPEN award/round-leader markets leaked anonymized "Player AD" @ ~0.5
+    # across 7 sports (#953). The raw payload exposes no real name for these
+    # (groupItemTitle="Player AD", prices=None, bid=0, lastTrade=0), so suppress.
+    if re.match(r"^Player\s+[A-Z]+$", name.strip()):
         return True
 
-    # "Will Player X win/be/..." in the question
-    if re.search(r"\bPlayer\s+[A-Z]\b", market.question or ""):
+    # "Will Player XX win/be/..." in the question
+    if re.search(r"\bPlayer\s+[A-Z]+\b", market.question or ""):
         return True
 
     # Additional heuristic: no trading activity AND price is exactly 1.0

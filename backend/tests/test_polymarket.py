@@ -806,6 +806,55 @@ class TestIsPlaceholderOutcome:
         m.group_item_title = "Other"
         assert _is_placeholder_outcome(m) is False
 
+    # --- #953: two-letter "Player XX" reserved slots (the leak) ---
+
+    def test_player_two_letter_in_title(self):
+        m = self._make_market(question="Will Player AD be the winner?")
+        m.group_item_title = "Player AD"
+        assert _is_placeholder_outcome(m) is True
+
+    def test_player_two_letter_in_question_only(self):
+        m = self._make_market(question="Will Player AG be the 2026 Wimbledon winner?")
+        assert _is_placeholder_outcome(m) is True
+
+    def test_player_two_letter_one_sided_half_price(self):
+        """The exact golf leak: 'Player AD' with a one-sided 0.5 ask, no bid/trade.
+
+        Pre-#953 this slipped both the single-letter regex and the >=0.995 price
+        heuristic, so _resolve_market_probability returned the 0.5 ask-only
+        fallback and it rendered as a 50% contender.
+        """
+        m = self._make_market(
+            question="Will Player AD shoot the best round?",
+            outcome_prices=[],
+            best_bid=0,
+            best_ask=0.5,
+            last_trade_price=0,
+        )
+        m.group_item_title = "Player AD"
+        assert _is_placeholder_outcome(m) is True
+
+    def test_real_two_word_name_not_detected(self):
+        m = self._make_market(
+            question="Will Carlos Alcaraz be the 2026 Wimbledon winner?",
+            outcome_prices=[0.4, 0.6],
+            best_bid=0.39,
+            last_trade_price=0.4,
+        )
+        m.group_item_title = "Carlos Alcaraz"
+        assert _is_placeholder_outcome(m) is False
+
+    def test_real_name_containing_player_word_not_detected(self):
+        """A real surname 'Player' (e.g. Gary Player) must not be suppressed."""
+        m = self._make_market(
+            question="Will Gary Player win?",
+            outcome_prices=[0.3, 0.7],
+            best_bid=0.29,
+            last_trade_price=0.3,
+        )
+        m.group_item_title = "Gary Player"
+        assert _is_placeholder_outcome(m) is False
+
 
 class TestPolymarketVolumeBackfill:
     """#940 prep: per-outcome volume backfill (the calibration traded/untraded tag)."""
