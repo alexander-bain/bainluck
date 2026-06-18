@@ -4,6 +4,16 @@ All outstanding work items for Bain Luck. Shipped items live in `docs/completed-
 
 GitHub Issues are the execution queue for scoped work packets. This document remains the strategic source of truth for priorities, rationale, and workstream context. When a backlog item becomes ready for a person or agent to pick up, create/link a GitHub issue and mark it with one of: `[idea]`, `[ready]`, `[active]`, `[blocked]`, `[shipped]`. See `docs/github-workflow.md`.
 
+## Major-event market coverage (golf majors → Oscars/Super Bowl/etc.)
+
+Vision: for major events, auto-generate a beautifully formatted dashboard that gathers and groups every related market. The US Open (2026-06) surfaced the prerequisite gaps for golf majors — full diagnosis in [`docs/us-open-market-coverage-diagnosis-2026-06-18.md`](us-open-market-coverage-diagnosis-2026-06-18.md). Four fixes, **quick wins first**:
+
+- [active] **A (quick win):** Kalshi golf prop series relied on the daily LLM for classification (many `kxpga*` prop prefixes missing from `KALSHI_FUTURES_TICKER_TO_SPORT_KEY`). Live data showed 47 distinct `kxpga*` prefixes, ALL golf -> fixed with a deterministic `kxpga`->golf catch-all (NOT a "us open" name-rule, which would collide with TENNIS). Issue: [#949](https://github.com/alexander-bain/bainluck/issues/949). `area:event-details` `type:bug` `priority:p1`.
+- [active] **B (quick win):** Polymarket scrambled "uptspt open" US Open events would orphan from the us_open card (`golf.py` `_normalize_tournament`). Added a reusable scramble->canonical fixup. Defensive — no scramble present in prod 2026-06-18 (current Polymarket major names are clean + already merge). Issue: [#950](https://github.com/alexander-bain/bainluck/issues/950). `area:event-details` `type:bug` `priority:p1`.
+- [ready] **C:** Golf tournament detail page (`get_golf_tournament`) surfaces only 6 market types — round-leaders, Top 40, scores, margins, player-category, and H2H matchups collapse, corrupt Top-N columns, or are built-but-unrendered. Rework to render all gathered types grouped by round/type; reusable major-event layout. Issue: [#951](https://github.com/alexander-bain/bainluck/issues/951). `area:event-details` `type:quality` `priority:p2`.
+- [ready] **D:** Binary yes/no golf props (albatross, hole-in-one, playoff, first-time winner, record-low round) dropped before surfacing (`golf.py:1345`). Surface as single-probability props. Pairs with C. Issue: [#952](https://github.com/alexander-bain/bainluck/issues/952). `area:event-details` `type:bug` `priority:p2`.
+- [idea] **Auto major-event dashboard** (strategic): reusable generator extending the C/D typed layout to Oscars/Super Bowl/etc. Unblocked once A-D land.
+
 ## Active GitHub Execution Queue
 
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)

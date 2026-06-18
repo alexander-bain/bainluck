@@ -477,3 +477,31 @@ class TestGameFuturesMapSeparation:
         assert "kxcs2game" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
         assert "kxvalorantgame" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
         assert "kxnbaseries" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
+
+
+class TestKxpgaGolfCatchAll:
+    """#949: every men's-PGA prop series classifies golf deterministically via the
+    `kxpga` catch-all (was relying on the daily LLM); tennis 'US Open' is NOT golf."""
+
+    def test_off_map_kxpga_prefixes_classify_golf(self):
+        # series confirmed in prod that were NOT in the specific map → now golf
+        for ticker in [
+            "kxpga3ball-26usopen-x", "kxpga5ball-26usopen-x", "kxpgaroundscore-26usopen",
+            "kxpgatop40-26usopen", "kxpgaplayercat-26usopen", "kxpgastrokemargin-26usopen",
+            "kxpgaholescore-26usopen", "kxpgauso-26", "kxpgaplayoff-26usopen",
+            "kxpgaholeinone-26usopen", "kxpgar1top5-26usopen",
+        ]:
+            assert get_sport_key_from_ticker(ticker) == "golf", ticker
+
+    def test_kxpga_uppercase_classifies_golf(self):
+        assert get_sport_key_from_ticker("KXPGAUSO-26USOPEN-WINNER") == "golf"
+
+    def test_tennis_us_open_not_pulled_into_golf(self):
+        # tennis tickers are kxatp*/kxwta* — must NOT be golf (no bare us-open rule)
+        assert get_sport_key_from_ticker("kxatpgame-26usopen-djokovic") == "tennis_atp"
+        # a non-pga ticker mentioning nothing golf must not become golf
+        assert get_sport_key_from_ticker("kxwtamatch-26usopen") != "golf"
+
+    def test_kxpga_catchall_does_not_match_lpga(self):
+        # 'kxlpga' starts with kxl, not kxp — catch-all must not swallow LPGA
+        assert not "kxlpgatour-26".startswith("kxpga")

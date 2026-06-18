@@ -159,6 +159,26 @@ _TOURNAMENT_PATTERNS = [
     (re.compile(r"tomorrow'?s?\s+golf\s+league|tgl\s+champion", re.I), "tgl"),
 ]
 
+# #950: Polymarket intermittently obfuscates major trademarks (e.g. "uptspt
+# Open" for "U.S. Open"). A scrambled name shares too few words with the real
+# major, so it orphans into a separate card instead of merging. Normalize known
+# scrambles to the canonical name BEFORE pattern matching. Small + reusable —
+# extend as new scrambles are observed. (Defensive: as of prod 2026-06-18 no
+# scrambled major name is present — current Polymarket major names are clean —
+# but the obfuscation recurs, so this is forward insurance.)
+_SCRAMBLED_MAJOR_FIXUPS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"uptspt\s+open", re.I), "U.S. Open"),
+]
+
+
+def _fix_scrambled_major(market_name: str) -> str:
+    """Replace a known scrambled major name with its canonical form."""
+    for pattern, canonical in _SCRAMBLED_MAJOR_FIXUPS:
+        if pattern.search(market_name):
+            return pattern.sub(canonical, market_name)
+    return market_name
+
+
 TOURNAMENT_DISPLAY_NAMES = {
     "masters": "The Masters",
     "pga_championship": "PGA Championship",
@@ -775,6 +795,9 @@ def _match_key(name: str) -> str:
 
 def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) -> str:
     """Extract tournament key from a market name. Returns 'other' if no match."""
+    # #950: de-obfuscate scrambled major trademarks (e.g. Polymarket's "uptspt
+    # Open") so the event merges onto the canonical major card, not an orphan.
+    market_name = _fix_scrambled_major(market_name)
     # Priority 1: Hardcoded major/special patterns
     for pattern, key in _TOURNAMENT_PATTERNS:
         if pattern.search(market_name):

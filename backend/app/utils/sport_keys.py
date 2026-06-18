@@ -970,6 +970,15 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxpgawinningscore": "golf",
     "kxpgacutline": "golf",
     "kxpgawinmargin": "golf",
+    # #949: generic catch-all — EVERY men's-PGA prop series is golf (verified
+    # in prod: 47 distinct kxpga* prefixes, 0 non-golf). "kxpga" is unambiguous
+    # (tennis is kxatp*), so this deterministically classifies all current AND
+    # future kxpga prop series (kxpga3ball, kxpgaroundscore, kxpgatop40,
+    # kxpgaplayercat, kxpgastrokemargin, kxpgaholescore, kxpgauso, kxpgaplayoff,
+    # …) at ingest — closing the window where off-map series sat 'other' until
+    # the daily LLM pass. The specific entries above are retained as docs; the
+    # `startswith` matcher returns golf either way. Does NOT match LPGA (kxlpga).
+    "kxpga": "golf",
     "kxlpgatour": "golf",
     "kxlivgolf": "golf",
     # Soccer — European leagues + World Cup
