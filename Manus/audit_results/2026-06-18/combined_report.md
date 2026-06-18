@@ -1,0 +1,73 @@
+# Manus Health Audit — 2026-06-18
+
+**Modules run:** 3
+**Completed:** 2
+**Failed/Timeout:** 1
+- feed: timeout
+
+---
+
+## Event Detail Deep Audit
+
+Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit of each event detail page.
+
+Events selected. Now auditing each of the 6 event detail pages against the full checklist. Starting with Event 1: Baltimore Orioles vs Seattle Mariners (ID: 14927002).
+
+Audit of all 6 events complete. Now capturing desktop and mobile (375px) screenshots for each event page.
+
+I have completed the deep audit of the 6 event detail pages on bainluck.com according to your instructions.
+
+I selected events across 4 different sports (MLB, WNBA, FIFA World Cup, and WTA Tennis) covering LIVE (recently completed today), FINAL, and UPCOMING statuses. I audited each against the full checklist, capturing both desktop and mobile (375px) screenshots.
+
+The final audit report and the zip file containing all the screenshots are attached.
+
+The overall health score is 52/100, primarily due to critical issues with hero/chart probability mismatches on completed games, missing logos, and poorly formatted player props for non-basketball sports.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/dpJuctXjS3crUoGtUayW3u/sandbox/jp0Ui3mkoQkpG9f8NXW49y_1781778750124_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZHBKdWN0WGpTM2NyVW9HdFVheVczdS9zYW5kYm94L2pwMFVpM21rb1FrcEc5ZjhOWFc0OXlfMTc4MTc3ODc1MDEyNF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJGMVpHbDBYM0psY0c5eWRBLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=EjuoIS6t~wdk1wQjnh7aQ7aJa9eBzrs9T7swEMDo~UKGm0qIclOQ~hwf7oOiNgSveSp5PkFYtojAfNkt402Io8wrnJqt9PZNZZYELn9ME6yVcPQXheyTW5~HPvRQ4L4nW~q5y8xwqmL4F8DK-xH9x8mXQeXs3dzsmHJx1I8KdkaKn6jtxntxVljXHhsFF7ljU1~ZO0D6J6WM~AMQTuwxFGidc42E0tMZ8B9tZkVg4Yrm8R90g~wlK5yGbg2YmSUmbG4ULMvnf~1kkbnscQFeQ3F0mZ8eMIiw-x1GSOpvnfQmDRi8YsdO6f9UOufT21vWlVnzUBhCYlMtHyKWlwOS1w__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/dpJuctXjS3crUoGtUayW3u/sandbox/jp0Ui3mkoQkpG9f8NXW49y_1781778750124_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZHBKdWN0WGpTM2NyVW9HdFVheVczdS9zYW5kYm94L2pwMFVpM21rb1FrcEc5ZjhOWFc0OXlfMTc4MTc3ODc1MDEyNF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=u2dftsY4j1ZL5aHx0hsLEwB2oNfg9GfCR3kwW7I5zBDfEmcWSjraCF0iwaBSQ~1T78SDhbxROKSpFob1nqBO0486xVk4KitqYNE~LCkZa1kcVAZ0QnY-bgLCCP-1P-kCzqkxddfUbfaOzXohrWmYcfnU2PkeKkSwu5d3~b1nOVMTLhqdbrV6FGyj8W247P8YW8zusIH3cJ5ji77A8U9ZiPUw-dMoekXZqKLnErTCA-zjvLTc~JF17PKdMHhPLvXoq~7EEZqaFK5lJexPUr1FcVThDtnBSNnD3DtAh7yFnKGuS1iePEDZl~ejlOBIrrJLfC-M-Lnt-ycvkNJQFZcR4A__
+
+---
+
+## Category Page Audit (Politics, Entertainment, Economics, Weather)
+
+Starting the comprehensive Category Page Audit for bainluck.com. I'll systematically evaluate the Politics, Entertainment, Economics, and Weather pages across all dimensions: data freshness, cross-source matching, classification accuracy, data quality, visual design, and upstream coverage. This will involve visiting multiple sites and taking screenshots.
+
+Now cross-referencing upstream sources (Kalshi and Polymarket) to identify coverage gaps. This involves checking what markets exist on those platforms that may be missing from bainluck.com.
+
+Here is the comprehensive Category Page Audit Report for bainluck.com. The audit covers all four category pages (Politics, Entertainment, Economics, Weather) across seven evaluation dimensions including data freshness, cross-source matching, classification accuracy, data quality, and visual design.
+
+**Key findings:**
+
+| Page | Score | Most Critical Issue |
+|------|-------|-------------------|
+| Politics | 74/100 | Data instability — Senate control probability flipped from 94% D to 87% R between page loads |
+| Entertainment | 83/100 | Political markets (Elon Musk, Trump) incorrectly classified as entertainment |
+| Economics | 88/100 | Stale Q1 2026 tariff market still featured; recession markets not merged |
+| Weather | 92/100 | Unit inconsistency (°F vs °C mixing) on global map |
+
+**Top 5 actionable improvements:**
+1. Investigate Politics data instability (Senate control probability flip)
+2. Fix cross-source matching logic (prevent 88pt spread merges; catch SCOTUS duplicates)
+3. Implement stale market filtering (remove past-date markets)
+4. Clean up Entertainment classification (remove political markets)
+5. Standardize Weather map temperature units
+
+Please see the full report attached for detailed findings, tables, and coverage gap analysis.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EXuftSDw6cbHefhR4yR9tR/sandbox/ro4EILIUD1HbErNKYwnjUQ_1781778630102_na1fn_L2hvbWUvdWJ1bnR1L2NhdGVnb3J5X3BhZ2VfYXVkaXRfcmVwb3J0.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRVh1ZnRTRHc2Y2JIZWZoUjR5Ujl0Ui9zYW5kYm94L3JvNEVJTElVRDFIYkVyTktZd25qVVFfMTc4MTc3ODYzMDEwMl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJOaGRHVm5iM0o1WDNCaFoyVmZZWFZrYVhSZmNtVndiM0owLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=E4Y6Ppu4NgxTgWdPlCRNdgkhnOE-eOk7bwNEO54f6gaa6-DCdbWmhM8qLIprvv2Sp7uCIG8eQ6QavuPvRdnZOGm7ZaNxuR6bX7TCPUV3L5QvE14gjE-UmaGmd8bJhN7WTJJSNxuQu2fRr104ghWsUomDA3~UOY0YTncmdQ5kDY8zwKqs0G-MGX0dC-tYNCtM8uAXHm-Gt0wklyxN9F7WZB4cNgyPDaWzygGFUFjbBh3~JpV3Hz08BdMeC8NHluT-KX5IRriNSW5RoeVbdKzrH8TW9eK21yGae~uPZWBoFd0vfNSjLu8vTSd5395DNkGsFWLRD6FsBAMNy8sr2lDU2A__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EXuftSDw6cbHefhR4yR9tR/sandbox/ro4EILIUD1HbErNKYwnjUQ_1781778630102_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL3BvbGl0aWNzX2Rlc2t0b3A.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRVh1ZnRTRHc2Y2JIZWZoUjR5Ujl0Ui9zYW5kYm94L3JvNEVJTElVRDFIYkVyTktZd25qVVFfMTc4MTc3ODYzMDEwMl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDNCdmJHbDBhV056WDJSbGMydDBiM0Eud2VicCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=DbJVEZvbHRjW2wsqjdrwKAFix8QXBj~F0rUoh3gc2Y4hQlI28vQ5JBpapD50HDuSgAUaOqTcZKiq89jdjKlU~SnNk2TijwQsCSBnGCufuynTjde0s7T-izUna~bAs65qAzbUJbvZtC0m3AhN3466h-bZRu2tgumRe7IN3G8e6XdRdPe~UeyqBRn8JwDcYTrGrUePtJR9JqSpJZ0jsAUPvC2k~7lYa5mRw6FV6B7-7xW4cX3nutWhBTg51-IvYRqytqy1exniRPqggSGawKBWz-qDsvmWMIBhGPtJUfpi5gMuifg9YpgkPRnTXHVwvI9p00LkbkGxaWsmkkdCztYEsA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EXuftSDw6cbHefhR4yR9tR/sandbox/ro4EILIUD1HbErNKYwnjUQ_1781778630102_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2VudGVydGFpbm1lbnRfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRVh1ZnRTRHc2Y2JIZWZoUjR5Ujl0Ui9zYW5kYm94L3JvNEVJTElVRDFIYkVyTktZd25qVVFfMTc4MTc3ODYzMDEwMl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWdWRHVnlkR0ZwYm0xbGJuUmZaR1Z6YTNSdmNBLndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=qb0uEBPN5x9sy2LkzQta68klPYn2JyiE5CwIr49xdtskDpTbMUgn2WmhCf7dRu~vPPuxplYbOoVs~-2F8Qs2pGTQVg1bEL4NE99RF8pR8cstUBPOSp4y2wuunXF8icitQGBsSDe56ErwoGgev7JvgX3VlJbMddfNIjGKaCOFVYpeZ0SP15VICJDQl6gTU0tKMHHZDda3aZLx97Hwt3yQ2ZS9YlWCaXp6S9P0YCXqAU~BXq1bMwGK5SmL7E~3RtAKo5gDwVsWimzppq-TVGlmBGBLmrzAa6iEh~wlbMyLualfEKFyxIY-Am3agbcr0Zt1vyE2lJLzDU11UBsIYnc5Pw__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EXuftSDw6cbHefhR4yR9tR/sandbox/ro4EILIUD1HbErNKYwnjUQ_1781778630102_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL2Vjb25vbWljc19kZXNrdG9w.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRVh1ZnRTRHc2Y2JIZWZoUjR5Ujl0Ui9zYW5kYm94L3JvNEVJTElVRDFIYkVyTktZd25qVVFfMTc4MTc3ODYzMDEwMl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDJWamIyNXZiV2xqYzE5a1pYTnJkRzl3LndlYnAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=ZyVSVwvYGOtqX8jDhILuEPno0CukQU3WmWX84v0xNWClMrP3rEL23GFnSqpV-yGMVeX1gb7eUDsGKPXfzojHD20zyVGA1KnVI2DwkHKbMpUakAE1GJG~zrPyWHPLvFHJZlsGTl0Lkak2w-wusqtOPKrtuJC1L2F6mkwEXkbKqv~C2Tij2lZONfWIXI-BiB1fqzt7VQcF~aVCoFe4mToe1bqzqlggLnjN7JiaoipGDXINj35MEuVkNFvH5ftZKMRzfhkDBSdw6xCTiWCglQlNdOWLIsWVAFbtBZX1oBplUfVh~~ZLKXI2bm5ihPfy5eqgYhhNtJ0rnrcfNf4F2a97oA__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EXuftSDw6cbHefhR4yR9tR/sandbox/ro4EILIUD1HbErNKYwnjUQ_1781778630102_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzL3dlYXRoZXJfZGVza3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRVh1ZnRTRHc2Y2JIZWZoUjR5Ujl0Ui9zYW5kYm94L3JvNEVJTElVRDFIYkVyTktZd25qVVFfMTc4MTc3ODYzMDEwMl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6TDNkbFlYUm9aWEpmWkdWemEzUnZjQS53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=q7iMsQ1i6YHgW7qAcZhiPbdIl9npBsPl1wYXy1QA2Ua~DBF9~6dhkFiUWxipLvbOpVekgGC~o-rNaPGANvmXiS704hYtMwmzFxg-JaM-DwpGbCjqfAAOXt1iieSjnBum1pNgfWFZAguVUQC7ZKKlOBhHKYGc1nX9lwyVHGDPVAigx3lzhhXLwbiajmdbd9CHb7J6Ji4t~-rJ1SIJvo5-w41JnIXRiCNVwmMKKuueCbqXnHUCBNqUL5ty8ZYTXRpM1PGqdMe7BHgI2rMmNHQM4P~ZvDFhsmT0A5Ap3IVp~Mgp~wAR6UB-XuLswh0qPX-jOoh8zF7HSUXlIAosAgkoEg__
