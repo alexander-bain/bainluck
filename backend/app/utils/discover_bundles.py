@@ -500,3 +500,127 @@ def assemble_awards_theme_bundles(
         output.append(bundle_by_group[group_id])
 
     return output
+
+
+# ── Theme bundles (today's biggest swings — Phase 1, slice 6) ──────────────────
+#
+# Cap-and-FOLD the feed's biggest GUARDED 24h movers into ONE expandable
+# ``type:bundle`` ``kind="theme"`` "Today's biggest swings" card, instead of
+# scattering N high-movement cards. Folds items ALREADY in ``feed_items`` (the
+# per-outcome ``probability_change_24h`` is in-feed at feed.py:1948-1962) — NO
+# new DB pool. Discover-mode only, like slices 1/3.
+#
+# GUARD (Alex design round 2 — a naive biggest-mover is net-negative): exclude
+# resolved/settled markets, exclude probability-extreme / settlement-jump end
+# states (a leader sitting at ~100% is a settlement, not a live story), and
+# require a sustained move above a threshold. Scoped to FUTURES items (where the
+# swing stories live; ``_futures_data`` returns {} for non-futures, so events
+# are naturally excluded and the ThemeBundleCard's futures members render
+# cleanly). Gotcha #23: un-normalized candidate binaries that sum >100% can show
+# a spurious near-100% leader — the extreme-prob guard excludes those too.
+
+SWINGS_THEME_LABEL = "Today's biggest swings"
+SWINGS_MIN_SWING = 0.15  # sustained 24h move ≥ 15pp to count as a "swing"
+SWINGS_EXTREME = 0.95    # leader at/above this = near-settled/settlement-jump → exclude
+_SWINGS_RESOLVED_STATUSES = {"resolved", "closed", "settled", "finalized"}
+
+
+def _swing_magnitude(
+    item: dict[str, Any], *, min_swing: float, extreme: float
+) -> float | None:
+    """Guarded swing magnitude (max |24h change|) for a FUTURES feed item, or
+    None if it fails the guard (non-futures / resolved / extreme / no real move).
+    """
+    data = _futures_data(item)
+    if not data:
+        return None
+    # GUARD: never surface a resolved/settled market as a "swing".
+    if str(data.get("status") or "").strip().lower() in _SWINGS_RESOLVED_STATUSES:
+        return None
+    outcomes = data.get("top_outcomes")
+    if not isinstance(outcomes, list) or not outcomes:
+        return None
+    probs = [
+        float(o["probability"])
+        for o in outcomes
+        if isinstance(o, dict) and o.get("probability") is not None
+    ]
+    # GUARD: exclude probability-extreme / near-settled (settlement jump, not a
+    # live story) — also catches un-normalized candidate-binary leaders (#23).
+    if probs and max(probs) >= extreme:
+        return None
+    changes = [
+        abs(float(o["probability_change_24h"]))
+        for o in outcomes
+        if isinstance(o, dict) and o.get("probability_change_24h") is not None
+    ]
+    if not changes:
+        return None
+    mag = max(changes)
+    return mag if mag >= min_swing else None
+
+
+def _make_swings_bundle_item(scored: list[tuple[float, dict[str, Any]]]) -> dict[str, Any]:
+    # Members ranked by swing magnitude (biggest mover leads the mini-ranked-peek).
+    ranked = [it for _, it in scored]
+    score = max(float(it.get("score") or 0) for it in ranked)
+    sort_time = max(float(it.get("_sort_time") or 0) for it in ranked)
+    member_ids = [_futures_data(it).get("id") for it in ranked]
+    names = [str(_futures_data(it).get("name") or "") for it in ranked]
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": f"{len(ranked)} markets moving today",
+        "headline": SWINGS_THEME_LABEL,
+        "data": {
+            "id": f"theme:swings:{'-'.join(str(m) for m in member_ids)}",
+            "title": SWINGS_THEME_LABEL,
+            "kind": "theme",
+            "story_key": "swings",
+            "item_count": len(ranked),
+            "member_ids": member_ids,
+            "items": [_public_member_item(it) for it in ranked],
+            "debug_bundles": {
+                "grouped_by": "swing_magnitude",
+                "member_ids": member_ids,
+                "member_names": names,
+                "swings_pp": [round(mag * 100, 1) for mag, _ in scored],
+            },
+        },
+        "_sort_time": sort_time,
+    }
+
+
+def assemble_swings_theme_bundles(
+    items: list[dict[str, Any]],
+    *,
+    min_items: int = 2,
+    max_items_per_bundle: int = 6,
+    min_swing: float = SWINGS_MIN_SWING,
+    extreme: float = SWINGS_EXTREME,
+) -> list[dict[str, Any]]:
+    """Fold the biggest GUARDED 24h movers into ONE "Today's biggest swings"
+    bundle (Discover-mode only). Fewer than ``min_items`` qualifiers → untouched.
+    """
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for item in items:
+        mag = _swing_magnitude(item, min_swing=min_swing, extreme=extreme)
+        if mag is not None:
+            scored.append((mag, item))
+    if len(scored) < min_items:
+        return items
+    scored.sort(key=lambda x: x[0], reverse=True)
+    chosen = scored[:max_items_per_bundle]
+    chosen_ids = {_item_id(it) for _, it in chosen}
+    bundle = _make_swings_bundle_item(chosen)
+
+    output: list[dict[str, Any]] = []
+    emitted = False
+    for item in items:
+        if _item_id(item) in chosen_ids:
+            if not emitted:
+                output.append(bundle)
+                emitted = True
+            continue
+        output.append(item)
+    return output

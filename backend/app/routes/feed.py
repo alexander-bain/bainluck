@@ -49,6 +49,7 @@ from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
     assemble_geopolitics_theme_bundles,
+    assemble_swings_theme_bundles,
 )
 from app.utils import (
     compute_highlight,
@@ -1344,6 +1345,9 @@ async def get_feed(
         feed_items = assemble_discover_comparison_bundles(feed_items)
         feed_items = assemble_geopolitics_theme_bundles(feed_items)
         feed_items = assemble_awards_theme_bundles(feed_items)
+        # #948 (slice 6): fold the biggest guarded 24h movers into one
+        # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
+        feed_items = assemble_swings_theme_bundles(feed_items)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
 
     total = len(feed_items)

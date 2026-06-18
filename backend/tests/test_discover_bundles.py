@@ -343,3 +343,88 @@ def test_dedupe_stashes_grouped_members_for_bundler():
     # Dropped siblings preserved for the awards bundler.
     assert len(survivor["_grouped_members"]) == 2
     assert {m["data"]["id"] for m in survivor["_grouped_members"]} == {2, 3}
+
+
+# ── Slice 6: guarded "today's biggest swings" bundle (#948) ───────────────────
+from app.utils.discover_bundles import assemble_swings_theme_bundles
+
+
+def _swing_item(market_id, name, *, change, leader_prob=0.4, status="active", score=None):
+    """Futures feed item with a 24h mover on its top_outcomes."""
+    return {
+        "type": "futures",
+        "score": score if score is not None else 90 - market_id,
+        "headline": name,
+        "data": {
+            "id": market_id,
+            "name": name,
+            "status": status,
+            "top_outcomes": [
+                {"name": "Yes", "probability": leader_prob, "probability_change_24h": change},
+                {"name": "No", "probability": 1 - leader_prob, "probability_change_24h": -change},
+            ],
+        },
+        "_sort_time": 1000 + market_id,
+    }
+
+
+def test_swings_folds_big_movers_into_one_bundle():
+    items = [
+        _swing_item(1, "Market A", change=0.30, score=70),
+        _swing_item(2, "Market B", change=0.20, score=88),
+        _swing_item(3, "Market C", change=0.18, score=60),
+    ]
+    out = assemble_swings_theme_bundles(items)
+    bundles = [i for i in out if i["type"] == "bundle"]
+    assert len(bundles) == 1
+    b = bundles[0]
+    assert b["data"]["kind"] == "theme"
+    assert b["data"]["id"].startswith("theme:swings:")
+    assert b["data"]["item_count"] == 3
+    # members ranked by swing magnitude (A 30 > B 20 > C 18)
+    assert b["data"]["member_ids"] == [1, 2, 3]
+    # bundle takes one slot scored by its best MEMBER (B's 88), not its swing
+    assert b["score"] == 88
+    assert len([i for i in out if i["type"] == "futures"]) == 0
+
+
+def test_swings_excludes_resolved_market():
+    items = [
+        _swing_item(1, "Live A", change=0.25),
+        _swing_item(2, "Live B", change=0.22),
+        _swing_item(3, "Resolved", change=0.40, status="resolved"),
+    ]
+    out = assemble_swings_theme_bundles(items)
+    b = [i for i in out if i["type"] == "bundle"][0]
+    assert 3 not in b["data"]["member_ids"]  # resolved excluded despite biggest swing
+    assert b["data"]["item_count"] == 2
+
+
+def test_swings_excludes_probability_extreme_settlement_jump():
+    items = [
+        _swing_item(1, "Live A", change=0.25),
+        _swing_item(2, "Live B", change=0.22),
+        _swing_item(3, "Settled-ish", change=0.50, leader_prob=0.97),  # near-100% leader
+    ]
+    out = assemble_swings_theme_bundles(items)
+    b = [i for i in out if i["type"] == "bundle"][0]
+    assert 3 not in b["data"]["member_ids"]
+
+
+def test_swings_single_mover_does_not_bundle():
+    items = [
+        _swing_item(1, "Only mover", change=0.30),
+        _swing_item(2, "Flat", change=0.02),  # below threshold
+    ]
+    out = assemble_swings_theme_bundles(items)
+    assert all(i["type"] == "futures" for i in out)  # no bundle
+
+
+def test_swings_ignores_non_futures_and_below_threshold():
+    items = [
+        {"type": "event", "data": {"id": 9, "top_outcomes": [{"probability": 0.5, "probability_change_24h": 0.4}]}, "score": 99},
+        _swing_item(1, "Small", change=0.05),
+        _swing_item(2, "Small2", change=0.04),
+    ]
+    out = assemble_swings_theme_bundles(items)
+    assert all(i["type"] != "bundle" for i in out)  # event ignored, futures below threshold
