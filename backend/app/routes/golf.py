@@ -1743,6 +1743,30 @@ def _detect_market_type(market_name: str) -> tuple[str, str]:
     return "other", "Other"
 
 
+_PLAYOFF_RE = re.compile(r"\bplayoff\b", re.I)
+
+# Source preference when collapsing cross-source duplicate "other" markets into
+# one card (#956): DataGolf model first, then the deepest liquidity.
+_RELATED_SOURCE_PRIORITY = {"datagolf": 0, "polymarket": 1, "kalshi": 2, "odds_api": 3}
+
+
+def _related_dedup_key(market_name: str) -> str:
+    """Group key for collapsing cross-source duplicate 'other' markets (#956).
+
+    Two source markets asking the same real-world question render as two stacked
+    cards with conflicting probabilities (Polymarket "Will there be a playoff..."
+    27% vs Kalshi "U.S. Open: Playoff" 22%). Their normalized question text does
+    NOT match, so a tournament playoff is keyed explicitly; everything else falls
+    back to the normalized question (collapses only exact cross-source dupes, not
+    the distinct multi-winner family — that stays a separate work item).
+    """
+    from app.utils.cross_source_matching import normalize_question
+
+    if _PLAYOFF_RE.search(market_name or ""):
+        return "playoff"
+    return normalize_question(market_name or "")
+
+
 def _prefer_datagolf_merge(
     existing: float | None,
     existing_is_dg: bool,
@@ -2114,14 +2138,62 @@ async def get_golf_tournament(
                 "probability_change_24h": round(float(o.probability_change_24h), 4) if o.probability_change_24h else None,
             })
 
+        # market_id -> source for cross-source dedup + per-card attribution (#956/#957).
+        other_src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(other_group["market_ids"])
+            )
+        )
+        other_mid_to_source: dict[int, str] = {r[0]: r[1] for r in other_src_result.all()}
+
+        def _lead_prob(outcomes: list) -> float | None:
+            """Representative probability for a card — the 'Yes' side of a binary
+            question, else the top outcome (used for the cross-source comparison)."""
+            for o in outcomes:
+                if (o.get("name") or "").strip().lower() == "yes":
+                    return o.get("probability")
+            return outcomes[0]["probability"] if outcomes else None
+
+        # #956: collapse cross-source duplicates (e.g. the two playoff cards) into
+        # ONE card. Keep the highest-priority source's outcomes; expose every
+        # source's probability under `sources` so the card can show "Poly 27% /
+        # Kalshi 22%" instead of two stacked, disagreeing cards.
+        grouped_related: dict[str, dict] = {}
         for mid in other_group["market_ids"]:
+            if mid not in outcomes_by_market:
+                continue
             mname = id_to_name.get(mid, "")
-            if mid in outcomes_by_market:
-                related_futures.append({
-                    "market_id": mid,
-                    "market_name": mname,
-                    "outcomes": outcomes_by_market[mid],
-                })
+            src = other_mid_to_source.get(mid, "unknown")
+            key = _related_dedup_key(mname)
+            entry = {
+                "market_id": mid,
+                "market_name": mname,
+                "source": src,
+                "outcomes": outcomes_by_market[mid],
+            }
+            source_row = {
+                "source": src,
+                "market_id": mid,
+                "probability": _lead_prob(outcomes_by_market[mid]),
+            }
+            existing = grouped_related.get(key)
+            if existing is None:
+                entry["sources"] = [source_row]
+                grouped_related[key] = entry
+            else:
+                existing["sources"].append(source_row)
+                # Keep the higher-priority source's card as the primary.
+                cur_pri = _RELATED_SOURCE_PRIORITY.get(existing["source"], 99)
+                new_pri = _RELATED_SOURCE_PRIORITY.get(src, 99)
+                if new_pri < cur_pri:
+                    sources = existing["sources"]
+                    entry["sources"] = sources
+                    grouped_related[key] = entry
+        for entry in grouped_related.values():
+            # Drop the single-source `sources` list when there's nothing to compare.
+            if len(entry.get("sources", [])) <= 1:
+                entry.pop("sources", None)
+            related_futures.append(entry)
 
     return {
         "tournament": {
