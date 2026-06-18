@@ -286,12 +286,21 @@ export default function GolfTournamentPage() {
     for (const { type, key, label } of typeMap) {
       const group = data.markets.find((g) => g.type === type);
       if (group && group.market_ids.length > 0) {
-        opts.push({
-          key,
-          label,
-          marketId: group.market_ids[0],
-          marketIds: group.market_ids,
-        });
+        let primary = group.market_ids[0];
+        let marketIds = group.market_ids;
+        // #955: the "winner" group still contains the "Winner Nationality" prop
+        // market (US/England/Spain) + Yes/No binaries, so market_ids[0] plotted
+        // nationalities, not golfers. The backend (_NON_CONTENDER_WINNER_RE)
+        // already picked the real golfer winner field as evolution_market_id —
+        // use it as the primary series, keeping the rest as ordered fallbacks.
+        if (type === "winner" && data.evolution_market_id) {
+          primary = data.evolution_market_id;
+          marketIds = [
+            data.evolution_market_id,
+            ...group.market_ids.filter((id) => id !== data.evolution_market_id),
+          ];
+        }
+        opts.push({ key, label, marketId: primary, marketIds });
       }
     }
     return opts;
@@ -335,7 +344,11 @@ export default function GolfTournamentPage() {
   const mergedGolfers = buildMergedGolfers(golfers, useLeaderboard ? leaderboard : null);
 
   const winnerGroup = markets.find((g) => g.type === "winner");
-  const evolutionMarketIds = winnerGroup?.market_ids || (evolution_market_id ? [evolution_market_id] : []);
+  // #955: prefer the backend's corrected winner field (evolution_market_id, which
+  // excludes the nationality/binary prop markets) as the primary chart series.
+  const evolutionMarketIds = evolution_market_id
+    ? [evolution_market_id, ...(winnerGroup?.market_ids || []).filter((id) => id !== evolution_market_id)]
+    : (winnerGroup?.market_ids || []);
 
   // Collect sources for attribution
   const sources: string[] = [];
@@ -475,9 +488,12 @@ export default function GolfTournamentPage() {
           <TournamentRelatedFutures markets={data.related_futures} accentColor={accentColor} />
         )}
 
-        {/* Footer */}
+        {/* Footer — #957: scope the DataGolf claim to the leaderboard; the
+            "More Markets" cards carry their own per-source attribution. */}
         <p className="text-center text-[11px] text-gray-400">
-          Probabilities from {isLive ? "DataGolf in-play model" : "sportsbook consensus"}.
+          {isLive
+            ? "Leaderboard probabilities from DataGolf in-play model; market cards labeled by source."
+            : "Leaderboard probabilities from sportsbook consensus; market cards labeled by source."}
           {isLive && " Auto-refreshes every 60s."}
           {isLive && lastRefresh && <> Last: {lastRefresh.toLocaleTimeString()}</>}
         </p>
@@ -493,12 +509,27 @@ export default function GolfTournamentPage() {
 interface RelatedFutureMarket {
   market_id: number;
   market_name: string;
+  source?: string;
+  sources?: { source: string; market_id: number; probability: number | null }[];
   outcomes: {
     name: string;
     probability: number | null;
     american_odds: number | null;
     probability_change_24h: number | null;
   }[];
+}
+
+// #957: per-card source attribution — the footer's blanket "DataGolf in-play
+// model" was wrong for these cards (playoff = Polymarket/Kalshi, etc.).
+const SOURCE_LABELS: Record<string, string> = {
+  datagolf: "DataGolf",
+  polymarket: "Polymarket",
+  kalshi: "Kalshi",
+  odds_api: "Sportsbooks",
+};
+function sourceLabel(src: string | undefined): string {
+  if (!src) return "";
+  return SOURCE_LABELS[src] || src.charAt(0).toUpperCase() + src.slice(1);
 }
 
 function TournamentRelatedFutures({
@@ -519,9 +550,30 @@ function TournamentRelatedFutures({
             key={market.market_id}
             className="border border-gray-200 rounded-xl p-4 bg-white"
           >
-            <h3 className="text-xs font-semibold text-gray-700 mb-3">
-              {market.market_name}
-            </h3>
+            <div className="flex items-start justify-between gap-2 mb-3">
+              <h3 className="text-xs font-semibold text-gray-700">
+                {market.market_name}
+              </h3>
+              {market.source && (
+                <span className="text-[10px] text-gray-400 shrink-0">
+                  {sourceLabel(market.source)}
+                </span>
+              )}
+            </div>
+            {/* #956/#957: cross-source comparison when the same question trades on
+                multiple venues (e.g. "Polymarket 27% · Kalshi 22%"). */}
+            {market.sources && market.sources.length > 1 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-2 text-[11px] text-gray-500">
+                {market.sources.map((s) => (
+                  <span key={`${s.source}-${s.market_id}`}>
+                    {sourceLabel(s.source)}{" "}
+                    <span className="font-semibold text-gray-700">
+                      {s.probability != null ? `${(s.probability * 100).toFixed(0)}%` : "—"}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="space-y-1.5">
               {market.outcomes.slice(0, 10).map((outcome, i) => (
                 <div

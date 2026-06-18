@@ -1188,6 +1188,8 @@ export interface GolfTournamentDetailResponse {
   related_futures?: {
     market_id: number;
     market_name: string;
+    source?: string;
+    sources?: { source: string; market_id: number; probability: number | null }[];
     outcomes: {
       name: string;
       probability: number | null;

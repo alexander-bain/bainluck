@@ -72,9 +72,11 @@ function buildChartData(
     todayStart.setHours(0, 0, 0, 0);
     cutoff = todayStart.getTime();
   } else if (timeRange === "tournament" && tournamentStart) {
-    // Start a little before the first round so the viewer sees the pre-event baseline
+    // #957: clamp the domain to the tournament start — a pre-start buffer
+    // surfaced a stray pre-event day on the x-axis ("Wed 17" before a Jun 18
+    // start). Start exactly at round 1.
     try {
-      cutoff = new Date(tournamentStart).getTime() - 12 * 60 * 60 * 1000;
+      cutoff = new Date(tournamentStart).getTime();
     } catch {
       cutoff = 0;
     }
