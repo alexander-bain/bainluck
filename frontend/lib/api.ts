@@ -1523,7 +1523,15 @@ export interface CalibrationData {
   mce_ci_upper: number;
   mce_closing_line: number | null;
   mce_opening_price: number | null;
+  liquidity_filter?: CalibrationLiquidityFilter | null;
   generated_at: string;
+}
+
+export interface CalibrationLiquidityFilter {
+  applies_to: string;
+  rule: string;
+  kalshi_included: number;
+  kalshi_excluded: number;
 }
 
 export async function fetchCalibration(): Promise<CalibrationData> {

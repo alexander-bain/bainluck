@@ -32,6 +32,54 @@ _HORIZONS = [
 _MIN_OUTCOMES_PER_HORIZON = 50
 
 
+# ---------------------------------------------------------------------------
+# #940 phase-1: published-calibration liquidity filter (Kalshi-first).
+#
+# A resolved outcome counts toward the PUBLISHED calibration numbers only if at
+# least one snapshot ever showed a real bid (yes_bid > 0) OR a trade
+# (last_price > 0). A pure one-sided, never-traded placeholder price (no bid and
+# no trade, ever) is a price we never actually discovered, so it is excluded
+# from the calibration denominator. This is a READ-SIDE filter only — it never
+# mutates is_winner or calibration_probability (gotcha #21).
+#
+# Kalshi-only for now: Polymarket's per-outcome volume backfill is still sparse
+# (phase-2, deferred + Alex-gated). The /calibration page surfaces the
+# included/excluded counts + this rule so the filter is transparent, never silent.
+#
+# KALSHI_LIQUIDITY_EXISTS is the production SQL form (embedded in the main
+# calibration query, where ``fo`` is futures_outcomes and ``vm`` carries source).
+# outcome_is_calibration_liquid() is the canonical, unit-tested Python definition
+# of the same predicate — keep the two in sync.
+# ---------------------------------------------------------------------------
+KALSHI_LIQUIDITY_EXISTS = (
+    "(vm.source <> 'kalshi' OR EXISTS (\n"
+    "        SELECT 1 FROM futures_odds_snapshots fos\n"
+    "        WHERE fos.outcome_id = fo.id\n"
+    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+)
+
+KALSHI_LIQUIDITY_RULE_TEXT = (
+    "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade "
+    "(last_price > 0) in any snapshot — pure one-sided, never-traded placeholder "
+    "prices. Applied to Kalshi only; never mutates resolutions."
+)
+
+
+def outcome_is_calibration_liquid(
+    ever_yes_bid: float | None, ever_last_price: float | None
+) -> bool:
+    """True if an outcome qualifies for the published calibration set.
+
+    Canonical definition of the #940 phase-1 rule, mirroring
+    ``KALSHI_LIQUIDITY_EXISTS``: an outcome is liquid (included) iff some
+    snapshot ever showed a real bid (``yes_bid > 0``) OR a trade
+    (``last_price > 0``). Never-bid AND never-traded -> excluded. Read-side
+    only (gotcha #21). ``ever_yes_bid`` / ``ever_last_price`` are the max
+    bid / max last_price observed across an outcome's snapshots (NULL if none).
+    """
+    return (ever_yes_bid or 0) > 0 or (ever_last_price or 0) > 0
+
+
 def _wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, float]:
     if total == 0:
         return (0.0, 0.0)
@@ -99,7 +147,7 @@ async def _precompute_calibration_main():
         # -----------------------------------------------------------
         # Query 1: Main futures calibration buckets
         # -----------------------------------------------------------
-        main_sql = text("""
+        main_sql = text(f"""
             WITH market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -158,7 +206,7 @@ async def _precompute_calibration_main():
                 WHERE eligible >= 1
                   AND has_winner >= 1
             ),
-            ranked_outcomes AS (
+            ranked_outcomes AS MATERIALIZED (
                 SELECT
                     COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
                     fo.is_winner AS is_winner,
@@ -167,6 +215,9 @@ async def _precompute_calibration_main():
                     cv.vm_id, cv.source, cv.category,
                     cv.eligible, cv.is_grouped,
                     (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
+                    -- #940 phase-1: never-bid/never-traded Kalshi placeholders are
+                    -- excluded from the published set (read-side only, gotcha #21).
+                    {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
                         ORDER BY ABS(fo.opening_probability - 0.5)
@@ -185,7 +236,7 @@ async def _precompute_calibration_main():
             mode_prices AS (
                 SELECT vm_id, adj_opening_probability AS mode_price
                 FROM ranked_outcomes
-                WHERE is_multi AND eligible >= 3
+                WHERE is_multi AND eligible >= 3 AND is_liquid
                 GROUP BY vm_id, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
@@ -193,7 +244,7 @@ async def _precompute_calibration_main():
                 SELECT ro.* FROM ranked_outcomes ro
                 LEFT JOIN mode_prices mp
                   ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
-                WHERE
+                WHERE ro.is_liquid AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -201,6 +252,14 @@ async def _precompute_calibration_main():
                              AND mp.vm_id IS NULL
                         ELSE ro.rn = 1
                     END
+            ),
+            -- #940 phase-1 transparency: how many Kalshi outcomes the liquidity
+            -- filter keeps vs drops (computed once from the materialized CTE).
+            liq_summary AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded
+                FROM ranked_outcomes
             ),
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
@@ -211,13 +270,29 @@ async def _precompute_calibration_main():
                 SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
                 AVG(adj_opening_probability) AS avg_prob,
                 SUM(adj_opening_probability::float) AS sum_prob,
-                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
+                MAX(ls.kalshi_included) AS kalshi_included,
+                MAX(ls.kalshi_excluded) AS kalshi_excluded
             FROM bucketed
+            CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
             ORDER BY bucket_idx, source, category, price_moved
         """)
         result = await db.execute(main_sql)
         rows = result.all()
+
+        # #940 phase-1 transparency: included/excluded counts are constant across
+        # every returned row (CROSS JOIN to the 1-row liq_summary).
+        kalshi_included = (
+            int(rows[0].kalshi_included)
+            if rows and rows[0].kalshi_included is not None
+            else 0
+        )
+        kalshi_excluded = (
+            int(rows[0].kalshi_excluded)
+            if rows and rows[0].kalshi_excluded is not None
+            else 0
+        )
 
         # -----------------------------------------------------------
         # Query 2: Ground-truth sports calibration from events table
@@ -587,6 +662,12 @@ async def _precompute_calibration_main():
         "mce_ci_upper": round(mce_ci_hi * 100, 2),
         "mce_closing_line": mce_closing_line,
         "mce_opening_price": mce_opening_price,
+        "liquidity_filter": {
+            "applies_to": "kalshi",
+            "rule": KALSHI_LIQUIDITY_RULE_TEXT,
+            "kalshi_included": kalshi_included,
+            "kalshi_excluded": kalshi_excluded,
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

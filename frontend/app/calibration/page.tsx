@@ -614,6 +614,20 @@ export default function CalibrationPage() {
           <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ bookmakers. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
           <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes from 2026 across Kalshi, Polymarket, and sportsbook odds (via The Odds API). We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
+          {data.liquidity_filter && (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded > 0) && (
+            <li>
+              <strong className="text-text-primary">Liquidity filter (Kalshi).</strong>{" "}
+              {data.liquidity_filter.rule}{" "}
+              <span className="text-text-primary">
+                {data.liquidity_filter.kalshi_included.toLocaleString()} included
+              </span>{" "}
+              &middot;{" "}
+              <span className="text-text-muted">
+                {data.liquidity_filter.kalshi_excluded.toLocaleString()} excluded
+              </span>{" "}
+              ({(100 * data.liquidity_filter.kalshi_excluded / (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded)).toFixed(0)}% of the Kalshi set). A skeptical auditor can re-include them &mdash; we publish both counts so the filter is never silent.
+            </li>
+          )}
         </ul>
       </section>
 

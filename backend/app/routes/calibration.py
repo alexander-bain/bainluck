@@ -1340,6 +1340,13 @@ async def public_calibration(
         "mce_ci_upper": round(mce_ci_hi * 100, 2),
         "mce_closing_line": mce_closing_line,
         "mce_opening_price": mce_opening_price,
+        # #940 phase-1: the never-bid/never-traded Kalshi liquidity filter + its
+        # included/excluded counts are computed in the precompute task (the
+        # authoritative path served from Redis above). This in-request fallback
+        # runs only on a cold Redis cache and is bounded by Heroku's 30s dyno
+        # limit, so it cannot afford the per-outcome snapshot scan — it serves
+        # the unfiltered set with liquidity_filter=None until the cache warms.
+        "liquidity_filter": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
