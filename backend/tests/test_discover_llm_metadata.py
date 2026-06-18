@@ -191,3 +191,22 @@ async def test_enrich_discover_llm_metadata_skips_without_llm_client(monkeypatch
     monkeypatch.setattr("app.tasks.enrich_markets.get_task_session", fail_if_session_is_opened)
 
     assert await enrich_discover_llm_metadata(limit=1) == {"skipped": True}
+
+
+def test_enrich_discover_llm_metadata_uses_scalar_snapshot_not_orm_attrs():
+    """#963 regression: the loop must iterate a scalar snapshot (cand_rows), NOT
+    live ORM objects. A per-item rollback expires ORM objects (gotcha #6), and a
+    subsequent ORM attribute access lazy-loads on the async greenlet path ->
+    'greenlet_spawn ... await_only()' which killed the task ~3s in. Guard against
+    re-introducing ORM attribute access inside the loop.
+    """
+    import inspect
+    from app.tasks import enrich_markets
+
+    src = inspect.getsource(enrich_markets.enrich_discover_llm_metadata)
+    # the loop variable is a dict snapshot
+    assert "cand_rows" in src
+    assert "for market in cand_rows" in src
+    # no live ORM attribute access on the loop var (would lazy-load post-rollback)
+    for attr in ("market.market_metadata", "market.name", "market.id", "market.llm_sport_category"):
+        assert attr not in src, f"ORM attr access {attr} reintroduces the #963 greenlet bug"

@@ -626,11 +626,30 @@ async def enrich_discover_llm_metadata(limit: int = 100):
             .limit(limit * 4)
         )
         candidates = result.scalars().all()
+        # #963 / gotcha #6: the per-item rollback below (on an LLM error) EXPIRES
+        # every ORM object in `candidates`; the next iteration's attribute access
+        # then triggers a lazy refresh on the async greenlet path ->
+        # "greenlet_spawn has not been called; can't call await_only()", which
+        # killed this task ~3s in (zero enrichment for 24h+). Snapshot the scalar
+        # fields up front so the loop never touches a live (expirable) ORM object.
+        cand_rows = [
+            {
+                "id": m.id,
+                "market_metadata": m.market_metadata,
+                "name": m.name,
+                "llm_sport_category": m.llm_sport_category,
+                "category": m.category,
+                "source": m.source,
+                "volume_24h": m.volume_24h,
+                "resolution_date": m.resolution_date,
+            }
+            for m in candidates
+        ]
 
-        for market in candidates:
+        for market in cand_rows:
             if stats["processed"] >= limit:
                 break
-            if not _metadata_needs_discover_llm_refresh(market.market_metadata, now=now):
+            if not _metadata_needs_discover_llm_refresh(market["market_metadata"], now=now):
                 stats["skipped_fresh"] += 1
                 continue
 
@@ -640,7 +659,7 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                     FuturesOutcome.current_probability,
                     FuturesOutcome.probability_change_24h,
                 )
-                .where(FuturesOutcome.market_id == market.id)
+                .where(FuturesOutcome.market_id == market["id"])
                 .order_by(FuturesOutcome.rank.asc().nullslast())
                 .limit(8)
             )
@@ -663,11 +682,11 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                 "minor_soccer, procedural_politics, commodity_ladder, repetitive_bucket, thin_liquidity, "
                 "stale_context. Empty if none.\n"
                 "- comparison_axes: dimensions useful for game pairings, like sports_vs_music, culture, macro, election, ai_tech.\n\n"
-                f"Market: {market.name}\n"
-                f"Category: {market.llm_sport_category or market.category or 'other'}\n"
-                f"Source: {market.source}\n"
-                f"24h volume: {market.volume_24h or 0}\n"
-                f"Resolution date: {market.resolution_date.isoformat() if market.resolution_date else 'unknown'}\n"
+                f"Market: {market['name']}\n"
+                f"Category: {market['llm_sport_category'] or market['category'] or 'other'}\n"
+                f"Source: {market['source']}\n"
+                f"24h volume: {market['volume_24h'] or 0}\n"
+                f"Resolution date: {market['resolution_date'].isoformat() if market['resolution_date'] else 'unknown'}\n"
                 "Outcomes:\n"
                 + ("\n".join(outcome_lines) if outcome_lines else "- unknown")
             )
@@ -683,19 +702,19 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                 content = response.choices[0].message.content or "{}"
                 raw = _json_from_llm_response(content)
                 metadata = _sanitize_discover_llm_metadata(raw, now=now)
-                next_metadata = dict(market.market_metadata or {})
+                next_metadata = dict(market["market_metadata"] or {})
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = metadata
 
                 # Persist story_key alongside LLM metadata
                 from app.utils.feed_market_quality import _story_key
                 computed_story_key = _story_key(
-                    market.name or "",
-                    market.llm_sport_category or market.category or "other",
+                    market["name"] or "",
+                    market["llm_sport_category"] or market["category"] or "other",
                 )
 
                 await session.execute(
                     update(FuturesMarket)
-                    .where(FuturesMarket.id == market.id)
+                    .where(FuturesMarket.id == market["id"])
                     .values(
                         market_metadata=next_metadata,
                         story_key=computed_story_key,
@@ -707,7 +726,7 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                     stats["estimated_output_tokens"] += int(getattr(usage, "completion_tokens", 0) or 0)
                 stats["generated"] += 1
             except Exception as exc:
-                logger.warning("Discover LLM metadata failed for market %s: %s", market.id, exc)
+                logger.warning("Discover LLM metadata failed for market %s: %s", market["id"], exc)
                 stats["errors"] += 1
                 try:
                     await session.rollback()
