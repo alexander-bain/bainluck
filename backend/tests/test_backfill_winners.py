@@ -1772,3 +1772,42 @@ class TestTotalBasesBoundVerdict:
         # 2 hits both HR -> TB_min = 2 + 6 = 8, exact TB = 8 -> winner up to 8.
         assert self._verdict(2, 2, 8) is True
         assert self._verdict(2, 2, 9) is False  # TB_max = 6 + 2 = 8 < 9
+
+
+class TestTotalOutcomeRegrade:
+    """#945: Kalshi TOTAL game_score re-grade (mirror of the spread re-grade)."""
+
+    def _w(self, name, hs, as_):
+        from app.tasks.backfill_winners import _total_outcome_is_winner
+        return _total_outcome_is_winner(name, hs, as_)
+
+    def test_over_wins_when_total_exceeds_line(self):
+        # 4-3 = 7 total. Over 5.5 -> True; Over 7.5 -> False.
+        assert self._w("Over 5.5 goals scored", 4, 3) is True
+        assert self._w("Over 7.5 goals scored", 4, 3) is False
+
+    def test_under_direction_respected_gotcha_17(self):
+        # Under 7.5 with total 7 -> True; Under 5.5 -> False (direction matters).
+        assert self._w("Under 7.5 goals scored", 4, 3) is True
+        assert self._w("Under 5.5 goals scored", 4, 3) is False
+
+    def test_points_and_runs_units(self):
+        assert self._w("Over 210.5 points scored", 110, 105) is True   # 215
+        assert self._w("Over 8.5 runs scored", 3, 2) is False           # 5
+
+    def test_non_total_or_missing_scores_returns_none(self):
+        assert self._w("Carolina wins by over 1.5 goals", 4, 3) is None
+        assert self._w("Over 5.5 goals scored", None, 3) is None
+
+    def test_regrade_wired_and_scoped(self):
+        import inspect
+        from app.tasks.backfill_winners import (
+            _regrade_kalshi_total_inversions, _resolve_winners_only,
+        )
+        rg = inspect.getsource(_regrade_kalshi_total_inversions)
+        assert "KX(NHL|NBA|MLB)TOTAL" in rg
+        assert "_total_outcome_is_winner(" in rg
+        assert "bool(r.cur) == won" in rg            # write-on-change
+        sql = rg[rg.index("text("):]
+        assert "resolution_source" not in sql.split("UPDATE")[1] if "UPDATE" in sql else True
+        assert "_regrade_kalshi_total_inversions(" in inspect.getsource(_resolve_winners_only)

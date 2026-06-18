@@ -1511,6 +1511,26 @@ def _spread_outcome_is_winner(
     return margin > line
 
 
+def _total_outcome_is_winner(outcome_name, home_score, away_score):
+    """#945: grade ONE "Over/Under N ... scored" total outcome from the final score.
+
+    total = home + away; "Over N" wins iff total > N, "Under N" iff total < N
+    (gotcha #17: Kalshi threshold outcomes are OVER probabilities unless the name
+    starts with "Under"/equals "No" — _TOTAL_RE captures the direction). Returns
+    True/False, or None if the name isn't a total outcome or scores are missing
+    (caller skips).
+    """
+    if home_score is None or away_score is None:
+        return None
+    tm = _TOTAL_RE.search(outcome_name or "")
+    if not tm:
+        return None
+    direction = tm.group("dir").lower()
+    line = float(tm.group(2))
+    total = home_score + away_score
+    return total > line if direction == "over" else total < line
+
+
 async def _resolve_kalshi_spread_total_from_scores():
     """Resolve Kalshi spread and total markets from actual game scores.
 
@@ -1943,6 +1963,68 @@ async def _regrade_kalshi_nhl_spread_inversions():
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("NHL spread inversion re-grade error: %s", e)
+    return stats
+
+
+async def _regrade_kalshi_total_inversions():
+    """#945: idempotent re-grade of Kalshi NHL/NBA/MLB TOTAL game_score outcomes
+    that are stale/inverted vs the linked event's final score.
+
+    Mirrors the spread re-grade (#939/#944). Kalshi TOTAL game_score `is_winner`
+    was set by the old complementary-flip bug and/or against pre-#944-relink
+    events, and the spread/total resolver's HAVING clause skips already-resolved
+    markets so these were never re-pulled (2026-06-17: KXMLBTOTAL 67.9%,
+    KXNBATOTAL 67.4%, KXNHLTOTAL 49.7% disagree vs final scores; the #755 re-null
+    regex excludes plain "TOTAL", so #944's relink did not churn them). #944 has
+    already corrected the event links, so recomputing from the linked event's
+    home+away total is sound.
+
+    "Over/Under N scored" wins per gotcha #17 (OVER unless Under/No). Write-on-
+    change; resolution_source STAYS game_score; never a bare reset (gotcha #21).
+    Bounded to the KXxxxTOTAL game_score cohort (#899). Runs in resolve_winners
+    (the fast every-2h path) so it forward-fixes and is idempotent. Do NOT trigger
+    the broad backfill_winners to refresh — its #755 re-null churns the cohort.
+    """
+    stats = {"checked": 0, "flipped": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            rows = await session.execute(text("""
+                SELECT fo.id AS oid, fo.name AS oc_name, fo.is_winner AS cur,
+                       e.home_score AS hs, e.away_score AS as_
+                FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                JOIN events e ON e.id = fm.event_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)TOTAL'
+                  AND fo.resolution_source = 'game_score'
+                  AND e.home_score IS NOT NULL
+                  AND e.away_score IS NOT NULL
+            """))
+            for r in rows.all():
+                stats["checked"] += 1
+                won = _total_outcome_is_winner(r.oc_name, r.hs, r.as_)
+                if won is None:
+                    continue
+                # write-on-change: skip rows already on the correct side
+                if r.cur is not None and bool(r.cur) == won:
+                    continue
+                await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = :won, last_updated = NOW() WHERE id = :oid"
+                    ),
+                    {"won": won, "oid": r.oid},
+                )
+                stats["flipped"] += 1
+            await session.commit()
+        if stats["flipped"]:
+            logger.info(
+                "Kalshi TOTAL inversion re-grade (#945): flipped %d of %d game_score outcomes",
+                stats["flipped"],
+                stats["checked"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Kalshi TOTAL inversion re-grade error: %s", e)
     return stats
 
 
@@ -4147,6 +4229,13 @@ async def _resolve_winners_only(limit: int = 2000):
     stats["nhl_spread_regrade"] = {
         "checked": nhl_spread_regrade_stats.get("checked", 0),
         "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+    }
+    # #945: re-grade Kalshi TOTAL game_score (same HAVING-skip staleness as the
+    # spread cohort; never re-pulled). Idempotent + write-on-change.
+    total_regrade_stats = await _regrade_kalshi_total_inversions()
+    stats["total_regrade"] = {
+        "checked": total_regrade_stats.get("checked", 0),
+        "flipped": total_regrade_stats.get("flipped", 0),
     }
     # #938: clear stale settlement_sync extra winners on golf field markets here
     # (the settlement_sync block in _backfill_all_winners is starved before it
