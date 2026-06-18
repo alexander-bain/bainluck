@@ -4090,27 +4090,6 @@ async def _resolve_winners_only(limit: int = 2000):
     _start = _t.monotonic()
     stats = {}
 
-    # #947 — FORWARD-DURABILITY: run the idempotent re-grades FIRST, before the
-    # slow/`#898`-starved blocks below, so they COMPLETE on every scheduled cycle
-    # (they were time-starved when they ran late, leaving spread game_score
-    # drifted to ~22% disagree). These re-grade the EXISTING resolved cohort and
-    # are independent of this cycle's resolver output, so a top placement is safe;
-    # the grading math is unchanged (#944 spread / #945 TOTAL, both verified 0%).
-    nhl_spread_regrade_stats = await _regrade_kalshi_nhl_spread_inversions()
-    stats["nhl_spread_regrade"] = {
-        "checked": nhl_spread_regrade_stats.get("checked", 0),
-        "flipped": nhl_spread_regrade_stats.get("flipped", 0),
-    }
-    total_regrade_stats = await _regrade_kalshi_total_inversions()
-    stats["total_regrade"] = {
-        "checked": total_regrade_stats.get("checked", 0),
-        "flipped": total_regrade_stats.get("flipped", 0),
-    }
-    golf_extra_winner_stats = await _regrade_golf_extra_winners()
-    stats["golf_extra_winner_regrade"] = {
-        "cleared": golf_extra_winner_stats.get("cleared", 0),
-    }
-
     # Phase 0: Fix stale scheduled events
     # 13,524 events stuck in 'scheduled' despite being completed.
     # Transitioning to 'closed' makes them eligible for ESPN ID matching,
@@ -4243,12 +4222,28 @@ async def _resolve_winners_only(limit: int = 2000):
     # Score-based resolution
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
-    # NOTE (#947): the idempotent spread/TOTAL/golf-extra re-grades used to run
-    # HERE, but this late in the task they were time-starved before completing on
-    # the scheduled cycle (spread game_score drifted to ~22% disagree). They now
-    # run at the TOP of this function (see "#947" block) so they complete every
-    # scheduled run; they re-grade the EXISTING resolved cohort and are
-    # independent of this cycle's resolver output (new games converge next cycle).
+    # #939: correct NHL spread outcomes pinned True/False by the old
+    # complementary resolver (the fixed resolver above can't reach them — the
+    # HAVING clause skips markets that still hold a game_score is_winner=True).
+    nhl_spread_regrade_stats = await _regrade_kalshi_nhl_spread_inversions()
+    stats["nhl_spread_regrade"] = {
+        "checked": nhl_spread_regrade_stats.get("checked", 0),
+        "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+    }
+    # #945: re-grade Kalshi TOTAL game_score (same HAVING-skip staleness as the
+    # spread cohort; never re-pulled). Idempotent + write-on-change.
+    total_regrade_stats = await _regrade_kalshi_total_inversions()
+    stats["total_regrade"] = {
+        "checked": total_regrade_stats.get("checked", 0),
+        "flipped": total_regrade_stats.get("flipped", 0),
+    }
+    # #938: clear stale settlement_sync extra winners on golf field markets here
+    # (the settlement_sync block in _backfill_all_winners is starved before it
+    # runs — #898). Idempotent + write-on-change.
+    golf_extra_winner_stats = await _regrade_golf_extra_winners()
+    stats["golf_extra_winner_regrade"] = {
+        "cleared": golf_extra_winner_stats.get("cleared", 0),
+    }
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()

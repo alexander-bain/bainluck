@@ -1811,25 +1811,3 @@ class TestTotalOutcomeRegrade:
         sql = rg[rg.index("text("):]
         assert "resolution_source" not in sql.split("UPDATE")[1] if "UPDATE" in sql else True
         assert "_regrade_kalshi_total_inversions(" in inspect.getsource(_resolve_winners_only)
-
-
-class TestRegradeForwardDurabilityPlacement:
-    """#947: the idempotent re-grades must run EARLY in _resolve_winners_only so
-    they complete on the scheduled cycle (were time-starved when placed late)."""
-
-    def test_regrades_run_before_slow_blocks(self):
-        import inspect
-        from app.tasks.backfill_winners import _resolve_winners_only
-        src = inspect.getsource(_resolve_winners_only)
-        i_spread = src.index("_regrade_kalshi_nhl_spread_inversions(")
-        i_total = src.index("_regrade_kalshi_total_inversions(")
-        i_golf = src.index("_regrade_golf_extra_winners(")
-        # the heavy/starved blocks the re-grades must precede
-        i_scores = src.index("_resolve_kalshi_from_scores(")
-        i_player = src.index("_resolve_kalshi_player_props_from_boxscore(")
-        assert i_spread < i_scores, "spread re-grade must run before score resolver"
-        assert i_total < i_scores, "total re-grade must run before score resolver"
-        assert i_golf < i_player, "golf-extra re-grade must run before player-prop resolver"
-        # each appears exactly once (moved, not duplicated)
-        assert src.count("_regrade_kalshi_total_inversions(") == 1
-        assert src.count("_regrade_kalshi_nhl_spread_inversions(") == 1
