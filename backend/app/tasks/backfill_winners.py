@@ -1605,6 +1605,14 @@ async def _resolve_kalshi_spread_total_from_scores():
                 # Team total: "{Team} over N points scored" in any outcome name
                 resolved_team_total = False
                 for oc in outcomes_list:
+                    # #947: this greedy regex also matches SPREAD outcomes
+                    # ("Carolina wins by over 1.5 goals" → team="Carolina wins by"),
+                    # grading a spread by the team's RAW score instead of the MARGIN
+                    # and shadowing the correct per-outcome spread branch below
+                    # (the spread inverter the #944 re-grade band-aided). Skip any
+                    # spread-pattern name so it falls through to the spread branch.
+                    if _SPREAD_RE.search(oc.name or ""):
+                        continue
                     _tt_re = re.match(
                         r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
                         oc.name or "",
@@ -1701,39 +1709,40 @@ async def _resolve_kalshi_spread_total_from_scores():
                         resolved_st = True
                         continue
 
-                    # Try total pattern
-                    tm = _TOTAL_RE.search(name)
-                    if tm:
-                        direction = tm.group("dir").lower()
-                        line = float(tm.group(2))
-
+                    # Try total pattern — grade THIS outcome INDEPENDENTLY.
+                    #
+                    # #947: multi-line totals ("Over 5.5", "Over 6.5", "Under 5.5",
+                    # ...) are independent binaries, NOT a complementary pair (same
+                    # as spreads, #939). The old code computed `won` for the first
+                    # matching outcome and flipped every sibling via
+                    # `oc_won = won if oc.id == outcome.id else not won` (the
+                    # `is_over` it computed was dead code), so on re-pull it
+                    # INVERTED multi-line totals — the total inverter the #945
+                    # re-grade band-aided. Grade each outcome on its own
+                    # Over/Under + line vs the real total; never flip siblings.
+                    if _TOTAL_RE.search(name):
                         if is_1h:
                             h1_scores = await _get_halftime_score(session, row.event_id)
                             if h1_scores is None:
                                 stats["no_plays"] += 1
                                 resolved_st = True
                                 break
-                            total = h1_scores[0] + h1_scores[1]
+                            h_for_total, a_for_total = h1_scores
                         else:
-                            total = row.home_score + row.away_score
+                            h_for_total, a_for_total = row.home_score, row.away_score
 
-                        won = total > line if direction == "over" else total < line
-                        for oc in outcomes_list:
-                            is_over = bool(
-                                re.match(
-                                    r"(?:over|under)", oc.name or "", re.IGNORECASE
-                                )
-                            )
-                            oc_won = won if oc.id == outcome.id else not won
-                            await session.execute(
-                                text(
-                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
-                                ),
-                                {"won": oc_won, "oid": oc.id},
-                            )
+                        won = _total_outcome_is_winner(name, h_for_total, a_for_total)
+                        if won is None:
+                            continue
+                        await session.execute(
+                            text(
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                            ),
+                            {"won": won, "oid": outcome.id},
+                        )
                         stats["h1_total" if is_1h else "total"] += 1
                         resolved_st = True
-                        break
+                        continue
 
                 # Fallback: team-name-only outcomes on 2-outcome markets
                 # (e.g., "Penn" on KXNCAAMBGAME, "California" on KXNCAAMB1HWINNER)

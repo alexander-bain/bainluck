@@ -1811,3 +1811,39 @@ class TestTotalOutcomeRegrade:
         sql = rg[rg.index("text("):]
         assert "resolution_source" not in sql.split("UPDATE")[1] if "UPDATE" in sql else True
         assert "_regrade_kalshi_total_inversions(" in inspect.getsource(_resolve_winners_only)
+
+
+class TestResolverNoReInversion:
+    """#947: _resolve_kalshi_spread_total_from_scores must NOT re-invert
+    already-correctly-resolved spread/total game_score markets on re-pull.
+    Two root causes fixed: (1) the team-total branch grabbed spread names;
+    (2) the total branch used a complementary sibling-flip."""
+
+    def _src(self):
+        import inspect
+        from app.tasks.backfill_winners import _resolve_kalshi_spread_total_from_scores
+        return inspect.getsource(_resolve_kalshi_spread_total_from_scores)
+
+    def test_team_total_branch_skips_spread_names(self):
+        src = self._src()
+        tt = src.split("# Team total:")[1].split("# For spread/total parsing")[0]
+        # spread names ("X wins by over N") must be skipped so the spread branch
+        # (margin-based) handles them, not the team-total branch (raw-score-based).
+        assert "_SPREAD_RE.search(oc.name" in tt
+
+    def test_total_branch_grades_each_outcome_independently(self):
+        src = self._src()
+        total_branch = src.split("# Try total pattern")[1].split("# Fallback:")[0]
+        # strip comment lines so we test CODE, not the comment that quotes the bug.
+        code = "\n".join(l for l in total_branch.splitlines() if not l.strip().startswith("#"))
+        # per-outcome grading via the #945 helper; no complementary sibling-flip.
+        assert "_total_outcome_is_winner(" in code
+        assert "oc_won = won if oc.id == outcome.id else not won" not in code
+        assert "is_over = bool(" not in code  # the dead var is gone
+
+    def test_spread_branch_still_independent(self):
+        # #939 spread branch must remain per-outcome (not regressed).
+        src = self._src()
+        spread_branch = src.split("# Try spread pattern")[1].split("# Try total pattern")[0]
+        assert "_spread_outcome_is_winner(" in spread_branch
+        assert "oc_won = won if oc.id == outcome.id else not won" not in spread_branch
