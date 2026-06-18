@@ -430,3 +430,24 @@ class TestFuturesCompareEndpoint:
             assert isinstance(body["sources"], list)
             assert isinstance(body["outcomes"], list)
             assert isinstance(body["outcome_count"], int)
+
+
+# ============================================================================
+# Grouped Feed sports_only filter — /api/futures/grouped-feed (#959)
+# ============================================================================
+
+
+class TestGroupedFeedSportsOnly:
+    """GET /api/futures/grouped-feed?sports_only=true — /sports must not leak."""
+
+    async def test_sports_only_param_accepted(self, client):
+        resp = await client.get("/api/futures/grouped-feed?sports_only=true")
+        assert resp.status_code == 200
+
+    async def test_sports_only_default_false_still_works(self, client):
+        resp = await client.get("/api/futures/grouped-feed")
+        assert resp.status_code == 200
+
+    async def test_sports_only_invalid_value_rejected(self, client):
+        resp = await client.get("/api/futures/grouped-feed?sports_only=maybe")
+        assert resp.status_code == 422

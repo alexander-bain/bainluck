@@ -1478,6 +1478,7 @@ async def get_playoff_grid(
 async def grouped_feed(
     category: Optional[str] = Query(None, description="Filter by category (sports, crypto, politics, weather)"),
     sport: Optional[str] = Query(None, description="Filter by sport"),
+    sports_only: bool = Query(False, description="Restrict to /sports-page sport categories (excludes esports/geopolitics/crypto/etc.)"),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1506,6 +1507,16 @@ async def grouped_feed(
         filters.append(FuturesMarket.category == category)
     if sport:
         filters.append(FuturesMarket.llm_sport_category == sport)
+    if sports_only:
+        # #959: real sports filter on llm_sport_category (NOT FuturesMarket.category,
+        # which holds values like "championship"). esports is excluded — it stays in
+        # Discover/Browse but is not a /sports surface (#958). Function-level import
+        # keeps this route circular-import-safe.
+        from app.routes.feed import SPORTS_PAGE_CATEGORIES
+
+        filters.append(
+            FuturesMarket.llm_sport_category.in_(SPORTS_PAGE_CATEGORIES)
+        )
 
     stmt = (
         select(FuturesMarket)

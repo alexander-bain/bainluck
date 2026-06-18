@@ -4,13 +4,10 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "framer-motion";
-import { fetchEventsByIds, fetchFuturesByIds, fetchFeed, fetchGroupedFeed } from "@/lib/api";
+import { fetchFeed, fetchGroupedFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
-import { staggerContainer, staggerItem } from "@/lib/animations";
-import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, GroupedFeedResponse } from "@/lib/types";
+import type { FeedEventData, FeedFuturesData, FeedTournamentData, GroupedFeedResponse } from "@/lib/types";
 import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
-import EventCard from "@/components/EventCard";
-import FuturesCard from "@/components/FuturesCard";
 import FeedCard from "@/components/FeedCard";
 import LeagueChips from "@/components/LeagueChips";
 import OnboardingBanner from "@/components/OnboardingBanner";
@@ -25,8 +22,6 @@ import {
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
-  usePinnedEvents,
-  usePinnedFutures,
 } from "@/hooks";
 
 // ---------------------------------------------------------------------------
@@ -43,16 +38,7 @@ export default function SportsPage() {
 
   const { track } = useAnalytics();
 
-  // Pinned events
-  const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
-
-  // Pinned futures
-  const {
-    pinnedIds: pinnedFuturesIds,
-    isPinned: isFuturesPinned,
-    togglePin: toggleFuturesPin,
-    isMaxReached: isFuturesMaxReached
-  } = usePinnedFutures();
+  // Pinning lives on My Stuff, not /sports (#960) — no pinned wiring here.
 
   // =========================================================================
   // Data fetching — single feed call
@@ -83,97 +69,9 @@ export default function SportsPage() {
     isLoading: groupedLoading,
   } = useSWR<GroupedFeedResponse>(
     authLoading ? null : "grouped-feed",
-    () => fetchGroupedFeed({ limit: 20 }),
+    () => fetchGroupedFeed({ limit: 20, sportsOnly: true }),
     { refreshInterval: 120000 }
   );
-
-  // =========================================================================
-  // Pinned items (still need individual fetches for items outside feed window)
-  // =========================================================================
-
-  const feedEventIds = useMemo(() => {
-    if (!feedData) return new Set<number>();
-    return new Set(
-      feedData.items
-        .filter(i => i.type === "event")
-        .map(i => (i.data as FeedEventData).id)
-    );
-  }, [feedData]);
-
-  const missingPinnedIds = useMemo(() => {
-    return pinnedIds.filter(id => !feedEventIds.has(id));
-  }, [feedEventIds, pinnedIds]);
-
-  const { data: fetchedPinnedEvents } = useSWR(
-    missingPinnedIds.length > 0 ? ["pinned-events", ...missingPinnedIds] : null,
-    () => fetchEventsByIds(missingPinnedIds),
-  );
-
-  const pinnedEvents = useMemo(() => {
-    const feedEventMap = new Map<number, Event>();
-    if (feedData) {
-      for (const item of feedData.items) {
-        if (item.type === "event") {
-          const d = item.data as FeedEventData;
-          feedEventMap.set(d.id, {
-            id: d.id,
-            external_id: d.external_id,
-            sport: d.sport,
-            sport_name: d.sport_name,
-            home_team: d.home_team,
-            away_team: d.away_team,
-            commence_time: d.commence_time,
-            status: d.status,
-            home_score: d.home_score,
-            away_score: d.away_score,
-            current_odds: d.current_odds ? {
-              home_probability: d.current_odds.home_probability,
-              away_probability: d.current_odds.away_probability,
-              bookmaker_count: d.current_odds.bookmaker_count,
-              projected_home_score: null,
-              projected_away_score: null,
-            } : undefined,
-            opening_odds: d.opening_odds ? {
-              home_probability: d.opening_odds.home_probability,
-              away_probability: d.opening_odds.away_probability ?? null,
-              favorite: d.opening_odds.favorite ?? null,
-            } : undefined,
-          } as Event);
-        }
-      }
-    }
-
-    const fetchedMap = new Map((fetchedPinnedEvents ?? []).map(e => [e.id, e]));
-    return pinnedIds
-      .map(id => fetchedMap.get(id) ?? feedEventMap.get(id))
-      .filter((e): e is Event => e !== undefined);
-  }, [feedData, fetchedPinnedEvents, pinnedIds]);
-
-  // Pinned futures
-  const feedFuturesIds = useMemo(() => {
-    if (!feedData) return new Set<number>();
-    return new Set(
-      feedData.items
-        .filter(i => i.type === "futures")
-        .map(i => (i.data as FeedFuturesData).id)
-    );
-  }, [feedData]);
-
-  const missingPinnedFuturesIds = useMemo(() => {
-    return pinnedFuturesIds.filter(id => !feedFuturesIds.has(id));
-  }, [feedFuturesIds, pinnedFuturesIds]);
-
-  const { data: fetchedPinnedFutures } = useSWR(
-    missingPinnedFuturesIds.length > 0 ? ["pinned-futures", ...missingPinnedFuturesIds] : null,
-    () => fetchFuturesByIds(missingPinnedFuturesIds),
-  );
-
-  const pinnedFutures = useMemo(() => {
-    const fetchedMap = new Map((fetchedPinnedFutures ?? []).map(f => [f.id, f]));
-    return pinnedFuturesIds
-      .map(id => fetchedMap.get(id))
-      .filter((f): f is FuturesMarketDetailResponse => f !== undefined);
-  }, [fetchedPinnedFutures, pinnedFuturesIds]);
 
   // =========================================================================
   // Interest signals — thumbs up/down step through affinity levels
@@ -272,59 +170,6 @@ export default function SportsPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Pinned Section */}
-              {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
-                <section>
-                  <motion.div
-                    className="flex items-center gap-2 mb-3"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
-                  >
-                    <span className="text-sm">📌</span>
-                    <h2 className="text-sm font-semibold text-text-primary">
-                      Pinned
-                    </h2>
-                    <span className="text-micro text-text-muted">
-                      {pinnedEvents.length + pinnedFutures.length}
-                    </span>
-                  </motion.div>
-                  <motion.div
-                    className="grid gap-3"
-                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
-                    variants={staggerContainer}
-                    initial="hidden"
-                    animate="visible"
-                  >
-                    {pinnedEvents.map((event, index) => (
-                      <motion.div key={`pinned-${event.id}`} variants={staggerItem}>
-                        <EventCard
-                          event={event}
-                          showSport={true}
-                          sourceSection="pinned"
-                          positionIndex={index}
-                          highlightLabel={event.highlight?.label}
-                          isPinned={true}
-                          onPinToggle={togglePin}
-                          pinDisabled={isMaxReached}
-                        />
-                      </motion.div>
-                    ))}
-                    {pinnedFutures.map((market) => (
-                      <motion.div key={`pinned-futures-${market.id}`} variants={staggerItem}>
-                        <FuturesCard
-                          market={market}
-                          showSport={true}
-                          isPinned={true}
-                          onPinToggle={toggleFuturesPin}
-                          pinDisabled={isFuturesMaxReached}
-                        />
-                      </motion.div>
-                    ))}
-                  </motion.div>
-                </section>
-              )}
-
               {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 

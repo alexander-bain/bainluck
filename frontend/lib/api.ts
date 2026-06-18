@@ -535,11 +535,13 @@ export async function fetchFuturesGroups(opts?: {
 export async function fetchGroupedFeed(opts?: {
   category?: string;
   sport?: string;
+  sportsOnly?: boolean;
   limit?: number;
 }): Promise<GroupedFeedResponse> {
   const params = new URLSearchParams();
   if (opts?.category) params.set("category", opts.category);
   if (opts?.sport) params.set("sport", opts.sport);
+  if (opts?.sportsOnly) params.set("sports_only", "true");
   if (opts?.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   return apiFetch<GroupedFeedResponse>(`/api/futures/grouped-feed${qs ? `?${qs}` : ""}`);

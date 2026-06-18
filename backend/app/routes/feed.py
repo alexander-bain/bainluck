@@ -421,6 +421,14 @@ DISCOVER_SPORTS_CATEGORIES = (
     "lacrosse",
 )
 
+# Categories that may appear on the /sports page surfaces. esports lives in
+# Discover/Browse (it stays in DISCOVER_SPORTS_CATEGORIES) but is NOT a sport,
+# so it is scoped out of /sports (#958). motorsports (F1/NASCAR) stays a sport.
+# Keep DISCOVER_SPORTS_CATEGORIES untouched so Discover/Browse are unaffected.
+SPORTS_PAGE_CATEGORIES = tuple(
+    c for c in DISCOVER_SPORTS_CATEGORIES if c != "esports"
+)
+
 # Editorial recall patterns — canonical list lives in
 # app.utils.editorial_patterns. Polling tasks precompute
 # `is_editorial_recall` at ingest time; feed queries the column.
@@ -3965,7 +3973,8 @@ async def _score_sports_mode_futures(
         ~FuturesMarket.name.like("% vs. %"),
     ]
 
-    sports_filter = FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES)
+    # #958: /sports excludes esports (kept in Discover/Browse via DISCOVER_SPORTS_CATEGORIES).
+    sports_filter = FuturesMarket.llm_sport_category.in_(SPORTS_PAGE_CATEGORIES)
 
     if sport_filter:
         sports_filter = and_(
