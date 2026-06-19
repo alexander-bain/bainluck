@@ -4647,6 +4647,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         link_props_stats["errors"].append(str(e))
         logger.warning("Link sports props failed: %s", e)
 
+    # #898: close the link_props timer. Without this _end_phase, _phase_times
+    # ["link_props"] kept its raw monotonic START value (~1.79M s ≈ 20 days on
+    # the dashboard) — a corrupt entry that made the phase map untrustworthy. Now
+    # it records real elapsed. Logging/measurement-only; no control-flow change.
+    _end_phase("link_props")
+
     _mark("candlestick_trades")
     # Phase 0-candlestick: Backfill hourly snapshots from Kalshi for sparse outcomes.
     # Must run BEFORE calibration price computation so Part A has richer data.
