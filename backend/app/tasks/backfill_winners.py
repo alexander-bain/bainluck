@@ -4427,16 +4427,31 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     import gc
 
     _phase_times = {}
+    _pipeline_start = _t.monotonic()
 
     def _start_phase(name):
         _phase_times[name] = _t.monotonic()
+        # #898: log per-phase timing in REAL TIME. The task dies at the 840s
+        # soft_time_limit inside a late phase, so the end-of-task _phase_times
+        # summary (return dict) never emits — making the budget-consuming phase
+        # invisible. Logging at each boundary means the LAST "START" with no
+        # matching "END" before SoftTimeLimitExceeded names the culprit phase.
+        logger.info(
+            "backfill phase START %s (cum %.1fs)",
+            name,
+            _t.monotonic() - _pipeline_start,
+        )
 
     def _end_phase(name):
         if name in _phase_times:
             elapsed = _t.monotonic() - _phase_times[name]
             _phase_times[name] = round(elapsed, 1)
-
-    _pipeline_start = _t.monotonic()
+            logger.info(
+                "backfill phase END %s: %.1fs (cum %.1fs)",
+                name,
+                elapsed,
+                _t.monotonic() - _pipeline_start,
+            )
 
     # ========================================================================
     # AUTHORITATIVE WINNER RESOLUTION — RUNS FIRST (see issue #898)
