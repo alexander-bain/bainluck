@@ -86,6 +86,21 @@ async def celery_dashboard(
         heartbeat_age = None
         worker_status = "error"
 
+    # #898: surface the backfill_winners per-phase timing so the
+    # SoftTimeLimitExceeded culprit phase is observable here (the task dies
+    # mid-phase before its end-of-run summary emits, and Heroku logs are not
+    # readable from the executor sandbox). `running_phase` is the phase that was
+    # in flight at the last write — i.e. the budget consumer when it timed out.
+    backfill_phase_timing = None
+    try:
+        import json as _json
+        _r = get_redis_client()
+        _raw = _r.get("bainluck:backfill_phase_timing")
+        if _raw:
+            backfill_phase_timing = _json.loads(_raw)
+    except Exception:
+        backfill_phase_timing = None
+
     # Compute overall health
     critical_tasks = [t for t in tasks if t.get("health") == "critical"]
     degraded_tasks = [t for t in tasks if t.get("health") == "degraded"]
@@ -110,6 +125,7 @@ async def celery_dashboard(
         "degraded_tasks": [t["task"] for t in degraded_tasks],
         "tasks": tasks,
         "odds_api_quota": odds_api_quota,
+        "backfill_phase_timing": backfill_phase_timing,
     }
 
 

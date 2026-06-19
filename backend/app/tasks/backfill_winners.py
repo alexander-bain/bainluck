@@ -4429,6 +4429,37 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _phase_times = {}
     _pipeline_start = _t.monotonic()
 
+    def _persist_phase_timing(running):
+        # #898: persist per-phase timing to Redis at every boundary so the
+        # SoftTimeLimitExceeded culprit phase is observable WITHOUT Heroku-log
+        # access (the task dies before its end-of-run summary emits, and the
+        # logger.info lines are unreadable from the executor sandbox / EPERM).
+        # The celery dashboard surfaces this key. `running` is the in-flight
+        # phase — the one consuming budget when the task dies. Best-effort;
+        # never breaks the task.
+        try:
+            import json as _json
+            from datetime import datetime as _dt, timezone as _tz
+            from app.tasks.redis_state import get_redis_client
+
+            completed = {
+                k: v for k, v in _phase_times.items()
+                if isinstance(v, (int, float)) and k != running
+            }
+            get_redis_client().setex(
+                "bainluck:backfill_phase_timing",
+                86400,
+                _json.dumps({
+                    "updated_at": _dt.now(_tz.utc).isoformat(),
+                    "cumulative_s": round(_t.monotonic() - _pipeline_start, 1),
+                    "running_phase": running,
+                    "completed": completed,
+                    "soft_time_limit_s": 840,
+                }),
+            )
+        except Exception:
+            pass
+
     def _start_phase(name):
         _phase_times[name] = _t.monotonic()
         # #898: log per-phase timing in REAL TIME. The task dies at the 840s
@@ -4441,6 +4472,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             name,
             _t.monotonic() - _pipeline_start,
         )
+        _persist_phase_timing(running=name)
 
     def _end_phase(name):
         if name in _phase_times:
@@ -4452,6 +4484,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 elapsed,
                 _t.monotonic() - _pipeline_start,
             )
+            _persist_phase_timing(running=None)
 
     # ========================================================================
     # AUTHORITATIVE WINNER RESOLUTION — RUNS FIRST (see issue #898)
