@@ -43,7 +43,7 @@ async def capture_kalshi_featured(
             FuturesMarket.external_id,
             FuturesMarket.llm_sport_category,
             FuturesMarket.volume_24h,
-            FuturesMarket.url,
+            FuturesMarket.image_url,
         )
         .where(
             FuturesMarket.source == "kalshi",
@@ -114,7 +114,7 @@ async def capture_polymarket_featured(
             FuturesMarket.external_id,
             FuturesMarket.llm_sport_category,
             FuturesMarket.volume_24h,
-            FuturesMarket.url,
+            FuturesMarket.image_url,
         )
         .where(
             FuturesMarket.source == "polymarket",
