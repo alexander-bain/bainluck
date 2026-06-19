@@ -11,6 +11,7 @@ import type {
   GolfLeaderboardPlayer,
 } from "@/lib/types";
 import { TOURNAMENT_EMOJI } from "@/lib/golfData";
+import { groupRelatedMarkets } from "@/lib/golfRelatedSections";
 import { EvolutionView } from "@/components/EvolutionView";
 import type { PositionOption } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -532,6 +533,83 @@ function sourceLabel(src: string | undefined): string {
   return SOURCE_LABELS[src] || src.charAt(0).toUpperCase() + src.slice(1);
 }
 
+function RelatedMarketCard({
+  market,
+  accentColor,
+}: {
+  market: RelatedFutureMarket;
+  accentColor: string;
+}) {
+  return (
+    <div className="border border-gray-200 rounded-xl p-4 bg-white">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <h3 className="text-xs font-semibold text-gray-700">
+          {market.market_name}
+        </h3>
+        {market.source && (
+          <span className="text-[10px] text-gray-400 shrink-0">
+            {sourceLabel(market.source)}
+          </span>
+        )}
+      </div>
+      {/* #956/#957: cross-source comparison when the same question trades on
+          multiple venues (e.g. "Polymarket 27% · Kalshi 22%"). */}
+      {market.sources && market.sources.length > 1 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-2 text-[11px] text-gray-500">
+          {market.sources.map((s) => (
+            <span key={`${s.source}-${s.market_id}`}>
+              {sourceLabel(s.source)}{" "}
+              <span className="font-semibold text-gray-700">
+                {s.probability != null ? `${(s.probability * 100).toFixed(0)}%` : "—"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {market.outcomes.slice(0, 10).map((outcome, i) => (
+          <div
+            key={`${outcome.name}-${i}`}
+            className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50"
+          >
+            <span className="text-sm text-gray-800 truncate mr-3">
+              {outcome.name}
+            </span>
+            <div className="flex items-center gap-3 shrink-0">
+              {outcome.probability_change_24h != null &&
+                Math.abs(outcome.probability_change_24h) >= 0.005 && (
+                  <span
+                    className={`text-[11px] font-medium ${
+                      outcome.probability_change_24h > 0
+                        ? "text-green-600"
+                        : "text-red-500"
+                    }`}
+                  >
+                    {outcome.probability_change_24h > 0 ? "+" : ""}
+                    {(outcome.probability_change_24h * 100).toFixed(1)}
+                  </span>
+                )}
+              <span
+                className="text-sm font-semibold min-w-[48px] text-right"
+                style={{ color: accentColor }}
+              >
+                {outcome.probability != null
+                  ? `${(outcome.probability * 100).toFixed(0)}%`
+                  : "—"}
+              </span>
+            </div>
+          </div>
+        ))}
+        {market.outcomes.length > 10 && (
+          <p className="text-[11px] text-gray-400 text-center pt-1">
+            +{market.outcomes.length - 10} more
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TournamentRelatedFutures({
   markets,
   accentColor,
@@ -541,83 +619,27 @@ function TournamentRelatedFutures({
 }) {
   if (!markets.length) return null;
 
+  const sections = groupRelatedMarkets(markets);
+
   return (
-    <section>
-      <h2 className="text-sm font-semibold text-gray-900 mb-3">More Markets</h2>
-      <div className="space-y-3">
-        {markets.map((market) => (
-          <div
-            key={market.market_id}
-            className="border border-gray-200 rounded-xl p-4 bg-white"
-          >
-            <div className="flex items-start justify-between gap-2 mb-3">
-              <h3 className="text-xs font-semibold text-gray-700">
-                {market.market_name}
-              </h3>
-              {market.source && (
-                <span className="text-[10px] text-gray-400 shrink-0">
-                  {sourceLabel(market.source)}
-                </span>
-              )}
-            </div>
-            {/* #956/#957: cross-source comparison when the same question trades on
-                multiple venues (e.g. "Polymarket 27% · Kalshi 22%"). */}
-            {market.sources && market.sources.length > 1 && (
-              <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-2 text-[11px] text-gray-500">
-                {market.sources.map((s) => (
-                  <span key={`${s.source}-${s.market_id}`}>
-                    {sourceLabel(s.source)}{" "}
-                    <span className="font-semibold text-gray-700">
-                      {s.probability != null ? `${(s.probability * 100).toFixed(0)}%` : "—"}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="space-y-1.5">
-              {market.outcomes.slice(0, 10).map((outcome, i) => (
-                <div
-                  key={`${outcome.name}-${i}`}
-                  className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50"
-                >
-                  <span className="text-sm text-gray-800 truncate mr-3">
-                    {outcome.name}
-                  </span>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {outcome.probability_change_24h != null &&
-                      Math.abs(outcome.probability_change_24h) >= 0.005 && (
-                        <span
-                          className={`text-[11px] font-medium ${
-                            outcome.probability_change_24h > 0
-                              ? "text-green-600"
-                              : "text-red-500"
-                          }`}
-                        >
-                          {outcome.probability_change_24h > 0 ? "+" : ""}
-                          {(outcome.probability_change_24h * 100).toFixed(1)}
-                        </span>
-                      )}
-                    <span
-                      className="text-sm font-semibold min-w-[48px] text-right"
-                      style={{ color: accentColor }}
-                    >
-                      {outcome.probability != null
-                        ? `${(outcome.probability * 100).toFixed(0)}%`
-                        : "—"}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {market.outcomes.length > 10 && (
-                <p className="text-[11px] text-gray-400 text-center pt-1">
-                  +{market.outcomes.length - 10} more
-                </p>
-              )}
-            </div>
+    <div className="space-y-6">
+      {sections.map((section) => (
+        <section key={section.id}>
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">
+            {section.title}
+          </h2>
+          <div className="space-y-3">
+            {section.markets.map((market) => (
+              <RelatedMarketCard
+                key={market.market_id}
+                market={market}
+                accentColor={accentColor}
+              />
+            ))}
           </div>
-        ))}
-      </div>
-    </section>
+        </section>
+      ))}
+    </div>
   );
 }
 
