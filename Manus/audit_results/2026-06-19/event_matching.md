@@ -1,34 +1,27 @@
-Starting the Event Matching Ground Truth Sweep. I'll systematically capture today's sports events from Kalshi, Polymarket, and bainluck.com. Beginning with Kalshi's sports section.
+Starting the Event Matching Ground Truth Sweep. I'll systematically capture today's sports events from Kalshi, Polymarket, and bainluck.com. Beginning with the Kalshi game sweep.
 
-Progress update: Completed Kalshi sweep. Found 14 MLB games today. NBA and NHL seasons are over (no games). Now I need to get the remaining tickers for games 6-14, then move to Polymarket. Let me get those tickers by clicking into the game pages.
+The direct category URL for baseball games returned a 404. I'll use the main sports page data and navigate to individual game pages to get tickers. Let me continue gathering the data from the all-sports page and click into individual games.
 
-Progress: Completed Kalshi and Polymarket sweeps. Found 14 MLB games today on both platforms. NBA and NHL are in offseason (no games). Now proceeding with deep audit of 3 selected games. Since only MLB is available, I'll select 3 MLB games for the deep audit:
+Completed Layer 1 sweeps. Since NHL and NBA are in offseason, I'll select 3 games for deep audit: 1 MLB game (Cincinnati vs New York Yankees), 1 WNBA game (Washington vs New York Liberty), and 1 more MLB game (Milwaukee vs Atlanta). Now proceeding with deep audit on Kalshi for these games.
 
-1. Cincinnati Reds vs New York Yankees (high-profile matchup)
-2. Milwaukee Brewers vs Atlanta Braves (high volume)
-3. Boston Red Sox vs Seattle Mariners (high volume)
+Here is the completed Event Matching Ground Truth Sweep. The JSON file contains:
 
-Starting deep audit on Kalshi for these games.
+**Layer 1 (All games today):** 16 games captured across MLB (13 games) and WNBA (3 games). NHL and NBA are both in offseason with no games today.
 
-Here is the completed Event Matching Ground Truth Sweep for June 19, 2026. The JSON output contains:
+**Layer 4 (Deep audit - 3 games):** 
+1. Cincinnati Reds vs New York Yankees (MLB) — 13 Kalshi market types identified, 6 Polymarket market types
+2. Milwaukee Brewers vs Atlanta Braves (MLB) — 6 Kalshi market types, 6 Polymarket market types  
+3. Washington Mystics vs New York Liberty (WNBA) — 3 Kalshi market types, 3 Polymarket market types
 
-**Layer 1 (All Games Today):** 14 MLB games captured from both Kalshi and Polymarket with full tickers and URLs. NBA and NHL are in offseason — no games today.
+**Layer 3 (bainluck.com event detail):**
+- MLB games show full "Bigger Picture" sections with championship path (Make Playoffs → Division → AL/NL Champ → World Series), player MVP awards, and additional YRFI/NRFI markets
+- WNBA event page is much simpler — no Bigger Picture section, no championship path, no player awards on the event detail page
+- No player prop cards visible on bainluck event pages (player props appear to be on Kalshi/Polymarket directly)
+- Player images use initials (not headshots)
+- No wrong-sport or wrong-gender leaks detected
+- No team filter pills visible on event detail pages
 
-**Layer 4 (Deep Audit — 3 Games):**
-1. Cincinnati Reds vs New York Yankees
-2. Milwaukee Brewers vs Atlanta Braves  
-3. Boston Red Sox vs Seattle Mariners
-
-Each deep audit includes all market types from both Kalshi (moneyline, spread, total, team totals) and Polymarket (moneyline, spreads, totals, first inning run, extra innings, 5 innings, home runs, strikeouts).
-
-**Layer 3 (bainluck.com):** Event detail pages audited for all 3 games. Key findings:
-- Player props: 0 shown on bainluck event pages (no individual player prop cards)
-- Player headshots: Not present (only initials)
-- Team filter pills: Not present
-- Championship path and awards visible on CIN vs NYY game (the most data-rich page)
-- No wrong-sport or wrong-gender market leaks detected
-
-The JSON is valid and complete.
+The JSON has been validated as syntactically correct.
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/6t8v49CbF6p9f6YpWDXdmG/sandbox/N7CziErniUYWnc3pioWsI6_1781887726019_na1fn_L2hvbWUvdWJ1bnR1L2dyb3VuZF90cnV0aF9zd2VlcA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvNnQ4djQ5Q2JGNnA5ZjZZcFdEWGRtRy9zYW5kYm94L043Q3ppRXJuaVVZV25jM3Bpb1dzSTZfMTc4MTg4NzcyNjAxOV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJkeWIzVnVaRjkwY25WMGFGOXpkMlZsY0EuanNvbiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=DK03EtFJ2Tj1C6ZkYhD2nO~yhyYUkAHDPnX7xxZx4Fd1B4uvE8nEmUhoPWuARCCAMt2MaRM8P8ECJxm40TGGrFKIYCwiZbslLEI5eHqPL4TZF8I5EZRO2K2Q9ou3wm8o84yk41gODTgxWJuNHErI~oHWKAgXWNggDDGafF4KOWyelR7OrTlXY6NOSGUyurt~fa~4oRCH~lcUSo81RmL0pe75bWs--qQiD~1U69Rbq940ibFfVVpqa~dRx7WdVNYZvZhFIUwAgrbn3wEOEZpZl4oPQyjHAUD5qOJpyeY0VDQ69t5U~KxyJTx0yu7pwC2mfag8StOEy8eegGu0yAfFrg__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/eBfPzAeqEmNvtptRjwPpTL/sandbox/CDq6lFt1wtddnMiRlndGU5_1781910882026_na1fn_L2hvbWUvdWJ1bnR1L2dyb3VuZF90cnV0aF9zd2VlcA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZUJmUHpBZXFFbU52dHB0Ump3UHBUTC9zYW5kYm94L0NEcTZsRnQxd3RkZG5NaVJsbmRHVTVfMTc4MTkxMDg4MjAyNl9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJkeWIzVnVaRjkwY25WMGFGOXpkMlZsY0EuanNvbiIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=t2ld5j~QF7V26vGvjtYuUVHs354Dd1aypn-COjz-dp9JQtuM-0JRM2XY3UiBYLaWO6CQqlvs2ZGkPpw~Qlg980a0ajgQllGYbOQoqGhKzm7k-SspK6AUSdKD8Q8Y1Ry2lgi8xWJTOImcG2bkG0UTr5~IHRkhkPzL4zuOFrcsRe6he9jRbhFzBpZ44qrUV2CrPHSndz9~Q2fHuvbR-vCUGBmQDq37V43QNJwY2l3ymll2UGH9iexP9sxWH3ldlP1XY0mUoSAi9TSGMipD8eYep0CchxT41SAAgUkZdsjNz2w0qr1zqG7Qj10ueqZ5tHEVcMfFrXBpoZXouuQxR65ctQ__
