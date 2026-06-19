@@ -4497,6 +4497,39 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         logger.info("backfill phase MARK %s (cum %.1fs)", name, _t.monotonic() - _pipeline_start)
         _persist_phase_timing(running=name)
 
+    # #898 TIME-BUDGET GUARD: the task dies at the 840s soft_time_limit deep in
+    # the maintenance tail (09:45Z cycle: ~447s resolution+API, then candlestick/
+    # trade backfills overran from ~489s to the wall). When a SoftTimeLimitExceeded
+    # fires mid-phase the WHOLE cycle aborts and nothing after persists. This guard
+    # lets the task RETURN SUCCESS before the wall: at the later heavy checkpoints,
+    # if remaining budget is under the safety margin, return a partial result so the
+    # cycle COMPLETES (resolution already ran first + committed) and the skipped
+    # maintenance resumes next cycle (those phases are idempotent / process the
+    # still-missing set). Bounded-downside: never worse than the current full abort.
+    _SOFT_LIMIT_S = 840
+    _BUDGET_MARGIN_S = 120
+
+    def _budget_left():
+        return _SOFT_LIMIT_S - (_t.monotonic() - _pipeline_start)
+
+    def _partial_result(stopped_before):
+        logger.warning(
+            "backfill TIME-BUDGET GUARD: returning partial result before %s "
+            "(%.0fs elapsed, %.0fs left); remaining maintenance resumes next cycle",
+            stopped_before,
+            _t.monotonic() - _pipeline_start,
+            _budget_left(),
+        )
+        return {
+            "status": "partial_budget_guard",
+            "stopped_before": stopped_before,
+            "pipeline_elapsed_s": round(_t.monotonic() - _pipeline_start, 1),
+            "phase_times": {
+                k: v for k, v in _phase_times.items()
+                if isinstance(v, (int, float)) and v < 100000
+            },
+        }
+
     # ========================================================================
     # AUTHORITATIVE WINNER RESOLUTION — RUNS FIRST (see issue #898)
     #
@@ -4621,7 +4654,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         from app.tasks.kalshi import _backfill_candlestick_snapshots
 
-        candlestick_stats = await _backfill_candlestick_snapshots(limit=500)
+        # #898: bounded per-cycle — the 09:45Z cycle proved candlestick+trade
+        # backfills (limit=500) overran from ~489s to the 840s wall (~351s, the
+        # single budget consumer). They're resumable (process series/outcomes
+        # still missing cal_prob/snapshots each cycle), so a smaller per-cycle
+        # limit drains over more cycles while letting each cycle COMPLETE.
+        candlestick_stats = await _backfill_candlestick_snapshots(limit=100)
     except Exception as e:
         candlestick_stats["errors"].append(str(e))
         logger.warning("Candlestick backfill failed: %s", e)
@@ -4633,7 +4671,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         from app.tasks.kalshi import _backfill_trade_history
 
-        trade_stats = await _backfill_trade_history(limit=500)
+        trade_stats = await _backfill_trade_history(limit=100)
     except Exception as e:
         trade_stats["errors"].append(str(e))
         logger.warning("Trade history backfill failed: %s", e)
@@ -4795,6 +4833,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         retro2_stats["errors"].append(str(e))
 
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("bookmaker_closing")
     _mark("bookmaker_closing")
     # Phase 0c-bookmaker: Precompute per-bookmaker calibration into Redis.
     # Moved early because it's a one-shot DB query + Redis write.
@@ -4803,14 +4843,20 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("calibration_prices")
     _mark("calibration_prices")
     # Phase 0e: Pre-compute calibration_probability (closing line or settled price)
     cal_price_stats = await _compute_calibration_prices()
 
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("polymarket_group_api")
     _mark("polymarket_group_api")
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("datagolf_settlement")
     _mark("datagolf_settlement")
     # Phase 0g-settlement: Resolve DataGolf outcomes from historical outrights
     # settlement data. Uses bet_outcome_numeric (1=won, 0=lost) which is more
@@ -4954,6 +5000,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # remaining resolution passes (#899).
     gc.collect()
 
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("datagolf_winners")
     _mark("datagolf_winners")
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
@@ -4969,6 +5017,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # leaderboard position inference. Must run AFTER Phase 0h so leaderboard-
     # based resolution handles winner/top_N/make_cut first, and this handles
     # the 386 remaining H2H/3-ball markets.
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("golf_matchups")
     _mark("golf_matchups")
     golf_matchup_stats = await _resolve_golf_matchups_from_datagolf()
 
