@@ -4486,6 +4486,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             )
             _persist_phase_timing(running=None)
 
+    def _mark(name):
+        # #898: lightweight running-phase marker for the UNWRAPPED maintenance
+        # tail (link_props onward). The 03:45Z instrumented cycle proved the task
+        # gets through resolution+API (~500s, incl. kalshi_api 254.7s) and dies in
+        # this tail — but `running_phase` was stuck at "link_props" because nothing
+        # after it was marked. These checkpoints update running_phase so the next
+        # scheduled cycle's dashboard pinpoints which maintenance phase consumes
+        # the remaining budget. No control-flow change; best-effort.
+        logger.info("backfill phase MARK %s (cum %.1fs)", name, _t.monotonic() - _pipeline_start)
+        _persist_phase_timing(running=name)
+
     # ========================================================================
     # AUTHORITATIVE WINNER RESOLUTION — RUNS FIRST (see issue #898)
     #
@@ -4603,6 +4614,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         link_props_stats["errors"].append(str(e))
         logger.warning("Link sports props failed: %s", e)
 
+    _mark("candlestick_trades")
     # Phase 0-candlestick: Backfill hourly snapshots from Kalshi for sparse outcomes.
     # Must run BEFORE calibration price computation so Part A has richer data.
     candlestick_stats = {"snapshots_created": 0, "errors": []}
@@ -4646,6 +4658,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         commence_stats["hockey_error"] = str(e)
         logger.warning("Hockey commence_time fix failed: %s", e)
 
+    _mark("group_ids")
     # Phase 0a: Backfill Polymarket group_id (no API, fast)
     group_stats = await _backfill_polymarket_group_ids()
 
@@ -4665,6 +4678,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0c-repair: Restore opening_probability from first snapshot for
     # outcomes with null opening but real snapshot data. Uses DISTINCT ON
     # for bulk performance instead of correlated subqueries.
+    _mark("retro_repair_tagging")
     repair_stats = {"restored": 0, "errors": []}
     try:
         for _ in range(5):
@@ -4781,6 +4795,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         retro2_stats["errors"].append(str(e))
 
+    _mark("bookmaker_closing")
     # Phase 0c-bookmaker: Precompute per-bookmaker calibration into Redis.
     # Moved early because it's a one-shot DB query + Redis write.
     bookmaker_stats = await _precompute_bookmaker_calibration()
@@ -4788,12 +4803,15 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
+    _mark("calibration_prices")
     # Phase 0e: Pre-compute calibration_probability (closing line or settled price)
     cal_price_stats = await _compute_calibration_prices()
 
+    _mark("polymarket_group_api")
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
+    _mark("datagolf_settlement")
     # Phase 0g-settlement: Resolve DataGolf outcomes from historical outrights
     # settlement data. Uses bet_outcome_numeric (1=won, 0=lost) which is more
     # authoritative than leaderboard inference. Must run BEFORE leaderboard
@@ -4936,6 +4954,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # remaining resolution passes (#899).
     gc.collect()
 
+    _mark("datagolf_winners")
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
@@ -4950,6 +4969,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # leaderboard position inference. Must run AFTER Phase 0h so leaderboard-
     # based resolution handles winner/top_N/make_cut first, and this handles
     # the 386 remaining H2H/3-ball markets.
+    _mark("golf_matchups")
     golf_matchup_stats = await _resolve_golf_matchups_from_datagolf()
 
     # Phase 0i: Sync is_winner from settled current_probability for golf.
