@@ -1,0 +1,15 @@
+Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit on each event detail page.
+
+Proceeding with auditing 6 event detail pages. I found 1 live event (AFL), and 5 completed events across Soccer, MLB, WNBA, and Boxing (the site currently has no clearly labeled "upcoming" section). Now auditing each event page in detail.
+
+I have completed the deep audit of 6 event detail pages on bainluck.com according to your rubric.
+
+The audit covered 1 live event (the only one available) and 5 completed events across AFL, Soccer, MLB, WNBA, and Boxing. The final Health Score is **52/100** due to several critical mobile rendering issues, missing prop markets, and discrepancies between live feed probabilities and static hero sections.
+
+The comprehensive audit report in your exact requested format is attached as a Markdown file, along with a ZIP archive containing all desktop and mobile screenshots for the 6 events.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/jKVarWNmHA3XjxTeo6UpW3/sandbox/VreZFQLQNTZHF1US7SBoZB_1781946487090_na1fn_L2hvbWUvdWJ1bnR1L0JhaW5MdWNrX0V2ZW50X0F1ZGl0X1JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvaktWYXJXTm1IQTNYanhUZW82VXBXMy9zYW5kYm94L1ZyZVpGUUxRTlRaSEYxVVM3U0JvWkJfMTc4MTk0NjQ4NzA5MF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDBKaGFXNU1kV05yWDBWMlpXNTBYMEYxWkdsMFgxSmxjRzl5ZEEubWQiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=pFQS4jNspoWs2TPQyqEK6ZY4ND4-lseaqJqPhAq5irZyK42S3Ew84KSDWeqFV6gCb-t6X59c6-K7G-TmSZVDTQ3hXJuZs7T1q7ePBaVw5c37qaern9o22Vny22AdGrW7739y~G8eIfweZlImOaXkYN5J0qNsY0rPwgjPn3g6lK9tDyn2OBLbjO7kt1P2pOyiq4UMoavgyck1BCV6aNK9wal9-haes~Qxq5-5r3TgfjF6TWmid7Quj45gC33p7A37D1FajDM4oxm-JV3En-Gy9s0Gc9wfqOQP91XTCFSiCv2LgY39Wa1BvJZNEQnnhcm80kEZET5vMf9ifejblvaEog__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/jKVarWNmHA3XjxTeo6UpW3/sandbox/VreZFQLQNTZHF1US7SBoZB_1781946487090_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvaktWYXJXTm1IQTNYanhUZW82VXBXMy9zYW5kYm94L1ZyZVpGUUxRTlRaSEYxVVM3U0JvWkJfMTc4MTk0NjQ4NzA5MF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=qe3TgHFxwcI~ezBJ3AHm6Dhk4GvkgkuBFezOlC5N3ZA9DRun1G3L7j5wu5amDE8Cdu4SXozx~yvenSw33lfqBgBSLqsIxPJAi71Y-VqqybEcqkf0i2nGyJhwWn4yFSThp8Xhk1QbAVKXOke1x9llYkBbMQ1zkVluts1t90MionXavZE-BMipyMfI2vJ4ABowLim31TnG~pmlGR4DEBRqPNK6gkJWiVsC5IU-uSOIp4LQ1KQ5OLF9QsV79fZ9BDhp~2CiJXdV~6TP1~fWTGml4Pc9mHzdFlGZmEzSieAzMQqtCLWrHqqu1NDYAc-bU6suKBi5dLQrxRFctJNvvWpKrw__
