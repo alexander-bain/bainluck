@@ -164,8 +164,15 @@ def kalshi_golf_series() -> list[str]:
     return sorted(mens)
 
 
-def kalshi_scan() -> list[dict]:
-    """Return raw US-Open men's golf markets from Kalshi (one row per market)."""
+def kalshi_scan(include_settled: bool = False) -> list[dict]:
+    """Return raw US-Open men's golf markets from Kalshi (one row per market).
+
+    By default only currently-tradeable markets are returned. Pass
+    include_settled=True to also surface resolved per-round/per-hole prop
+    markets (eagle, birdie, round score, round lead, etc.) — these settle as
+    the tournament progresses, so late in an event most of the granular prop
+    scene is finalized and would otherwise be invisible.
+    """
     series = kalshi_golf_series()
     print(f"[kalshi] scanning {len(series)} men's golf series...", file=sys.stderr)
     markets: dict[str, dict] = {}  # ticker -> market dict (dedup)
@@ -198,7 +205,7 @@ def kalshi_scan() -> list[dict]:
                         mtkr = m.get("ticker") or ""
                         if not (ev_match or _is_us_open_text(mt, msub, mtkr)):
                             continue
-                        if m.get("status") not in ("active", "open", None, "initialized"):
+                        if not include_settled and m.get("status") not in ("active", "open", None, "initialized"):
                             # keep only tradeable markets for "today" view
                             if m.get("status") in ("settled", "finalized"):
                                 continue
@@ -473,6 +480,13 @@ def main():
                     help="Trade-volume window in hours (default 12)")
     ap.add_argument("--out", default="scripts/us_open_golf_markets.csv")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--include-settled", action="store_true",
+                    help="Also include resolved per-round/per-hole prop markets "
+                         "(eagle, birdie, round score/lead). Surfaces the full "
+                         "extended prop scene once an event is underway.")
+    ap.add_argument("--top", type=int, default=0,
+                    help="Limit the printed markdown table to the top N rows "
+                         "(0 = print all). The CSV always contains every row.")
     args = ap.parse_args()
 
     now = int(time.time())
@@ -480,7 +494,7 @@ def main():
     window_lbl = f"{args.hours:g}h"
 
     # --- Scan both venues ---
-    k_rows = kalshi_scan()
+    k_rows = kalshi_scan(include_settled=args.include_settled)
     p_rows = polymarket_scan()
 
     # --- Compute true Nh volume via trades (parallel) ---
@@ -533,17 +547,37 @@ def main():
 
     unified.sort(key=lambda x: x["vol12_usd"], reverse=True)
 
-    # --- Output: markdown table ---
+    # --- Output: header + category summary ---
     print()
     print(f"# US Open (men's golf) markets — ranked by {window_lbl} trade volume")
     print(f"# Generated {datetime.now(timezone.utc).isoformat()}  "
           f"(cutoff = last {window_lbl})")
+    settled_note = " (incl. settled props)" if args.include_settled else ""
+    print(f"# {len(unified)} markets total{settled_note}: "
+          f"{len(k_rows)} Kalshi + {len(p_rows)} Polymarket")
     print()
+
+    import collections as _c
+    by_type = _c.Counter((x["source"], x["type"]) for x in unified)
+    type_usd = _c.defaultdict(float)
+    for x in unified:
+        type_usd[(x["source"], x["type"])] += x["vol12_usd"] or 0.0
+    print("## Prop-type breakdown")
+    print(f"| Source | Type | Markets | {window_lbl} vol (USD) |")
+    print("|--------|------|---------|------------|")
+    for (s, t), n in sorted(by_type.items(), key=lambda kv: -type_usd[kv[0]]):
+        print(f"| {s} | {t} | {n} | ${type_usd[(s, t)]:,.0f} |")
+    print()
+
+    # --- Output: markdown table ---
+    shown = unified if args.top <= 0 else unified[:args.top]
+    title_cap = "" if args.top <= 0 else f" (top {len(shown)} of {len(unified)})"
+    print(f"## Markets ranked by {window_lbl} trade volume{title_cap}")
     hdr = ("| # | Source | Market | Type | Implied % | "
            f"{window_lbl} vol (USD) | {window_lbl} native | 24h vol |")
     print(hdr)
     print("|---|--------|--------|------|-----------|------------|-----------|---------|")
-    for i, x in enumerate(unified, 1):
+    for i, x in enumerate(shown, 1):
         prob = f"{x['implied_prob']*100:.1f}%" if x["implied_prob"] is not None else "—"
         v24 = f"{x['vol24h_native']:,.0f}" if x["vol24h_native"] else "—"
         print(f"| {i} | {x['source']} | {x['market'][:60]} | {x['type']} | "
