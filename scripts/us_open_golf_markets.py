@@ -487,6 +487,11 @@ def main():
     ap.add_argument("--top", type=int, default=0,
                     help="Limit the printed markdown table to the top N rows "
                          "(0 = print all). The CSV always contains every row.")
+    ap.add_argument("--storylines", action="store_true",
+                    help="Print a final-round viewing guide (winner race, "
+                         "tightest head-to-head pairings, top-5 bubble, winning "
+                         "score line) instead of the full market table. The CSV "
+                         "is still written.")
     args = ap.parse_args()
 
     now = int(time.time())
@@ -557,31 +562,34 @@ def main():
           f"{len(k_rows)} Kalshi + {len(p_rows)} Polymarket")
     print()
 
-    import collections as _c
-    by_type = _c.Counter((x["source"], x["type"]) for x in unified)
-    type_usd = _c.defaultdict(float)
-    for x in unified:
-        type_usd[(x["source"], x["type"])] += x["vol12_usd"] or 0.0
-    print("## Prop-type breakdown")
-    print(f"| Source | Type | Markets | {window_lbl} vol (USD) |")
-    print("|--------|------|---------|------------|")
-    for (s, t), n in sorted(by_type.items(), key=lambda kv: -type_usd[kv[0]]):
-        print(f"| {s} | {t} | {n} | ${type_usd[(s, t)]:,.0f} |")
-    print()
+    if args.storylines:
+        _print_storylines(unified, window_lbl)
+    else:
+        import collections as _c
+        by_type = _c.Counter((x["source"], x["type"]) for x in unified)
+        type_usd = _c.defaultdict(float)
+        for x in unified:
+            type_usd[(x["source"], x["type"])] += x["vol12_usd"] or 0.0
+        print("## Prop-type breakdown")
+        print(f"| Source | Type | Markets | {window_lbl} vol (USD) |")
+        print("|--------|------|---------|------------|")
+        for (s, t), n in sorted(by_type.items(), key=lambda kv: -type_usd[kv[0]]):
+            print(f"| {s} | {t} | {n} | ${type_usd[(s, t)]:,.0f} |")
+        print()
 
-    # --- Output: markdown table ---
-    shown = unified if args.top <= 0 else unified[:args.top]
-    title_cap = "" if args.top <= 0 else f" (top {len(shown)} of {len(unified)})"
-    print(f"## Markets ranked by {window_lbl} trade volume{title_cap}")
-    hdr = ("| # | Source | Market | Type | Implied % | "
-           f"{window_lbl} vol (USD) | {window_lbl} native | 24h vol |")
-    print(hdr)
-    print("|---|--------|--------|------|-----------|------------|-----------|---------|")
-    for i, x in enumerate(shown, 1):
-        prob = f"{x['implied_prob']*100:.1f}%" if x["implied_prob"] is not None else "—"
-        v24 = f"{x['vol24h_native']:,.0f}" if x["vol24h_native"] else "—"
-        print(f"| {i} | {x['source']} | {x['market'][:60]} | {x['type']} | "
-              f"{prob} | ${x['vol12_usd']:,.0f} | {x['vol12_native']} | {v24} |")
+        # --- Output: markdown table ---
+        shown = unified if args.top <= 0 else unified[:args.top]
+        title_cap = "" if args.top <= 0 else f" (top {len(shown)} of {len(unified)})"
+        print(f"## Markets ranked by {window_lbl} trade volume{title_cap}")
+        hdr = ("| # | Source | Market | Type | Implied % | "
+               f"{window_lbl} vol (USD) | {window_lbl} native | 24h vol |")
+        print(hdr)
+        print("|---|--------|--------|------|-----------|------------|-----------|---------|")
+        for i, x in enumerate(shown, 1):
+            prob = f"{x['implied_prob']*100:.1f}%" if x["implied_prob"] is not None else "—"
+            v24 = f"{x['vol24h_native']:,.0f}" if x["vol24h_native"] else "—"
+            print(f"| {i} | {x['source']} | {x['market'][:60]} | {x['type']} | "
+                  f"{prob} | ${x['vol12_usd']:,.0f} | {x['vol12_native']} | {v24} |")
 
     # --- Output: CSV ---
     import csv
@@ -595,6 +603,66 @@ def main():
                         x["implied_prob"], x["vol12_usd"], x["vol12_native"],
                         x["vol24h_native"], x["ticker_or_id"]])
     print(f"\n[done] wrote {len(unified)} rows to {args.out}", file=sys.stderr)
+
+
+def _print_storylines(unified: list[dict], window_lbl: str) -> None:
+    """Render a final-round viewing guide from the live unified board.
+
+    Pulls four narrative slices from the (live) markets: the winner race, the
+    tightest final-round head-to-head pairings, the top-5 bubble, and the
+    winning-score line. Designed to be re-run through the round for updates.
+    """
+    def pct(x):
+        p = x.get("implied_prob")
+        return p * 100 if p is not None else None
+
+    def usd(x):
+        return x.get("vol12_usd") or 0.0
+
+    # --- Winner race (Kalshi per-player winner markets) ---
+    win = [x for x in unified if x["type"] == "winner"
+           and x["source"] == "Kalshi" and pct(x) is not None]
+    win.sort(key=lambda x: -pct(x))
+    print("## 🏆 Winner race")
+    for x in win[:8]:
+        name = re.sub(r"Will (.+?) win.*", r"\1", x["market"])
+        print(f"- **{pct(x):.0f}%** {name}  · {window_lbl} ${usd(x):,.0f}")
+
+    # --- Tightest final-round head-to-head pairings ---
+    h2h = [x for x in unified if x["type"] == "head-to-head"
+           and pct(x) is not None and usd(x) > 500]
+    # Dedup mirror pairings (A vs B / B vs A) by keeping the higher-volume side.
+    seen, uniq = {}, []
+    for x in sorted(h2h, key=lambda x: -usd(x)):
+        m = re.sub(r"Will (.+?) beat (.+?) in the 4th round.*", r"\1|\2", x["market"])
+        key = frozenset(m.split("|"))
+        if key in seen:
+            continue
+        seen[key] = True
+        uniq.append(x)
+    uniq.sort(key=lambda x: abs(pct(x) - 50))
+    print("\n## ⚔️ Tightest final-round pairings (coin-flips)")
+    for x in uniq[:6]:
+        m = re.sub(r"Will (.+?) beat (.+?) in the 4th round.*", r"\1 vs \2", x["market"])
+        print(f"- **{pct(x):.0f}/{100 - pct(x):.0f}** {m}  · {window_lbl} ${usd(x):,.0f}")
+
+    # --- Top-5 bubble (on the cusp) ---
+    bub = [x for x in unified if x["type"] == "top 5"
+           and pct(x) is not None and 20 <= pct(x) <= 85]
+    bub.sort(key=lambda x: -usd(x))
+    print("\n## 📊 Top-5 bubble (the chase behind the leaders)")
+    for x in bub[:8]:
+        name = re.sub(r".*Will (.+?) finish top 5.*", r"\1", x["market"])
+        print(f"- **{pct(x):.0f}%** {name}  · {window_lbl} ${usd(x):,.0f}")
+
+    # --- Winning score line ---
+    ws = [x for x in unified if x["type"] == "winning score" and pct(x) is not None]
+    ws.sort(key=lambda x: -pct(x))
+    if ws:
+        print("\n## 🎯 Winning score line")
+        for x in ws:
+            lab = x["market"].split("—")[0].strip()
+            print(f"- **{pct(x):.0f}%** {lab}")
 
 
 def _kalshi_label(r):
