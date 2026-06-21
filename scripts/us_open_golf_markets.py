@@ -69,7 +69,15 @@ def _get(url: str, params: dict | None = None, headers: dict | None = None,
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
-            if e.code in (429, 500, 502, 503, 504):
+            if e.code == 422:
+                # Gamma's offset pagination caps (~2000) and returns 422
+                # ("offset too large, use /events/keyset"). Treat as end-of-data
+                # so the sweep loop stops gracefully instead of crashing; the
+                # tag-slug discovery already covers the golf events directly.
+                return None
+            if e.code in (403, 429, 500, 502, 503, 504):
+                # 403 from Kalshi/Polymarket here is almost always a transient
+                # rate-limit guard, not a real auth failure — back off and retry.
                 last_err = e
                 time.sleep(min(2 ** attempt, 16))
                 continue
