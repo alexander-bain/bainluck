@@ -1,23 +1,26 @@
-Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit of each event detail page.
+Starting the Event Detail Deep Audit for bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then systematically audit each event detail page against the full checklist.
 
-Events selected. Now auditing each of the 6 event detail pages against the full checklist. Starting with the first live event (Rei Sakamoto vs Anton Matusevich, Wimbledon Tennis).
+I've identified the available events on bainluck.com. There are no live games currently (it's mid-afternoon UTC and today's games haven't started yet). I'll proceed with auditing 6 events: 4 completed (across Soccer, MLB, WNBA, Tennis) and 2 upcoming (MLB). Starting the detailed audit of each event page now.
 
-Audit checklist completed for all 6 events. Now capturing desktop and mobile screenshots for each event page.
+Completed the detailed audit of all 6 events. Now taking desktop and mobile screenshots for each event page.
 
-The Event Detail Deep Audit is complete. 
+I have completed the comprehensive audit of 6 event detail pages on bainluck.com according to your instructions.
 
-I've audited 6 events across 3 sports (Tennis, MLB, Soccer) covering LIVE, FINAL, and UPCOMING statuses. The health score came out to 19/100 due to several critical data mismatches and rendering issues.
+The audit covered:
+- 2 FINAL events (Soccer, MLB)
+- 2 RECENT FINAL events serving as "live" proxies since no games were currently active (WNBA, Tennis)
+- 2 UPCOMING events (MLB)
 
-Key critical findings include:
-- Chart tooltips showing wildly different probabilities than the hero section for live events
-- The Score Differential chart completely failing to render on completed soccer games
-- Nonsensical probabilities appearing in the Related Futures section (e.g., heavy underdogs showing 49% to win by 4+ goals)
-- Flatlining source data defaulting to 50% instead of hiding when unavailable
+I evaluated each event against your full checklist, including the hero section, win probability and score differential charts, player/team props, related futures, mobile rendering, and cross-page consistency.
 
-The full structured markdown report is attached, along with a ZIP file containing all desktop and mobile (375px) screenshots for the 6 audited events.
+The final report is attached as a Markdown file, detailing the health score (52/100), critical findings, warnings, and suggested improvements. I've also attached a zip file containing both the desktop and mobile (375px) screenshots for all 6 events.
 
+The most critical issue found across multiple pages is a mismatch between the probability shown in the HTML page title and the probability displayed in the hero card. Additionally, there are issues with the score differential chart not rendering on some pages and incorrect 100%/0% values showing for upcoming game props.
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/HZrrJ6HEbMRLVYADLyFBQE/sandbox/wWKchsOrAgjbYHS5yG60hj_1782129910671_na1fn_L2hvbWUvdWJ1bnR1L1FBX0F1ZGl0X1JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvSFpycko2SEViTVJMVllBREx5RkJRRS9zYW5kYm94L3dXS2Noc09yQWdqYllIUzV5RzYwaGpfMTc4MjEyOTkxMDY3MV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDFGQlgwRjFaR2wwWDFKbGNHOXlkQS5tZCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=HJ5vwXbWnAlwjdG~nNF7yTg3G72VAF2XX4sc7pFoBHlLk84gzncDsYM6IpDEDbxlprlhZea3LQohj99GVxPbc3tzy8u4uDJY9VUucKQ~KZ7pqAHTosHYPfgvzS5VWbGv1hjmzRHjrP4Xm~BYwVnvoP3VnVoVseKxdF0XPV4wwoSfKybU2BsApgzqguRo3Eotw04LHoACRdP6OIjpR9Tra0GVvyOmIqr9Otcd~61DbwBH2LesWSa6kyF35z-WVtwXq6bszWNKEK5Xlt9zt6wXyM27OjIkp5BJPIJTF8vDr2~u4dcp449ISjSH3jSl8qucmyD1e8M33XqCOMXI4K0EvA__
+Please review the attached report and screenshots for the full details. Let me know if you need any further analysis!
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/HZrrJ6HEbMRLVYADLyFBQE/sandbox/wWKchsOrAgjbYHS5yG60hj_1782129910671_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvSFpycko2SEViTVJMVllBREx5RkJRRS9zYW5kYm94L3dXS2Noc09yQWdqYllIUzV5RzYwaGpfMTc4MjEyOTkxMDY3MV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=sIunFGDttc4eoJ0a9aavwuOLK0KdaK8HlceDslWK7ecDDTAlTE0SplfYaF9IjDNfWkCF7-OQ~HWTFqd1z9nDRV54XiHVOxZEZv5faykYw~HLc49N7zIFwN7ad5AFHyqiMyszEULSTLbxYlPzGLEQ06vDE6O52p6Vrru3yj6OjBzcrbdn1p1nRO4Fu7ImxSQbiKLJ7S3LjB3N4gpIKhvOAsKiFiVAq9uJ0kTnojeDxJryvOd7Q~wVjEAuIQ7soR1Z8StVZy1mApq7mBrDpLk2xnMJKa~DAY~BzyRxcq3D5a5pf4kmTbc8ho4kfvBldkPLyn-~hOAxdBukjpU63kJNAg__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EqcDCrMQfiKoWFfThPsE3N/sandbox/6r1wSCcHL0UDAi05bIIhgj_1782141956128_na1fn_L2hvbWUvdWJ1bnR1L2JhaW5sdWNrX2V2ZW50X2F1ZGl0X3JlcG9ydA.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRXFjRENyTVFmaUtvV0ZmVGhQc0UzTi9zYW5kYm94LzZyMXdTQ2NITDBVREFpMDViSUloZ2pfMTc4MjE0MTk1NjEyOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJKaGFXNXNkV05yWDJWMlpXNTBYMkYxWkdsMFgzSmxjRzl5ZEEubWQiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=T~Ll2aO8IuusGd5eBzNLZfh6lZWX55BNKMGNPDK7mjqBpB4Fj86v4h8foUdm-zSFsa7V71GCfHOIbamheN3hFS732fUhJEFSQ54u-m8cHI6Vbs-8~~GXjHWivLAWGyoklW1EZ1pxn8BUgcz6fZylWLVKgn2MtbfxBC9QGebVfssYg9~9IIrHfhDegMkL-UIm0swpPqMW4tV0grpNp6n84ZNXBELcoWRvryeBgK2ejdPRCqrl6t6FbR3lvuIr4VEPLj0QeYs0o88ToxsQUQjqZ6RnhUZYzVtzwztxqXmq91dIrWH8qzQjtzBtcEVr5~d25kECpiyhoWA92oOA7gLYdg__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/EqcDCrMQfiKoWFfThPsE3N/sandbox/6r1wSCcHL0UDAi05bIIhgj_1782141956128_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3Rz.zip?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvRXFjRENyTVFmaUtvV0ZmVGhQc0UzTi9zYW5kYm94LzZyMXdTQ2NITDBVREFpMDViSUloZ2pfMTc4MjE0MTk1NjEyOF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6LnppcCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=EdFL-gUXTZL-~37oBGUUTDwDXNmfhDNKJMV9iL7vrEd7ygHh04uw-YtKIVF31b2B50B6v0kHNwj~yZmFEMGmw4kZVpdBnPjF49JNncaXx~TQOb3QKa-c-eWWuPn2wxHnb6ql6yPq7MwDqWcyQJAkYuMODqlw~ARd2GFklXKzsjbZmNOZn4W2pdrjdzNYu0ivFC-5jaeJ3Ba96lNxhb9bKvQS1E2FYHWaJFH9yiixBrJtBH8~ooLvAI4OykCw8YZmJA23ve7bLVLO2zhnghzEvRIbeIzHLRw9yRohukCa5y7WtvCTpYvoNeT9Q~IdUV8U1-SZh5xI1JdLQRw2bct~cQ__
