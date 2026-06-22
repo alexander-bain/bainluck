@@ -1,103 +1,35 @@
 {
   "date": "2026-06-22",
-  "mode": "deep",
+  "mode": "light",
   "new_findings_count": 7,
   "tasks": {
-    "event_detail": {
-      "task_id": "EqcDCrMQfiKoWFfThPsE3N",
-      "status": "complete",
-      "task_url": "https://manus.im/app/EqcDCrMQfiKoWFfThPsE3N",
-      "credits": 0
-    },
     "feed": {
-      "task_id": "WtHra4kHjBwevnH4vUJN8A",
-      "status": "complete",
-      "task_url": "https://manus.im/app/WtHra4kHjBwevnH4vUJN8A",
+      "task_id": "Pf3YtbdeFYGjryz76iirat",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/Pf3YtbdeFYGjryz76iirat",
       "credits": 0
     },
-    "event_matching": {
-      "task_id": "Rs4VYPWRd2nsobvQgopQjg",
+    "event_detail": {
+      "task_id": "i4GLsc7prsUoAL9uwji537",
       "status": "complete",
-      "task_url": "https://manus.im/app/Rs4VYPWRd2nsobvQgopQjg",
-      "credits": 0
-    },
-    "market_accuracy": {
-      "task_id": "jSSUucKtTsVJyp3QxwHKb9",
-      "status": "complete",
-      "task_url": "https://manus.im/app/jSSUucKtTsVJyp3QxwHKb9",
-      "credits": 0
-    },
-    "category_page": {
-      "task_id": "dTyv7TrEr9v459DyQjYjm8",
-      "status": "complete",
-      "task_url": "https://manus.im/app/dTyv7TrEr9v459DyQjYjm8",
-      "credits": 0
-    },
-    "league_page": {
-      "task_id": "kQwALPG5KZNUnf2RNvnVp5",
-      "status": "complete",
-      "task_url": "https://manus.im/app/kQwALPG5KZNUnf2RNvnVp5",
-      "credits": 1813
-    },
-    "market_completeness": {
-      "task_id": "DDx3MegiawJ7Csaq9xGSCP",
-      "status": "complete",
-      "task_url": "https://manus.im/app/DDx3MegiawJ7Csaq9xGSCP",
-      "credits": 0
-    },
-    "chart_timing": {
-      "task_id": "VCEisE44WdYUC9K6cS5rT6",
-      "status": "complete",
-      "task_url": "https://manus.im/app/VCEisE44WdYUC9K6cS5rT6",
+      "task_url": "https://manus.im/app/i4GLsc7prsUoAL9uwji537",
       "credits": 0
     },
     "grid": {
-      "task_id": "LoR3E2moB7G7LUAqjYXs9d",
+      "task_id": "FCFJATHdhjwyE7mXpeoQ4b",
       "status": "complete",
-      "task_url": "https://manus.im/app/LoR3E2moB7G7LUAqjYXs9d",
-      "credits": 0
-    },
-    "visual_review": {
-      "task_id": "WvgdhYxxSx8QWth6GgBhWR",
-      "status": "complete",
-      "task_url": "https://manus.im/app/WvgdhYxxSx8QWth6GgBhWR",
+      "task_url": "https://manus.im/app/FCFJATHdhjwyE7mXpeoQ4b",
       "credits": 0
     }
   },
   "diagnostics": {
-    "category_page": {},
-    "feed": {
-      "critical": 1,
-      "0/100": 1,
-      "0%": 4,
-      "bug": 1
-    },
-    "event_detail": {
-      "critical": 2,
-      "0%": 2,
-      "bug": 1
-    },
-    "market_completeness": {
-      "critical": 1,
-      "bug": 1
-    },
-    "market_accuracy": {
-      "0%": 1
-    },
-    "visual_review": {
-      "critical": 1,
-      "bug": 1
-    },
     "grid": {
       "critical": 1
     },
-    "event_matching": {},
-    "chart_timing": {},
-    "league_page": {
+    "event_detail": {
       "critical": 1,
-      "broken": 1,
-      "0%": 1,
-      "error": 2
+      "0%": 3,
+      "fail": 1
     }
   }
 }
