@@ -126,7 +126,13 @@ async def _precompute_golf():
 
 
 async def _precompute_grids():
-    """Pre-warm championship grid caches for MLB, NBA, NHL."""
+    """Pre-warm championship grid caches for MLB, NBA, NHL, Golf.
+
+    #901: golf was missing from this warm list, so `/playoffs/golf` read an
+    unwarmed `bainluck:category:playoffs:golf` key on every load → cold rebuild
+    via ~15 sequential DataGolf calls (~12s) and frequent skeleton stalls. Golf
+    is warmed here so the request path hits Redis like the other leagues.
+    """
     from app.tasks.base import get_task_session
     from app.routes.playoffs import get_playoff_grid
     from app.tasks.redis_state import get_redis_client
@@ -134,7 +140,7 @@ async def _precompute_grids():
 
     rc = get_redis_client()
     warmed = []
-    for slug in ["mlb", "nba", "nhl"]:
+    for slug in ["mlb", "nba", "nhl", "golf"]:
         try:
             async with get_task_session() as session:
                 result = await asyncio.wait_for(

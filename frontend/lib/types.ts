@@ -1431,6 +1431,10 @@ export interface ChampionshipGridResponse {
   source_of_truth?: string;
   /** Multi-tour golf events */
   events?: ChampionshipGridEvent[];
+  /** #901: server returns {error:"timeout"} (HTTP 200) when the grid rebuild
+   *  exceeds the 25s wait_for — the frontend must treat this as an error, not
+   *  an empty/infinite-skeleton state. */
+  error?: string;
 }
 
 /** Team Progression types (event detail → championship grid row) */

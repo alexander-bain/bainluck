@@ -589,6 +589,13 @@ export default function PlayoffGridPage({
     { refreshInterval: 60000 }
   );
 
+  // #901: the server returns {error:"timeout"} (HTTP 200) when the grid rebuild
+  // exceeds its 25s wait_for (golf cold-rebuilds were the worst offender). SWR
+  // sees a successful response, so without this guard the page fell through to a
+  // misleading "no odds available" empty state / infinite skeleton. Treat it as
+  // a retryable error instead.
+  const gridTimedOut = gridData?.error === "timeout";
+
   // Fetch golf schedule (only for golf)
   const { data: golfSchedule } = useSWR(
     slug === "golf" ? "golf-schedule" : null,
@@ -736,6 +743,11 @@ export default function PlayoffGridPage({
           <ErrorMessage message="Failed to load championship grid. Please try again." />
         )}
 
+        {/* #901: server-side rebuild timed out (HTTP 200 {error:"timeout"}) */}
+        {!gridError && gridTimedOut && (
+          <ErrorMessage message="The championship grid is taking longer than usual to load. Please try again in a moment." />
+        )}
+
         {/* Multi-event golf rendering */}
         {gridData?.events && gridData.events.length > 0 ? (
           <>
@@ -797,7 +809,7 @@ export default function PlayoffGridPage({
             {gridData?.movers && <MoversSection movers={gridData.movers} />}
 
             {/* Empty state */}
-            {!isLoading && !gridError && sections && sections.every((s) => s.data.participants.length === 0) && (
+            {!isLoading && !gridError && !gridTimedOut && sections && sections.every((s) => s.data.participants.length === 0) && (
               <div className="text-center py-12">
                 <p className="text-text-secondary text-lg mb-2">
                   No championship odds available yet
