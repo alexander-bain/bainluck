@@ -1847,3 +1847,107 @@ class TestResolverNoReInversion:
         spread_branch = src.split("# Try spread pattern")[1].split("# Try total pattern")[0]
         assert "_spread_outcome_is_winner(" in spread_branch
         assert "oc_won = won if oc.id == outcome.id else not won" not in spread_branch
+
+
+class TestBudgetGuard:
+    """#898 (Queue #94): the time-budget guard must early-return BEFORE the
+    candlestick/trade backfills (the phases that bust the 840s soft_time_limit)
+    so the cycle COMPLETES with status='partial_budget_guard' instead of dying
+    on SoftTimeLimitExceeded. Resolution phases run first + commit, so winners
+    still grade; only the idempotent maintenance tail is skipped."""
+
+    class _FakeSession:
+        async def execute(self, *a, **k):
+            m = MagicMock()
+            m.rowcount = 0
+            m.scalar = MagicMock(return_value=0)
+            m.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+            m.fetchall = MagicMock(return_value=[])
+            m.all = MagicMock(return_value=[])
+            return m
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    class _FakeCM:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return TestBudgetGuard._FakeSession()
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def test_guard_early_returns_before_candlestick_when_budget_exhausted(self):
+        """With elapsed > the ~600s effective budget by the time the candlestick
+        guard is reached, the task returns partial_budget_guard(candlestick_trades)
+        and never calls the candlestick/trade backfills."""
+        import app.tasks.backfill_winners as bw
+        import app.tasks.kalshi as kalshi
+
+        # monotonic: first call = pipeline_start (0.0); every later call = 700.0
+        # → budget_left = 840 - 700 = 140 < margin 240 → guard fires.
+        state = {"v": 0.0}
+
+        def fake_monotonic():
+            v = state["v"]
+            state["v"] = 700.0
+            return v
+
+        # All resolution / pre-candlestick phase fns mocked to no-op dicts so the
+        # function reaches the candlestick guard instantly (no DB).
+        resolution_fns = [
+            "_resolve_kalshi_from_scores",
+            "_resolve_kalshi_spread_total_from_scores",
+            "_resolve_kalshi_player_props_from_boxscore",
+            "_resolve_kalshi_total_bases_from_boxscore",
+            "_resolve_kalshi_period_props",
+            "_backfill_kalshi_winners",
+            "_backfill_kalshi_winners_via_markets",
+            "_backfill_polymarket_winners_from_api",
+            "_backfill_from_current_probability",
+        ]
+
+        candlestick_mock = AsyncMock(return_value={"snapshots_created": 0, "errors": []})
+        trade_mock = AsyncMock(return_value={"snapshots_created": 0, "errors": []})
+
+        with patch("time.monotonic", side_effect=fake_monotonic), \
+                patch.object(bw, "get_task_session", self._FakeCM()), \
+                patch.object(kalshi, "_link_sports_props_to_events", AsyncMock(return_value={"total_linked": 0, "errors": []})), \
+                patch.object(kalshi, "_backfill_candlestick_snapshots", candlestick_mock), \
+                patch.object(kalshi, "_backfill_trade_history", trade_mock):
+            for name in resolution_fns:
+                patch.object(bw, name, AsyncMock(return_value={})).start()
+            try:
+                result = await bw._backfill_all_winners(dry_run=True, limit=5)
+            finally:
+                patch.stopall()
+
+        assert result["status"] == "partial_budget_guard", result
+        # The fix's crux: the guard now sits BEFORE candlestick, not at the old
+        # first checkpoint (bookmaker_closing).
+        assert result["stopped_before"] == "candlestick_trades", result
+        # The wall-busting backfills must NOT have run.
+        candlestick_mock.assert_not_called()
+        trade_mock.assert_not_called()
+
+    def test_margin_gives_600s_effective_budget(self):
+        """Guard margin must yield a ~600s budget under the 840s soft limit
+        (240 margin), comfortably under the 900s hard limit."""
+        import inspect
+        import app.tasks.backfill_winners as bw
+
+        src = inspect.getsource(bw._backfill_all_winners)
+        assert "_SOFT_LIMIT_S = 840" in src
+        assert "_BUDGET_MARGIN_S = 240" in src
+        # effective budget = soft - margin
+        assert (840 - 240) == 600
+        # the candlestick/trade block is guarded before _mark("candlestick_trades")
+        guard_then_mark = src.split('_partial_result("candlestick_trades")')[1]
+        assert '_mark("candlestick_trades")' in guard_then_mark
+        # and a second guard precedes the trade-history sub-phase
+        assert '_partial_result("trades")' in src

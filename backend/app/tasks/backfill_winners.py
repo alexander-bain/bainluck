@@ -4507,7 +4507,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # maintenance resumes next cycle (those phases are idempotent / process the
     # still-missing set). Bounded-downside: never worse than the current full abort.
     _SOFT_LIMIT_S = 840
-    _BUDGET_MARGIN_S = 120
+    # #898 (Queue #94): margin raised 120 -> 240 so the effective budget is
+    # ~600s (840 - 240), leaving comfortable headroom under the 840s soft limit
+    # AND the 900s hard limit. With margin 120 the effective budget was ~720s,
+    # which the rotating maintenance tail (candlestick/trades + polymarket_api,
+    # 131-449s) could still overrun before a guard fired. 600s guarantees the
+    # early-return wins the race against SoftTimeLimitExceeded.
+    _BUDGET_MARGIN_S = 240
 
     def _budget_left():
         return _SOFT_LIMIT_S - (_t.monotonic() - _pipeline_start)
@@ -4653,6 +4659,14 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # it records real elapsed. Logging/measurement-only; no control-flow change.
     _end_phase("link_props")
 
+    # #898 (Queue #94): the candlestick + trade-history backfills below are the
+    # phases the rotating "killer" most often busts the 840s wall inside (they
+    # run BEFORE the first existing guard at bookmaker_closing, so the task died
+    # here before any guard could fire). Guard them: if resolution + the earlier
+    # maintenance already consumed the budget, early-return so the cycle COMPLETES
+    # (resolution ran first + committed; these backfills are idempotent/resumable).
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("candlestick_trades")
     _mark("candlestick_trades")
     # Phase 0-candlestick: Backfill hourly snapshots from Kalshi for sparse outcomes.
     # Must run BEFORE calibration price computation so Part A has richer data.
@@ -4670,6 +4684,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         candlestick_stats["errors"].append(str(e))
         logger.warning("Candlestick backfill failed: %s", e)
 
+    # #898 (Queue #94): re-check the budget after candlestick ran — the trade
+    # history backfill is the other half of the wall-busting block. Early-return
+    # here too rather than entering it with no headroom.
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("trades")
     # Phase 0-trades: Backfill snapshots from Kalshi trade history for outcomes
     # missing calibration_probability. Creates real traded-price snapshots that
     # our 2-hour polling missed. Must run BEFORE calibration price computation.
