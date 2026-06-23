@@ -290,16 +290,17 @@ export default function GolfTournamentPage() {
         let primary = group.market_ids[0];
         let marketIds = group.market_ids;
         // #955: the "winner" group still contains the "Winner Nationality" prop
-        // market (US/England/Spain) + Yes/No binaries, so market_ids[0] plotted
-        // nationalities, not golfers. The backend (_NON_CONTENDER_WINNER_RE)
-        // already picked the real golfer winner field as evolution_market_id —
-        // use it as the primary series, keeping the rest as ordered fallbacks.
+        // market (US/England/Spain) + Yes/No binaries. EvolutionView plots the
+        // UNION of marketIds via /multi-history and IGNORES the primary marketId
+        // whenever marketIds.length > 1 — so prior fixes that only set the
+        // primary still merged the nationality/binary outcomes back in. The
+        // backend (_NON_CONTENDER_WINNER_RE) already picked the real golfer
+        // winner field as evolution_market_id; force marketIds to that SINGLE id
+        // so EvolutionView takes the single-market path (fetchFuturesHistory →
+        // golfer outcomes only), not the multi-history union.
         if (type === "winner" && data.evolution_market_id) {
           primary = data.evolution_market_id;
-          marketIds = [
-            data.evolution_market_id,
-            ...group.market_ids.filter((id) => id !== data.evolution_market_id),
-          ];
+          marketIds = [data.evolution_market_id];
         }
         opts.push({ key, label, marketId: primary, marketIds });
       }
@@ -345,10 +346,12 @@ export default function GolfTournamentPage() {
   const mergedGolfers = buildMergedGolfers(golfers, useLeaderboard ? leaderboard : null);
 
   const winnerGroup = markets.find((g) => g.type === "winner");
-  // #955: prefer the backend's corrected winner field (evolution_market_id, which
-  // excludes the nationality/binary prop markets) as the primary chart series.
+  // #955: use ONLY the backend's corrected winner field (evolution_market_id,
+  // which excludes the nationality/binary prop markets) as a SINGLE-id array, so
+  // EvolutionView takes the single-market path instead of merging the union of
+  // marketIds via /multi-history (which re-surfaces nationality/Yes-No outcomes).
   const evolutionMarketIds = evolution_market_id
-    ? [evolution_market_id, ...(winnerGroup?.market_ids || []).filter((id) => id !== evolution_market_id)]
+    ? [evolution_market_id]
     : (winnerGroup?.market_ids || []);
 
   // Collect sources for attribution
