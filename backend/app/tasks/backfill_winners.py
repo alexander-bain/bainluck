@@ -2124,11 +2124,20 @@ async def _resolve_kalshi_player_props_from_boxscore():
 
     try:
         async with get_task_session() as session:
+            # #899: do NOT join e.box_score_data onto every outcome row. The box
+            # score JSONB (all players' stats) was re-deserialized per outcome and
+            # result.all() held every copy at once → OOM on the 200MB worker child
+            # (the id()-keyed cache below couldn't dedup distinct deserialized
+            # objects). That OOM forced the #937 re-grade to stay scoped to
+            # kxnhlpts. Fetch the SMALL outcome rows here (no JSONB), then load each
+            # event's box score ONCE in bounded batches so peak memory is
+            # O(batch of events), not O(all outcomes x JSONB) — letting #937 broaden
+            # the re-grade beyond kxnhlpts without re-introducing the OOM.
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
-                           fm.external_id AS ticker, e.box_score_data,
-                           fo.is_winner AS cur_winner
+                           fm.external_id AS ticker, fo.is_winner AS cur_winner,
+                           e.id AS event_id
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
@@ -2140,99 +2149,114 @@ async def _resolve_kalshi_player_props_from_boxscore():
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
                            -- Targeted re-grade for the #937 mapping fix ONLY: re-process
                            -- already box_score-resolved NHL points props (they were all
-                           -- wrongly graded losers). Scoped to kxnhlpts so we do NOT pull the
-                           -- full ~45k box_score set + heavy JSONB into this query — that
-                           -- OOM-crashed the 200MB worker child (#899). Idempotent: we only
-                           -- write when the verdict CHANGES (gotcha #21-safe recompute).
+                           -- wrongly graded losers). Idempotent: we only write when the
+                           -- verdict CHANGES (gotcha #21-safe recompute). #899 made the
+                           -- box_score load memory-bounded, so #937 can widen this clause.
                            OR (fo.resolution_source = 'box_score'
                                AND LOWER(fm.external_id) LIKE 'kxnhlpts%'))
                       AND LOWER(fm.external_id) LIKE ANY(:prefixes)
-                    ORDER BY fm.id
+                    ORDER BY e.id
                     LIMIT 50000
                 """),
                 {"prefixes": [p + "%" for p in all_prop_prefixes]},
             )
-            rows = result.all()
+            from collections import defaultdict as _defaultdict
+            rows = result.all()  # small now — no box_score JSONB
+            by_event: dict = _defaultdict(list)
+            for row in rows:
+                by_event[row.event_id].append(row)
 
             winner_ids = []
             loser_ids = []
-            _bs_cache = {}
-            for row in rows:
-                ticker_lower = (row.ticker or "").lower()
-
-                stat_name = None
-                combo_stats = None
-                for prefix, stat in _PROP_TICKER_TO_STAT.items():
-                    if ticker_lower.startswith(prefix):
-                        stat_name = stat
-                        break
-                if not stat_name:
-                    for prefix, stat_list in _COMBO_STATS.items():
-                        if ticker_lower.startswith(prefix):
-                            combo_stats = stat_list
-                            break
-                if not stat_name and not combo_stats:
-                    continue
-
-                m = _PROP_RE.match(row.outcome_name or "")
-                if m:
-                    player_name = m.group(1).strip()
-                    threshold = int(m.group(2))
-                elif stat_name in ("double doubles", "triple doubles"):
-                    player_name = (row.outcome_name or "").strip()
-                    threshold = 1
-                else:
-                    stats["no_parse"] += 1
-                    continue
-
-                bs_id = id(row.box_score_data)
-                if bs_id not in _bs_cache:
-                    raw_bs = row.box_score_data or {}
+            event_ids = list(by_event.keys())
+            _BS_BATCH = 100  # events per box_score load — bounds peak RSS (#899)
+            for _i in range(0, len(event_ids), _BS_BATCH):
+                batch_ids = event_ids[_i:_i + _BS_BATCH]
+                bs_result = await session.execute(
+                    text("SELECT id, box_score_data FROM events WHERE id = ANY(:ids)"),
+                    {"ids": batch_ids},
+                )
+                # parse each event's box score ONCE, keyed by event_id
+                bs_map: dict = {}
+                for bs_row in bs_result.all():
+                    raw_bs = bs_row.box_score_data or {}
                     raw_players = (
                         raw_bs.get("players", raw_bs)
                         if isinstance(raw_bs, dict)
                         else {}
                     )
-                    _bs_cache[bs_id] = {
+                    bs_map[bs_row.id] = {
                         _normalize_player_name(k): v for k, v in raw_players.items()
                     }
-                norm_box = _bs_cache[bs_id]
 
-                player_norm = _normalize_player_name(player_name)
-                player_stats = norm_box.get(player_norm)
+                for ev_id in batch_ids:
+                    norm_box = bs_map.get(ev_id)
+                    if not norm_box:
+                        continue
+                    for row in by_event[ev_id]:
+                        ticker_lower = (row.ticker or "").lower()
 
-                if player_stats is None and "," in player_name:
-                    parts = player_name.split(",", 1)
-                    flipped_norm = _normalize_player_name(
-                        f"{parts[1].strip()} {parts[0].strip()}"
-                    )
-                    player_stats = norm_box.get(flipped_norm)
+                        stat_name = None
+                        combo_stats = None
+                        for prefix, stat in _PROP_TICKER_TO_STAT.items():
+                            if ticker_lower.startswith(prefix):
+                                stat_name = stat
+                                break
+                        if not stat_name:
+                            for prefix, stat_list in _COMBO_STATS.items():
+                                if ticker_lower.startswith(prefix):
+                                    combo_stats = stat_list
+                                    break
+                        if not stat_name and not combo_stats:
+                            continue
 
-                if player_stats is None:
-                    stats["no_player"] += 1
-                    continue
+                        m = _PROP_RE.match(row.outcome_name or "")
+                        if m:
+                            player_name = m.group(1).strip()
+                            threshold = int(m.group(2))
+                        elif stat_name in ("double doubles", "triple doubles"):
+                            player_name = (row.outcome_name or "").strip()
+                            threshold = 1
+                        else:
+                            stats["no_parse"] += 1
+                            continue
 
-                if combo_stats:
-                    actual = sum(player_stats.get(s, 0) for s in combo_stats)
-                else:
-                    actual = player_stats.get(stat_name, 0)
+                        player_norm = _normalize_player_name(player_name)
+                        player_stats = norm_box.get(player_norm)
 
-                if actual is None:
-                    stats["no_player"] += 1
-                    continue
+                        if player_stats is None and "," in player_name:
+                            parts = player_name.split(",", 1)
+                            flipped_norm = _normalize_player_name(
+                                f"{parts[1].strip()} {parts[0].strip()}"
+                            )
+                            player_stats = norm_box.get(flipped_norm)
 
-                verdict = actual >= threshold
-                # Skip rows already correct (idempotent re-grade): only write when
-                # the authoritative verdict differs from the stored value. This
-                # avoids re-touching the ~thousands of already-correct box_score
-                # rows every cycle (no last_updated churn) while letting a mapping
-                # fix flip the genuinely mis-resolved rows (e.g. #937 NHL points).
-                if row.cur_winner is not None and bool(row.cur_winner) == verdict:
-                    continue
-                if verdict:
-                    winner_ids.append(row.outcome_id)
-                else:
-                    loser_ids.append(row.outcome_id)
+                        if player_stats is None:
+                            stats["no_player"] += 1
+                            continue
+
+                        if combo_stats:
+                            actual = sum(player_stats.get(s, 0) for s in combo_stats)
+                        else:
+                            actual = player_stats.get(stat_name, 0)
+
+                        if actual is None:
+                            stats["no_player"] += 1
+                            continue
+
+                        verdict = actual >= threshold
+                        # Skip rows already correct (idempotent re-grade): only write
+                        # when the authoritative verdict differs from the stored value
+                        # — avoids re-touching already-correct box_score rows every
+                        # cycle while letting a mapping fix flip mis-resolved ones.
+                        if row.cur_winner is not None and bool(row.cur_winner) == verdict:
+                            continue
+                        if verdict:
+                            winner_ids.append(row.outcome_id)
+                        else:
+                            loser_ids.append(row.outcome_id)
+
+                bs_map.clear()  # release this batch's box scores before the next
 
             if winner_ids:
                 await session.execute(
