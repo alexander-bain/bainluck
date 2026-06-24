@@ -342,6 +342,15 @@ _HOUSE_DISTRICT_RE = re.compile(
 )
 _HOUSE_DISTRICT_TICKER_RE = re.compile(r"KXHOUSERACE")
 
+# Nonfarm-payrolls jobs-number ladders — Lane 2 Queue L2-4 (Alex 2026-06-24:
+# "GDP is potentially interesting. Payroll is not."). ~9 open monthly BLS jobs-
+# number threshold markets (ticker KXPAYROLLS*). Hard-exclude. False-positive-
+# safe: matches the unambiguous "nonfarm payroll(s)" metric (and the ticker),
+# NOT "payroll tax" policy markets. GDP (KXGDPNOM*), Fed-rate, and CPI markets
+# carry no "nonfarm payroll" text and a different ticker → stay eligible.
+_PAYROLLS_RE = re.compile(r"\bnonfarm\s+payrolls?\b", re.IGNORECASE)
+_PAYROLLS_TICKER_RE = re.compile(r"KXPAYROLLS")
+
 
 _LOW_SIGNAL_SPORT_RE = re.compile(
     r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
@@ -826,6 +835,14 @@ def classify_market_quality(
     if house_district_excluded:
         reasons.append("house_district_excluded")
 
+    # Nonfarm-payrolls jobs ladder: hard-exclude; GDP stays eligible (Alex
+    # 2026-06-24, Lane 2 L2-4).
+    payrolls_excluded = bool(_PAYROLLS_RE.search(name)) or bool(
+        _PAYROLLS_TICKER_RE.search(ticker)
+    )
+    if payrolls_excluded:
+        reasons.append("payrolls_excluded")
+
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
         reasons.append("ladder_or_bucket")
@@ -886,6 +903,10 @@ def classify_market_quality(
         # Lane 2 L2-3 (Alex 2026-06-24): vote-percent ladders + individual
         # House-district winner markets, hard-excluded (chamber-control and
         # major races stay eligible — not matched here).
+        quality = "suppress"
+    elif payrolls_excluded:
+        # Lane 2 L2-4 (Alex 2026-06-24): nonfarm-payrolls jobs ladder,
+        # hard-excluded. GDP / Fed / CPI stay eligible (not matched here).
         quality = "suppress"
     elif ticker_suppress:
         quality = "low_quality"

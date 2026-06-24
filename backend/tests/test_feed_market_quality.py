@@ -909,6 +909,56 @@ class TestVotePercentAndHouseDistrictSuppression:
         assert "vote_percent_excluded" not in quality.reasons
 
 
+class TestPayrollsSuppression:
+    """Lane 2 Queue L2-4 (Alex 2026-06-24: 'GDP is potentially interesting.
+    Payroll is not.'): hard-exclude nonfarm-payrolls jobs-number ladders
+    (~9, KXPAYROLLS*); KEEP GDP / Fed / CPI eligible."""
+
+    def test_nonfarm_payrolls_markets_are_hard_suppressed(self):
+        for name, ticker in [
+            ("How many nonfarm payrolls were added in June 2026?", "KXPAYROLLS-26JUN"),
+            ("Nonfarm payrolls above 150k in June?", "KXPAYROLLS-26JUN-150"),
+            ("June nonfarm payroll change?", "KXPAYROLLS-26JUN-CHG"),
+        ]:
+            quality = classify_market_quality(
+                name, sport_category="economics", external_id=ticker
+            )
+            assert quality.quality_class == "suppress", f"not suppressed: {name}"
+            assert "payrolls_excluded" in quality.reasons, name
+            assert quality_score_adjustment(quality) <= -100, name
+
+    def test_ticker_suppresses_payrolls_even_with_odd_name(self):
+        quality = classify_market_quality(
+            "Jobs report", sport_category="economics", external_id="KXPAYROLLS-26JUL"
+        )
+        assert quality.quality_class == "suppress"
+        assert "payrolls_excluded" in quality.reasons
+
+    def test_gdp_and_macro_stay_eligible(self):
+        # Alex: GDP is potentially interesting — must NOT be suppressed. Fed/CPI
+        # also stay eligible. None carry "nonfarm payroll" / KXPAYROLLS.
+        for name, ticker in [
+            ("Will GDP growth be above 3% in Q2?", "KXGDPNOM-26Q2"),
+            ("US nominal GDP above $30T in 2026?", "KXGDPNOM-26"),
+            ("Will the Fed cut rates in July?", "KXFEDDECISION-26JUL"),
+            ("CPI inflation above 3% in June?", "KXCPI-26JUN"),
+        ]:
+            quality = classify_market_quality(
+                name, sport_category="economics", external_id=ticker
+            )
+            assert "payrolls_excluded" not in quality.reasons, name
+            assert quality.quality_class != "suppress", name
+
+    def test_payroll_tax_policy_not_caught(self):
+        # "payroll tax" is a policy market, not the jobs-number ladder.
+        quality = classify_market_quality(
+            "Will Congress cut the payroll tax in 2026?",
+            sport_category="politics",
+            external_id="KXPAYROLLTAX-26",
+        )
+        assert "payrolls_excluded" not in quality.reasons
+
+
 class TestFeedQualityDebug:
     def test_builds_summary_and_item_diagnostics(self):
         now = datetime(2026, 5, 18, tzinfo=timezone.utc)
