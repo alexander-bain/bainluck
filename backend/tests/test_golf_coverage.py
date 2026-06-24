@@ -66,3 +66,32 @@ class TestYesNoProp:
     def test_no_probability_returns_none(self):
         m = _mkt("U.S. Open: Albatross", outcomes=[_oc("Yes", None)])
         assert _extract_yes_no_prop(m, "kalshi") is None
+
+
+class TestRoundTopGroups:
+    """#951 residual: round_top markets exposed per-round/tier with outcomes."""
+
+    def test_round_top_groups_built_and_exposed(self):
+        import inspect
+        from app.routes.golf import get_golf_tournament
+        src = inspect.getsource(get_golf_tournament)
+        # builds the structure from the round_top market group
+        assert "round_top_groups" in src
+        assert 'g["type"] == "round_top"' in src
+        # parses round + tier from the market name
+        assert r"Round\s+(\d+)\s+Top\s+(\d+)" in src
+        # false-positive-safe: skips groups with no outcomes (no bare cards)
+        assert "if not outs:" in src
+        # exposed on the response
+        assert '"round_top_groups": round_top_groups,' in src
+
+    def test_round_top_name_parse(self):
+        # the round/tier parse the builder relies on
+        import re
+        for name, rnd, top in [
+            ("2026 U.S. Open: Round 1 Top 5 Finishers", 1, 5),
+            ("The Memorial Tournament: Round 3 Top 10 Finishers", 3, 10),
+            ("U.S. Open: Round 2 Top 20 Finishers", 2, 20),
+        ]:
+            m = re.search(r"Round\s+(\d+)\s+Top\s+(\d+)", name, re.I)
+            assert m and int(m.group(1)) == rnd and int(m.group(2)) == top

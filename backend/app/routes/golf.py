@@ -2156,6 +2156,63 @@ async def get_golf_tournament(
                         win = g[col]
 
     # ------------------------------------------------------------------
+    # #951: round_top groups — "Round N Top M Finishers" markets are excluded
+    # from the tournament placement grid (round-specific Top-N would corrupt the
+    # whole-tournament Top-N columns) and previously surfaced only as bare
+    # ids/names. Expose them per-market (round + tier + per-golfer outcomes) so
+    # the frontend can render a dedicated rounds panel. Disambiguated by
+    # round + top_n, so there is no grid-key collision across rounds.
+    # ------------------------------------------------------------------
+    round_top_groups: list[dict] = []
+    rt_group = next((g for g in sorted_groups if g["type"] == "round_top"), None)
+    if rt_group and rt_group["market_ids"]:
+        rt_ids = rt_group["market_ids"]
+        rt_out_result = await db.execute(
+            select(FuturesOutcome).where(
+                FuturesOutcome.market_id.in_(rt_ids),
+                FuturesOutcome.current_probability.isnot(None),
+            )
+        )
+        rt_by_market: dict[int, list] = defaultdict(list)
+        for o in rt_out_result.scalars().all():
+            rt_by_market[o.market_id].append(o)
+        rt_src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(rt_ids)
+            )
+        )
+        rt_src = {row[0]: row[1] for row in rt_src_result.all()}
+        rt_names = dict(zip(rt_group["market_ids"], rt_group["market_names"]))
+        for mid in rt_ids:
+            outs = rt_by_market.get(mid)
+            if not outs:
+                continue  # false-positive-safe: never surface an empty group
+            name = rt_names.get(mid, "")
+            m = re.search(r"Round\s+(\d+)\s+Top\s+(\d+)", name, re.I)
+            outcomes = sorted(
+                (
+                    {
+                        "name": o.name,
+                        "probability": round(float(o.current_probability), 3),
+                    }
+                    for o in outs
+                ),
+                key=lambda x: x["probability"],
+                reverse=True,
+            )[:10]
+            round_top_groups.append(
+                {
+                    "market_id": mid,
+                    "market_name": name,
+                    "round": int(m.group(1)) if m else None,
+                    "top_n": int(m.group(2)) if m else None,
+                    "source": "datagolf_model" if rt_src.get(mid) == "datagolf" else rt_src.get(mid, ""),
+                    "outcomes": outcomes,
+                }
+            )
+        round_top_groups.sort(key=lambda g: (g["round"] or 99, g["top_n"] or 99))
+
+    # ------------------------------------------------------------------
     # Build "Related Futures" — tournament-specific markets NOT in the grid.
     # These are H2H matchups, nationality props, hole-in-one, bogey-free, etc.
     # ------------------------------------------------------------------
@@ -2262,6 +2319,7 @@ async def get_golf_tournament(
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,
         "h2h_matchups": tournament.get("h2h_matchups", []),
+        "round_top_groups": round_top_groups,
     }
 
 
