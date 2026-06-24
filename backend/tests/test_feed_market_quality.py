@@ -781,6 +781,60 @@ class TestMarginTurnoutSuppression:
             assert "margin_turnout_excluded" not in quality.reasons, name
 
 
+class TestStreamCountSuppression:
+    """Lane 2 Queue L2-2 (2026-06-24): artist annual stream-count markets
+    ('[artist] Streams in 2026', ~60 variants via KXARTISTSTREAMS*) are the next
+    mechanical family after margin/turnout (#968). Hard-exclude; keep awards /
+    competition 'stream*' markets eligible. Names below are real prod rows."""
+
+    STREAM_COUNT_NAMES = [
+        ("Rihanna Streams in 2026", "KXARTISTSTREAMSY-RIRI26DEC31"),
+        ("Drake Streams in 2026", "KXARTISTSTREAMSY-DRAKE26DEC31"),
+        ("Ariana Grande Streams in 2026", "KXARTISTSTREAMSY-GRANDE26DEC31"),
+        ("Peso Pluma Streams in 2026", "KXARTISTSTREAMSY-PLUMA26DEC31"),
+        ("J. Cole Streams in 2026", "KXARTISTSTREAMSY-COLE26DEC31"),
+        ("Playboi Carti Streams in 2026", "KXARTISTSTREAMSY-CARTI26DEC31"),
+        ("Notorious B.I.G. Streams in 2026", "KXARTISTSTREAMSY-BIG26DEC31"),
+    ]
+
+    def test_artist_stream_count_markets_are_hard_suppressed(self):
+        for name, ticker in self.STREAM_COUNT_NAMES:
+            quality = classify_market_quality(
+                name, sport_category="entertainment", external_id=ticker
+            )
+            assert quality.quality_class == "suppress", f"not suppressed: {name}"
+            assert "stream_count_excluded" in quality.reasons, name
+            assert quality_score_adjustment(quality) <= -100, name
+
+    def test_ticker_suppresses_even_with_odd_name(self):
+        # Ticker is the strong signal; trust it even if the name is unusual.
+        quality = classify_market_quality(
+            "SOL", sport_category="entertainment", external_id="KXARTISTSTREAMSY-SOL26DEC31"
+        )
+        assert quality.quality_class == "suppress"
+        assert "stream_count_excluded" in quality.reasons
+
+    def test_streaming_awards_and_competitions_stay_eligible(self):
+        # Carve-outs: awards / competitions about streaming must NOT be caught.
+        for name in [
+            "Win Streamer of the Year at the Streamer Awards 2026?",
+            "Best Televised or Streamed Motion Picture?",
+            "Will Kai Cenat be the Most Watched Kick Streamer in June?",
+        ]:
+            quality = classify_market_quality(name, sport_category="entertainment")
+            assert "stream_count_excluded" not in quality.reasons, name
+            assert quality.quality_class != "suppress", name
+
+    def test_industrial_on_stream_idiom_not_caught(self):
+        # "comes on stream in <year>" (singular) is an industrial idiom, not a
+        # stream-count market.
+        quality = classify_market_quality(
+            "Will the LNG pipeline come on stream in 2026?",
+            sport_category="economics",
+        )
+        assert "stream_count_excluded" not in quality.reasons
+
+
 class TestFeedQualityDebug:
     def test_builds_summary_and_item_diagnostics(self):
         now = datetime(2026, 5, 18, tzinfo=timezone.utc)

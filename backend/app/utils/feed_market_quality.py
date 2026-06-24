@@ -300,6 +300,23 @@ def _is_us_presidential_turnout(name: str) -> bool:
     return bool(re.search(r"\b(u\.?s\.?|united states|american)\b", low))
 
 
+# Artist annual stream-count markets — Lane 2 Queue L2-2 (2026-06-24), the next
+# over-represented mechanical family after margin/turnout (#968). ~60 open
+# variants, one per artist (KXARTISTSTREAMS*): "Rihanna Streams in 2026", "Drake
+# Streams in 2026", ... A number-guessing ladder of annual Spotify stream counts
+# with no audience-facing story. The *weekly* variant was already suppressed by
+# _ENTERTAINMENT_METRIC_RE; this is the same family, just the annual phrasing the
+# regex missed, so entertainment base 40 survived (and big names like Drake even
+# got the compelling boost). Hard-exclude, same as #968.
+#
+# Pattern is plural "streams in <year>" so it does NOT catch the legit carve-outs:
+# awards ("Streamer of the Year", "Best ... Streamed Motion Picture"),
+# competitions ("Most Watched Kick Streamer in June"), or industrial "comes on
+# stream in <year>" idioms (singular "stream").
+_STREAM_COUNT_RE = re.compile(r"\bstreams\s+in\s+\d{4}\b", re.IGNORECASE)
+_STREAM_COUNT_TICKER_RE = re.compile(r"KXARTISTSTREAMS")
+
+
 _LOW_SIGNAL_SPORT_RE = re.compile(
     r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
     r"esports|counter.?strike|cs2|csgo|valorant|league of legends|"
@@ -762,6 +779,13 @@ def classify_market_quality(
     if margin_turnout_excluded:
         reasons.append("margin_turnout_excluded")
 
+    # Artist annual stream-count ladder: hard-exclude (Lane 2 L2-2, 2026-06-24).
+    stream_count_excluded = bool(_STREAM_COUNT_RE.search(name)) or bool(
+        _STREAM_COUNT_TICKER_RE.search(ticker)
+    )
+    if stream_count_excluded:
+        reasons.append("stream_count_excluded")
+
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
         reasons.append("ladder_or_bucket")
@@ -814,6 +838,9 @@ def classify_market_quality(
         quality: QualityClass = "suppress"
     elif margin_turnout_excluded:
         # Alex 2026-06-24: margin-of-victory + voter-turnout flood, hard-excluded.
+        quality = "suppress"
+    elif stream_count_excluded:
+        # Lane 2 L2-2: artist annual stream-count ladder, hard-excluded.
         quality = "suppress"
     elif ticker_suppress:
         quality = "low_quality"
