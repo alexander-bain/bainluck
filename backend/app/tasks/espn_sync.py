@@ -1246,6 +1246,42 @@ async def _transition_event_statuses_impl() -> dict:
     return stats
 
 
+# #922: realistic per-sport game durations for spacing the ESPN WP backfill
+# timeline. ESPN's WP feed returns hundreds of per-play points; the old
+# `commence + i*30s` stamping assumed a fixed 30s cadence and overran the real
+# game by hours on long games — late-game points (≈100% in a blowout) landed
+# past the true end, even into the future, producing the chart "stale tail".
+_WP_BACKFILL_DURATION_HOURS = {
+    "baseball": 3.5,
+    "basketball": 2.75,
+    "americanfootball": 3.5,
+    "icehockey": 3.0,
+    "soccer": 2.5,
+    "mma": 3.5,
+}
+_WP_BACKFILL_DEFAULT_HOURS = 3.0
+
+
+def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):
+    """Synthetic captured_at for backfill WP point ``index`` of ``total``.
+
+    Spreads points evenly across a realistic game window [commence, commence +
+    sport_duration], hard-clamped to ``now`` so a synthetic timeline can NEVER
+    extend past the real game end / current time (the #922 stale-tail bug).
+    """
+    if not commence:
+        return now
+    family = (sport_key or "").split("_")[0].lower()
+    cap_hours = _WP_BACKFILL_DURATION_HOURS.get(family, _WP_BACKFILL_DEFAULT_HOURS)
+    window_end = commence + timedelta(hours=cap_hours)
+    if window_end > now:
+        window_end = now  # never stamp past the present
+    span = max((window_end - commence).total_seconds(), 0.0)
+    if total <= 1 or span == 0.0:
+        return commence
+    return commence + timedelta(seconds=span * (index / (total - 1)))
+
+
 async def _backfill_espn_win_probability(limit: int = 200):
     """Backfill ESPN win probability for completed events with sparse snapshots.
 
@@ -1321,6 +1357,8 @@ async def _backfill_espn_win_probability(limit: int = 200):
 
                     event_snapshots = 0
                     commence = event_row.commence_time
+                    _wp_now = datetime.now(timezone.utc)
+                    _wp_total = len(wp_data)
 
                     for i, point in enumerate(wp_data):
                         home_wp = point.get("home_win_probability")
@@ -1328,10 +1366,11 @@ async def _backfill_espn_win_probability(limit: int = 200):
                             continue
 
                         seconds_left = point.get("seconds_left")
-                        snap_time = (
-                            commence + timedelta(seconds=i * 30)
-                            if commence
-                            else datetime.now(timezone.utc)
+                        # #922: spread points across the real game window (clamped
+                        # to now) instead of a naive 30s/point timeline that ran
+                        # hours past the game end into the future (the stale tail).
+                        snap_time = _wp_backfill_snap_time(
+                            commence, i, _wp_total, sport_key, _wp_now
                         )
 
                         stmt = pg_insert(WinProbSnapshot).values(
