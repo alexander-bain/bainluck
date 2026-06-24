@@ -835,6 +835,80 @@ class TestStreamCountSuppression:
         assert "stream_count_excluded" not in quality.reasons
 
 
+class TestVotePercentAndHouseDistrictSuppression:
+    """Lane 2 Queue L2-3 (Alex 2026-06-24): hard-exclude vote-percent ladders
+    (~54, KXVOTEPRIMARY*) and individual House-district winners (~359,
+    KXHOUSERACE*), the same mechanical shape as margin/turnout (#968). CRITICAL
+    carve-out: chamber-CONTROL and major Senate/Gov/President races stay
+    eligible. Names below are real prod rows."""
+
+    VOTE_PERCENT_NAMES = [
+        ("Alabama Republican Senate primary: Barry Moore vote percent",
+         "KXVOTEPRIMARY-SENATEALR26BMOOBMOO"),
+        ("CA-11 primary: Scott Wiener vote percent", "KXVOTEPRIMARY-CA11PRIMARY26SWIESWIE"),
+        ("California governor primary: Katie Porter vote percent", "KXVOTEPRIMARY-26JUN02KPOR"),
+        ("Georgia Republican Senate primary: Mike Collins vote percent",
+         "KXVOTEPRIMARY-SENATEGAR26MCOLMCOL"),
+    ]
+
+    HOUSE_DISTRICT_NAMES = [
+        ("TN-09 House winner?", "KXHOUSERACE-TN09-26"),
+        ("AZ-08 House winner?", "KXHOUSERACE-AZ08-26"),
+        ("WI-07 House winner?", "KXHOUSERACE-WI07-26"),
+        ("AL-03 House winner?", "KXHOUSERACE-AL03-26"),
+    ]
+
+    def test_vote_percent_ladders_are_hard_suppressed(self):
+        for name, ticker in self.VOTE_PERCENT_NAMES:
+            quality = classify_market_quality(
+                name, sport_category="politics", external_id=ticker
+            )
+            assert quality.quality_class == "suppress", f"not suppressed: {name}"
+            assert "vote_percent_excluded" in quality.reasons, name
+            assert quality_score_adjustment(quality) <= -100, name
+
+    def test_house_district_winners_are_hard_suppressed(self):
+        for name, ticker in self.HOUSE_DISTRICT_NAMES:
+            quality = classify_market_quality(
+                name, sport_category="politics", external_id=ticker
+            )
+            assert quality.quality_class == "suppress", f"not suppressed: {name}"
+            assert "house_district_excluded" in quality.reasons, name
+
+    def test_ticker_suppresses_house_district_even_with_odd_name(self):
+        quality = classify_market_quality(
+            "House winner", sport_category="politics", external_id="KXHOUSERACE-XX99-26"
+        )
+        assert quality.quality_class == "suppress"
+        assert "house_district_excluded" in quality.reasons
+
+    def test_chamber_control_and_major_races_stay_eligible(self):
+        # CRITICAL carve-out: control + major races must NOT be suppressed.
+        for name, ticker in [
+            ("Which party will win the U.S. House?", "CONTROLH-2026"),
+            ("Which party will win the U.S. Senate?", "CONTROLS-2026"),
+            ("Which party will win the Senate in 2026?", "32224"),
+            ("Will Republicans lose the House majority before the midterms?",
+             "KXLOSEMAJORITY-27JAN01"),
+            ("Which party wins 2028 US Presidential Election?", "33228"),
+        ]:
+            quality = classify_market_quality(
+                name, sport_category="politics", external_id=ticker
+            )
+            assert "house_district_excluded" not in quality.reasons, name
+            assert "vote_percent_excluded" not in quality.reasons, name
+            assert quality.quality_class != "suppress", name
+
+    def test_popular_vote_winner_not_caught_by_vote_percent(self):
+        # "win the popular vote" is a major outcome, not a vote-% ladder.
+        quality = classify_market_quality(
+            "Who will win the popular vote in 2028?",
+            sport_category="politics",
+            external_id="POPVOTEWIN-28",
+        )
+        assert "vote_percent_excluded" not in quality.reasons
+
+
 class TestFeedQualityDebug:
     def test_builds_summary_and_item_diagnostics(self):
         now = datetime(2026, 5, 18, tzinfo=timezone.utc)

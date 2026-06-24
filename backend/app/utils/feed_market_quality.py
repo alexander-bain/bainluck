@@ -316,6 +316,32 @@ def _is_us_presidential_turnout(name: str) -> bool:
 _STREAM_COUNT_RE = re.compile(r"\bstreams\s+in\s+\d{4}\b", re.IGNORECASE)
 _STREAM_COUNT_TICKER_RE = re.compile(r"KXARTISTSTREAMS")
 
+# Vote-percent ladders — Lane 2 Queue L2-3 (Alex 2026-06-24). "[Candidate] vote
+# percent" per-candidate vote-share threshold markets (~54 open, ticker
+# KXVOTEPRIMARY*) are the same mechanical ladder shape as margin-of-victory
+# (#968): one row per candidate, no audience-facing story. Hard-exclude.
+# False-positive-safe: requires the literal "vote percent / % of the vote /
+# vote share" — does NOT catch approval ratings or poll shares of other things.
+_VOTE_PERCENT_RE = re.compile(
+    r"\bvote percent\b"
+    r"|\bvote share\b"
+    r"|\b(?:percent|%|\d+%)\s+of the vote\b",
+    re.IGNORECASE,
+)
+_VOTE_PERCENT_TICKER_RE = re.compile(r"KXVOTEPRIMARY")
+
+# Individual House-DISTRICT winner markets — Lane 2 Queue L2-3 (Alex 2026-06-24).
+# "TN-09 House winner?" per-district races (~359 open, ticker KXHOUSERACE*) — one
+# row per congressional district. Hard-exclude. The carve-out is by construction:
+# the chamber-CONTROL market ("Which party will win the U.S. House?", ticker
+# CONTROLH-*) carries no district code and no "House winner" phrasing, so it is
+# NOT matched and stays eligible — likewise Senate/Governor/President major races.
+_HOUSE_DISTRICT_RE = re.compile(
+    r"\b[a-z]{2}-?\d{1,2}\b\s+house\s+winner",
+    re.IGNORECASE,
+)
+_HOUSE_DISTRICT_TICKER_RE = re.compile(r"KXHOUSERACE")
+
 
 _LOW_SIGNAL_SPORT_RE = re.compile(
     r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
@@ -786,6 +812,20 @@ def classify_market_quality(
     if stream_count_excluded:
         reasons.append("stream_count_excluded")
 
+    # Vote-percent ladders + individual House-district winners: hard-exclude
+    # (Alex 2026-06-24, Lane 2 L2-3). Chamber-control / major races are NOT
+    # matched (no district code / no "vote percent" / different ticker).
+    vote_percent_excluded = bool(_VOTE_PERCENT_RE.search(name)) or bool(
+        _VOTE_PERCENT_TICKER_RE.search(ticker)
+    )
+    if vote_percent_excluded:
+        reasons.append("vote_percent_excluded")
+    house_district_excluded = bool(_HOUSE_DISTRICT_RE.search(name)) or bool(
+        _HOUSE_DISTRICT_TICKER_RE.search(ticker)
+    )
+    if house_district_excluded:
+        reasons.append("house_district_excluded")
+
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
         reasons.append("ladder_or_bucket")
@@ -841,6 +881,11 @@ def classify_market_quality(
         quality = "suppress"
     elif stream_count_excluded:
         # Lane 2 L2-2: artist annual stream-count ladder, hard-excluded.
+        quality = "suppress"
+    elif vote_percent_excluded or house_district_excluded:
+        # Lane 2 L2-3 (Alex 2026-06-24): vote-percent ladders + individual
+        # House-district winner markets, hard-excluded (chamber-control and
+        # major races stay eligible — not matched here).
         quality = "suppress"
     elif ticker_suppress:
         quality = "low_quality"
