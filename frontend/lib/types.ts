@@ -1200,6 +1200,15 @@ export interface GolfTournamentDetailResponse {
   evolution_market_id: number | null;
   biggest_movers: GolfMover[];
   h2h_matchups?: GolfH2HMatchup[];
+  // #951: per-round "Round N Top M Finishers" markets, grouped by round → tier.
+  round_top_groups?: {
+    market_id: number;
+    market_name: string;
+    round: number | null;
+    top_n: number | null;
+    source?: string;
+    outcomes: { name: string; probability: number | null }[];
+  }[];
 }
 
 // ============================================================================

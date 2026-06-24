@@ -492,6 +492,11 @@ export default function GolfTournamentPage() {
           <TournamentRelatedFutures markets={data.related_futures} accentColor={accentColor} />
         )}
 
+        {/* #951: per-round "Round N Top M Finishers" panel */}
+        {data.round_top_groups && data.round_top_groups.length > 0 && (
+          <TournamentRounds groups={data.round_top_groups} accentColor={accentColor} />
+        )}
+
         {/* Footer — #957: scope the DataGolf claim to the leaderboard; the
             "More Markets" cards carry their own per-source attribution. */}
         <p className="text-center text-[11px] text-gray-400">
@@ -527,6 +532,7 @@ interface RelatedFutureMarket {
 // model" was wrong for these cards (playoff = Polymarket/Kalshi, etc.).
 const SOURCE_LABELS: Record<string, string> = {
   datagolf: "DataGolf",
+  datagolf_model: "DataGolf model",
   polymarket: "Polymarket",
   kalshi: "Kalshi",
   odds_api: "Sportsbooks",
@@ -643,6 +649,92 @@ function TournamentRelatedFutures({
         </section>
       ))}
     </div>
+  );
+}
+
+// ============================================================================
+// Tournament Rounds (#951) — per-round "Top N Finishers" panel
+// ============================================================================
+
+type RoundTopGroup = NonNullable<
+  GolfTournamentDetailResponse["round_top_groups"]
+>[number];
+
+function TournamentRounds({
+  groups,
+  accentColor,
+}: {
+  groups: RoundTopGroup[];
+  accentColor: string;
+}) {
+  if (!groups.length) return null;
+
+  // Group by round, preserving the backend's (round, top_n) sort.
+  const byRound = new Map<number, RoundTopGroup[]>();
+  for (const g of groups) {
+    const r = g.round ?? 0;
+    if (!byRound.has(r)) byRound.set(r, []);
+    byRound.get(r)!.push(g);
+  }
+  const rounds = Array.from(byRound.entries()).sort((a, b) => a[0] - b[0]);
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-gray-900 mb-3">Rounds</h2>
+      <div className="space-y-6">
+        {rounds.map(([round, tiers]) => (
+          <div key={round}>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              {round ? `Round ${round}` : "Round"}
+            </h3>
+            <div className="space-y-3">
+              {tiers.map((tier) => (
+                <div
+                  key={tier.market_id}
+                  className="border border-gray-200 rounded-xl p-4 bg-white"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <h4 className="text-xs font-semibold text-gray-700">
+                      {tier.top_n ? `Top ${tier.top_n} Finishers` : tier.market_name}
+                    </h4>
+                    {tier.source && (
+                      <span className="text-[10px] text-gray-400 shrink-0">
+                        {sourceLabel(tier.source)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {tier.outcomes.slice(0, 10).map((outcome, i) => (
+                      <div
+                        key={`${outcome.name}-${i}`}
+                        className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50"
+                      >
+                        <span className="text-sm text-gray-800 truncate mr-3">
+                          {outcome.name}
+                        </span>
+                        <span
+                          className="text-sm font-semibold min-w-[48px] text-right"
+                          style={{ color: accentColor }}
+                        >
+                          {outcome.probability != null
+                            ? `${(outcome.probability * 100).toFixed(0)}%`
+                            : "—"}
+                        </span>
+                      </div>
+                    ))}
+                    {tier.outcomes.length > 10 && (
+                      <p className="text-[11px] text-gray-400 text-center pt-1">
+                        +{tier.outcomes.length - 10} more
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
