@@ -2147,13 +2147,20 @@ async def _resolve_kalshi_player_props_from_boxscore():
                            OR fo.resolution_source IN
                                ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
                                          'clean_resolution', 'pass2_loser', 'pass3_threshold')
-                           -- Targeted re-grade for the #937 mapping fix ONLY: re-process
-                           -- already box_score-resolved NHL points props (they were all
-                           -- wrongly graded losers). Idempotent: we only write when the
-                           -- verdict CHANGES (gotcha #21-safe recompute). #899 made the
-                           -- box_score load memory-bounded, so #937 can widen this clause.
-                           OR (fo.resolution_source = 'box_score'
-                               AND LOWER(fm.external_id) LIKE 'kxnhlpts%'))
+                           -- #937: re-process ALL already box_score-resolved prop
+                           -- outcomes (was scoped to kxnhlpts only to dodge the #899
+                           -- OOM — now fixed, so the broadened set is memory-safe).
+                           -- Catches the same class of historical mis-grades beyond
+                           -- NHL points (reproduced under-marking: hockey ~38pp,
+                           -- baseball ~21pp). Every _PROP_TICKER_TO_STAT mapping is
+                           -- verified against the authoritative ESPN stat-key map
+                           -- (services/espn_api.py: H->hits, HR->home runs,
+                           -- SO->strikeouts, G->goals, A->assists, ...), and the
+                           -- write is idempotent (only flips when the box_score
+                           -- verdict CHANGES, gotcha #21-safe). Re-grade reads the
+                           -- event's OWN box score by player+stat — not an event
+                           -- linkage, so no #942/#14 commence_time-collapse risk.
+                           OR fo.resolution_source = 'box_score')
                       AND LOWER(fm.external_id) LIKE ANY(:prefixes)
                     ORDER BY e.id
                     LIMIT 50000

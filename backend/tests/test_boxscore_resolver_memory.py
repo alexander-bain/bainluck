@@ -103,3 +103,67 @@ async def test_resolution_semantics_preserved_through_batched_load(monkeypatch):
     assert captured["winner_ids"] == [42], stats   # graded a winner from the batch-loaded box score
     assert not captured["loser_ids"]
     assert stats["resolved"] == 1
+
+
+def test_regrade_broadened_beyond_kxnhlpts():
+    """#937: the box_score re-grade branch must no longer be scoped to kxnhlpts —
+    it re-processes ALL box_score-resolved props (now memory-safe via #899)."""
+    src = inspect.getsource(_resolve_kalshi_player_props_from_boxscore)
+    # the re-grade branch is now an unrestricted box_score clause
+    assert "OR fo.resolution_source = 'box_score')" in src
+    # and the old kxnhlpts-only restriction on that branch is gone
+    regrade_clause = src.split("resolution_source = 'box_score'", 1)[1].split(")", 1)[0]
+    assert "kxnhlpts" not in regrade_clause, (
+        "box_score re-grade is still scoped to kxnhlpts — #937 broadening missing"
+    )
+
+
+async def test_regrade_flips_mismarked_mlb_strikeouts_prop(monkeypatch):
+    """#937: an already-box_score-resolved MLB strikeouts prop that was wrongly
+    graded a loser flips to winner when re-graded (8 K >= 6), proving the
+    broadening fixes non-NHL props with the verified ESPN stat-key mapping."""
+    import app.tasks.backfill_winners as bw
+
+    outcome = _row(
+        outcome_id=99,
+        outcome_name="Gerrit Cole: 6+",
+        ticker="KXMLBKS-26JUL04NYY",   # strikeouts -> 'strikeouts'
+        cur_winner=False,              # mis-graded loser
+        event_id=3,
+    )
+    bs = _row(
+        id=3,
+        box_score_data={"source": "espn", "players": {"gerrit cole": {"strikeouts": 8}}},
+    )
+    captured = {"winner_ids": None, "loser_ids": None}
+    session = AsyncMock()
+
+    async def _execute(stmt, params=None):
+        sql = str(getattr(stmt, "text", stmt))
+        if "FROM futures_outcomes" in sql and "box_score_data FROM events" not in sql:
+            return _Result([outcome])
+        if "box_score_data FROM events" in sql:
+            return _Result([bs])
+        if "is_winner = true" in sql:
+            captured["winner_ids"] = (params or {}).get("ids")
+            return MagicMock(rowcount=len(captured["winner_ids"] or []))
+        if "is_winner = false" in sql:
+            captured["loser_ids"] = (params or {}).get("ids")
+            return MagicMock(rowcount=len(captured["loser_ids"] or []))
+        return MagicMock(rowcount=0)
+
+    session.execute = AsyncMock(side_effect=_execute)
+    session.commit = AsyncMock()
+
+    class _CM:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(bw, "get_task_session", lambda: _CM())
+    stats = await _resolve_kalshi_player_props_from_boxscore()
+
+    assert captured["winner_ids"] == [99], stats   # flipped the mis-graded loser to winner
+    assert not captured["loser_ids"]
