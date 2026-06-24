@@ -1923,6 +1923,22 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     _empty_pages = 0
 
                     for page_num in range(200):
+                        # #969: inner time-budget guard. The outer per-series
+                        # check (above) wasn't enough — a single deep series can
+                        # paginate (up to 200 pages) past the 900s soft wall
+                        # mid-loop, which is what kept this task in a ~5.5-day
+                        # SoftTimeLimitExceeded outage. The per-series cursor is
+                        # already persisted each page (below), so break here and
+                        # the next cron resumes this series mid-pagination; the
+                        # top-of-series check then breaks the series loop too.
+                        if (_time.monotonic() - _start_time) > _MAX_SECONDS:
+                            logger.info(
+                                "Settled events: time budget hit mid-series %s at "
+                                "page %d (cursor persisted, resumes next cron)",
+                                series,
+                                page_num,
+                            )
+                            break
                         for _retry in range(3):
                             try:
                                 events, cursor = await service.get_events(
