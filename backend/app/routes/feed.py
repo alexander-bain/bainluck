@@ -74,6 +74,7 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    has_no_real_price,
 )
 from app.utils.feed_reasons import (
     generate_event_reason,
@@ -4996,11 +4997,13 @@ async def _score_futures(
         if not runtime_filters["eligible"]:
             continue
 
-        probs_available = [
-            o["probability"] for o in outcomes_data if o["probability"] is not None
-        ]
-        if not probs_available and market.outcomes:
-            # Market has outcomes but none have probability data — dead
+        # #921: drop markets with no REAL price — every outcome null/zero (dead)
+        # OR even the top outcome below the 0.5% display floor (rounds to 0% — the
+        # "0% on active markets" junk). Genuine even-odds / longshot-leader races
+        # are far above the floor and stay eligible.
+        if market.outcomes and has_no_real_price(
+            [o["probability"] for o in outcomes_data]
+        ):
             continue
 
         # Get source count from canonical key

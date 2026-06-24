@@ -12,6 +12,29 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
 
+# #921: a market needs a real, showable price to earn a Discover card. Below
+# this floor the top outcome rounds to 0% in the UI — the "0% probability on
+# active markets" junk Manus kept flagging (e.g. "Korea K League 1 Champion" with
+# no meaningful line). 0.5% is the display-rounding boundary; genuine even-odds
+# (50%) and real longshot-leader races sit far above it.
+FEED_MIN_REAL_PROBABILITY = 0.005
+
+
+def has_no_real_price(outcome_probabilities: "list[float | None]") -> bool:
+    """True if a futures market has no meaningful price to surface (#921).
+
+    No real price means EITHER every outcome is null/zero (a dead market) OR even
+    the top outcome is below the display floor (rounds to 0%). Inputs are the
+    per-outcome ``current_probability`` values (0.0-1.0); ``None``/``0`` mean "no
+    price". False-positive-safe: 50% even-odds and real longshot-leader races
+    (leader well above 0.5%) return False and stay eligible.
+    """
+    real = [float(p) for p in outcome_probabilities if p]
+    if not real:
+        return True
+    return max(real) < FEED_MIN_REAL_PROBABILITY
+
+
 QualityClass = Literal["compelling", "normal", "low_quality", "suppress"]
 EditorialArchetype = Literal[
     "world_event",

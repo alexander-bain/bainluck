@@ -22,6 +22,7 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    has_no_real_price,
     has_specific_explanation,
     has_strong_hook,
     quality_score_adjustment,
@@ -957,6 +958,33 @@ class TestPayrollsSuppression:
             external_id="KXPAYROLLTAX-26",
         )
         assert "payrolls_excluded" not in quality.reasons
+
+
+class TestNoRealPrice:
+    """#921 (Lane 2 L2-6): markets with no real price (0%/null on active markets)
+    must not earn a Discover card. Real even-odds + longshot-leader races stay."""
+
+    def test_dead_markets_have_no_real_price(self):
+        # all-null and all-zero: pure dead markets (prod: 82 + 6 open).
+        assert has_no_real_price([None, None, None]) is True
+        assert has_no_real_price([0, 0, 0]) is True
+        assert has_no_real_price([0.0, None, 0.0]) is True
+        assert has_no_real_price([]) is True
+
+    def test_negligible_top_price_has_no_real_price(self):
+        # under-0.5% cohort (prod: 480 open) — top outcome rounds to 0%, junk.
+        assert has_no_real_price([0.001, 0.0008, 0.0]) is True  # Korea K League shape
+        assert has_no_real_price([0.004, 0.002, 0.001]) is True
+        assert has_no_real_price([0.0049]) is True  # just below the 0.5% floor
+
+    def test_real_prices_are_kept(self):
+        # KEEP: even-odds 50%, decisive favorites, and genuine wide-open races
+        # whose leader is meaningfully above the floor.
+        assert has_no_real_price([0.5, 0.5]) is False  # even-odds (queue carve-out)
+        assert has_no_real_price([0.92, 0.08]) is False
+        assert has_no_real_price([0.03, 0.02, 0.01]) is False  # leader 3% — real race
+        assert has_no_real_price([0.005]) is False  # exactly at floor stays
+        assert has_no_real_price([0.22, None, 0.18]) is False  # mixed, real leader
 
 
 class TestFeedQualityDebug:
