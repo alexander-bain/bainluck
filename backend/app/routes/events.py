@@ -31,6 +31,15 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.name_normalization import expand_search_terms
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
+from app.utils.feed_market_quality import has_no_real_price
+
+# #921 slice 2: placeholder/TBD-team markets have no information to show on an
+# event page (e.g. "TBD vs TBD" props for an unscheduled matchup). Name-based,
+# false-positive-safe — real team names never match.
+_PLACEHOLDER_TEAM_RE = re.compile(
+    r"\b(tbd|to be determined|to be decided|winner of|loser of)\b",
+    re.IGNORECASE,
+)
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
@@ -3308,6 +3317,16 @@ async def get_game_markets(
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
         if not market_outcomes:
+            continue
+
+        # #921 slice 2: don't render no-real-price or placeholder-team markets on
+        # event pages. No real price = every outcome null/zero OR top outcome
+        # below the 0.5% display floor (renders as a "0%" card — the symptom
+        # Manus kept flagging). Placeholder teams ("TBD vs TBD") have no info to
+        # show. Reuses the slice-1 helper; even-odds 50% + real games stay.
+        if has_no_real_price([o.current_probability for o in market_outcomes]):
+            continue
+        if _PLACEHOLDER_TEAM_RE.search(market.name or ""):
             continue
 
         market_type = _classify_game_market(market.name, external_id=market.external_id)

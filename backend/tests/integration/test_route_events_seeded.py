@@ -504,6 +504,82 @@ class TestGameMarketsPopulatedShape:
         }
 
 
+@pytest.fixture
+async def no_price_markets_client():
+    """Event with a real total market + a no-real-price market + a placeholder-
+    team market — only the real one should render (#921 slice 2)."""
+    from app.main import app
+    from app.routes.events import _game_markets_cache
+
+    _game_markets_cache.clear()
+
+    event = _make_event(id=3, home_team="Celtics", away_team="76ers", status="live")
+    real_market = _make_futures_market(
+        id=401, name="Celtics at 76ers Total Points", source="kalshi"
+    )
+    no_price_market = _make_futures_market(
+        id=402, name="Celtics at 76ers Total Rebounds", source="kalshi"
+    )
+    placeholder_market = _make_futures_market(
+        id=403, name="TBD vs TBD Total Points", source="kalshi"
+    )
+    markets = [real_market, no_price_market, placeholder_market]
+    for market in markets:
+        market.event_id = event.id
+
+    outcomes = [
+        # real: top outcome well above the 0.5% floor → kept
+        _make_outcome(id=501, market_id=401, name="Over 224.5", probability=0.57),
+        # no real price: top outcome 0.3% (<0.5%) → dropped
+        _make_outcome(id=502, market_id=402, name="Over 44.5", probability=0.003),
+        # placeholder teams → dropped (even with a real price)
+        _make_outcome(id=503, market_id=403, name="Over 200.5", probability=0.55),
+    ]
+    mock_session = _make_event_detail_session(
+        event=event, futures=markets, outcomes=outcomes
+    )
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    app.dependency_overrides.clear()
+
+
+class TestGameMarketsNoRealPriceDrop:
+    """#921 slice 2: no-real-price + placeholder-team markets must not render on
+    event pages; legitimate priced markets stay."""
+
+    async def test_real_market_kept_junk_dropped(self, no_price_markets_client):
+        resp = await no_price_markets_client.get("/api/events/3/game-markets")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Collect every market_name across all sections.
+        names = set()
+        for section in body.values():
+            if isinstance(section, list):
+                for item in section:
+                    if isinstance(item, dict) and item.get("market_name"):
+                        names.add(item["market_name"])
+        assert "Celtics at 76ers Total Points" in names  # real → kept
+        assert "Celtics at 76ers Total Rebounds" not in names  # no price → dropped
+        assert "TBD vs TBD Total Points" not in names  # placeholder → dropped
+
+
 class TestRelatedFuturesShape:
     """GET /api/events/{id}/related-futures response shape."""
 
