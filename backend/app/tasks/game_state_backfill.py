@@ -533,6 +533,29 @@ async def _copy_espn_snapshot_periods(session: AsyncSession, event_id: int) -> i
         return 0
 
 
+def _resolve_marker_window(
+    end_candidates: list[datetime],
+    start_time: datetime,
+    now: datetime,
+) -> datetime | None:
+    """Resolve the 'Final' marker time from candidate snapshot timestamps.
+
+    #922 follow-up: the end marker is the max captured_at across all snapshot
+    tables — which can include a future/out-of-window point (e.g. an earlier
+    bad ESPN-WP-backfill row, or any source with a bad timestamp). Stamping the
+    Final marker there extends the chart x-domain past the real game end (the
+    'stale tail', gotcha #22). Hard-clamp to ``now`` so the marker can never sit
+    in the future, and keep the existing >=30-min sanity guard. Returns the
+    clamped end time, or None if no candidates / the span is implausibly short.
+    """
+    if not end_candidates:
+        return None
+    end_time = min(max(end_candidates), now)
+    if (end_time - start_time).total_seconds() < 1800:
+        return None
+    return end_time
+
+
 async def _write_start_end_markers(session: AsyncSession, event: Event) -> bool:
     """Write Start and Final markers using real timestamps.
 
@@ -593,13 +616,13 @@ async def _write_start_end_markers(session: AsyncSession, event: Event) -> bool:
     except Exception:
         pass
 
-    if not end_candidates:
-        return False
-
-    end_time = max(end_candidates)
-
-    # Sanity: game must have lasted at least 30 minutes
-    if (end_time - start_time).total_seconds() < 1800:
+    # #922 follow-up: clamp to now() so a future/out-of-window candidate (e.g. a
+    # residual bad ESPN-WP-backfill row) can't push the Final marker into the
+    # future and grow a chart stale tail. Keeps the >=30-min sanity guard.
+    end_time = _resolve_marker_window(
+        end_candidates, start_time, datetime.now(timezone.utc)
+    )
+    if end_time is None:
         return False
 
     session.add(WinProbSnapshot(
