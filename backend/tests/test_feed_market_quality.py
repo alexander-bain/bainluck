@@ -706,6 +706,81 @@ class TestMarketQualityClassification:
         }
 
 
+class TestMarginTurnoutSuppression:
+    """Alex 2026-06-24: margin-of-victory + voter-turnout markets flooded
+    Discover (~1,100 open variants). Hard-exclude both families; carve out only
+    US presidential turnout. Names below are real prod rows."""
+
+    # Representative real names pulled from prod (status='open'), incl. variants
+    # the old `voter turnout` literal missed ("turnout" without "voter").
+    MARGIN_TURNOUT_NAMES = [
+        # margin of victory (the bulk — KXMIDTERMMOV-*, KXPRIMARYMOV-*)
+        ("Alabama's 1st District margin of victory", "KXMIDTERMMOV-AL01R"),
+        ("Alabama Governor margin of victory", "KXMIDTERMMOV-ALGOVR"),
+        ("Alabama Republican Senate primary: margin of victory", "KXPRIMARYMOV-SENATEALR26"),
+        ("2028 Electoral College margin of victory?", "ECMOV-28NOV07"),
+        ("2028 popular vote margin of victory?", "POPVOTEMOV-28NOV07"),
+        ("2026 NJ-11 special election margin of victory?", "KXMOVNJ11SPECIAL-26APR16"),
+        ("Alaska Senate election margin of victory", "KXAKMOV-AKSENATE26NOV03"),
+        # voter turnout (KXMIDTERMVOTETURN-*)
+        ("Alabama 01 House General Election: voter turnout", "KXMIDTERMVOTETURN-AL01"),
+        ("Alaska Senate General Election: voter turnout", "KXMIDTERMVOTETURN-AKSEN"),
+        # turnout WITHOUT "voter" — old regex missed these
+        ("2026 2026 Midterms: U.S. House turnout?", "KXHOUSETURNOUT-26NOV03"),
+        ("2026 Midterms: House Turnout", "217635"),
+        ("New Zealand Election: Turnout", "431672"),
+        ("Russia Parliamentary Election: Turnout", "403985"),
+        ("Zambia Presidential Election 1st Round: Turnout", "563179"),
+        ("Texas Senate primary: Democrats have higher turnout than Republicans?",
+         "KXTXSENATETURNOUTGOPMINUSDEM-26NOV03"),
+        ("Los Angeles mayoral primary: Spencer Pratt vs Nithya Raman margin",
+         "KXRAMANPRATTDIFF-26JUN05"),
+    ]
+
+    def test_margin_and_turnout_markets_are_hard_suppressed(self):
+        for name, ticker in self.MARGIN_TURNOUT_NAMES:
+            quality = classify_market_quality(
+                name, sport_category="politics", external_id=ticker
+            )
+            assert quality.quality_class == "suppress", f"not suppressed: {name}"
+            assert "margin_turnout_excluded" in quality.reasons, name
+            assert quality_score_adjustment(quality) <= -100, name
+
+    def test_us_presidential_turnout_is_carved_out(self):
+        # Forward-looking carve-out: US presidential turnout may surface.
+        for name in [
+            "2028 U.S. Presidential Election: National Turnout",
+            "US presidential turnout in 2028?",
+            "United States presidential election turnout",
+        ]:
+            quality = classify_market_quality(name, sport_category="politics")
+            assert quality.quality_class != "suppress", name
+            assert "margin_turnout_excluded" not in quality.reasons, name
+
+    def test_foreign_presidential_turnout_stays_suppressed(self):
+        # The carve-out is US-specific — foreign presidential/parliamentary
+        # turnout must still be excluded.
+        for name in [
+            "Zambia Presidential Election 1st Round: Turnout",
+            "Russia Parliamentary Election: Turnout",
+            "New Zealand Election: Turnout",
+        ]:
+            quality = classify_market_quality(name, sport_category="politics")
+            assert quality.quality_class == "suppress", name
+            assert "margin_turnout_excluded" in quality.reasons, name
+
+    def test_finance_margins_are_not_caught(self):
+        # "margin" in a finance/business sense must NOT trigger the election
+        # margin exclude (no election keyword present).
+        for name in [
+            "Micron Q3 adjusted gross margin?",
+            "Sweetgreen profit margin in Q2",
+            "Will MicroStrategy be margin called in 2026?",
+        ]:
+            quality = classify_market_quality(name, sport_category="economics")
+            assert "margin_turnout_excluded" not in quality.reasons, name
+
+
 class TestFeedQualityDebug:
     def test_builds_summary_and_item_diagnostics(self):
         now = datetime(2026, 5, 18, tzinfo=timezone.utc)

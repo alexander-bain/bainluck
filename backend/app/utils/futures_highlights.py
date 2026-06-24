@@ -148,7 +148,7 @@ _BORING_PATTERNS = re.compile(
     r"|treasury yield at month.end"
     r"|inflation rate yoy.* for (jan|feb|mar|apr|may|jun)"
     r"|margin of victory"
-    r"|voter turnout"
+    r"|\bturnout\b"
     r"|district .+ (margin|turnout)"
     r"|how many launches will spacex"
     r"|allegiance \d+ winner"

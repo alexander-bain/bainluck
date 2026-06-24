@@ -250,6 +250,56 @@ _REGIONAL_US_ELECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Margin-of-victory + voter-turnout election markets — Alex product decision
+# (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
+# per state/district (KXMIDTERMMOV-*, KXMIDTERMVOTETURN-*, ...), and Alex judged
+# them "hard to imagine ever being interesting to any audience." They previously
+# only got the weak -25 BORING_PENALTY (politics base 45 - 25 = 20 still cleared
+# the 18.5 sports floor), so they survived and crowded the feed. Treatment: HARD
+# EXCLUDE both families by default. The ONLY carve-out is US presidential turnout
+# (see _is_us_presidential_turnout) — foreign presidential/parliamentary turnout
+# (Zambia, Russia, New Zealand) stays suppressed.
+#
+# Margin: nearly all say "margin of victory" literally; the election-context
+# branches catch variants ("LA mayoral primary: ... margin") while deliberately
+# NOT matching finance margins ("Micron gross margin", "MicroStrategy margin
+# called", "Sweetgreen profit margin"), which carry no election keyword.
+_ELECTION_MARGIN_RE = re.compile(
+    r"margin of victory"
+    r"|\b(election|primary|runoff|midterm|senate|house|governor|gubernatorial"
+    r"|presidential|congress(?:ional)?|district|electoral college|popular vote"
+    r"|mayoral|parliament(?:ary)?|redistrict\w*)\b[^.]{0,40}\bmargin\b"
+    r"|\bmargin\b[^.]{0,40}\b(election|primary|runoff|midterm|senate|house"
+    r"|governor|gubernatorial|presidential|congress(?:ional)?|district)\b",
+    re.IGNORECASE,
+)
+# "turnout" is election-specific in this catalog; plain word match is safe and
+# catches the variants the old `voter turnout` literal missed ("U.S. House
+# turnout?", "House Turnout", "Russia Parliamentary Election: Turnout").
+_VOTER_TURNOUT_RE = re.compile(r"\bturnout\b", re.IGNORECASE)
+# Belt-and-suspenders: the known margin/turnout ticker families. Name detection
+# alone covers every current market, but tickers guard against future blank/odd
+# names. Tokens chosen to avoid collisions (e.g. "MOVIE").
+_MARGIN_TURNOUT_TICKER_RE = re.compile(
+    r"(KXMOV|MIDTERMMOV|PRIMARYMOV|POPVOTEMOV|ECMOV|POPVOTEMARGIN"
+    r"|VOTETURN|MIDTERMVOTETURN|PRIMARYTURNOUT|HOUSETURNOUT|TURNOUT)",
+)
+
+
+def _is_us_presidential_turnout(name: str) -> bool:
+    """Carve-out: US presidential voter turnout may surface (Alex 2026-06-24).
+
+    Must be US-specific so foreign presidential/parliamentary turnout
+    (Zambia, Russia) stays suppressed.
+    """
+    low = (name or "").lower()
+    if "turnout" not in low:
+        return False
+    if not re.search(r"\bpresident", low):
+        return False
+    return bool(re.search(r"\b(u\.?s\.?|united states|american)\b", low))
+
+
 _LOW_SIGNAL_SPORT_RE = re.compile(
     r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
     r"esports|counter.?strike|cs2|csgo|valorant|league of legends|"
@@ -701,6 +751,17 @@ def classify_market_quality(
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
 
+    # Margin-of-victory + voter-turnout: hard-exclude both families (Alex
+    # 2026-06-24), carving out only US presidential turnout.
+    margin_turnout = (
+        bool(_ELECTION_MARGIN_RE.search(name))
+        or bool(_VOTER_TURNOUT_RE.search(name))
+        or bool(_MARGIN_TURNOUT_TICKER_RE.search(ticker))
+    )
+    margin_turnout_excluded = margin_turnout and not _is_us_presidential_turnout(name)
+    if margin_turnout_excluded:
+        reasons.append("margin_turnout_excluded")
+
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
         reasons.append("ladder_or_bucket")
@@ -751,6 +812,9 @@ def classify_market_quality(
     if social_filler or (obscure and not compelling) or resolved_sports:
         # R6: resolved sports never surface as live cards.
         quality: QualityClass = "suppress"
+    elif margin_turnout_excluded:
+        # Alex 2026-06-24: margin-of-victory + voter-turnout flood, hard-excluded.
+        quality = "suppress"
     elif ticker_suppress:
         quality = "low_quality"
     elif (
