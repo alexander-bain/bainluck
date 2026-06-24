@@ -303,6 +303,13 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     if ee.home_win_probability is None:
         return False
 
+    # #922: our own resolved status is the authoritative "game is over" signal
+    # (more reliable than ESPN's ee.status, which can lag 20-40 min on MLB). When
+    # the event is completed/closed we capture the terminal win-prob point once
+    # and stop appending new time-series points on post-final re-process cycles
+    # (the appends were the chart "stale tail"). Score/metadata updates still flow.
+    is_completed = getattr(event, "status", None) in ("completed", "closed")
+
     # Write espn_win_prob_home, win_probability_sources, AND espn_id
     # in one atomic Core update. espn_id was previously set via ORM
     # attribute assignment which could fail to flush when mixed with
@@ -323,17 +330,22 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     )
     event.win_probability_sources = _wps
 
-    snapshot = ESPNSnapshot(
-        event_id=event.id,
-        home_win_probability=ee.home_win_probability,
-        away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
-        home_score=ee.home_score,
-        away_score=ee.away_score,
-        game_clock=ee.clock,
-        period=ee.status_detail,
-    )
-    session.add(snapshot)
-    stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
+    # #922: skip the ESPNSnapshot append for completed/closed events — it is a
+    # plain append (no dedup) and post-final cycles would stamp new espnHistory
+    # points at `now`, extending the chart past the real final. The live-captured
+    # ESPNSnapshots already cover the game through its end.
+    if not is_completed:
+        snapshot = ESPNSnapshot(
+            event_id=event.id,
+            home_win_probability=ee.home_win_probability,
+            away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+            home_score=ee.home_score,
+            away_score=ee.away_score,
+            game_clock=ee.clock,
+            period=ee.status_detail,
+        )
+        session.add(snapshot)
+        stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
 
     # Write ESPN to win_prob_snapshots only for espn_id matches.
     # Name-based matches can be false positives (especially
@@ -353,6 +365,7 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
                     "home_score": ee.home_score,
                     "away_score": ee.away_score,
                 },
+                is_completed=is_completed,
             )
             if is_new:
                 session.add(espn_wp_snap)
@@ -424,6 +437,11 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             event.win_probability_sources = _wps2
 
             from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+            # #922: if OUR event is already completed/closed (ESPN can lag and
+            # keep reporting MLB as "in" for 20-40 min post-final), capture the
+            # terminal stat_model point once and stop appending drift points —
+            # those post-final stat_model re-stamps were the MLB chart stale tail.
+            is_completed = getattr(event, "status", None) in ("completed", "closed")
             stat_snap, is_new = await _create_or_update_win_prob_snapshot(
                 session,
                 event_id=event.id,
@@ -438,6 +456,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                     "pregame_spread": pregame_spread,
                     "time_source": "espn",
                 },
+                is_completed=is_completed,
             )
             if is_new:
                 session.add(stat_snap)

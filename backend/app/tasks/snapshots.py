@@ -14,6 +14,7 @@ async def _create_or_update_win_prob_snapshot(
     home_win_probability: float,
     away_win_probability: float,
     game_state: dict = None,
+    is_completed: bool = False,
 ) -> tuple:
     """
     Create a new WinProbSnapshot or update existing if value unchanged.
@@ -21,6 +22,14 @@ async def _create_or_update_win_prob_snapshot(
     Returns (snapshot, is_new) tuple.
     - If value changed: creates new snapshot, returns (new_snapshot, True)
     - If value same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+
+    #922: when ``is_completed`` is True (the event is completed/closed), a value
+    change does NOT append a new time-series point — instead the most recent
+    snapshot is refreshed in place (value + valid_until). On post-final re-process
+    cycles ESPN can keep echoing a value / report the game as "in" for 20-40 min,
+    and the stat model drifts; appending those produced the chart "stale tail".
+    The terminal value is still captured (in place at the real final, or as a
+    single new point if no prior snapshot exists yet for this event+source).
     """
     from app.models.models import WinProbSnapshot
 
@@ -54,6 +63,19 @@ async def _create_or_update_win_prob_snapshot(
         is_same = prob_same and period_same
 
     if existing is None or not is_same:
+        # #922: completed/closed event — refresh the terminal point in place
+        # instead of appending a new late captured_at point. The live snapshots
+        # already captured the game through its final; this keeps the terminal
+        # value current without extending the time series past the real final.
+        if is_completed and existing is not None:
+            existing.home_win_probability = home_win_probability
+            existing.away_win_probability = away_win_probability
+            if game_state is not None:
+                existing.game_state = game_state
+            existing.valid_until = now
+            existing.reading_count = (existing.reading_count or 0) + 1
+            return existing, False
+
         # Value changed — close out the old row and create a new one
         if existing is not None:
             existing.valid_until = now
