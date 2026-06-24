@@ -965,7 +965,7 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
         from app.tasks.bug_report_github import (
             GITHUB_TOKEN, build_labels, compute_severity,
             create_github_issue, format_issue_body, format_issue_title,
-            add_to_project_board,
+            add_to_project_board, is_owner_email, should_file_individual_issue,
         )
         from app.models.models import BugReport
         from sqlalchemy import update as sa_update
@@ -988,6 +988,26 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
                 logger.info("Bug report #%d has no description and no screenshot — skipping", report_id)
                 return None
 
+            # #885: reporter provenance + routing. Owner reports always file an
+            # individual issue; a non-owner feature-request / product
+            # misunderstanding is taken "with a grain of salt" — NOT filed
+            # individually (it remains in the admin staging archive). Bugs from
+            # anyone are filed and severity-labeled.
+            is_owner = is_owner_email(report.user_email)
+            if not should_file_individual_issue(report.category, is_owner):
+                logger.info(
+                    "Bug report #%d is an external '%s' (non-bug) — skipping "
+                    "individual GitHub issue per #885 routing; kept in staging.",
+                    report_id,
+                    report.category,
+                )
+                return {
+                    "skipped_routing": True,
+                    "report_id": report_id,
+                    "category": report.category,
+                    "reporter": "external",
+                }
+
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
             body = format_issue_body(
@@ -997,7 +1017,7 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
             )
-            labels = build_labels(report.category, severity)
+            labels = build_labels(report.category, severity, is_owner=is_owner)
 
             issue_number, issue_node_id = create_github_issue(title, body, labels)
 

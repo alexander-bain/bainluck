@@ -172,3 +172,44 @@ class TestFormatIssueBody:
     def test_body_contains_report_id(self):
         body = format_issue_body(99, "bug", "ui", None, False)
         assert "report #99" in body
+
+
+class TestReporterProvenanceAndRouting:
+    """#885: provenance labels + grain-of-salt routing."""
+
+    def test_is_owner_email(self, monkeypatch):
+        monkeypatch.setenv("ADMIN_USER_EMAILS", "alex@bainluck.com, owner@x.com")
+        from app.tasks import bug_report_github as g
+        assert g.is_owner_email("alex@bainluck.com") is True
+        assert g.is_owner_email("ALEX@bainluck.com") is True   # case-insensitive
+        assert g.is_owner_email("  owner@x.com ") is True       # trimmed
+        assert g.is_owner_email("rando@gmail.com") is False
+        assert g.is_owner_email(None) is False
+        assert g.is_owner_email("") is False
+
+    def test_is_owner_email_empty_config(self, monkeypatch):
+        monkeypatch.delenv("ADMIN_USER_EMAILS", raising=False)
+        from app.tasks import bug_report_github as g
+        assert g.is_owner_email("anyone@x.com") is False
+
+    def test_build_labels_provenance(self):
+        from app.tasks.bug_report_github import build_labels
+        assert "reporter:owner" in build_labels("ui", "P1", is_owner=True)
+        assert "reporter:external" in build_labels("ui", "P1", is_owner=False)
+        # default is external
+        assert "reporter:external" in build_labels("ui", "P1")
+
+    def test_routing_owner_always_files(self):
+        from app.tasks.bug_report_github import should_file_individual_issue
+        # owner files individual issues regardless of category
+        assert should_file_individual_issue("feature_request", is_owner=True) is True
+        assert should_file_individual_issue("ui", is_owner=True) is True
+
+    def test_routing_external_bug_files_but_feature_request_does_not(self):
+        from app.tasks.bug_report_github import should_file_individual_issue
+        # external bugs are taken seriously -> filed
+        assert should_file_individual_issue("ui", is_owner=False) is True
+        assert should_file_individual_issue("data_quality", is_owner=False) is True
+        assert should_file_individual_issue(None, is_owner=False) is True
+        # external feature-request / product-misunderstanding -> grain of salt
+        assert should_file_individual_issue("feature_request", is_owner=False) is False

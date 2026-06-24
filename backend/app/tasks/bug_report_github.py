@@ -131,7 +131,39 @@ def format_issue_body(
     return "\n".join(lines)
 
 
-def build_labels(category: str | None, severity: str) -> list[str]:
+# #885: reporter provenance. Alex's directive — "clarify whether the shake came
+# from me or anyone else; bugs from anyone serious, but feature requests /
+# product misunderstandings from anyone else taken with a grain of salt."
+def _owner_emails() -> set[str]:
+    raw = os.environ.get("ADMIN_USER_EMAILS", "")
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def is_owner_email(email: str | None) -> bool:
+    """True if the reporter's email is an owner/admin email (ADMIN_USER_EMAILS)."""
+    if not email:
+        return False
+    return email.strip().lower() in _owner_emails()
+
+
+# Categories that are NOT bugs — a feature request / product misunderstanding.
+# From a non-owner these are taken "with a grain of salt": no individual issue.
+_NON_BUG_CATEGORIES = {"feature_request"}
+
+
+def should_file_individual_issue(category: str | None, is_owner: bool) -> bool:
+    """#885 routing policy. Owner → always an individual issue. Non-owner → an
+    individual issue only for BUG categories; a non-owner feature-request /
+    product-misunderstanding is NOT filed individually (it stays in the admin
+    staging archive / a future weekly digest)."""
+    if is_owner:
+        return True
+    return (category or "") not in _NON_BUG_CATEGORIES
+
+
+def build_labels(
+    category: str | None, severity: str, is_owner: bool = False
+) -> list[str]:
     labels = ["bug-report", "needs-agent"]
     area = CATEGORY_TO_AREA.get(category or "")
     if area:
@@ -139,6 +171,8 @@ def build_labels(category: str | None, severity: str) -> list[str]:
     priority = SEVERITY_TO_PRIORITY.get(severity)
     if priority:
         labels.append(priority)
+    # #885: provenance — owner vs external reporter
+    labels.append("reporter:owner" if is_owner else "reporter:external")
     return labels
 
 
