@@ -264,6 +264,7 @@ class TestBeatScheduleCompleteness:
         "snapshot-coverage-metrics-daily",
         "resolve-winners",
         "digest-external-feature-requests-weekly",
+        "compare-ws-shadow",
     }
 
     def test_no_missing_entries(self):

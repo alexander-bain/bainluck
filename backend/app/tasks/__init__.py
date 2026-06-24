@@ -1166,6 +1166,32 @@ def digest_external_feature_requests_task(self):
     return _tracked_run("feature_request_digest", _digest())
 
 
+@celery_app.task(bind=True, name="app.tasks.compare_ws_shadow")
+def compare_ws_shadow_task(self):
+    """#836 Batch 2 (SHADOW): compute the WS-shadow-vs-current is_winner match
+    rate per source and store it in Redis for review (no live watching). Gates
+    the eventual flip to WS-authoritative — flip only when agreement is high."""
+
+    async def _compare():
+        import json as _json
+        from app.tasks.base import get_task_session
+        from app.tasks.redis_state import get_async_redis_client
+        from app.services.ws_shadow import compare_shadow_verdicts, SHADOW_COMPARISON_KEY
+
+        async with get_task_session() as session:
+            report = await compare_shadow_verdicts(session)
+        try:
+            rc = get_async_redis_client()
+            await rc.set(SHADOW_COMPARISON_KEY, _json.dumps(report), ex=14 * 86400)
+            await rc.aclose()
+        except Exception:
+            logger.warning("ws_shadow: failed to store comparison", exc_info=True)
+        logger.info("ws_shadow comparison: %s", report.get("total"))
+        return report
+
+    return _tracked_run("ws_shadow_comparison", _compare())
+
+
 # --- Calibration Prices ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_calibration_prices")
@@ -1653,6 +1679,12 @@ celery_app.conf.beat_schedule = {
     "digest-external-feature-requests-weekly": {
         "task": "app.tasks.digest_external_feature_requests",
         "schedule": crontab(minute=0, hour=14, day_of_week=1),  # Weekly Monday 2:00 PM UTC
+        "options": {"queue": "background"},
+    },
+    # #836 Batch 2 (SHADOW): refresh the WS-shadow-vs-current match rate for review
+    "compare-ws-shadow": {
+        "task": "app.tasks.compare_ws_shadow",
+        "schedule": crontab(minute=20, hour="*/6"),
         "options": {"queue": "background"},
     },
     # March Madness bracket sync — disabled (season over). Re-enable in March.

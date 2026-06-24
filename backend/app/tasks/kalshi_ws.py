@@ -269,3 +269,53 @@ async def _run_kalshi_ws_consumer():
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
     return stats
+
+
+async def _run_kalshi_ws_shadow_consumer():
+    """#836 Batch 2 (SHADOW): widened lifecycle-only grader that records its
+    verdict to Redis (NEVER is_winner). Subscribes to ALL markets' settlement
+    lifecycle (not the price `ticker` firehose) so every Kalshi settlement is
+    graded in real time — into the shadow store, for the automated comparison.
+
+    Runs ONLY when the `bainluck:ws_shadow_enabled` flag is on (deploy-dark).
+    The authoritative `_run_kalshi_ws_consumer` is untouched and keeps owning
+    `is_winner`.
+    """
+    from app.services.kalshi_ws import KalshiWebSocket
+    from app.services.ws_shadow import (
+        is_ws_shadow_enabled, verdict_from_lifecycle, record_shadow_verdict,
+    )
+
+    if not await is_ws_shadow_enabled():
+        return {"status": "shadow_disabled"}
+
+    api_key_id = os.getenv("KALSHI_API_KEY_ID")
+    has_key = os.getenv("KALSHI_RSA_PRIVATE_KEY") or os.getenv("KALSHI_PRIVATE_KEY_PATH")
+    if not api_key_id or not has_key:
+        return {"status": "skipped", "reason": "no_credentials"}
+
+    ws = KalshiWebSocket()
+    stats = {"shadow_verdicts": 0, "errors": 0}
+
+    async def handle_lifecycle_shadow(msg: dict):
+        parsed = verdict_from_lifecycle(msg)
+        if not parsed:
+            return
+        ticker, is_winner = parsed
+        try:
+            # SHADOW ONLY — keyed by the settled ticker's external_id; the
+            # comparison joins FuturesOutcome.external_id == ticker exactly, so
+            # no rsplit / event resolution is needed here.
+            await record_shadow_verdict(ticker, is_winner)
+            stats["shadow_verdicts"] += 1
+        except Exception:
+            stats["errors"] += 1
+
+    ws.on_lifecycle = handle_lifecycle_shadow
+    # lifecycle-only + all markets: settlement trickle, NOT the price ticker firehose
+    try:
+        await ws.run(channels=["market_lifecycle_v2"], subscribe_all=True)
+    except asyncio.CancelledError:
+        pass
+    logger.info("Kalshi WS SHADOW consumer exiting: %s", stats)
+    return stats
