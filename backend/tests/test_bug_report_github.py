@@ -213,3 +213,58 @@ class TestReporterProvenanceAndRouting:
         assert should_file_individual_issue(None, is_owner=False) is True
         # external feature-request / product-misunderstanding -> grain of salt
         assert should_file_individual_issue("feature_request", is_owner=False) is False
+
+
+class TestFingerprintDedupAndDigest:
+    """#975 (#885 follow-up): cross-report fingerprint dedup + weekly digest."""
+
+    def test_same_page_category_diagnosis_same_fingerprint(self):
+        from app.tasks.bug_report_github import compute_fingerprint
+        a = compute_fingerprint(
+            {"current_page": "/discover"}, "ui", "the chart line is broken")
+        b = compute_fingerprint(
+            {"current_page": "/discover"}, "ui", "chart graph axis wrong")  # same root_cause
+        # both map to "Chart rendering issue" on the same page+category
+        assert a == b
+
+    def test_different_diagnosis_different_fingerprint(self):
+        from app.tasks.bug_report_github import compute_fingerprint
+        # same page + category, DIFFERENT diagnosis -> must NOT collapse
+        chart = compute_fingerprint({"current_page": "/x"}, "ui", "chart axis broken")
+        perf = compute_fingerprint({"current_page": "/x"}, "ui", "page is slow to load")
+        assert chart != perf
+
+    def test_different_page_different_fingerprint(self):
+        from app.tasks.bug_report_github import compute_fingerprint
+        a = compute_fingerprint({"current_page": "/a"}, "ui", "chart broken")
+        b = compute_fingerprint({"current_page": "/b"}, "ui", "chart broken")
+        assert a != b
+
+    def test_fingerprint_handles_missing_app_state(self):
+        from app.tasks.bug_report_github import compute_fingerprint
+        # must not throw on None app_state / current_tab fallback
+        assert compute_fingerprint(None, None, None)
+        assert compute_fingerprint({"current_tab": "feed"}, "ui", "x")
+
+    def test_format_digest_body(self):
+        from app.tasks.bug_report_github import format_digest_body
+        body = format_digest_body(
+            [
+                {"id": 1, "page": "/discover", "description": "wish it had dark mode"},
+                {"id": 2, "page": "/sports", "description": "add team filters"},
+            ],
+            "2026-06-24",
+        )
+        assert "#1" in body and "#2" in body
+        assert "2026-06-24" in body
+        assert "2 external" in body or "2 " in body
+
+    def test_dedup_wiring_present(self):
+        """The submit task must compute a fingerprint and comment-on-existing
+        rather than always filing (guards the #975 dedup can't be dropped)."""
+        import inspect
+        import app.tasks as t
+        src = inspect.getsource(t.create_github_issue_for_bug_report_task)
+        assert "compute_fingerprint" in src
+        assert "comment_on_issue" in src
+        assert "deduped_onto" in src

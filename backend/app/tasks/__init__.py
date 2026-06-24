@@ -966,9 +966,11 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
             GITHUB_TOKEN, build_labels, compute_severity,
             create_github_issue, format_issue_body, format_issue_title,
             add_to_project_board, is_owner_email, should_file_individual_issue,
+            compute_fingerprint, comment_on_issue, FRONTEND_URL,
         )
         from app.models.models import BugReport
-        from sqlalchemy import update as sa_update
+        from sqlalchemy import select, update as sa_update
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
 
         if not GITHUB_TOKEN:
             logger.warning("GITHUB_TOKEN not set — skipping issue creation for report #%d", report_id)
@@ -1008,6 +1010,51 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
                     "reporter": "external",
                 }
 
+            # #975: cross-report dedup. If a DIFFERENT report with the same
+            # page+category+diagnosis fingerprint already filed an issue within
+            # the last 7 days, comment on it instead of filing a duplicate (a
+            # recurring bug accretes evidence on one issue, not N). The existing
+            # backlog_ref check only catches the SAME report re-submitted.
+            fp = compute_fingerprint(report.app_state, report.category, report.description)
+            cutoff = _dt.now(_tz.utc) - _td(days=7)
+            recent = await db.execute(
+                select(BugReport)
+                .where(
+                    BugReport.id != report_id,
+                    BugReport.backlog_ref.isnot(None),
+                    BugReport.created_at >= cutoff,
+                )
+                .order_by(BugReport.created_at.desc())
+                .limit(200)
+            )
+            for prior in recent.scalars().all():
+                ref = (prior.backlog_ref or "").lstrip("#")
+                if not ref.isdigit():
+                    continue
+                if compute_fingerprint(prior.app_state, prior.category, prior.description) != fp:
+                    continue
+                try:
+                    comment_on_issue(
+                        int(ref),
+                        f"Recurrence: rage-shake report #{report_id} matches this "
+                        f"issue's fingerprint (same page + category + diagnosis). "
+                        f"[Admin detail]({FRONTEND_URL}/admin/bug-reports)",
+                    )
+                except Exception:
+                    logger.warning(
+                        "dedup comment on %s failed — filing a new issue instead",
+                        prior.backlog_ref, exc_info=True,
+                    )
+                    break  # comment failed → fall through to filing a fresh issue
+                await db.execute(
+                    sa_update(BugReport).where(BugReport.id == report_id).values(backlog_ref=prior.backlog_ref)
+                )
+                logger.info(
+                    "Bug report #%d deduped onto %s (fingerprint %s)",
+                    report_id, prior.backlog_ref, fp,
+                )
+                return {"deduped_onto": prior.backlog_ref, "report_id": report_id, "fingerprint": fp}
+
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
             body = format_issue_body(
@@ -1037,6 +1084,86 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
         return run_async(_create())
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
+
+
+@celery_app.task(bind=True, name="app.tasks.digest_external_feature_requests")
+def digest_external_feature_requests_task(self):
+    """#975: weekly roll-up of external (non-owner) feature-request shakes.
+
+    Per #885 these are NOT filed as individual issues (taken "with a grain of
+    salt") — they sit in the admin staging archive with backlog_ref NULL. This
+    rolls the past week's batch into ONE digest issue so they're reviewable in
+    aggregate, and stamps their backlog_ref to the digest so they aren't
+    re-digested next week (reuses the existing column — no migration).
+    """
+
+    async def _digest():
+        from app.tasks.base import get_task_session
+        from app.tasks.bug_report_github import (
+            GITHUB_TOKEN, create_github_issue, format_digest_body, is_owner_email,
+        )
+        from app.models.models import BugReport
+        from sqlalchemy import select, update as sa_update
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+        if not GITHUB_TOKEN:
+            logger.warning("GITHUB_TOKEN not set — skipping feature-request digest")
+            return {"skipped": "no_token"}
+
+        now = _dt.now(_tz.utc)
+        cutoff = now - _td(days=7)
+        async with get_task_session() as db:
+            result = await db.execute(
+                select(BugReport)
+                .where(
+                    BugReport.category == "feature_request",
+                    BugReport.backlog_ref.is_(None),
+                    BugReport.created_at >= cutoff,
+                )
+                .order_by(BugReport.created_at.desc())
+                .limit(500)
+            )
+            rows = result.scalars().all()
+            # external-only (owner feature-requests are filed individually, but
+            # guard anyway in case provenance changes)
+            external = [r for r in rows if not is_owner_email(r.user_email)]
+            if not external:
+                logger.info("Feature-request digest: nothing external this week")
+                return {"digested": 0}
+
+            reports = [
+                {
+                    "id": r.id,
+                    "page": (r.app_state or {}).get("current_page")
+                    or (r.app_state or {}).get("current_tab")
+                    or "?",
+                    "description": r.description,
+                    "user_email": r.user_email,
+                }
+                for r in external
+            ]
+            week_label = now.strftime("%Y-%m-%d")
+            body = format_digest_body(reports, week_label)
+            title = f"Weekly external feature-request digest — {week_label} ({len(reports)})"
+            issue_number, _ = create_github_issue(
+                title, body, ["alert-intake", "type:feature", "reporter:external"]
+            )
+
+            # stamp each report's backlog_ref to the digest so it is not
+            # re-digested next week (no schema migration; reuses the column)
+            ids = [r.id for r in external]
+            await db.execute(
+                sa_update(BugReport)
+                .where(BugReport.id.in_(ids))
+                .values(backlog_ref=f"#{issue_number}")
+            )
+            logger.info(
+                "Feature-request digest: rolled %d external reports into issue #%d",
+                len(ids), issue_number,
+            )
+            return {"digested": len(ids), "issue_number": issue_number}
+
+    return _tracked_run("feature_request_digest", _digest())
 
 
 # --- Calibration Prices ---
@@ -1521,6 +1648,12 @@ celery_app.conf.beat_schedule = {
     "sync-statpal-team-stats-weekly": {
         "task": "app.tasks.sync_statpal_team_stats",
         "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Weekly Monday 9:00 AM UTC
+    },
+    # #975: weekly roll-up of external feature-request shakes into one digest issue
+    "digest-external-feature-requests-weekly": {
+        "task": "app.tasks.digest_external_feature_requests",
+        "schedule": crontab(minute=0, hour=14, day_of_week=1),  # Weekly Monday 2:00 PM UTC
+        "options": {"queue": "background"},
     },
     # March Madness bracket sync — disabled (season over). Re-enable in March.
     # "sync-mm-bracket": {

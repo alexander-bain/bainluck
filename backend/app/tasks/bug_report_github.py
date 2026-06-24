@@ -176,6 +176,65 @@ def build_labels(
     return labels
 
 
+# #975 (#885 follow-up): cross-report dedup. A stable fingerprint of
+# page + category + estimated diagnosis. Two DIFFERENT reports of the SAME
+# underlying problem share a fingerprint, so the second accretes evidence on the
+# first's issue instead of filing a duplicate. The diagnosis (compute_root_cause)
+# is included so two unrelated bugs on the same page+category do NOT false-collapse.
+def compute_fingerprint(
+    app_state: dict | None, category: str | None, description: str | None
+) -> str:
+    import hashlib
+
+    state = app_state or {}
+    page = (state.get("current_page") or state.get("current_tab") or "").strip().lower()
+    cat = (category or "other").strip().lower()
+    diagnosis = compute_root_cause(description).strip().lower()
+    raw = f"{page}|{cat}|{diagnosis}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def comment_on_issue(issue_number: int, body: str) -> None:
+    """Append a comment to an existing GitHub issue (recurrence dedup)."""
+    resp = httpx.post(
+        f"https://api.github.com/repos/{REPO}/issues/{issue_number}/comments",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"body": body},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
+def format_digest_body(reports: list[dict], week_label: str) -> str:
+    """#975: roll up the past week's external feature-requests into one issue.
+
+    `reports` is a list of dicts with keys: id, page, description, user_email.
+    """
+    lines = [
+        f"## External feature-requests — week of {week_label}",
+        "",
+        f"{len(reports)} external (non-owner) feature-request / product-feedback "
+        "shake(s) this week. These are NOT individually filed (taken with a grain "
+        "of salt per #885); reviewed in aggregate here.",
+        "",
+        "| Report | Page | Summary |",
+        "|--------|------|---------|",
+    ]
+    for r in reports:
+        desc = (r.get("description") or "(no description)").replace("\n", " ").strip()
+        if len(desc) > 100:
+            desc = desc[:97] + "..."
+        page = r.get("page") or "?"
+        lines.append(f"| #{r['id']} | {page} | {desc} |")
+    lines.append("")
+    lines.append("*Auto-generated weekly digest (rage-shake v2, #885/#975).*")
+    return "\n".join(lines)
+
+
 def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, str]:
     resp = httpx.post(
         f"https://api.github.com/repos/{REPO}/issues",

@@ -263,6 +263,7 @@ class TestBeatScheduleCompleteness:
         "backfill-polymarket-winners",
         "snapshot-coverage-metrics-daily",
         "resolve-winners",
+        "digest-external-feature-requests-weekly",
     }
 
     def test_no_missing_entries(self):
