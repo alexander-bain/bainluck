@@ -658,9 +658,23 @@ def enrich_market_images(self, limit: int = 50):
     return _tracked_run("enrich_images", _enrich(limit))
 
 
-@celery_app.task(bind=True, name="app.tasks.enrich_market_hooks")
+@celery_app.task(
+    bind=True,
+    name="app.tasks.enrich_market_hooks",
+    soft_time_limit=600,
+    time_limit=660,
+)
 def enrich_market_hooks(self, limit: int = 50):
-    """Generate LLM hook descriptions for markets missing hook_description."""
+    """Generate LLM hook descriptions for markets missing hook_description.
+
+    #967 (same class as #966): this makes up to `limit` sequential OpenAI calls,
+    so the batch can exceed the GLOBAL 300s ``task_time_limit`` (a HARD limit →
+    SIGKILL, which is NOT a catchable exception → ``_tracked_run`` records
+    neither success nor failure → silent ``no_data``). Mirror the working
+    ``enrich_cu_v2_profiles``: a 600s SOFT limit raises a catchable
+    SoftTimeLimitExceeded (overruns are recorded + free the slot) under a 660s
+    hard limit that gives the batch room to finish.
+    """
     from app.tasks.enrich_markets import enrich_market_hooks as _enrich
     return _tracked_run("enrich_hooks", _enrich(limit))
 

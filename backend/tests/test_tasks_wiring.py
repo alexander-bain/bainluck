@@ -33,23 +33,29 @@ class TestBeatScheduleWiring:
                 f"'{task_name}' — must start with 'app.tasks.'"
             )
 
-    def test_llm_batch_task_has_soft_time_limit(self):
-        """#966: enrich_discover_llm_metadata makes up to `limit` sequential
-        OpenAI calls and routinely exceeds the global 300s HARD task_time_limit.
-        A hard-limit overrun is a SIGKILL — NOT a catchable exception — so
-        _tracked_run records neither success nor failure (the task sat at
-        no_data for ~40h). It MUST carry a SOFT limit (which raises a catchable
-        SoftTimeLimitExceeded) so overruns surface as failures and free the
-        worker slot. Guard it can't silently regress to the bare global limit.
+    def test_llm_batch_tasks_have_soft_time_limit(self):
+        """#966/#967: tasks that make a batch of sequential OpenAI calls routinely
+        exceed the global 300s HARD task_time_limit. A hard-limit overrun is a
+        SIGKILL — NOT a catchable exception — so _tracked_run records neither
+        success nor failure (the task sits at no_data indefinitely). Each MUST
+        carry a SOFT limit (which raises a catchable SoftTimeLimitExceeded) so
+        overruns surface as failures and free the worker slot. Guard the whole
+        class so it can't silently regress to the bare global limit.
         """
-        task = celery_app.tasks["app.tasks.enrich_discover_llm_metadata"]
-        assert task.soft_time_limit is not None, (
-            "enrich_discover_llm_metadata has no soft_time_limit — a >300s LLM "
-            "batch will be SIGKILLed (untracked no_data), not recorded as a failure"
-        )
-        assert task.time_limit is not None and task.time_limit > task.soft_time_limit
-        # must clear the global 300s hard limit so the batch has room to finish
-        assert task.soft_time_limit >= 300
+        llm_batch_tasks = [
+            "app.tasks.enrich_discover_llm_metadata",  # #966
+            "app.tasks.enrich_market_hooks",           # #967
+            "app.tasks.enrich_cu_v2_profiles",         # the original working sibling
+        ]
+        for name in llm_batch_tasks:
+            task = celery_app.tasks[name]
+            assert task.soft_time_limit is not None, (
+                f"{name} has no soft_time_limit — a >300s LLM batch will be "
+                f"SIGKILLed (untracked no_data), not recorded as a failure"
+            )
+            assert task.time_limit is not None and task.time_limit > task.soft_time_limit, name
+            # must clear the global 300s hard limit so the batch has room to finish
+            assert task.soft_time_limit >= 300, name
 
 
 class TestModuleImports:
