@@ -82,22 +82,60 @@ def _issue_url(issue_number: int) -> str:
     return f"https://github.com/{REPO}/issues/{issue_number}"
 
 
-def _project_item_id(issue_number: int) -> str:
-    items = _gh_json(
-        ["project", "item-list", PROJECT_NUMBER, "--owner", OWNER, "--limit", "200"]
-    ).get("items", [])
-    item = next((i for i in items if i.get("content", {}).get("number") == issue_number), None)
-    if item:
-        return item["id"]
+def _graphql_project_item_id(issue_number: int) -> str | None:
+    """Resolve the Project item id from the ISSUE side via GraphQL.
 
+    Querying `issue.projectItems` returns only the handful of project items for
+    THIS issue, so it works no matter how many items are on the board. The old
+    approach (`gh project item-list --limit 200`) silently missed any issue past
+    the 200-item cap — and the board now has 400+ items — so freshly-created
+    issues' cards never moved.
+    """
+    owner, repo = REPO.split("/", 1)
+    query = (
+        "query($owner:String!,$repo:String!,$number:Int!){"
+        "repository(owner:$owner,name:$repo){issue(number:$number){"
+        "projectItems(first:20){nodes{id project{number}}}}}}"
+    )
+    output = _run(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"repo={repo}",
+            "-F",
+            f"number={issue_number}",
+        ],
+        capture=True,
+    )
+    # NOTE: dict.get(k, {}) still returns None when the key exists with a null
+    # value (e.g. issue not found → "issue": null), so guard each hop with `or {}`.
+    payload = json.loads(output) or {}
+    repository = (payload.get("data") or {}).get("repository") or {}
+    issue = repository.get("issue") or {}
+    nodes = (issue.get("projectItems") or {}).get("nodes") or []
+    for node in nodes:
+        if str((node.get("project") or {}).get("number")) == PROJECT_NUMBER:
+            return node["id"]
+    return None
+
+
+def _project_item_id(issue_number: int) -> str:
+    item_id = _graphql_project_item_id(issue_number)
+    if item_id:
+        return item_id
+
+    # Not on the board yet — add it, then re-resolve from the issue side.
     _run(["gh", "project", "item-add", PROJECT_NUMBER, "--owner", OWNER, "--url", _issue_url(issue_number)])
-    items = _gh_json(
-        ["project", "item-list", PROJECT_NUMBER, "--owner", OWNER, "--limit", "200"]
-    ).get("items", [])
-    item = next((i for i in items if i.get("content", {}).get("number") == issue_number), None)
-    if not item:
+    item_id = _graphql_project_item_id(issue_number)
+    if not item_id:
         raise SystemExit(f"Added issue #{issue_number}, but could not find its project item")
-    return item["id"]
+    return item_id
 
 
 def _edit_labels(issue_number: int, *, add: list[str], remove: list[str]) -> None:
