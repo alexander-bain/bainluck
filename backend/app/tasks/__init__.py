@@ -665,9 +665,25 @@ def enrich_market_hooks(self, limit: int = 50):
     return _tracked_run("enrich_hooks", _enrich(limit))
 
 
-@celery_app.task(bind=True, name="app.tasks.enrich_discover_llm_metadata")
+@celery_app.task(
+    bind=True,
+    name="app.tasks.enrich_discover_llm_metadata",
+    soft_time_limit=600,
+    time_limit=660,
+)
 def enrich_discover_llm_metadata(self, limit: int = 100):
-    """Generate cached structured LLM metadata for Discover candidates."""
+    """Generate cached structured LLM metadata for Discover candidates.
+
+    #966: this task makes up to `limit` sequential OpenAI calls (30s client
+    timeout each), so the batch routinely exceeds the GLOBAL 300s
+    ``task_time_limit`` (a HARD limit → Celery SIGKILLs the worker child).
+    SIGKILL is not a catchable Python exception, so ``_tracked_run`` recorded
+    neither success nor failure and the task sat at ``no_data`` for ~40h while
+    the enrichment backlog froze. Mirror the working sibling
+    ``enrich_cu_v2_profiles``: a 600s SOFT limit raises a catchable
+    SoftTimeLimitExceeded (an overrun is recorded as a failure and frees the
+    worker slot) under a 660s hard limit that gives the LLM batch room to finish.
+    """
     from app.tasks.enrich_markets import enrich_discover_llm_metadata as _enrich
     return _tracked_run("enrich_discover_llm", _enrich(limit))
 
