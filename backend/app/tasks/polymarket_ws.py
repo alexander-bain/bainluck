@@ -292,3 +292,53 @@ async def _run_polymarket_ws_consumer():
 
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
+
+
+async def _run_polymarket_ws_shadow_consumer():
+    """#837 fast-follow (SHADOW): widened resolution-only grader that records
+    its verdict to Redis (NEVER is_winner). Subscribes to ALL markets'
+    resolution pushes (not the price firehose) so every Polymarket settlement
+    is graded in real time — into the shadow store, for the automated
+    source-agnostic comparison (`compare_shadow_verdicts`).
+
+    Runs ONLY when the `bainluck:ws_shadow_enabled` flag is on (deploy-dark).
+    The authoritative `_run_polymarket_ws_consumer` is untouched and keeps
+    owning `is_winner`.
+    """
+    from app.services.polymarket_ws import PolymarketWebSocket
+    from app.services.ws_shadow import (
+        is_ws_shadow_enabled,
+        verdict_from_polymarket_resolved,
+        record_shadow_verdict,
+    )
+
+    if not await is_ws_shadow_enabled():
+        return {"status": "shadow_disabled"}
+
+    ws = PolymarketWebSocket()
+    stats = {"shadow_verdicts": 0, "errors": 0}
+
+    async def handle_resolved_shadow(msg: dict):
+        parsed = verdict_from_polymarket_resolved(msg)
+        if not parsed:
+            return
+        # SHADOW ONLY — record BOTH outcome verdicts, keyed by each outcome's
+        # external_id ({condition_id}_yes / {condition_id}_no). The comparison
+        # joins FuturesOutcome.external_id == key exactly, source-agnostic.
+        for ext_id, is_winner in parsed:
+            try:
+                await record_shadow_verdict(ext_id, is_winner)
+                stats["shadow_verdicts"] += 1
+            except Exception:
+                stats["errors"] += 1
+
+    ws.on_resolved = handle_resolved_shadow
+    # resolution-only + all markets: NO asset_ids -> subscribe to all; the
+    # service only dispatches market_resolved here (on_price/on_trade unset),
+    # so this is the settlement trickle, NOT the price firehose.
+    try:
+        await ws.run()
+    except asyncio.CancelledError:
+        pass
+    logger.info("Polymarket WS SHADOW consumer exiting: %s", stats)
+    return stats

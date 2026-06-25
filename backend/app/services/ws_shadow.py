@@ -64,6 +64,35 @@ def verdict_from_lifecycle(msg: dict) -> tuple[str, bool] | None:
     return ticker, (result == "yes")
 
 
+def verdict_from_polymarket_resolved(msg: dict) -> list[tuple[str, bool]] | None:
+    """Pure: parse a Polymarket `market_resolved` message into per-outcome
+    (external_id, is_winner) verdicts.
+
+    Polymarket outcomes store `external_id` = `{condition_id}_yes` /
+    `{condition_id}_no` (see the authoritative consumer's `condition_to_ids`
+    lookup). A resolved push carries the condition id under `market` and the
+    winning side under `winning_outcome` ("yes"/"no"). This mirrors
+    `_run_polymarket_ws_consumer.handle_resolved`'s winning logic: the side
+    matching `winning_outcome` is the winner, the opposite side is the loser.
+
+    Returns a list of BOTH per-outcome verdicts so the shadow store can be
+    keyed by each outcome's external_id (which is what `compare_shadow_verdicts`
+    joins on). Returns None for non-terminal / ambiguous messages. NEVER
+    touches the DB.
+    """
+    if not isinstance(msg, dict):
+        return None
+    condition_id = msg.get("market") or msg.get("condition_id") or ""
+    winning = str(msg.get("winning_outcome") or "").strip().lower()
+    if not condition_id or winning not in ("yes", "no"):
+        return None
+    yes_wins = winning == "yes"
+    return [
+        (f"{condition_id}_yes", yes_wins),
+        (f"{condition_id}_no", not yes_wins),
+    ]
+
+
 async def record_shadow_verdict(ticker: str, is_winner: bool) -> None:
     """Write the shadow verdict to Redis (NEVER the real is_winner)."""
     from app.tasks.redis_state import get_async_redis_client

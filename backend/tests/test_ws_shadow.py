@@ -106,3 +106,49 @@ async def test_shadow_consumer_is_deploy_dark_when_flag_off():
     with patch("app.services.ws_shadow.is_ws_shadow_enabled", AsyncMock(return_value=False)):
         result = await kalshi_ws._run_kalshi_ws_shadow_consumer()
     assert result == {"status": "shadow_disabled"}
+
+
+# ---- Polymarket shadow (#837 fast-follow) ----
+
+def test_pm_verdict_yes_wins():
+    """winning_outcome=yes → {cond}_yes True, {cond}_no False."""
+    msg = {"event_type": "market_resolved", "market": "0xabc", "winning_outcome": "yes"}
+    assert sh.verdict_from_polymarket_resolved(msg) == [("0xabc_yes", True), ("0xabc_no", False)]
+
+def test_pm_verdict_no_wins():
+    """winning_outcome=no → {cond}_yes False, {cond}_no True."""
+    msg = {"event_type": "market_resolved", "market": "0xabc", "winning_outcome": "NO"}
+    assert sh.verdict_from_polymarket_resolved(msg) == [("0xabc_yes", False), ("0xabc_no", True)]
+
+def test_pm_verdict_missing_market_is_none():
+    assert sh.verdict_from_polymarket_resolved({"winning_outcome": "yes"}) is None
+
+def test_pm_verdict_missing_or_bad_winner_is_none():
+    assert sh.verdict_from_polymarket_resolved({"market": "0xabc"}) is None
+    assert sh.verdict_from_polymarket_resolved({"market": "0xabc", "winning_outcome": "void"}) is None
+
+def test_pm_verdict_bad_input_is_none():
+    assert sh.verdict_from_polymarket_resolved(None) is None
+    assert sh.verdict_from_polymarket_resolved("nope") is None
+
+
+async def test_pm_shadow_consumer_is_deploy_dark_when_flag_off():
+    """The Polymarket shadow consumer must NOT connect when the flag is off."""
+    from app.tasks import polymarket_ws
+    with patch("app.services.ws_shadow.is_ws_shadow_enabled", AsyncMock(return_value=False)):
+        result = await polymarket_ws._run_polymarket_ws_shadow_consumer()
+    assert result == {"status": "shadow_disabled"}
+
+
+async def test_pm_record_writes_redis_both_outcomes_not_is_winner():
+    """A Polymarket resolved verdict records BOTH outcome external_ids to Redis,
+    keyed by {condition_id}_yes/_no, and never touches is_winner (no DB access)."""
+    rc = _fake_async_redis()
+    parsed = sh.verdict_from_polymarket_resolved(
+        {"market": "0xdead", "winning_outcome": "yes"}
+    )
+    with patch("app.tasks.redis_state.get_async_redis_client", return_value=rc):
+        for ext_id, is_winner in parsed:
+            await sh.record_shadow_verdict(ext_id, is_winner)
+    calls = {c.args[1]: c.args[2] for c in rc.hset.await_args_list}
+    assert calls == {"0xdead_yes": "1", "0xdead_no": "0"}

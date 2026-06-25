@@ -72,12 +72,31 @@ async def run_kalshi_shadow():
         await asyncio.sleep(30)
 
 
+async def run_polymarket_shadow():
+    """#837 fast-follow (SHADOW): widened resolution-only grader, Redis-shadow
+    only. Deploy-dark — does nothing until `bainluck:ws_shadow_enabled` is
+    turned on; never writes is_winner (records verdicts to Redis for the
+    source-agnostic comparison)."""
+    from app.tasks.polymarket_ws import _run_polymarket_ws_shadow_consumer
+
+    while True:
+        try:
+            result = await _run_polymarket_ws_shadow_consumer()
+            if result and result.get("status") in ("shadow_disabled", "skipped"):
+                await asyncio.sleep(300)  # flag off — re-check in 5m
+                continue
+        except Exception as e:
+            logger.exception("Polymarket WS SHADOW crashed: %s", e)
+        await asyncio.sleep(30)
+
+
 async def main():
     logger.info("Starting WebSocket consumers (Kalshi + Polymarket + shadow)")
     await asyncio.gather(
         run_kalshi(),
         run_polymarket(),
         run_kalshi_shadow(),
+        run_polymarket_shadow(),
     )
 
 
