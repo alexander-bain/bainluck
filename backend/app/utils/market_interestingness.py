@@ -75,6 +75,10 @@ class MarketInterestingnessInputs:
     # TMDB. Set ONLY for entertainment markets that match the trending set; a
     # bounded additive bonus (see TRENDING_BONUS) — nudges, never dominates.
     trending: bool = False
+    # #882 slice 3: market's subject (artist/track/album) is on the music charts.
+    # Shares the SAME single bounded bonus as `trending` (cultural-hotness — they
+    # never stack), so a market that's both trending AND charting still gets +6.
+    charting: bool = False
 
     @classmethod
     def from_mapping(cls, row: dict[str, Any]) -> "MarketInterestingnessInputs":
@@ -123,6 +127,7 @@ class MarketInterestingnessInputs:
                 "explanation_quality",
             ),
             trending=bool(_first_present(row, "trending", "tmdb_trending") or False),
+            charting=bool(_first_present(row, "charting", "music_charting") or False),
         )
 
 
@@ -179,10 +184,15 @@ def score_market_interestingness(
     # normalization + capped, so it never dominates and leaves non-trending
     # scores identical to before.
     reasons = _build_reasons(signals)
-    if inputs.trending:
+    if inputs.trending or inputs.charting:
+        # Single bounded cultural-hotness bonus — trending (TMDB) and charting
+        # (music) never stack, so the boost is capped at TRENDING_BONUS.
         normalized_score += TRENDING_BONUS
-        components = {**components, "trending": TRENDING_BONUS}
-        reasons = [*reasons, "trending_on_tmdb"]
+        components = {**components, "cultural_hotness": TRENDING_BONUS}
+        if inputs.trending:
+            reasons = [*reasons, "trending_on_tmdb"]
+        if inputs.charting:
+            reasons = [*reasons, "charting_music"]
 
     return MarketInterestingnessScore(
         score=round(_clamp(normalized_score, 0.0, 100.0), 2),

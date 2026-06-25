@@ -34,6 +34,7 @@ async def _precompute_interestingness() -> dict:
     from app.tasks.enrich_tmdb import (
         _extract_quoted_title,
         _fetch_tmdb_trending,
+        _fetch_music_charts,
         _normalize_title,
     )
 
@@ -57,6 +58,20 @@ async def _precompute_interestingness() -> dict:
     except Exception:
         logger.warning("TMDB trending load failed — interestingness runs without it", exc_info=True)
         trending_titles = set()
+
+    # #882 slice 3: load the music-charts title set (cached 12h; same pattern).
+    charting_titles: set[str] = set()
+    try:
+        cached_m = r.get("music:charting_titles")
+        if cached_m:
+            charting_titles = set(json.loads(cached_m))
+        else:
+            charting_titles = await _fetch_music_charts()
+            if charting_titles:
+                r.setex("music:charting_titles", 43200, json.dumps(sorted(charting_titles)))
+    except Exception:
+        logger.warning("Music charts load failed — interestingness runs without it", exc_info=True)
+        charting_titles = set()
 
     async with get_task_session() as session:
         # Query all feed-eligible markets: open, not event-linked, not past resolution
@@ -145,15 +160,26 @@ async def _precompute_interestingness() -> dict:
             # Reliable signals: a quoted subject title, OR a trending title (>=5
             # chars) appearing in the normalized market name.
             is_trending = False
-            if trending_titles and market.llm_sport_category == "entertainment":
+            is_charting = False
+            if market.llm_sport_category == "entertainment" and (
+                trending_titles or charting_titles
+            ):
                 quoted = _normalize_title(_extract_quoted_title(market.name))
-                if quoted and quoted in trending_titles:
-                    is_trending = True
-                else:
-                    norm_name = _normalize_title(market.name)
-                    is_trending = any(
-                        len(t) >= 5 and t in norm_name for t in trending_titles
-                    )
+                norm_name = _normalize_title(market.name)
+                if trending_titles:
+                    if quoted and quoted in trending_titles:
+                        is_trending = True
+                    else:
+                        is_trending = any(
+                            len(t) >= 5 and t in norm_name for t in trending_titles
+                        )
+                if charting_titles:
+                    if quoted and quoted in charting_titles:
+                        is_charting = True
+                    else:
+                        is_charting = any(
+                            len(t) >= 5 and t in norm_name for t in charting_titles
+                        )
 
             inputs = MarketInterestingnessInputs(
                 probability=leader_prob,
@@ -169,6 +195,7 @@ async def _precompute_interestingness() -> dict:
                 ),
                 llm_quality=llm_quality,
                 trending=is_trending,
+                charting=is_charting,
             )
             result = score_market_interestingness(inputs, now=now)
 

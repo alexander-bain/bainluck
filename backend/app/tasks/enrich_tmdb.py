@@ -139,6 +139,33 @@ async def _fetch_tmdb_trending() -> set[str]:
     return titles
 
 
+# #882 slice 3: Apple/iTunes "most-played" RSS — key-free music charts. The
+# legacy rss.applemarketingtools.com host 301-redirects to this one; httpx does
+# not auto-follow, so hit the final host directly.
+_MUSIC_CHARTS_BASE = "https://rss.marketingtools.apple.com/api/v2/us/music/most-played"
+
+
+async def _fetch_music_charts() -> set[str]:
+    """Return normalized currently-charting music titles (track + album names and
+    artist names) from Apple's free RSS. Empty set on any failure — a no-op."""
+    titles: set[str] = set()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            for kind in ("songs", "albums"):
+                resp = await client.get(f"{_MUSIC_CHARTS_BASE}/50/{kind}.json")
+                if resp.status_code != 200:
+                    continue
+                for r in resp.json().get("feed", {}).get("results", []):
+                    for raw in (r.get("name"), r.get("artistName")):
+                        norm = _normalize_title(raw)
+                        if len(norm) >= 4:  # skip ultra-short/ambiguous
+                            titles.add(norm)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Apple music charts fetch error: %s", e)
+        return set()
+    return titles
+
+
 async def enrich_tmdb_images(limit: int = 50):
     """Enrich quoted-title entertainment markets with real TMDB artwork."""
     from app.models.models import FuturesMarket

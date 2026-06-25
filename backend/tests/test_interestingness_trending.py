@@ -34,13 +34,24 @@ class TestTrendingBoost:
         # The base (8-signal) score must be identical whether or not the trending
         # FIELD exists — no global renormalization regression.
         s = score_market_interestingness(_inputs(trending=False))
-        assert "trending" not in s.components
+        assert "cultural_hotness" not in s.components
         assert "trending_on_tmdb" not in s.reasons
 
     def test_trending_reason_and_component_present_when_boosted(self):
         s = score_market_interestingness(_inputs(trending=True))
         assert "trending_on_tmdb" in s.reasons
-        assert s.components.get("trending") == TRENDING_BONUS
+        assert s.components.get("cultural_hotness") == TRENDING_BONUS
+
+    def test_charting_boost_does_not_stack_with_trending(self):
+        # #882 slice 3: charting shares the single bounded bonus; trending+charting
+        # still = TRENDING_BONUS (no stacking).
+        base = score_market_interestingness(_inputs(trending=False, charting=False)).score
+        chart = score_market_interestingness(_inputs(charting=True)).score
+        both = score_market_interestingness(_inputs(trending=True, charting=True)).score
+        assert chart - base <= TRENDING_BONUS + 0.01
+        assert both - base <= TRENDING_BONUS + 0.01  # capped, no stacking
+        s = score_market_interestingness(_inputs(charting=True))
+        assert "charting_music" in s.reasons
 
     def test_boost_capped_at_100(self):
         # A near-max market + trending stays <= 100.
