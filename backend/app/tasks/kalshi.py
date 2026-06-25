@@ -1846,13 +1846,18 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 import time as _time
 
                 _start_time = _time.monotonic()
-                # #107: lowered 720 -> 600 for a wider margin under the 900s soft
-                # limit. #969 added a per-page budget check but kalshi_settled
-                # still busted 900s (a single page's API/SQL op overran the 180s
-                # margin); 300s margin gives that op room to finish below the wall.
-                # Drains a little less per cycle but COMPLETES reliably (the task
-                # was in a ~5.8-day SoftTimeLimit outage, doing nothing).
-                _MAX_SECONDS = 600
+                # Budget under the 900s soft limit. History: 720 (#107) -> 600
+                # (#969 inner page-loop guard) -> 420. The #969-Queue109 trigger
+                # test PROVED the deadline-bounded fetch keeps the task under the
+                # wall (885s, success, no SoftTimeLimit — outage broken), but the
+                # 600s budget left only a ~15s margin: a catch-up run does ~61
+                # sequential Kalshi fetches whose accumulated latency overran the
+                # guard by ~285s before the loops broke. The deadline bounds each
+                # fetch's RETRY span, but the per-page work past the guard isn't
+                # individually bounded, so widen the margin to absorb it (420 +
+                # ~285 overhang ~= 705s, ~195s under the wall). Drains a little
+                # less per cycle; the per-series cursor resumes next run.
+                _MAX_SECONDS = 420
 
                 from app.tasks.redis_state import get_redis_client
 
