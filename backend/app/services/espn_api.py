@@ -543,6 +543,16 @@ class ESPNAPIService:
         if not competitions:
             return {}
         result: dict = {}
+        # #980/#981: expose whether ESPN considers the game FINAL. A
+        # prematurely-"completed" event (commence +1day bug #981) can still be
+        # in-progress on ESPN; without this, a mid-game score gets written as a
+        # final and corrupts calibration. state == "post" / completed == True.
+        _stype = (competitions[0].get("status", {}) or {}).get("type", {}) or {}
+        result["is_final"] = bool(
+            _stype.get("completed") is True
+            or _stype.get("state") == "post"
+            or _stype.get("name") == "STATUS_FINAL"
+        )
         for comp in competitions[0].get("competitors", []):
             raw = comp.get("score")
             try:

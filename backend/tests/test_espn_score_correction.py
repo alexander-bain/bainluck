@@ -35,3 +35,12 @@ class TestCorrectedFinalScore:
 
     def test_no_espn_data_is_noop(self):
         assert _corrected_final_score(0, 0, None, None) is None
+
+    def test_not_final_is_not_corrected(self):
+        # #980/#981: a prematurely-"completed" event still in-progress on ESPN
+        # must NOT have its mid-game score written as a final.
+        assert _corrected_final_score(0, 0, 0, 2, espn_is_final=False) is None
+        assert _corrected_final_score(0, 0, 4, 9, espn_is_final=False) is None
+
+    def test_final_flag_allows_correction(self):
+        assert _corrected_final_score(0, 0, 4, 9, espn_is_final=True) == (4, 9)

@@ -832,7 +832,7 @@ async def _cleanup_bad_espn_matches():
     return stats
 
 
-def _corrected_final_score(our_home, our_away, espn_home, espn_away):
+def _corrected_final_score(our_home, our_away, espn_home, espn_away, espn_is_final=True):
     """Decide the score to write from an ESPN summary, or None to leave as-is.
 
     Fixes the OPS-137 / #805-adjacent bug where a finished game is stuck at a 0-0
@@ -848,6 +848,12 @@ def _corrected_final_score(our_home, our_away, espn_home, espn_away):
     This only corrects the score; is_winner is left to the resolver, which grades
     off the corrected value on its own cadence.
     """
+    # #980/#981: only correct from a CONFIRMED-FINAL ESPN game. A prematurely-
+    # "completed" event (status bug) can be mid-game on ESPN; writing that
+    # in-progress score as a final corrupts the score (and calibration). When
+    # ESPN's final status is unknown, do NOT write (conservative).
+    if not espn_is_final:
+        return None
     if espn_home is None:
         return None
     espn_total = (espn_home or 0) + (espn_away or 0)
@@ -1000,6 +1006,7 @@ async def _backfill_box_scores(
                             event.away_score,
                             scores.get("home_score"),
                             scores.get("away_score"),
+                            espn_is_final=bool(scores.get("is_final")),
                         )
                         if _fix is not None:
                             event.home_score, event.away_score = _fix
