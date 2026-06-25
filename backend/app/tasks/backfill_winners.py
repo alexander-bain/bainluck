@@ -3755,7 +3755,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     service = PolymarketAPIService()
     try:
         # --- Phase A: Condition-ID lookups (concurrent) ---
-        sem = asyncio.Semaphore(10)
+        # #985: low concurrency — re-fetching the (now un-skipped) backlog at
+        # semaphore-10 saturated Gamma's rate limit (a verify run hit 6000/6000
+        # 429). Throttle to a gentle, sustainable rate so fetches succeed.
+        sem = asyncio.Semaphore(3)
 
         async def _fetch_market(cid):
             # #985: returns (cid, data_or_None, definitive). definitive=True means
@@ -3768,7 +3771,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                         return cid, await service.get_market_by_condition(str(cid)), True
                     except Exception as e:
                         if "429" in str(e) or "rate" in str(e).lower():
-                            await asyncio.sleep(min(2 * (_attempt + 1), 6))  # bounded backoff
+                            await asyncio.sleep(min(5 * (_attempt + 1), 20))  # #985: harder backoff
                             continue
                         return cid, None, False  # non-429 transient — not definitive
                 return cid, None, False  # 429-exhausted — not definitive, retry next run
@@ -3783,6 +3786,19 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
             results = await asyncio.gather(
                 *[_fetch_market(r.external_id) for r in batch]
             )
+            # #985 circuit-breaker: if Gamma is throttling us (most of the batch
+            # 429'd), STOP the run — these are not dead, they retry next run.
+            # Prevents the 6000/6000 rate_limited burn that makes zero progress
+            # and only deepens the throttle. The drain resumes (cursor) next run.
+            _batch_rl = sum(1 for _c, _md, _df in results if _md is None and not _df)
+            if results and _batch_rl >= 0.8 * len(results):
+                stats["rate_limited"] = stats.get("rate_limited", 0) + _batch_rl
+                stats["throttled_stop"] = True
+                logger.warning(
+                    "Polymarket resolver: Gamma throttling (%d/%d 429 in batch) — "
+                    "stopping run early; resumes next run", _batch_rl, len(results),
+                )
+                break
 
             async with get_task_session() as session:
                 for cid, market_data, definitive in results:

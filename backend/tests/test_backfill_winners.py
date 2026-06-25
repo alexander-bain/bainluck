@@ -2010,3 +2010,16 @@ def test_poly_resolver_dead_cid_429_classification():
     # one-time purge of the 429-polluted dead set
     assert "bainluck:poly_dead_purged_v2" in src
     assert "_rc.delete(_dead_key)" in src
+
+
+def test_poly_resolver_rate_limit_aware():
+    """#985: the bulk re-fetch must respect Gamma's rate limit — re-fetching the
+    un-skipped backlog at high concurrency saturated it (a verify run hit 6000/6000
+    429, 0 winners). Low concurrency + a circuit-breaker that stops the run when a
+    batch is mostly throttled (not dead — retried next run)."""
+    import inspect
+    from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
+    src = inspect.getsource(_backfill_polymarket_winners_from_api)
+    assert "asyncio.Semaphore(3)" in src                 # low concurrency
+    assert "throttled_stop" in src                       # circuit-breaker flag
+    assert "_batch_rl >= 0.8 * len(results)" in src      # breaker condition
