@@ -555,3 +555,119 @@ def _extract_away_team(summary_context: str) -> str:
         if line.startswith("Matchup: ") and " at " in line:
             return line.removeprefix("Matchup: ").split(" at ", 1)[0].strip()
     return "away team"
+
+
+# ---------------------------------------------------------------------------
+# #871: explainability-gated move attribution (Alex MC 2026-06-25)
+#
+# v1 rendered an unconditional LLM "why did the line move?" dump — Alex's
+# "jumbled vomit of obvious statements." His rule: a move-card surfaces ONLY
+# when our EXPLANATION CONFIDENCE is high — INDEPENDENT of move magnitude. A
+# small, well-explained move CAN surface; a large, poorly-explained move must
+# NOT. The confidence gate is what structurally prevents the vomit: it cannot
+# surface a move it cannot attribute to a concrete cause.
+#
+# Confidence is computed deterministically from EVIDENCE, not magnitude:
+#  - Data-quality gate (first-class): if the bookmaker count changed across the
+#    move, a book entered/left the consensus — the "move" is an artifact, not a
+#    real signal → confidence 0 (never surfaces).
+#  - Concrete attributor required (silence over filler): only a scoring play
+#    (live), an injury to the team whose probability FELL (direction-consistent),
+#    or relevant news attributes a move. Generic team-stats / game-context do
+#    NOT raise confidence — that was the vomit.
+#  - The cause is rendered deterministically from the winning evidence (one
+#    single claim), never free-formed.
+# ---------------------------------------------------------------------------
+
+EXPLANATION_CONFIDENCE_THRESHOLD = 0.6
+
+
+@dataclass
+class MoveAttribution:
+    """Result of explainability assessment for an event's top line movement."""
+    confidence: float
+    primary_cause: Optional[str]
+    evidence_type: Optional[str]  # "scoring_play" | "injury" | "news" | None
+
+    @property
+    def surfaced(self) -> bool:
+        return self.confidence >= EXPLANATION_CONFIDENCE_THRESHOLD and bool(
+            self.primary_cause
+        )
+
+
+def _team_matches(name: str, team: str) -> bool:
+    a = (name or "").strip().lower()
+    b = (team or "").strip().lower()
+    if not a or not b:
+        return False
+    return a in b or b in a or a.split()[-1] == b.split()[-1]
+
+
+def assess_move_attribution(
+    analysis: "LineMovementAnalysis",
+    injuries: Optional[list[dict]] = None,
+    news_headlines: Optional[list[str]] = None,
+    scoring_plays: Optional[list[dict]] = None,
+    home_team: str = "",
+    away_team: str = "",
+    event_status: str = "scheduled",
+) -> MoveAttribution:
+    """Assess whether an event's line move can be confidently attributed.
+
+    Returns a MoveAttribution; only `.surfaced` results should render a card.
+    Deterministic, evidence-first, magnitude-independent (see module note).
+    """
+    if not analysis.movements:
+        return MoveAttribution(0.0, None, None)
+
+    top = analysis.movements[0]
+
+    # Data-quality gate: a changed bookmaker count means a book entered/left the
+    # consensus — the move is an artifact we cannot attribute. Hard 0.
+    before, after = top.bookmaker_count_before, top.bookmaker_count_after
+    if before and after and abs(after - before) >= 2:
+        return MoveAttribution(0.0, None, "data_quality_artifact")
+    if (before and not after) or (after and not before):
+        return MoveAttribution(0.0, None, "data_quality_artifact")
+
+    # Which team LOST probability across the move (the side a cause should hit)?
+    # change > 0 → home gained, away fell.  change < 0 → home fell.
+    fell_team = away_team if top.change > 0 else home_team
+    gained_team = home_team if top.change > 0 else away_team
+
+    # 1. Live game: a scoring play is a concrete, high-confidence cause.
+    if event_status in ("live", "in", "completed", "closed") and scoring_plays:
+        last = scoring_plays[-1]
+        desc = (last.get("description") or "").strip()
+        if desc:
+            clk = last.get("clock") or ""
+            per = last.get("period") or ""
+            where = f" ({per} {clk})".rstrip() if (per or clk) else ""
+            return MoveAttribution(0.85, f"Scoring play{where}: {desc}", "scoring_play")
+
+    # 2. Injury to the team whose probability FELL (direction-consistent).
+    for inj in injuries or []:
+        if _team_matches(inj.get("team_name", ""), fell_team):
+            player = inj.get("player_name", "").strip()
+            status = inj.get("status", "").strip()
+            itype = (inj.get("injury_type") or "").strip()
+            if player:
+                tail = f" ({status}{', ' + itype if itype else ''})" if status else ""
+                return MoveAttribution(
+                    0.75,
+                    f"{player} — {fell_team} — out/limited{tail}",
+                    "injury",
+                )
+
+    # 2b. An injury on the team that GAINED is contradictory evidence — lower
+    # confidence (don't surface a cause that points the wrong way).
+    # (Falls through to news / no-attribution.)
+
+    # 3. News is temporally near but not move-attributed — below threshold by
+    # design (conservative start; surfaces nothing on news alone).
+    if news_headlines:
+        return MoveAttribution(0.4, news_headlines[0].strip(), "news")
+
+    # No concrete attributor → not explainable → silence.
+    return MoveAttribution(0.1, None, None)

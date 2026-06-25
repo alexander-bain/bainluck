@@ -5651,7 +5651,7 @@ async def get_line_movement_analysis(
     - Completed/Closed: permanent (never re-computed)
     """
     from app.models import LineMovementAnalysis as LineMovementModel
-    from app.utils.line_movement import detect_line_movements, build_llm_prompt
+    from app.utils.line_movement import detect_line_movements, assess_move_attribution
 
     # Verify event exists
     event_result = await db.execute(
@@ -5881,23 +5881,24 @@ async def get_line_movement_analysis(
         except Exception as e:
             logger.warning(f"Team stats fetch failed for event {event_id}: {e}")
 
-        # Skip LLM when we have no real context — it can only restate
-        # what the movement cards already show, producing filler text
-        has_any_context = bool(injuries_data) or bool(news_headlines) or bool(game_context) or bool(team_stats) or bool(scoring_plays_data)
-        if has_any_context:
-            prompt = build_llm_prompt(
-                analysis,
-                injuries=injuries_data,
-                news_headlines=news_headlines,
-                game_context=game_context,
-                team_stats=team_stats,
-                scoring_plays=scoring_plays_data,
-            )
-            try:
-                from app.services.llm import generate_line_movement_explanation
-                explanation = generate_line_movement_explanation(prompt)
-            except Exception as e:
-                logger.warning(f"LLM explanation failed for event {event_id}: {e}")
+        # #871 (Alex MC 2026-06-25): gate on EXPLANATION CONFIDENCE, not move
+        # size. v1 dumped all context to an LLM whenever ANY context existed —
+        # the "jumbled vomit." Now we surface a cause ONLY when concrete evidence
+        # attributes the move (data-quality gate + a scoring play / a
+        # direction-consistent injury), rendered deterministically as a single
+        # claim. A poorly-explained move — however large — gets no card (silence
+        # over filler); a small, well-explained move surfaces with its cause.
+        attribution = assess_move_attribution(
+            analysis,
+            injuries=injuries_data,
+            news_headlines=news_headlines,
+            scoring_plays=scoring_plays_data,
+            home_team=event.home_team_name,
+            away_team=event.away_team_name,
+            event_status=event.status,
+        )
+        if attribution.surfaced:
+            explanation = attribution.primary_cause
 
     # Check for prediction market disagreement
     disagreement_explanation = None
