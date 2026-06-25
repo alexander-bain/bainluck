@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, distinct, and_, or_, update as _sql_update
+from sqlalchemy import select, distinct, and_, or_, func, update as _sql_update
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -948,7 +948,26 @@ async def _backfill_box_scores(
                             and_(
                                 Event.status.in_(["completed", "closed"]),
                                 Event.espn_id.isnot(None),
-                                Event.box_score_data.is_(None),
+                                or_(
+                                    Event.box_score_data.is_(None),
+                                    # #980 follow-up: box_score'd events stuck at a
+                                    # 0 total (live capture missed the final) that
+                                    # the box-IS-None branch excludes. Re-feed once
+                                    # to pull the real ESPN final; the
+                                    # scores_checked_at marker prevents re-polling
+                                    # legit-0 games (postponed / 0-0 soccer draws).
+                                    and_(
+                                        Event.box_score_data.isnot(None),
+                                        ~Event.box_score_data.op("?")(
+                                            "scores_checked_at"
+                                        ),
+                                        (
+                                            func.coalesce(Event.home_score, 0)
+                                            + func.coalesce(Event.away_score, 0)
+                                        )
+                                        == 0,
+                                    ),
+                                ),
                             ),
                         )
                     )
@@ -1017,6 +1036,19 @@ async def _backfill_box_scores(
                             _bsd = dict(event.box_score_data)
                             _bsd["period_scores_checked_at"] = now_str
                             event.box_score_data = _bsd
+
+                        # #980 follow-up anti-thrash: mark score-checked so the
+                        # 0-total re-feed branch can't re-poll legit-0 events
+                        # (postponed / 0-0 soccer draws — ESPN total 0, no
+                        # correction) forever. Only reached on a successful ESPN
+                        # response; transient failures raise and retry next run.
+                        if (
+                            isinstance(event.box_score_data, dict)
+                            and "scores_checked_at" not in event.box_score_data
+                        ):
+                            _bsd2 = dict(event.box_score_data)
+                            _bsd2["scores_checked_at"] = now_str
+                            event.box_score_data = _bsd2
 
                         # Rate limit between requests
                         await _asyncio.sleep(0.5)
