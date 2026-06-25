@@ -832,6 +832,31 @@ async def _cleanup_bad_espn_matches():
     return stats
 
 
+def _corrected_final_score(our_home, our_away, espn_home, espn_away):
+    """Decide the score to write from an ESPN summary, or None to leave as-is.
+
+    Fixes the OPS-137 / #805-adjacent bug where a finished game is stuck at a 0-0
+    placeholder (live capture missed the final) and the old backfill never
+    corrected it because it only wrote when ``home_score IS None``. Verified vs
+    ESPN: espn_id 401815890 = 4-9 / 401815887 = 4-5 while we stored 0-0.
+
+    Writes the ESPN final ONLY when we have no score OR a 0-0 placeholder AND
+    ESPN actually scored (positive total). False-positive-safe:
+    - a genuinely scoreless / POSTPONED game (ESPN total 0, e.g. 401815854) is
+      left untouched, so postponed 0-0 rows are never given a fake score;
+    - a real non-zero stored score is NEVER overwritten (gotcha #21).
+    This only corrects the score; is_winner is left to the resolver, which grades
+    off the corrected value on its own cadence.
+    """
+    if espn_home is None:
+        return None
+    espn_total = (espn_home or 0) + (espn_away or 0)
+    our_total = (our_home or 0) + (our_away or 0)
+    if espn_total > 0 and our_total == 0:
+        return (espn_home, espn_away)
+    return None
+
+
 async def _backfill_box_scores(
     limit: int = 100,
     priority_calibration: bool = False,
@@ -951,9 +976,14 @@ async def _backfill_box_scores(
 
                         now_str = datetime.now(timezone.utc).isoformat()
 
-                        if event.home_score is None and scores.get("home_score") is not None:
-                            event.home_score = scores["home_score"]
-                            event.away_score = scores.get("away_score")
+                        _fix = _corrected_final_score(
+                            event.home_score,
+                            event.away_score,
+                            scores.get("home_score"),
+                            scores.get("away_score"),
+                        )
+                        if _fix is not None:
+                            event.home_score, event.away_score = _fix
                             stats["scores_backfilled"] += 1
 
                         if box_score or scoring_plays:
