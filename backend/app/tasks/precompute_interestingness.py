@@ -31,12 +31,32 @@ async def _precompute_interestingness() -> dict:
         MarketInterestingnessInputs,
         score_market_interestingness,
     )
+    from app.tasks.enrich_tmdb import (
+        _extract_quoted_title,
+        _fetch_tmdb_trending,
+        _normalize_title,
+    )
 
     now = datetime.now(timezone.utc)
     r = get_redis_client()
     scored = 0
     errors = 0
     started = time.monotonic()
+
+    # #882 slice 4: load the TMDB-trending title set (cached 12h in Redis so the
+    # 2h interestingness run doesn't hammer TMDB). Empty set = feature no-ops.
+    trending_titles: set[str] = set()
+    try:
+        cached = r.get("tmdb:trending_titles")
+        if cached:
+            trending_titles = set(json.loads(cached))
+        else:
+            trending_titles = await _fetch_tmdb_trending()
+            if trending_titles:
+                r.setex("tmdb:trending_titles", 43200, json.dumps(sorted(trending_titles)))
+    except Exception:
+        logger.warning("TMDB trending load failed — interestingness runs without it", exc_info=True)
+        trending_titles = set()
 
     async with get_task_session() as session:
         # Query all feed-eligible markets: open, not event-linked, not past resolution
@@ -121,6 +141,20 @@ async def _precompute_interestingness() -> dict:
             if isinstance(discover_llm, dict):
                 llm_quality = discover_llm.get("quality_score")
 
+            # #882 slice 4: entertainment-only TMDB-trending match (bounded boost).
+            # Reliable signals: a quoted subject title, OR a trending title (>=5
+            # chars) appearing in the normalized market name.
+            is_trending = False
+            if trending_titles and market.llm_sport_category == "entertainment":
+                quoted = _normalize_title(_extract_quoted_title(market.name))
+                if quoted and quoted in trending_titles:
+                    is_trending = True
+                else:
+                    norm_name = _normalize_title(market.name)
+                    is_trending = any(
+                        len(t) >= 5 and t in norm_name for t in trending_titles
+                    )
+
             inputs = MarketInterestingnessInputs(
                 probability=leader_prob,
                 source_count=source_count,
@@ -134,6 +168,7 @@ async def _precompute_interestingness() -> dict:
                     else None
                 ),
                 llm_quality=llm_quality,
+                trending=is_trending,
             )
             result = score_market_interestingness(inputs, now=now)
 

@@ -99,6 +99,46 @@ async def _fetch_tmdb_image(title: str) -> tuple[str | None, dict | None]:
         return None, None
 
 
+def _normalize_title(title: str | None) -> str:
+    """Normalize a title for trending-set matching: lowercase, alnum-only."""
+    return re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+
+
+async def _fetch_tmdb_trending() -> set[str]:
+    """Return the set of normalized currently-trending movie + TV titles (week).
+
+    Used by #882 slice 4 (interestingness boost). Empty set on any failure /
+    missing creds — a no-op, never an error.
+    """
+    if not (TMDB_READ_TOKEN or TMDB_API_KEY):
+        return set()
+    headers = {}
+    base_params: dict = {}
+    if TMDB_READ_TOKEN:
+        headers["Authorization"] = f"Bearer {TMDB_READ_TOKEN}"
+    else:
+        base_params["api_key"] = TMDB_API_KEY
+    titles: set[str] = set()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            for media in ("movie", "tv"):
+                resp = await client.get(
+                    f"{TMDB_BASE}/trending/{media}/week",
+                    params=base_params,
+                    headers=headers,
+                )
+                if resp.status_code != 200:
+                    continue
+                for r in resp.json().get("results", []):
+                    norm = _normalize_title(r.get("title") or r.get("name"))
+                    if len(norm) >= 3:  # skip ultra-short/ambiguous titles
+                        titles.add(norm)
+    except Exception as e:  # noqa: BLE001
+        logger.error("TMDB trending fetch error: %s", e)
+        return set()
+    return titles
+
+
 async def enrich_tmdb_images(limit: int = 50):
     """Enrich quoted-title entertainment markets with real TMDB artwork."""
     from app.models.models import FuturesMarket

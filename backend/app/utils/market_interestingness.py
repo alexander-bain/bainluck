@@ -45,6 +45,12 @@ class InterestingnessWeights:
 
 DEFAULT_WEIGHTS = InterestingnessWeights()
 
+# #882 slice 4: bounded additive boost (post-normalization, capped) for an
+# entertainment market whose subject title is currently trending on TMDB. Added
+# AFTER the base 0-100 score so non-trending markets are completely unchanged (no
+# global renormalization) and the boost is a small, predictable nudge.
+TRENDING_BONUS = 6.0
+
 
 @dataclass(frozen=True)
 class MarketInterestingnessInputs:
@@ -65,6 +71,10 @@ class MarketInterestingnessInputs:
     category_feed_share: float | None = None
     volume_24h: float | None = None
     llm_quality: float | None = None
+    # #882 slice 4: market's subject (a movie/TV title) is currently trending on
+    # TMDB. Set ONLY for entertainment markets that match the trending set; a
+    # bounded additive bonus (see TRENDING_BONUS) — nudges, never dominates.
+    trending: bool = False
 
     @classmethod
     def from_mapping(cls, row: dict[str, Any]) -> "MarketInterestingnessInputs":
@@ -112,6 +122,7 @@ class MarketInterestingnessInputs:
                 "hook_quality",
                 "explanation_quality",
             ),
+            trending=bool(_first_present(row, "trending", "tmdb_trending") or False),
         )
 
 
@@ -163,11 +174,21 @@ def score_market_interestingness(
     raw_score = sum(components.values())
     normalized_score = raw_score / weights.total * 100 if weights.total > 0 else 0.0
 
+    # #882 slice 4: bounded additive trending bonus (entertainment-only; the
+    # caller sets inputs.trending only for a TMDB-trending subject). Added after
+    # normalization + capped, so it never dominates and leaves non-trending
+    # scores identical to before.
+    reasons = _build_reasons(signals)
+    if inputs.trending:
+        normalized_score += TRENDING_BONUS
+        components = {**components, "trending": TRENDING_BONUS}
+        reasons = [*reasons, "trending_on_tmdb"]
+
     return MarketInterestingnessScore(
         score=round(_clamp(normalized_score, 0.0, 100.0), 2),
         components=components,
         normalized_signals={k: round(v, 4) for k, v in signals.items()},
-        reasons=_build_reasons(signals),
+        reasons=reasons,
     )
 
 
