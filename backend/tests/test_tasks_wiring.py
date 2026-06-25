@@ -234,6 +234,7 @@ class TestBeatScheduleCompleteness:
         "check-ground-truth-health-daily",
         "capture-featured-markets-daily",
         "enrich-market-images",
+        "enrich-tmdb-images",
         "merge-duplicate-events",
         "precompute-interestingness",
         "check-aggregation-quality",

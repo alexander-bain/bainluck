@@ -660,6 +660,18 @@ def enrich_market_images(self, limit: int = 50):
 
 @celery_app.task(
     bind=True,
+    name="app.tasks.enrich_tmdb_images",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def enrich_tmdb_images(self, limit: int = 50):
+    """#882: real TMDB artwork for quoted-title entertainment markets."""
+    from app.tasks.enrich_tmdb import enrich_tmdb_images as _enrich
+    return _tracked_run("enrich_tmdb", _enrich(limit))
+
+
+@celery_app.task(
+    bind=True,
     name="app.tasks.enrich_market_hooks",
     soft_time_limit=600,
     time_limit=660,
@@ -1752,6 +1764,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.enrich_market_images",
         "schedule": crontab(minute=50, hour="*/4"),  # 6x daily — fetch Pexels images
         "kwargs": {"limit": 200},
+    },
+    "enrich-tmdb-images": {
+        "task": "app.tasks.enrich_tmdb_images",
+        "schedule": crontab(minute=35, hour="*/6"),  # #882: real TMDB art for quoted-title entertainment
+        "kwargs": {"limit": 50},
+        "options": {"queue": "background"},
     },
     "precompute-interestingness": {
         "task": "app.tasks.precompute_interestingness",
