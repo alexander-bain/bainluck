@@ -1,0 +1,38 @@
+{
+  "date": "2026-06-25",
+  "mode": "light",
+  "new_findings_count": 3,
+  "tasks": {
+    "feed": {
+      "task_id": "LoXvotbRcPZWCz2LpTMMLG",
+      "status": "complete",
+      "task_url": "https://manus.im/app/LoXvotbRcPZWCz2LpTMMLG",
+      "credits": 0
+    },
+    "event_detail": {
+      "task_id": "ahhZykx3XEahnudx4m52h5",
+      "status": "complete",
+      "task_url": "https://manus.im/app/ahhZykx3XEahnudx4m52h5",
+      "credits": 0
+    },
+    "market_accuracy": {
+      "task_id": "37u8WnZCuYjtdp8FdLsyMb",
+      "status": "complete",
+      "task_url": "https://manus.im/app/37u8WnZCuYjtdp8FdLsyMb",
+      "credits": 2025
+    }
+  },
+  "diagnostics": {
+    "feed": {
+      "critical": 2,
+      "0%": 2
+    },
+    "event_detail": {
+      "critical": 1
+    },
+    "market_accuracy": {
+      "critical": 1,
+      "0%": 1
+    }
+  }
+}
