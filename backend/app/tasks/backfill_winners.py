@@ -3733,8 +3733,22 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     _t0 = _time.monotonic()
     _MAX_RUNTIME = 420  # 7 min (resolve_winners has 9 min soft limit)
 
-    # Dead-CID cache: skip condition_ids that returned 404 on previous runs
+    # Dead-CID cache: skip condition_ids that returned a definitive 404 before.
     _dead_key = "bainluck:poly_dead_cids"
+    # #985: one-time purge of the polluted dead set. The old _fetch_market cached
+    # 429 rate-limits (and any error) as "dead" (gotcha #36), so real markets —
+    # incl. flagship ones (2024 US Presidential, $286M US×Iran ceasefire) — were
+    # wrongly marked dead and skipped forever. Purge once after this fix so they
+    # get re-fetched; genuine 404s are re-added correctly by the 404-only
+    # classification below.
+    _purge_flag = "bainluck:poly_dead_purged_v2"
+    if not _rc.get(_purge_flag):
+        _purged = _rc.delete(_dead_key)
+        _rc.setex(_purge_flag, 86400 * 30, "1")
+        logger.info(
+            "Polymarket dead-cid set PURGED once (#985 429-pollution fix; key existed=%s)",
+            _purged,
+        )
     dead_cids = _rc.smembers(_dead_key)
     dead_cids = {c.decode() if isinstance(c, bytes) else c for c in dead_cids}
 
@@ -3744,13 +3758,20 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         sem = asyncio.Semaphore(10)
 
         async def _fetch_market(cid):
+            # #985: returns (cid, data_or_None, definitive). definitive=True means
+            # the API gave an authoritative answer — a market dict, or a true 404
+            # (None). definitive=False means transient (429/error/timeout): the
+            # caller must NOT cache it dead (gotcha #36); retry it next run.
             async with sem:
-                try:
-                    return cid, await service.get_market_by_condition(str(cid))
-                except Exception as e:
-                    if "429" in str(e) or "rate" in str(e).lower():
-                        await asyncio.sleep(2)
-                    return cid, None
+                for _attempt in range(3):
+                    try:
+                        return cid, await service.get_market_by_condition(str(cid)), True
+                    except Exception as e:
+                        if "429" in str(e) or "rate" in str(e).lower():
+                            await asyncio.sleep(min(2 * (_attempt + 1), 6))  # bounded backoff
+                            continue
+                        return cid, None, False  # non-429 transient — not definitive
+                return cid, None, False  # 429-exhausted — not definitive, retry next run
 
         alive_conditions = [r for r in by_condition if r.external_id not in dead_cids]
         stats["skipped_dead"] = len(by_condition) - len(alive_conditions)
@@ -3764,11 +3785,16 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
             )
 
             async with get_task_session() as session:
-                for cid, market_data in results:
+                for cid, market_data, definitive in results:
                     stats["markets_checked"] += 1
-                    if not market_data:
-                        stats["api_miss"] += 1
-                        _rc.sadd(_dead_key, cid)
+                    if market_data is None:
+                        if definitive:
+                            # genuine 404 — safe to cache dead
+                            stats["api_miss"] += 1
+                            _rc.sadd(_dead_key, cid)
+                        else:
+                            # transient (429/error) — DO NOT mark dead; retry next run
+                            stats["rate_limited"] = stats.get("rate_limited", 0) + 1
                         continue
 
                     prices_raw = (

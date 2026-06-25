@@ -1989,3 +1989,24 @@ class TestCalLoopConsolidatedFix:
             body = inspect.getsource(fn)
             # the deadline is actually checked in a loop (early-return), not just accepted
             assert "deadline and _time.monotonic() >= deadline" in body, fn.__name__
+
+
+def test_poly_resolver_dead_cid_429_classification():
+    """#985: the dead-cid cache must mark a condition_id dead ONLY on a definitive
+    404, never on a 429/transient error (gotcha #36). The old code returned None
+    on any error and cached it dead, so rate-limited flagship markets were skipped
+    forever. _fetch_market now returns a `definitive` flag and the consumer only
+    sadd's the dead key when definitive. Plus a one-time purge of the polluted set."""
+    import inspect
+    from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
+    src = inspect.getsource(_backfill_polymarket_winners_from_api)
+    # _fetch_market returns a 3rd 'definitive' element + bounded retry
+    assert "definitive" in src
+    assert "return cid, None, False" in src           # transient → not definitive
+    assert "await service.get_market_by_condition(str(cid)), True" in src  # authoritative
+    # consumer only caches dead on a definitive 404
+    assert "if definitive:" in src
+    assert "_rc.sadd(_dead_key, cid)" in src
+    # one-time purge of the 429-polluted dead set
+    assert "bainluck:poly_dead_purged_v2" in src
+    assert "_rc.delete(_dead_key)" in src
