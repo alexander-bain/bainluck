@@ -1841,6 +1841,22 @@ async def _backfill_from_settled_events(limit: int = 5000):
             async with get_task_session() as session:
                 total_snapshots = 0
 
+                # #969-Q109b: bound the longest single uninterrupted DB op. The
+                # _MAX_SECONDS loop guard + the get_events deadline were NOT
+                # enough — the task still busted the 900s wall in the trigger test
+                # (run b03a6be8 SoftTimeLimit @ 18:17Z). Fetches are capped at the
+                # 30s HTTP timeout, so the only thing that can run uninterrupted
+                # for the observed ~285-480s past the guard is a single SQL
+                # statement/commit blocking on a lock held by the live Kalshi
+                # poller (gotcha #6/#13: per-market commits to dodge deadlocks).
+                # A loop-boundary guard cannot interrupt a hung DB op; only a DB
+                # timeout can. statement_timeout caps any single statement and
+                # lock_timeout fails a blocked commit fast, so the work stays
+                # under the loop guard instead of into the soft wall. A timeout
+                # raises -> caught below -> graceful return + cursor resume.
+                await session.execute(text("SET statement_timeout = '90s'"))
+                await session.execute(text("SET lock_timeout = '20s'"))
+
                 # Process priority series first, then rotate through all others
                 # using a Redis-persisted cursor (full coverage every ~38 runs).
                 import time as _time

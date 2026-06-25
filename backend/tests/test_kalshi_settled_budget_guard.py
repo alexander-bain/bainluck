@@ -121,3 +121,17 @@ def test_caller_breaks_before_heavy_sql_when_fetch_consumes_budget():
     assert "_rc.setex(_cursor_key, 86400 * 7, _page_cursor)" in src
     # and the caller's own 429 backoff is clamped to the remaining budget
     assert "min(5 * (_retry + 1), 10, _rem)" in src
+
+
+def test_session_has_statement_and_lock_timeouts():
+    """#969-Q109b: a loop-boundary guard can't interrupt a single hung DB op
+    (a commit blocking on the live poller's lock ran ~285-480s past the guard
+    and busted the 900s wall). The session MUST set statement_timeout +
+    lock_timeout so any single statement/commit fails fast instead of hanging."""
+    src = inspect.getsource(_backfill_from_settled_events)
+    assert "SET statement_timeout" in src, (
+        "no statement_timeout — a single hung SQL op can overrun the soft wall"
+    )
+    assert "SET lock_timeout" in src, (
+        "no lock_timeout — a commit blocked on a poller lock can hang the task"
+    )
