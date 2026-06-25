@@ -1347,6 +1347,11 @@ async def public_calibration(
         # limit, so it cannot afford the per-outcome snapshot scan — it serves
         # the unfiltered set with liquidity_filter=None until the cache warms.
         "liquidity_filter": None,
+        # #762: void_filter (did_not_play / withdrew exclusion) is likewise
+        # computed in the precompute task served from Redis above; None here on a
+        # cold cache. The exclusion itself IS applied in this fallback's query
+        # (resolution_source NOT IN (...)); only the transparency count is None.
+        "void_filter": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

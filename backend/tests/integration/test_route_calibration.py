@@ -200,6 +200,7 @@ class TestCalibrationPublicEndpoint:
             "mce_closing_line",
             "mce_opening_price",
             "liquidity_filter",
+            "void_filter",
             "generated_at",
         }
 

@@ -64,6 +64,37 @@ KALSHI_LIQUIDITY_RULE_TEXT = (
     "prices. Applied to Kalshi only; never mutates resolutions."
 )
 
+# #762: void-resolution filter (mostly DataGolf "Make the Cut" markets).
+#
+# A resolved outcome whose resolution_source is did_not_play / withdrew is a
+# VOID — the player never teed off, so there was no cut outcome to score. These
+# are all graded is_winner=False by the resolver, but counting them as
+# "predicted X% and lost" dragged DataGolf's actual rate down across every bin
+# (~49% of resolved DataGolf outcomes were did_not_play, inflating MCE to
+# ~13.7pp). The main calibration query already drops these from the denominator
+# (resolution_source NOT IN (...)); this surfaces the count + rule so the
+# exclusion is transparent, never silent — the same contract as the #940
+# liquidity_filter. Read-side only; never mutates is_winner (gotcha #21).
+VOID_RESOLUTION_SOURCES = ("did_not_play", "withdrew")
+
+VOID_FILTER_RULE_TEXT = (
+    "Excludes resolved outcomes for players who never participated "
+    "(did_not_play / withdrew) — VOIDs with no real outcome to score, not "
+    "losses. Mostly DataGolf 'Make the Cut' markets; never mutates resolutions."
+)
+
+
+def outcome_is_calibration_void(resolution_source: str | None) -> bool:
+    """True if an outcome is a VOID excluded from the published calibration set.
+
+    Canonical, unit-tested definition of the #762 rule: an outcome whose
+    ``resolution_source`` marks non-participation (did_not_play / withdrew) is a
+    void — the underlying event never occurred for that player — so it is dropped
+    from the calibration denominator. Read-side only (gotcha #21); the inverse of
+    "counts toward calibration" for this dimension.
+    """
+    return resolution_source in VOID_RESOLUTION_SOURCES
+
 
 def outcome_is_calibration_liquid(
     ever_yes_bid: float | None, ever_last_price: float | None
@@ -464,6 +495,25 @@ async def _precompute_calibration_main():
         closing_result = await db.execute(closing_sql)
         closing_row = closing_result.one()
 
+        # -----------------------------------------------------------
+        # Query 8: #762 void-filter transparency — how many eligible resolved
+        # outcomes the void rule (did_not_play / withdrew) drops from the
+        # published denominator. Mirrors the #940 liquidity_filter count so the
+        # exclusion is surfaced, never silent. Same eligibility predicate as the
+        # main query (resolved + opening_probability in (0,1)).
+        # -----------------------------------------------------------
+        void_sql = text("""
+            SELECT COUNT(*) AS excluded
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.resolution_source IN ('did_not_play', 'withdrew')
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+        """)
+        void_result = await db.execute(void_sql)
+        void_excluded = int(void_result.scalar() or 0)
+
     # -----------------------------------------------------------
     # Post-processing (runs outside the DB session)
     # -----------------------------------------------------------
@@ -667,6 +717,11 @@ async def _precompute_calibration_main():
             "rule": KALSHI_LIQUIDITY_RULE_TEXT,
             "kalshi_included": kalshi_included,
             "kalshi_excluded": kalshi_excluded,
+        },
+        "void_filter": {
+            "applies_to": "datagolf",
+            "rule": VOID_FILTER_RULE_TEXT,
+            "excluded": void_excluded,
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
