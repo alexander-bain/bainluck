@@ -580,6 +580,72 @@ class TestGameMarketsNoRealPriceDrop:
         assert "TBD vs TBD Total Points" not in names  # placeholder → dropped
 
 
+@pytest.fixture
+async def deep_otm_spread_client():
+    """Event with a spread market carrying a near-the-money line + deep-OTM
+    alternate rungs — only the meaningful lines should render (#921 residual)."""
+    from app.main import app
+    from app.routes.events import _game_markets_cache
+
+    _game_markets_cache.clear()
+
+    event = _make_event(id=4, home_team="Celtics", away_team="76ers", status="live")
+    spread_market = _make_futures_market(
+        id=601, name="Celtics at 76ers Spread", source="kalshi"
+    )
+    spread_market.event_id = event.id
+    markets = [spread_market]
+
+    outcomes = [
+        _make_outcome(id=701, market_id=601, name="Celtics -1.5", probability=0.46),  # near-money → kept
+        _make_outcome(id=702, market_id=601, name="Celtics +1.5", probability=0.54),  # near-money → kept
+        _make_outcome(id=703, market_id=601, name="Celtics -12.5", probability=0.001),  # deep-OTM → dropped
+        _make_outcome(id=704, market_id=601, name="Celtics -15.5", probability=0.001),  # deep-OTM → dropped
+    ]
+    mock_session = _make_event_detail_session(
+        event=event, futures=markets, outcomes=outcomes
+    )
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    app.dependency_overrides.clear()
+
+
+class TestDeepOtmSpreadCollapse:
+    """#921 residual: deep-OTM alternate spread rungs (cover prob < 2%) are
+    collapsed; near-the-money lines stay."""
+
+    async def test_deep_otm_rungs_dropped_near_money_kept(self, deep_otm_spread_client):
+        resp = await deep_otm_spread_client.get("/api/events/4/game-markets")
+        assert resp.status_code == 200
+        spreads = resp.json()["spreads"]
+        names = {s["outcome_name"] for s in spreads}
+        assert "Celtics -1.5" in names  # 46% near-money → kept
+        assert "Celtics +1.5" in names  # 54% near-money → kept
+        assert "Celtics -12.5" not in names  # 0.1% deep-OTM → dropped
+        assert "Celtics -15.5" not in names  # 0.1% deep-OTM → dropped
+        # every surviving spread line is at or above the 2% floor
+        assert all(
+            s["probability"] is None or s["probability"] >= 0.02 for s in spreads
+        )
+
+
 class TestRelatedFuturesShape:
     """GET /api/events/{id}/related-futures response shape."""
 

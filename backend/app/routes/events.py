@@ -40,6 +40,15 @@ _PLACEHOLDER_TEAM_RE = re.compile(
     r"\b(tbd|to be determined|to be decided|winner of|loser of)\b",
     re.IGNORECASE,
 )
+
+# #921 residual: collapse deep-out-of-the-money alternate spread rungs. Alt
+# spread ladders ("Spread: Pirates -8.5/-9.5/-10.5/…") litter the spreads
+# section with cover sides at ~0.1% — real markets (the other side is ~99.9%)
+# but useless rungs. Drop any spread outcome whose cover probability is below
+# this floor; the main line + near-the-money alts (>= floor) stay. Conservative
+# 2% — only kills the obviously-useless deep rungs (measured: collapses a
+# 38-item ladder to the 3 meaningful lines on event 14961907).
+_SPREAD_DEEP_OTM_FLOOR = 0.02
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
@@ -3431,6 +3440,11 @@ async def get_game_markets(
             for o in market_outcomes:
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
+                # #921 residual: drop deep-OTM alternate spread rungs (cover prob
+                # below the floor) so the section shows meaningful lines, not the
+                # full ladder. Near-the-money alts + the main line stay.
+                if prob is not None and prob < _SPREAD_DEEP_OTM_FLOOR:
+                    continue
                 spreads.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
