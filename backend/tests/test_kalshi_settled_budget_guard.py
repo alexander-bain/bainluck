@@ -34,7 +34,8 @@ def test_page_loop_has_inner_time_budget_guard():
 def test_budget_and_cursor_machinery_present():
     src = inspect.getsource(_backfill_from_settled_events)
     # budget is comfortably under the task's 900s soft limit
-    assert "_MAX_SECONDS = 720" in src
+    # #107: widened margin under the 900s soft limit (720 -> 600)
+    assert "_MAX_SECONDS = 600" in src
     # per-series cursor is persisted so a mid-series break resumes next cron
     assert 'f"bainluck:settled_cursor:{series}"' in src
     assert "_rc.setex(_cursor_key" in src

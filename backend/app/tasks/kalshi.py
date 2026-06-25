@@ -1419,11 +1419,15 @@ def _split_kalshi_trades_by_commence(
     return pregame, has_any_trade, has_commence
 
 
-async def _backfill_trade_history(limit: int = 100):
+async def _backfill_trade_history(limit: int = 100, deadline: float | None = None):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
     Uses a Redis cursor to resume across runs, so successive 6h runs clear the
     329K backlog incrementally instead of restarting from scratch each time.
+
+    #107: ``deadline`` (a ``time.monotonic()`` from the caller's cycle budget) makes
+    the batch loop early-return at the cycle wall, not just at the local 480s cap —
+    so a long run can't bust the soft limit mid-flight (resumable via the cursor).
     """
     import asyncio
     from app.tasks.redis_state import get_redis_client
@@ -1494,9 +1498,11 @@ async def _backfill_trade_history(limit: int = 100):
         BATCH = 10
 
         for batch_start in range(0, len(candidates), BATCH):
-            if (_time.monotonic() - _start) > 480:
+            if (deadline and _time.monotonic() >= deadline) or (
+                _time.monotonic() - _start
+            ) > 480:
                 logger.info(
-                    "Trade backfill: time budget at %d/%d",
+                    "Trade backfill: budget/deadline at %d/%d",
                     stats["fetched"],
                     len(candidates),
                 )
@@ -1606,8 +1612,14 @@ async def _backfill_trade_history(limit: int = 100):
     return stats
 
 
-async def _backfill_candlestick_snapshots(limit: int = 5000):
+async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | None = None):
     """Backfill previous_price snapshots for ALL settled Kalshi series.
+
+    #107: ``deadline`` is an optional ``time.monotonic()`` timestamp (the CALLER's
+    cycle budget). The internal 540s budget is absolute and ignores time already
+    spent by the cycle, so a single long run busts the 840s soft limit mid-flight.
+    When ``deadline`` is set, the series AND inner page loops early-return at it,
+    so the budget guard actually fires (the work is resumable next cycle).
 
     Fetches settled events from the Kalshi API and creates snapshots from
     previous_price_dollars (the last real trade price before settlement).
@@ -1650,15 +1662,23 @@ async def _backfill_candlestick_snapshots(limit: int = 5000):
             _start = _time.monotonic()
 
             for series in series_list:
-                if (_time.monotonic() - _start) > 540:
+                # #107: stop at the cycle deadline (caller's budget) OR the local
+                # 540s cap, whichever comes first — so this never busts the soft wall.
+                if (deadline and _time.monotonic() >= deadline) or (
+                    _time.monotonic() - _start
+                ) > 540:
                     logger.info(
-                        "Previous-price backfill: time budget after %d series",
+                        "Previous-price backfill: budget/deadline after %d series",
                         series_list.index(series),
                     )
                     break
 
                 cursor = None
                 for page in range(50):
+                    # #107: finer in-operation check — a single deep series can
+                    # paginate past the wall between series-level checks.
+                    if deadline and _time.monotonic() >= deadline:
+                        break
                     try:
                         events, cursor = await service.get_events(
                             status="settled",
@@ -1826,7 +1846,13 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 import time as _time
 
                 _start_time = _time.monotonic()
-                _MAX_SECONDS = 720
+                # #107: lowered 720 -> 600 for a wider margin under the 900s soft
+                # limit. #969 added a per-page budget check but kalshi_settled
+                # still busted 900s (a single page's API/SQL op overran the 180s
+                # margin); 300s margin gives that op room to finish below the wall.
+                # Drains a little less per cycle but COMPLETES reliably (the task
+                # was in a ~5.8-day SoftTimeLimit outage, doing nothing).
+                _MAX_SECONDS = 600
 
                 from app.tasks.redis_state import get_redis_client
 

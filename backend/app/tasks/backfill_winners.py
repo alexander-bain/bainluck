@@ -4696,6 +4696,23 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # here before any guard could fire). Guard them: if resolution + the earlier
     # maintenance already consumed the budget, early-return so the cycle COMPLETES
     # (resolution ran first + committed; these backfills are idempotent/resumable).
+    # #107: run the calibration DRAIN (bookmaker calibration → closing lines →
+    # calibration_probability) BEFORE candlestick_trades. candlestick is the
+    # heavy budget consumer; when it ran first the drain was starved on heavy
+    # cycles and never updated cal_prob (kalshi MCE actively worsened 2.02→3.10).
+    # Running the drain first guarantees it executes every cycle; candlestick now
+    # enriches snapshots for the NEXT cycle's drain (eventually consistent).
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("bookmaker_closing")
+    _mark("bookmaker_closing")
+    bookmaker_stats = await _precompute_bookmaker_calibration()
+    closing_stats = await _backfill_closing_lines()
+
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("calibration_prices")
+    _mark("calibration_prices")
+    cal_price_stats = await _compute_calibration_prices()
+
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("candlestick_trades")
     _mark("candlestick_trades")
@@ -4710,7 +4727,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         # single budget consumer). They're resumable (process series/outcomes
         # still missing cal_prob/snapshots each cycle), so a smaller per-cycle
         # limit drains over more cycles while letting each cycle COMPLETE.
-        candlestick_stats = await _backfill_candlestick_snapshots(limit=100)
+        # #107: pass the cycle deadline so the inner loop early-returns BEFORE the
+        # soft wall (the between-unit guard above can't stop a single long call).
+        candlestick_stats = await _backfill_candlestick_snapshots(
+            limit=100, deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+        )
     except Exception as e:
         candlestick_stats["errors"].append(str(e))
         logger.warning("Candlestick backfill failed: %s", e)
@@ -4727,7 +4748,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         from app.tasks.kalshi import _backfill_trade_history
 
-        trade_stats = await _backfill_trade_history(limit=100)
+        trade_stats = await _backfill_trade_history(
+            limit=100, deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+        )
     except Exception as e:
         trade_stats["errors"].append(str(e))
         logger.warning("Trade history backfill failed: %s", e)
@@ -4889,21 +4912,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         retro2_stats["errors"].append(str(e))
 
-    if _budget_left() < _BUDGET_MARGIN_S:
-        return _partial_result("bookmaker_closing")
-    _mark("bookmaker_closing")
-    # Phase 0c-bookmaker: Precompute per-bookmaker calibration into Redis.
-    # Moved early because it's a one-shot DB query + Redis write.
-    bookmaker_stats = await _precompute_bookmaker_calibration()
-
-    # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
-    closing_stats = await _backfill_closing_lines()
-
-    if _budget_left() < _BUDGET_MARGIN_S:
-        return _partial_result("calibration_prices")
-    _mark("calibration_prices")
-    # Phase 0e: Pre-compute calibration_probability (closing line or settled price)
-    cal_price_stats = await _compute_calibration_prices()
+    # #107: the bookmaker_closing / closing_lines / calibration_prices drain was
+    # moved AHEAD of candlestick_trades (see above) so the calibration drain runs
+    # FIRST every cycle — even when candlestick later exhausts the budget. (Old
+    # position here starved the drain on heavy cycles → kalshi MCE worsened.)
 
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("polymarket_group_api")

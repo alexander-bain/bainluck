@@ -1928,10 +1928,11 @@ class TestBudgetGuard:
                 patch.stopall()
 
         assert result["status"] == "partial_budget_guard", result
-        # The fix's crux: the guard now sits BEFORE candlestick, not at the old
-        # first checkpoint (bookmaker_closing).
-        assert result["stopped_before"] == "candlestick_trades", result
-        # The wall-busting backfills must NOT have run.
+        # #107: the calibration drain (bookmaker_closing/calibration_prices) was
+        # reordered AHEAD of candlestick, so on budget exhaustion the first
+        # post-resolution guard hit is now "bookmaker_closing" — and the
+        # wall-busting candlestick/trade backfills still never run.
+        assert result["stopped_before"] == "bookmaker_closing", result
         candlestick_mock.assert_not_called()
         trade_mock.assert_not_called()
 
@@ -1951,3 +1952,40 @@ class TestBudgetGuard:
         assert '_mark("candlestick_trades")' in guard_then_mark
         # and a second guard precedes the trade-history sub-phase
         assert '_partial_result("trades")' in src
+
+
+class TestCalLoopConsolidatedFix:
+    """#107: bound the candlestick/trade inner ops to the cycle deadline + run
+    the calibration drain BEFORE candlestick so it executes every cycle."""
+
+    def _bw_src(self):
+        import inspect
+        from app.tasks.backfill_winners import _backfill_all_winners
+        return inspect.getsource(_backfill_all_winners)
+
+    def test_candlestick_and_trade_get_cycle_deadline(self):
+        src = self._bw_src()
+        # both wall-busting inner ops are passed the cycle deadline so they
+        # early-return mid-flight (not just at their own absolute caps)
+        assert "_backfill_candlestick_snapshots(" in src
+        assert "deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S" in src
+        # trade history call also gets it
+        cand_then_trade = src.split("_backfill_trade_history(", 1)[1][:120]
+        assert "deadline=" in cand_then_trade
+
+    def test_calibration_drain_runs_before_candlestick(self):
+        src = self._bw_src()
+        cal = src.find("_compute_calibration_prices()")
+        cand = src.find("_backfill_candlestick_snapshots(")
+        assert cal != -1 and cand != -1
+        assert cal < cand, "calibration drain must run BEFORE candlestick (#107 reorder)"
+
+    def test_inner_ops_have_deadline_param(self):
+        import inspect
+        from app.tasks.kalshi import _backfill_candlestick_snapshots, _backfill_trade_history
+        for fn in (_backfill_candlestick_snapshots, _backfill_trade_history):
+            sig = inspect.signature(fn)
+            assert "deadline" in sig.parameters, fn.__name__
+            body = inspect.getsource(fn)
+            # the deadline is actually checked in a loop (early-return), not just accepted
+            assert "deadline and _time.monotonic() >= deadline" in body, fn.__name__
