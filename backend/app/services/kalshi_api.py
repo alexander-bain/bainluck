@@ -86,6 +86,7 @@ class KalshiAPIService(BaseAPIClient):
         with_nested_markets: bool = True,
         limit: int = 200,
         cursor: Optional[str] = None,
+        deadline: Optional[float] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get events from Kalshi.
@@ -99,6 +100,13 @@ class KalshiAPIService(BaseAPIClient):
             with_nested_markets: Include nested market data
             limit: Max results per page (1-200)
             cursor: Pagination cursor
+            deadline: Optional time.monotonic() deadline. The retry/backoff span
+                is bounded by it — once reached, return ([], cursor) instead of
+                sleeping/retrying. #969: a settled-backfill page must not let the
+                429-backoff retry span overrun the caller's time budget (the
+                nested caller-3 × internal-4 retries could burn ~165s of sleeps
+                and push the task past its 900s soft wall). Returns the INPUT
+                cursor so the caller resumes/re-fetches this same page next run.
 
         Returns:
             Tuple of (events list, next cursor or None)
@@ -115,13 +123,24 @@ class KalshiAPIService(BaseAPIClient):
             params["cursor"] = cursor
 
         import asyncio as _asyncio
+        import time as _time
         for _attempt in range(4):
+            # #969: never start another attempt past the deadline.
+            if deadline is not None and _time.monotonic() >= deadline:
+                return [], cursor
             response = await self.client.get(
                 f"{self.BASE_URL}/events",
                 params=params,
             )
             if response.status_code == 429:
-                await _asyncio.sleep(5 * (_attempt + 1))
+                # #969: cap the backoff (was 5/10/15/20 = up to 50s) and never
+                # sleep past the deadline.
+                _backoff = min(5 * (_attempt + 1), 10)
+                if deadline is not None:
+                    _backoff = min(_backoff, max(0.0, deadline - _time.monotonic()))
+                    if _backoff <= 0:
+                        return [], cursor
+                await _asyncio.sleep(_backoff)
                 continue
             response.raise_for_status()
             data = response.json()

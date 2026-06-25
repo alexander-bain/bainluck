@@ -1738,6 +1738,24 @@ async def trigger_backfill_winners(
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
 
 
+@router.post("/backfill-kalshi-settled")
+async def trigger_backfill_kalshi_settled(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(5000, description="Max snapshots to backfill this run"),
+):
+    """Trigger the Kalshi settled-events backfill task (status/is_winner/cal_prob
+    capture from the settled-events API). #969: bounded by an inner deadline so it
+    stays under its 900s soft limit. Use to fast-loop verify, not the 6h cron."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.backfill_kalshi_settled",
+        kwargs={"limit": limit},
+        queue="background",
+    )
+    return {"status": "queued", "task_id": result.id, "limit": limit}
+
+
 @router.post("/calibration/recompute")
 async def trigger_calibration_recompute(request: Request, secret: str = Query(None)):
     """Force recompute the public calibration cache."""

@@ -1965,7 +1965,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 page_num,
                             )
                             break
+                        # #969: pass the budget deadline INTO the fetch and
+                        # remember THIS page's cursor. The page-top guard only
+                        # bounds BETWEEN pages — the fetch span itself (network +
+                        # 429 backoff, caller-3 × internal-4 retries) could burn
+                        # ~165s and overrun the 900s wall. Bounding it here is the
+                        # inner-op fix (margin-widening alone already failed).
+                        _deadline = _start_time + _MAX_SECONDS
+                        _page_cursor = cursor
                         for _retry in range(3):
+                            if (_time.monotonic() - _start_time) > _MAX_SECONDS:
+                                break
                             try:
                                 events, cursor = await service.get_events(
                                     status="settled",
@@ -1973,14 +1983,34 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     with_nested_markets=True,
                                     limit=200,
                                     cursor=cursor,
+                                    deadline=_deadline,
                                 )
                                 break
                             except Exception as api_err:
                                 if "429" in str(api_err):
-                                    await asyncio.sleep(5 * (_retry + 1))
+                                    _rem = _deadline - _time.monotonic()
+                                    if _rem <= 0:
+                                        break
+                                    await asyncio.sleep(min(5 * (_retry + 1), 10, _rem))
                                     continue
                                 raise
                         stats["api_pages"] += 1
+
+                        # #969: if the fetch consumed the budget, persist THIS
+                        # page's cursor (re-fetch+reprocess is idempotent — all
+                        # writes are UPSERT/ON CONFLICT/status-guarded) and stop
+                        # BEFORE the heavy per-page SQL, which has no internal
+                        # guard and would push this iteration past the hard wall.
+                        if (_time.monotonic() - _start_time) > _MAX_SECONDS:
+                            if _page_cursor:
+                                _rc.setex(_cursor_key, 86400 * 7, _page_cursor)
+                            logger.info(
+                                "Settled events: budget consumed during fetch of "
+                                "%s page %d (cursor persisted, resumes next cron)",
+                                series,
+                                page_num,
+                            )
+                            break
 
                         if not events:
                             break
