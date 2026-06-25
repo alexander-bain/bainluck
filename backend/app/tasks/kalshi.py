@@ -1970,6 +1970,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     _empty_pages = 0
 
                     for page_num in range(200):
+                        _page_t0 = _time.monotonic()  # #969 diag: per-page timing
                         # #969: inner time-budget guard. The outer per-series
                         # check (above) wasn't enough — a single deep series can
                         # paginate (up to 200 pages) past the 900s soft wall
@@ -2016,6 +2017,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     continue
                                 raise
                         stats["api_pages"] += 1
+                        _fetch_dur = _time.monotonic() - _page_t0  # #969 diag
 
                         # #969: if the fetch consumed the budget, persist THIS
                         # page's cursor (re-fetch+reprocess is idempotent — all
@@ -2316,6 +2318,18 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         stats["winners_resolved"] += winners_set
 
                         await session.commit()
+
+                        # #969 diag: per-page timing so a single log pull shows
+                        # WHERE the ~900s goes (fetch vs SQL) and whether the
+                        # _MAX_SECONDS guard is firing. Remove once #969 closes.
+                        _now = _time.monotonic()
+                        logger.info(
+                            "settled-diag s=%s p=%d elapsed=%.0f fetch=%.1f "
+                            "page_total=%.1f sql=%.1f ev=%d resolved=%d snaps=%d",
+                            series, page_num, _now - _start_time, _fetch_dur,
+                            _now - _page_t0, (_now - _page_t0) - _fetch_dur,
+                            len(events), page_resolved, series_snapshots,
+                        )
 
                         # Track consecutive empty pages for early exit
                         page_useful = (
