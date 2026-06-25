@@ -883,3 +883,21 @@ class TestPolymarketVolumeBackfill:
         from app.tasks.polymarket import _process_event_batch
         src = inspect.getsource(_process_event_batch)
         assert "sub_vol" in src and "volume" in src
+
+    def test_poll_has_time_budget_guard_and_cursor(self):
+        """#984: poll_polymarket scanned ~210 pages with no time guard and busted
+        the 540s soft limit (consec=13, sole driver of critical health). It MUST
+        carry an inner per-page budget check (mirror #969) + a rotating Redis page
+        cursor so it stops before the wall and resumes coverage next run."""
+        import inspect
+        from app.tasks.polymarket import _poll_polymarket_markets
+        src = inspect.getsource(_poll_polymarket_markets)
+        # budget comfortably under the 540s soft limit
+        assert "_MAX_SECONDS = 420" in src
+        # per-page guard using monotonic elapsed
+        assert "_time.monotonic() - _start > _MAX_SECONDS" in src
+        # rotating page cursor persisted for resume
+        assert "bainluck:polymarket_poll_page" in src
+        assert "_rc.setex(_poll_cursor_key" in src
+        # the supplementary settled-sports pass is ALSO budget-guarded
+        assert src.count("_MAX_SECONDS") >= 4

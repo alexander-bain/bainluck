@@ -340,8 +340,37 @@ async def _poll_polymarket_markets():
         seen_ids: set[str] = set()
         batch: list = []
 
-        for page in range(max_pages):
-            if page > 0:
+        # #984: bound the pagination to a time budget under the 540s soft limit.
+        # poll_polymarket scanned up to 130 active pages + an 80-page settled-
+        # sports pass with NO time guard, busting the wall (consec=13, 0
+        # successes >24h — the sole driver of critical health). Mirror the #969
+        # inner-bound: a per-page budget check breaks before the wall, and a
+        # rotating Redis page cursor resumes next run so coverage rotates across
+        # runs instead of re-scanning the same early pages each time.
+        import time as _time
+        _start = _time.monotonic()
+        _MAX_SECONDS = 420  # 120s margin under the 540s soft limit
+        from app.tasks.redis_state import get_redis_client
+        _rc = get_redis_client()
+        _poll_cursor_key = "bainluck:polymarket_poll_page"
+        _resume_page = int(_rc.get(_poll_cursor_key) or 0)
+        if not (0 <= _resume_page < max_pages):
+            _resume_page = 0
+
+        events_data = None
+        pages_fetched = 0
+        budget_hit = False
+        for _i in range(max_pages):
+            page = (_resume_page + _i) % max_pages
+            if _time.monotonic() - _start > _MAX_SECONDS:
+                _rc.setex(_poll_cursor_key, 86400, str(page))  # resume here next run
+                logger.info(
+                    "Polymarket poll: time budget (%ds) hit after %d pages "
+                    "(resume page %d next run)", _MAX_SECONDS, _i, page,
+                )
+                budget_hit = True
+                break
+            if _i > 0:
                 await asyncio.sleep(0.3)
 
             try:
@@ -352,7 +381,10 @@ async def _poll_polymarket_markets():
                 logger.warning("Error fetching Polymarket page %d: %s", page, e)
                 break
 
+            pages_fetched += 1
             if not events_data:
+                # wrapped past the end of the active set — reset cursor, stop
+                _rc.setex(_poll_cursor_key, 86400, "0")
                 break
 
             for event_data in events_data:
@@ -375,7 +407,12 @@ async def _poll_polymarket_markets():
                     batch.clear()
 
             if len(events_data) < 100:
+                # reached the last active page — next run starts fresh
+                _rc.setex(_poll_cursor_key, 86400, "0")
                 break
+        else:
+            # full max_pages sweep with no early break — reset cursor
+            _rc.setex(_poll_cursor_key, 86400, "0")
 
         # Process remaining events
         if batch:
@@ -386,10 +423,9 @@ async def _poll_polymarket_markets():
             )
             batch.clear()
 
-        pages_fetched = page + 1 if events_data is not None else page
         logger.info(
-            "Polymarket: fetched %d unique events across %d pages",
-            len(seen_ids), pages_fetched,
+            "Polymarket: fetched %d unique events across %d pages (budget_hit=%s)",
+            len(seen_ids), pages_fetched, budget_hit,
         )
         if pages_fetched >= max_pages:
             logger.warning(
@@ -408,9 +444,17 @@ async def _poll_polymarket_markets():
         _SPORTS_TAG_SLUGS = ["baseball", "basketball", "hockey", "football"]
         supplemented = 0
         for tag_slug in _SPORTS_TAG_SLUGS:
+            # #984: skip the settled-sports pass entirely if the main scan already
+            # spent the budget — it must not push the task past the 540s wall.
+            if budget_hit or (_time.monotonic() - _start) > _MAX_SECONDS:
+                budget_hit = True
+                break
             tag_offset = 0
             max_tag_pages = 20
             for _tp in range(max_tag_pages):
+                if (_time.monotonic() - _start) > _MAX_SECONDS:
+                    budget_hit = True
+                    break
                 try:
                     await asyncio.sleep(0.3)
                     tag_events = await service.get_events(
