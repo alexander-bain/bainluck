@@ -1362,6 +1362,12 @@ async def _snapshot_coverage_metrics():
             # This query is too heavy for the web dyno's 30s timeout
             # but runs fine on the background worker.
             try:
+                # #940 metric honesty (mirror of precompute_backfill_winners_status):
+                # needs_backfill = NO resolution_source (the genuine gap); split the
+                # rest of the no-winner-tradeable universe into authoritative
+                # (api_settlement/game_score/box_score — correct single-sided NO,
+                # gotcha #17) vs heuristic (pass2_loser/all_losers/clean_resolution —
+                # #754 correctness audit). Count-only, no mutation (gotcha #21).
                 status_result = await session.execute(
                     text("""
                         WITH market_status AS (
@@ -1369,7 +1375,11 @@ async def _snapshot_coverage_metrics():
                                 BOOL_OR(fo.is_winner) AS has_winner,
                                 MAX(fo.current_probability) AS max_prob,
                                 BOOL_AND(fo.calibration_probability IS NULL
-                                         AND fo.opening_probability IS NULL) AS all_cal_null
+                                         AND fo.opening_probability IS NULL) AS all_cal_null,
+                                BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc,
+                                BOOL_OR(fo.resolution_source IN
+                                        ('api_settlement', 'game_score', 'box_score'))
+                                    AS authoritative
                             FROM futures_markets fm
                             JOIN futures_outcomes fo ON fo.market_id = fm.id
                             WHERE fm.status = 'resolved'
@@ -1383,9 +1393,20 @@ async def _snapshot_coverage_metrics():
                             ) AS has_winner,
                             COUNT(*) FILTER (
                                 WHERE NOT has_winner
+                                  AND NOT any_rsrc
                                   AND NOT (all_cal_null AND source != 'datagolf')
                                   AND (max_prob IS NULL OR max_prob > 0.10)
                             ) AS needs_backfill,
+                            COUNT(*) FILTER (
+                                WHERE NOT has_winner AND authoritative
+                                  AND NOT (all_cal_null AND source != 'datagolf')
+                                  AND (max_prob IS NULL OR max_prob > 0.10)
+                            ) AS resolved_single_sided,
+                            COUNT(*) FILTER (
+                                WHERE NOT has_winner AND any_rsrc AND NOT authoritative
+                                  AND NOT (all_cal_null AND source != 'datagolf')
+                                  AND (max_prob IS NULL OR max_prob > 0.10)
+                            ) AS heuristic_resolved,
                             COUNT(*) FILTER (
                                 WHERE all_cal_null AND source != 'datagolf'
                             ) AS untradeable_excluded
@@ -1397,6 +1418,8 @@ async def _snapshot_coverage_metrics():
                     "sources": [
                         {"source": r.source, "resolved": r.resolved_markets,
                          "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
+                         "resolved_single_sided": r.resolved_single_sided,
+                         "heuristic_resolved": r.heuristic_resolved,
                          "untradeable_excluded": r.untradeable_excluded}
                         for r in status_result.all()
                     ],

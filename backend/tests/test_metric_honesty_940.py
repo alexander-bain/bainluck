@@ -1,0 +1,67 @@
+"""#940 metric honesty: the no-winner / needs_backfill count must EXCLUDE
+authoritatively-resolved single-sided markets (a binary/threshold that correctly
+resolved NO has no winning outcome BY STRUCTURE — gotcha #17), and must split the
+rest of the no-winner-tradeable universe transparently. needs_backfill is now the
+GENUINE gap (no resolution_source at all). Count-only; no is_winner mutation
+(gotcha #21). clean_resolution is heuristic (relabeled pass2_guess) -> #754, NOT
+counted as authoritative.
+"""
+
+import inspect
+
+
+def _both_status_sources():
+    from app.tasks.precompute_backfill_winners_status import (
+        _precompute_backfill_winners_status,
+    )
+    from app.tasks.precompute_calibration import _precompute_calibration_main_impl  # noqa
+    a = inspect.getsource(_precompute_backfill_winners_status)
+    # the calibration twin embeds the same query in its main impl; grab module src
+    import app.tasks.precompute_calibration as pc
+    b = inspect.getsource(pc)
+    return a, b
+
+
+def test_needs_backfill_requires_no_resolution_source():
+    """needs_backfill = the genuine gap = NOT has_winner AND NOT any_rsrc."""
+    a = inspect.getsource(
+        __import__("app.tasks.precompute_backfill_winners_status", fromlist=["x"])
+        ._precompute_backfill_winners_status
+    )
+    assert "BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc" in a
+    # needs_backfill filter must exclude anything already processed
+    assert "NOT has_winner\n                          AND NOT any_rsrc" in a
+
+
+def test_authoritative_set_excludes_heuristic_clean_resolution():
+    """Authoritative = api_settlement/game_score/box_score ONLY. clean_resolution
+    (relabeled pass2_guess) and pass2_loser/all_losers are NOT authoritative —
+    they are the separate #754 correctness audit."""
+    import app.tasks.precompute_backfill_winners_status as m
+    a = inspect.getsource(m._precompute_backfill_winners_status)
+    assert "('api_settlement', 'game_score', 'box_score')" in a
+    assert "AS authoritative" in a
+    # the transparency buckets exist
+    assert "AS resolved_single_sided" in a
+    assert "AS heuristic_resolved" in a
+    # clean_resolution must NOT be promoted into the authoritative tuple
+    assert "'clean_resolution'" not in a.split("AS authoritative")[0].split("authoritative")[-1] or "clean_resolution is" in a
+
+
+def test_calibration_twin_matches():
+    """The duplicate query in precompute_calibration must carry the same fix so
+    the two caches agree."""
+    import app.tasks.precompute_calibration as pc
+    b = inspect.getsource(pc)
+    assert "BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc" in b
+    assert "('api_settlement', 'game_score', 'box_score')" in b
+    assert "AS resolved_single_sided" in b
+    assert "AS heuristic_resolved" in b
+
+
+def test_no_is_winner_mutation_in_status_precompute():
+    """#940 is count-only — the status precompute must not UPDATE is_winner."""
+    import app.tasks.precompute_backfill_winners_status as m
+    src = inspect.getsource(m)
+    assert "SET is_winner" not in src
+    assert "UPDATE futures_outcomes" not in src

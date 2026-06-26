@@ -31,13 +31,32 @@ async def _precompute_backfill_winners_status() -> dict:
     try:
         async with get_task_session() as session:
             # ── 1. Sources summary (main query) ─────────────────────────
+            # #940 metric honesty: a market with no winning outcome is NOT
+            # automatically "needs_backfill". Most are single-sided Kalshi/Poly
+            # threshold/binary markets that correctly resolved NO (gotcha #17 —
+            # "Over 224.5", total 211 → the lone outcome is correctly is_winner=
+            # false; there is no winner BY STRUCTURE). Split the no-winner-tradeable
+            # universe three ways by resolution_source:
+            #   needs_backfill        = NO resolution_source at all (the genuine gap)
+            #   resolved_single_sided = authoritative (api_settlement/game_score/
+            #                           box_score) — correctly resolved, EXCLUDED
+            #   heuristic_resolved    = guessed (pass2_loser/all_losers/
+            #                           clean_resolution[=relabeled pass2_guess]/…)
+            #                           — correctness is the SEPARATE #754 audit
+            # Count/denominator-only — NO is_winner/cal_prob mutation (gotcha #21).
+            # clean_resolution is treated as heuristic (it is renamed pass2_guess,
+            # see backfill_winners repair) — held for #754, NOT excluded as correct.
             result = await session.execute(text("""
                 WITH market_status AS (
                     SELECT fm.id, fm.source,
                         BOOL_OR(fo.is_winner) AS has_winner,
                         MAX(fo.current_probability) AS max_prob,
                         BOOL_AND(fo.calibration_probability IS NULL
-                                 AND fo.opening_probability IS NULL) AS all_cal_null
+                                 AND fo.opening_probability IS NULL) AS all_cal_null,
+                        BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc,
+                        BOOL_OR(fo.resolution_source IN
+                                ('api_settlement', 'game_score', 'box_score'))
+                            AS authoritative
                     FROM futures_markets fm
                     JOIN futures_outcomes fo ON fo.market_id = fm.id
                     WHERE fm.status = 'resolved'
@@ -51,9 +70,20 @@ async def _precompute_backfill_winners_status() -> dict:
                     ) AS has_winner,
                     COUNT(*) FILTER (
                         WHERE NOT has_winner
+                          AND NOT any_rsrc
                           AND NOT (all_cal_null AND source != 'datagolf')
                           AND (max_prob IS NULL OR max_prob > 0.10)
                     ) AS needs_backfill,
+                    COUNT(*) FILTER (
+                        WHERE NOT has_winner AND authoritative
+                          AND NOT (all_cal_null AND source != 'datagolf')
+                          AND (max_prob IS NULL OR max_prob > 0.10)
+                    ) AS resolved_single_sided,
+                    COUNT(*) FILTER (
+                        WHERE NOT has_winner AND any_rsrc AND NOT authoritative
+                          AND NOT (all_cal_null AND source != 'datagolf')
+                          AND (max_prob IS NULL OR max_prob > 0.10)
+                    ) AS heuristic_resolved,
                     COUNT(*) FILTER (
                         WHERE all_cal_null AND source != 'datagolf'
                     ) AS untradeable_excluded
@@ -63,6 +93,8 @@ async def _precompute_backfill_winners_status() -> dict:
             sources = [
                 {"source": r.source, "resolved": r.resolved_markets,
                  "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
+                 "resolved_single_sided": r.resolved_single_sided,
+                 "heuristic_resolved": r.heuristic_resolved,
                  "untradeable_excluded": r.untradeable_excluded}
                 for r in result.all()
             ]
