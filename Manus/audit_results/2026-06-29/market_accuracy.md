@@ -1,0 +1,14 @@
+Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to pick 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
+
+I have completed the Market Accuracy Ground Truth audit for 4 events on bainluck.com and cross-referenced with Kalshi. The detailed findings are compiled in the attached JSON file.
+
+### Summary of Findings:
+1. **Cross-Game Contamination Detected (CRITICAL)**: The scheduled MLB game between the Cincinnati Reds and Milwaukee Brewers (Event `/events/14966194`) is showing **100% / 0%** settled values for "Additional Markets" and "Player Props" even though the game has not started yet. This indicates data leakage from a previously completed game involving the Brewers (likely yesterday's Cubs vs Brewers game).
+2. **Monotonicity Violation Detected (CRITICAL)**: The completed MLB game between the Chicago Cubs and Milwaukee Brewers (Event `/events/14969284`) shows a monotonicity violation in its O/U thresholds. It lists O/U 7.5, 8.5, and 9.5 at 0%, but then jumps to 100% for O/U 10.5 and 11.5. This implies the display is mixing "Over" and "Under" markets without clearly labeling the direction, breaking the expected monotonic decrease for Over thresholds.
+3. **Kalshi Cross-Reference**: For the NBA Finals games between the Knicks and Spurs, Kalshi uses distinct tickers for each game in the series (e.g., `KXNBA1HTOTAL-26JUN08NYKSAS` for Game 2 and `KXNBA1HTOTAL-26JUN13NYKSAS` for Game 4). The threshold counts match perfectly between Bainluck and Kalshi (e.g., 9 thresholds for 1H total).
+4. **General Structure**: Completed games show "Total Maps" and "Margin Maps" with settled 100%/0% probabilities, while scheduled games often lack these detailed sections unless pre-game odds are fully populated from sources like Kalshi.
+
+The JSON output provides the structured data exactly as requested.
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/gEBViR6784H9cg5YddtRuW/sandbox/Gga7KZhPrsgpG7dAg6DHXz_1782742656670_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZ0VCVmlSNjc4NEg5Y2c1WWRkdFJ1Vy9zYW5kYm94L0dnYTdLWmhQcnNncEc3ZEFnNkRIWHpfMTc4Mjc0MjY1NjY3MF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=rY9ydENvusGNOoMHPL3UNfzS32LRuFwHF0Fo9nqOn2OoGdabtoJaB-DaP4uNx0Q3ZP6YqJopgsSBxry27puurH3vJirNjSMnnt3VuTrgI8uiNXHduX5JP2qq0OXFwalUlzo4UDTNSZCOXGEJANiYJovHR42Po6jM9gUParnTKssl68V07MPNAvjTU5BwxFWMTIrN456mQYyi9iuv2bG1qffKfSg5k76HNeXx9hG8zGv26Aeha~--sF5LZA3N2-M0JOOC68oi3Tcmab6kt2t9B3A9~TB68LzZ7nZh-niryFYDxxgTkaD6SeRejevGNcfO3jRwrHzD0RsFb5jLfliiLA__
