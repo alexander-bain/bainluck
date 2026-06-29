@@ -4,35 +4,32 @@
   "new_findings_count": 8,
   "tasks": {
     "feed": {
-      "task_id": "MaDVyZXoHMkixG8XMETGby",
-      "status": "complete",
-      "task_url": "https://manus.im/app/MaDVyZXoHMkixG8XMETGby",
+      "task_id": "ZDHMvSrvm2TqcnsZAxsHnQ",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/ZDHMvSrvm2TqcnsZAxsHnQ",
       "credits": 0
     },
     "event_detail": {
-      "task_id": "7JhqYK6aoaHCDRshEgC4pn",
+      "task_id": "ZxqGCiDMBXKDG85s7ybbeu",
       "status": "complete",
-      "task_url": "https://manus.im/app/7JhqYK6aoaHCDRshEgC4pn",
+      "task_url": "https://manus.im/app/ZxqGCiDMBXKDG85s7ybbeu",
       "credits": 0
     },
     "market_completeness": {
-      "task_id": "27PbHrTAt6aJdk9WxEWwNi",
-      "status": "timeout",
-      "task_url": "https://manus.im/app/27PbHrTAt6aJdk9WxEWwNi",
+      "task_id": "JrAAeNJUqXdm59AvPGuZzQ",
+      "status": "complete",
+      "task_url": "https://manus.im/app/JrAAeNJUqXdm59AvPGuZzQ",
       "credits": 0
     }
   },
   "diagnostics": {
     "event_detail": {
-      "critical": 1,
-      "0%": 1,
-      "bug": 1
-    },
-    "feed": {
-      "critical": 1,
       "broken": 1,
       "0%": 2,
       "fail": 1
+    },
+    "market_completeness": {
+      "critical": 2
     }
   }
 }
