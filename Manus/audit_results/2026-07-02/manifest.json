@@ -1,0 +1,36 @@
+{
+  "date": "2026-07-02",
+  "mode": "light",
+  "new_findings_count": 2,
+  "tasks": {
+    "feed": {
+      "task_id": "LjVym6o2J4fzdpDpKadhQL",
+      "status": "complete",
+      "task_url": "https://manus.im/app/LjVym6o2J4fzdpDpKadhQL",
+      "credits": 0
+    },
+    "event_detail": {
+      "task_id": "GexLuxScpzAFboZszXwwdt",
+      "status": "complete",
+      "task_url": "https://manus.im/app/GexLuxScpzAFboZszXwwdt",
+      "credits": 1910
+    },
+    "visual_review": {
+      "task_id": "7CzQuHUxQdRjDozHa3mbQV",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/7CzQuHUxQdRjDozHa3mbQV",
+      "credits": 0
+    }
+  },
+  "diagnostics": {
+    "feed": {
+      "critical": 2,
+      "fail": 1,
+      "bug": 1
+    },
+    "event_detail": {
+      "critical": 1,
+      "fail": 1
+    }
+  }
+}
