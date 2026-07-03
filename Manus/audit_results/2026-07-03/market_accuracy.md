@@ -1,17 +1,28 @@
-Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to select 4 events, then audit each for monotonicity, cross-game contamination, and cross-reference with Kalshi.
+Starting the Market Accuracy Ground Truth audit. I'll visit bainluck.com/feed to pick 4 events, then systematically audit each one for monotonicity, cross-game contamination, and data accuracy.
 
-I notice that this completed MLB game event page doesn't have "Projected Scoring" or "Spread" sections - it only shows Win Probability, Additional Markets (player props), and Bigger Picture. Let me search for events that have the projected scoring sections - these are likely on upcoming/scheduled games. Let me look for upcoming NBA Finals games or other scheduled events.
+Making progress on the audit. I've analyzed the first NBA Finals event (Game 4, Knicks vs Spurs). The page structure uses "Additional Markets" rather than "Projected scoring" sections. The game is completed so all markets show settlement values (0% or 100%). Now moving on to check more events including live/scheduled MLB games which will have actual probability distributions to check for monotonicity.
 
-I have completed the Market Accuracy Ground Truth audit for bainluck.com event detail pages.
+The Market Accuracy Ground Truth audit is complete. Here are the key findings:
 
-### Key Findings
-1. **Section Availability:** The sections mentioned in the instructions ("Projected Scoring", "Projected Combined Scoring", "Spread" with grouped outcomes, and "Period Markets") do **not** exist under those exact names on most event pages. For scheduled MLB games, these sections are completely absent.
-2. **NBA Finals Structure:** On NBA Finals game pages, the equivalent data is found under "Total maps" (Full game and 1st half), "Margin maps", and "Player Props".
-3. **Monotonicity Check:** I verified the monotonicity for all Full Game Over/Under thresholds, 1st Half Total thresholds, and Player Prop thresholds across three NBA Finals games (Games 1, 2, and 3 between the Knicks and Spurs). All thresholds passed the monotonicity check (probabilities were strictly decreasing or non-increasing).
-4. **Cross-Game Contamination:** I compared the thresholds across Games 1, 2, and 3. While Games 1 and 3 shared identical thresholds and Game 2 had slightly different ones (offset by 1 point), this aligns with standard market behavior based on pre-game projected totals and does not indicate contamination. No outcomes from previous games were found on subsequent game pages.
-5. **Kalshi Cross-Reference:** The NBA Finals have already concluded (Knicks won), and Kalshi has removed all game-specific markets (1H Total, Spreads, Player Props). Only 2027 futures remain on Kalshi, making a live cross-reference impossible for these completed events.
+**Cross-Game Contamination: CONFIRMED (CRITICAL)**
 
-The detailed structured data has been compiled into the attached JSON report.
+Two of the four audited events show cross-game contamination in the NBA Finals series (Knicks vs Spurs):
+
+1. **Game 4** (`/events/14918299`): Shows 18 1H O/U thresholds when Kalshi only has 9 for this game. The extra 9 thresholds (99.5–123.5, all at 100%) are from Game 3 where 1H total was 125. Threshold 111.5 appears in BOTH the 0% and 100% groups simultaneously — impossible for a single game.
+
+2. **Game 3** (`/events/14870286`): 1H O/U 123.5 shows 0% when 1H total was 125 (should be 100%). This threshold is likely from Game 2 contaminating Game 3's page.
+
+**Monotonicity: CLEAN in primary sections**
+- Total Maps (Projected Combined Scoring equivalent): All correctly monotonic
+- Player Props: All 25+ players checked across events are correctly monotonic
+- The contamination creates apparent monotonicity violations only in the Additional Markets section where outcomes from different games are mixed together
+
+**Root Cause:** Bainluck appears to aggregate markets across the entire series ticker (KXNBA1HTOTAL) rather than filtering to only the specific game event date.
+
+The full JSON report and detailed markdown analysis are attached.
 
 
-**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/TFsTVRkna8JQFK4eHwa6GH/sandbox/SL3HSuUzJatmRfelxrrHqF_1783094579398_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3JlcG9ydA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvVEZzVFZSa25hOEpRRks0ZUh3YTZHSC9zYW5kYm94L1NMM0hTdVV6SmF0bVJmZWx4cnJIcUZfMTc4MzA5NDU3OTM5OF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM0psY0c5eWRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE4MzAyOTc2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Ub~PkSbfxqTd2chKwEOpmdUNLlCNr1CieTDoe9Ypu81MaLESL-JdUMQzZ7rkRBvCONr-KKgAiHmyQWoS~dbw2y2oJW1wrUbM0YrWjy8eyzFKBFPomDeu8NgFhgIX~7fEMuggCWOdMY-VIc2GLMB7FN1MghyCFOPrSVoeTwzOHOb~EEdjvhVzigRTh1xyRy709C90IfIIRy96CBbWuzIwvA-NnG2aw3PzReZEKid6vNUsO0R5CgrynMJZBO1djCyW9weibu1WkzCSuLpmLvrw8N56HIs841WM-2ou9Upju9HfgrjP54MSTa~pACreW9I8zq9MMZ2v3zfbJrX8fB7vuQ__
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/foMXYZX4j6WxzxroxWwiUw/sandbox/bcRhcCoaYGxKpQqbHn70JV_1783120545935_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9hdWRpdA.json?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZm9NWFlaWDRqNld4enhyb3hXd2lVdy9zYW5kYm94L2JjUmhjQ29hWUd4S3BRcWJIbjcwSlZfMTc4MzEyMDU0NTkzNV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjloZFdScGRBLmpzb24iLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE4MzAyOTc2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=WfjFmhKNY7rsnZ-~Zl8dGarfk1SLZvsb~hKNNBLStg6hCIaRkRi~10rgs4bL7mWiJlj1TFomrjdTMvBxHyfPrkptbUeSzKpQjUCNQJPynBz87EI2zv1etNjUpW8rokL-8wJCoG2gIB3nwT6ALpYNrWz2iEkczIwt5v7e4-G3Yxc88QtC9uXFGTzkGRt~cvX2Er-smrPLRfVGlr9BK1LtgcEE~lQ4PPK~P4PBrI5IQ4mpslS0uu6DJoqCi~a6u639pVVTIZw48TDD4siAUZaxnrhKpV6mVvvUxDYWdD6QgCBZW3BfUzGxUsxAFIB7z5OR2aM4cUKL7EqdmZ5S6Y86ng__
+
+
+**Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/foMXYZX4j6WxzxroxWwiUw/sandbox/bcRhcCoaYGxKpQqbHn70JV_1783120545935_na1fn_L2hvbWUvdWJ1bnR1L21hcmtldF9hY2N1cmFjeV9ncm91bmRfdHJ1dGg.md?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZm9NWFlaWDRqNld4enhyb3hXd2lVdy9zYW5kYm94L2JjUmhjQ29hWUd4S3BRcWJIbjcwSlZfMTc4MzEyMDU0NTkzNV9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDIxaGNtdGxkRjloWTJOMWNtRmplVjluY205MWJtUmZkSEoxZEdnLm1kIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxODMwMjk3NjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Lv7mtc8FuNFi5qAqEXxtp1dJ7-Vapa-me3bD7~AmReoSsFjY~QikrySr~5vU5VW8BzANw9TsuKXh5hIkXKK8rd60V0YtMaEMWIZ6UnvYXtoGHXHrZ4ixdPKEhhkh4D-XCoYQc527DGdj0E1ushgS14IJqWpK0BIYBgFkR5YFs2N0rACEKTLsryjYO1uGmmM3SItEeVDFyhth1pp45JOLIkQD6f~XemRhxLmuHMQDjCPbMZs0PNkjfuzY-zM5bSUTgLb5xa5Oi66DFoJl4ekuFHWv-BvtsGNuUwmm79CkozRl8-vOm5AGg1rz0vrPALP2dMCm7OSlRnw8sOjDqr4LDQ__
