@@ -4496,6 +4496,21 @@ async def clob_resolve_sample_endpoint(
     return await clob_resolve_sample(limit=limit)
 
 
+@router.post("/clob-resolve-drain")
+async def clob_resolve_drain_endpoint(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(300, description="Markets to process this run"),
+    dry_run: bool = Query(True, description="True = report only, no writes"),
+):
+    """#989 writing drain: authoritatively re-resolve the curve-dropped
+    Polymarket cohort via CLOB. Defaults to dry_run=True (safe). Set
+    dry_run=false to write is_winner (clob_authoritative) for the confident
+    tiers. Runs inline for a bounded slice; the beat task drains continuously."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks.clob_resolve import clob_resolve_drain
+    return await clob_resolve_drain(limit=limit, dry_run=dry_run)
+
+
 @router.get("/audit-pass2-guess")
 async def audit_pass2_guess(
     request: Request, secret: str = Query(None),

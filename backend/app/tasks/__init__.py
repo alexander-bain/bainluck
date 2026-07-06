@@ -405,6 +405,16 @@ def backfill_polymarket_winners(self, limit: int = 10000):
     return _tracked_run("polymarket_winners", _backfill_polymarket_winners_from_api(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.clob_resolve_drain")
+def clob_resolve_drain(self, limit: int = 300, dry_run: bool = False):
+    """#989: authoritatively re-resolve the curve-dropped Polymarket cohort
+    (pass2_loser/all_losers) via the CLOB API. Writes is_winner with
+    resolution_source='clob_authoritative' for the confident resolved_direct /
+    resolved_name_match tiers only; void/ambiguous stay excluded. Cursor-resumable."""
+    from app.tasks.clob_resolve import clob_resolve_drain as _drain
+    return _tracked_run("clob_resolve_drain", _drain(limit=limit, dry_run=dry_run))
+
+
 # --- Categorization ---
 
 @celery_app.task(bind=True, name="app.tasks.categorize_futures")
@@ -1903,6 +1913,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_polymarket_winners",
         "schedule": crontab(minute=45, hour="5,11,17,23"),  # Every 6h, 15min after PM sync
         "kwargs": {"limit": 10000},
+        "options": {"queue": "background"},
+    },
+    "clob-resolve-drain": {
+        "task": "app.tasks.clob_resolve_drain",
+        "schedule": crontab(minute=20, hour="1,7,13,19"),  # Every 6h, clear of :40-:58 cal windows
+        # #989: wired in DRY-RUN first (verify-before-write). Flip to dry_run=False
+        # after the manually-verified bounded write slice proves out over a cycle.
+        "kwargs": {"limit": 300, "dry_run": True},
         "options": {"queue": "background"},
     },
     "backfill-box-scores": {

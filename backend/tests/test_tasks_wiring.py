@@ -262,6 +262,7 @@ class TestBeatScheduleCompleteness:
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",
+        "clob-resolve-drain",
         "snapshot-coverage-metrics-daily",
         "resolve-winners",
         "digest-external-feature-requests-weekly",
