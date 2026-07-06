@@ -209,6 +209,38 @@ def _apply_search_synonyms(
     ]
 
 
+def _rerank_by_category_coherence(markets: list) -> list:
+    """#993 Slice C — demote cross-category false-matches on entity queries.
+
+    When a query matches an entity whose markets cluster in one category (e.g.
+    "lebron james" → 7 basketball markets), a lone same-name market from an
+    unrelated category (the tier-2, volume-0 "Will LeBron announce a Presidential
+    run" politics novelty) must not outrank the entity's real markets. Stable
+    partition: dominant-category markets first (preserving the incoming
+    rank/tier/volume order), everything else after. Deterministic, no LLM.
+
+    Only fires on a CLEAR plurality (dominant ≥2 and strictly greater than the
+    next category) so balanced multi-category queries and single-market results
+    are left untouched — and politics queries (e.g. "trump approval", dominant =
+    politics) keep politics on top (no regression).
+    """
+    if len(markets) < 2:
+        return markets
+    from collections import Counter
+
+    counts = Counter(
+        m.llm_sport_category for m in markets if m.llm_sport_category
+    )
+    if len(counts) < 2:
+        return markets  # single category (or none) — nothing to demote
+    (dom, dom_n), (_, next_n) = counts.most_common(2)
+    if dom_n < 2 or dom_n <= next_n:
+        return markets  # no clear dominant category — leave order as-is
+    in_dom = [m for m in markets if m.llm_sport_category == dom]
+    out_dom = [m for m in markets if m.llm_sport_category != dom]
+    return in_dom + out_dom
+
+
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
@@ -1215,17 +1247,19 @@ async def search_events(
     futures_result = await db.execute(futures_query)
     futures_markets_raw = futures_result.scalars().unique().all()
 
-    # Deduplicate by normalized name
+    # Deduplicate by normalized name (dedup the FULL fetched set, then re-rank,
+    # then truncate — so category re-ranking can promote the entity's real
+    # market above a cross-category false-match before the top-10 cut). #993
     seen_search_keys: set[str] = set()
-    futures_markets = []
+    deduped_futures = []
     for m in futures_markets_raw:
         dkey = _normalize_futures_dedup_key(m)
         if dkey in seen_search_keys:
             continue
         seen_search_keys.add(dkey)
-        futures_markets.append(m)
-        if len(futures_markets) >= 10:
-            break
+        deduped_futures.append(m)
+
+    futures_markets = _rerank_by_category_coherence(deduped_futures)[:10]
 
     formatted_futures = [
         _format_futures_for_search(market)
@@ -1483,9 +1517,16 @@ async def typeahead_search(
         .limit(20)
     )
     futures_result = await db.execute(futures_query)
+    # #993 typeahead parity: same category-coherence demotion as /search, so the
+    # dropdown surfaces the entity's real market (e.g. "LeBron James Next Team")
+    # instead of a cross-category novelty (tier-2 "presidential run") before the
+    # 5-item cut. Shared helper — no duplicated ranking logic.
+    ta_futures_ranked = _rerank_by_category_coherence(
+        futures_result.scalars().unique().all()
+    )
     futures_pool = []
     seen_futures_keys: set[str] = set()
-    for market in futures_result.scalars().all():
+    for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
         dedup_key = _normalize_futures_dedup_key(market)

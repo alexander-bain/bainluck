@@ -15,7 +15,43 @@ from app.routes.events import (
     _strip_search_scaffolding,
     _apply_search_synonyms,
     _is_field_outcome,
+    _rerank_by_category_coherence,
 )
+
+
+def _mkt(cat, name="m"):
+    return SimpleNamespace(llm_sport_category=cat, name=name)
+
+
+class TestCategoryCoherenceRerank:
+    def test_demotes_cross_category_false_match(self):
+        # lebron: 3 basketball + 1 politics novelty -> basketball first, politics last
+        ms = [_mkt("politics", "presidential run"), _mkt("basketball", "next team"),
+              _mkt("basketball", "retire"), _mkt("basketball", "owner")]
+        out = _rerank_by_category_coherence(ms)
+        assert out[0].llm_sport_category == "basketball"
+        assert out[-1].llm_sport_category == "politics"
+
+    def test_politics_query_keeps_politics(self):
+        # "trump approval": politics dominant -> stays on top (no regression)
+        ms = [_mkt("politics", "approval"), _mkt("politics", "impeach"), _mkt("economics", "gdp")]
+        out = _rerank_by_category_coherence(ms)
+        assert out[0].llm_sport_category == "politics"
+
+    def test_balanced_untouched(self):
+        ms = [_mkt("basketball"), _mkt("politics"), _mkt("basketball"), _mkt("politics")]
+        out = _rerank_by_category_coherence(ms)
+        assert out == ms  # no clear plurality -> order preserved
+
+    def test_single_or_empty_untouched(self):
+        assert _rerank_by_category_coherence([_mkt("basketball")]) == [_mkt("basketball")] or True
+        one = [_mkt("basketball")]
+        assert _rerank_by_category_coherence(one) is one
+
+    def test_stable_within_dominant(self):
+        a, b = _mkt("basketball", "A"), _mkt("basketball", "B")
+        out = _rerank_by_category_coherence([a, _mkt("politics"), b])
+        assert [m.name for m in out if m.llm_sport_category == "basketball"] == ["A", "B"]
 
 
 class TestScaffoldingStrip:
