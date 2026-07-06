@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -709,11 +710,13 @@ class FuturesMarket(Base):
     # Curator score adjustment — accumulated from boost/demote signals
     curation_score_adj: Mapped[Optional[int]] = mapped_column(Integer, server_default="0")
 
-    # Volume/liquidity from prediction markets (internal signal, never user-facing)
+    # Volume/liquidity from prediction markets (internal signal, never user-facing).
+    # BigInteger: prod ALTER applied 2026-07-06 (#990) — World Cup volume exceeded
+    # int32 (2.147B cap). Models synced to match; keep in lockstep with the DB type.
     volume: Mapped[Optional[int]] = mapped_column(
-        Integer
+        BigInteger
     )  # Lifetime volume in contracts/dollars
-    volume_24h: Mapped[Optional[int]] = mapped_column(Integer)  # 24-hour trading volume
+    volume_24h: Mapped[Optional[int]] = mapped_column(BigInteger)  # 24-hour trading volume
     max_movement_24h: Mapped[Optional[float]] = mapped_column(Numeric(7, 4))  # MAX(ABS(outcome.probability_change_24h))
     open_interest: Mapped[Optional[int]] = mapped_column(
         Integer
