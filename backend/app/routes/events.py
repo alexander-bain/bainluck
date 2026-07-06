@@ -1309,19 +1309,22 @@ async def search_events(
     futures_result = await db.execute(futures_query)
     futures_markets_raw = futures_result.scalars().unique().all()
 
-    # Deduplicate by normalized name (dedup the FULL fetched set, then re-rank,
-    # then truncate — so category re-ranking can promote the entity's real
-    # market above a cross-category false-match before the top-10 cut). #993
+    # Re-rank FIRST (name-match priority + volume + wrong-league), THEN dedup —
+    # so dedup keeps the volume-winning representative per key. (Dedup-then-rerank
+    # let dedup keep the highest-ts_rank variant — e.g. the 820-vol "English
+    # Premier League Champion" over the 16M-vol "…Winner?" — which then lost the
+    # volume sort to lacrosse.) #993
+    reranked_futures = _rerank_search_futures(futures_markets_raw, expanded)
     seen_search_keys: set[str] = set()
-    deduped_futures = []
-    for m in futures_markets_raw:
+    futures_markets = []
+    for m in reranked_futures:
         dkey = _normalize_futures_dedup_key(m)
         if dkey in seen_search_keys:
             continue
         seen_search_keys.add(dkey)
-        deduped_futures.append(m)
-
-    futures_markets = _rerank_search_futures(deduped_futures, expanded)[:10]
+        futures_markets.append(m)
+        if len(futures_markets) >= 10:
+            break
 
     formatted_futures = [
         _format_futures_for_search(market)
