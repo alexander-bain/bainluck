@@ -15,7 +15,8 @@ from app.routes.events import (
     _strip_search_scaffolding,
     _apply_search_synonyms,
     _is_field_outcome,
-    _rerank_by_category_coherence,
+    _cohere_by_category,
+    _rerank_search_futures,
 )
 
 
@@ -23,35 +24,57 @@ def _mkt(cat, name="m"):
     return SimpleNamespace(llm_sport_category=cat, name=name)
 
 
-class TestCategoryCoherenceRerank:
-    def test_demotes_cross_category_false_match(self):
-        # lebron: 3 basketball + 1 politics novelty -> basketball first, politics last
-        ms = [_mkt("politics", "presidential run"), _mkt("basketball", "next team"),
-              _mkt("basketball", "retire"), _mkt("basketball", "owner")]
-        out = _rerank_by_category_coherence(ms)
+# expanded-terms shape for _rerank_search_futures: [(term, expansion_or_None)]
+_LEBRON = [("lebron", None), ("james", None)]
+_TRUMP = [("trump", None), ("approval", None)]
+
+
+class TestRerankSearchFutures:
+    def test_name_match_beats_outcome_only(self):
+        # lebron: real basketball markets NAME him; election markets only list him
+        # as an outcome (name has no 'lebron james') -> those go last.
+        ms = [
+            _mkt("politics", "Presidential Election Winner 2028"),   # outcome-only
+            _mkt("basketball", "LeBron James Next Team"),            # name-match
+            _mkt("politics", "Will LeBron James announce a Presidential run"),  # name-match, novelty
+            _mkt("basketball", "Will LeBron James retire"),          # name-match
+        ]
+        out = _rerank_search_futures(ms, _LEBRON)
+        assert out[0].name == "LeBron James Next Team"               # basketball leads
+        assert out[-1].name == "Presidential Election Winner 2028"   # outcome-only demoted
+
+    def test_cross_category_novelty_demoted_within_name_matches(self):
+        ms = [
+            _mkt("politics", "Will LeBron James announce a Presidential run"),
+            _mkt("basketball", "LeBron James Next Team"),
+            _mkt("basketball", "Will LeBron James retire"),
+        ]
+        out = _rerank_search_futures(ms, _LEBRON)
         assert out[0].llm_sport_category == "basketball"
         assert out[-1].llm_sport_category == "politics"
 
-    def test_politics_query_keeps_politics(self):
-        # "trump approval": politics dominant -> stays on top (no regression)
-        ms = [_mkt("politics", "approval"), _mkt("politics", "impeach"), _mkt("economics", "gdp")]
-        out = _rerank_by_category_coherence(ms)
+    def test_politics_query_no_regression(self):
+        ms = [
+            _mkt("politics", "Will Trump approval exceed 50%"),
+            _mkt("politics", "Trump approval rating in 2026"),
+            _mkt("economics", "GDP with Trump approval outcome"),   # name has trump+approval too
+        ]
+        out = _rerank_search_futures(ms, _TRUMP)
         assert out[0].llm_sport_category == "politics"
+
+    def test_single_untouched(self):
+        one = [_mkt("basketball", "LeBron James Next Team")]
+        assert _rerank_search_futures(one, _LEBRON) is one
+
+
+class TestCohereByCategory:
+    def test_clear_plurality_promoted(self):
+        ms = [_mkt("politics"), _mkt("basketball"), _mkt("basketball")]
+        assert _cohere_by_category(ms)[0].llm_sport_category == "basketball"
 
     def test_balanced_untouched(self):
         ms = [_mkt("basketball"), _mkt("politics"), _mkt("basketball"), _mkt("politics")]
-        out = _rerank_by_category_coherence(ms)
-        assert out == ms  # no clear plurality -> order preserved
-
-    def test_single_or_empty_untouched(self):
-        assert _rerank_by_category_coherence([_mkt("basketball")]) == [_mkt("basketball")] or True
-        one = [_mkt("basketball")]
-        assert _rerank_by_category_coherence(one) is one
-
-    def test_stable_within_dominant(self):
-        a, b = _mkt("basketball", "A"), _mkt("basketball", "B")
-        out = _rerank_by_category_coherence([a, _mkt("politics"), b])
-        assert [m.name for m in out if m.llm_sport_category == "basketball"] == ["A", "B"]
+        assert _cohere_by_category(ms) == ms
 
 
 class TestScaffoldingStrip:

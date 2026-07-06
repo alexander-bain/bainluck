@@ -209,36 +209,55 @@ def _apply_search_synonyms(
     ]
 
 
-def _rerank_by_category_coherence(markets: list) -> list:
-    """#993 Slice C — demote cross-category false-matches on entity queries.
-
-    When a query matches an entity whose markets cluster in one category (e.g.
-    "lebron james" → 7 basketball markets), a lone same-name market from an
-    unrelated category (the tier-2, volume-0 "Will LeBron announce a Presidential
-    run" politics novelty) must not outrank the entity's real markets. Stable
-    partition: dominant-category markets first (preserving the incoming
-    rank/tier/volume order), everything else after. Deterministic, no LLM.
-
-    Only fires on a CLEAR plurality (dominant ≥2 and strictly greater than the
-    next category) so balanced multi-category queries and single-market results
-    are left untouched — and politics queries (e.g. "trump approval", dominant =
-    politics) keep politics on top (no regression).
-    """
+def _cohere_by_category(markets: list) -> list:
+    """Stable partition putting the dominant-category markets first. Fires only on
+    a CLEAR plurality (dominant ≥2 and strictly greater than the next category);
+    otherwise leaves order untouched. Deterministic, no LLM."""
     if len(markets) < 2:
         return markets
     from collections import Counter
 
-    counts = Counter(
-        m.llm_sport_category for m in markets if m.llm_sport_category
-    )
+    counts = Counter(m.llm_sport_category for m in markets if m.llm_sport_category)
     if len(counts) < 2:
-        return markets  # single category (or none) — nothing to demote
+        return markets
     (dom, dom_n), (_, next_n) = counts.most_common(2)
     if dom_n < 2 or dom_n <= next_n:
-        return markets  # no clear dominant category — leave order as-is
-    in_dom = [m for m in markets if m.llm_sport_category == dom]
-    out_dom = [m for m in markets if m.llm_sport_category != dom]
-    return in_dom + out_dom
+        return markets
+    return [m for m in markets if m.llm_sport_category == dom] + [
+        m for m in markets if m.llm_sport_category != dom
+    ]
+
+
+def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]) -> list:
+    """#993 Slice C — surface the entity's real markets on entity queries.
+
+    TWO deterministic signals, in order (no LLM):
+    1. **Name-match beats outcome-only-match.** A market whose NAME contains the
+       query terms is ABOUT the entity ("LeBron James Next Team"); a market that
+       matches only via an outcome is one where the entity is a longshot option
+       (many "Presidential Election Winner 2028" markets list "LeBron James" as a
+       candidate). Name-matches rank first. (Without this, election markets that
+       list the person as an outcome make an unrelated category the plurality —
+       the exact regression the first attempt caused.)
+    2. **Category coherence within the name-matches** — demote a lone
+       cross-category novelty (the politics "Will LeBron announce a Presidential
+       run", which DOES name LeBron) below the dominant basketball markets.
+
+    Preserves incoming rank/tier/volume order within each group. Politics queries
+    ("trump approval") are unaffected: those markets name Trump AND politics is
+    the dominant category, so they stay on top.
+    """
+    if len(markets) < 2:
+        return markets
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+
+    def _name_match(m) -> bool:
+        n = (m.name or "").lower()
+        return bool(low) and all((t in n) or (e and e in n) for t, e in low)
+
+    name_matches = [m for m in markets if _name_match(m)]
+    outcome_only = [m for m in markets if not _name_match(m)]
+    return _cohere_by_category(name_matches) + outcome_only
 
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
@@ -1259,7 +1278,7 @@ async def search_events(
         seen_search_keys.add(dkey)
         deduped_futures.append(m)
 
-    futures_markets = _rerank_by_category_coherence(deduped_futures)[:10]
+    futures_markets = _rerank_search_futures(deduped_futures, expanded)[:10]
 
     formatted_futures = [
         _format_futures_for_search(market)
@@ -1521,8 +1540,8 @@ async def typeahead_search(
     # dropdown surfaces the entity's real market (e.g. "LeBron James Next Team")
     # instead of a cross-category novelty (tier-2 "presidential run") before the
     # 5-item cut. Shared helper — no duplicated ranking logic.
-    ta_futures_ranked = _rerank_by_category_coherence(
-        futures_result.scalars().unique().all()
+    ta_futures_ranked = _rerank_search_futures(
+        futures_result.scalars().unique().all(), ta_expanded
     )
     futures_pool = []
     seen_futures_keys: set[str] = set()
