@@ -292,6 +292,20 @@ def _categorize_kalshi_market(
     return "other"
 
 
+def _partition_new_events_first(events, existing_tickers):
+    """#995: split fetched Kalshi events so ones whose ``event_ticker`` is NOT
+    already in the DB (``existing_tickers``) come first.
+
+    Kalshi's /events listing is ordered expiry-DESC, so brand-new short-dated
+    events sit at the tail and were dropped by the processing deadline —
+    freezing market creation. Processing new events first guarantees a
+    truncated run still creates everything new it fetched. Relative order within
+    each partition is preserved. Returns ``(new_events, existing_events)``."""
+    new_events = [e for e in events if e.event_ticker not in existing_tickers]
+    existing_events = [e for e in events if e.event_ticker in existing_tickers]
+    return new_events, existing_events
+
+
 async def _poll_kalshi_markets():
     """Async implementation of Kalshi polling."""
     import time
@@ -366,6 +380,43 @@ async def _poll_kalshi_markets():
                 )
                 await session.commit()
                 logger.info("Bulk orphan cleanup complete")
+
+            # Process-new-first ordering (#995). Kalshi's /events listing is
+            # ordered by strike/expiry DESC — far-future events first, soonest-
+            # resolving last — and the total (>28K) far exceeds our fetch window
+            # (max_pages=50 ≈ 10K events) and the 480s processing deadline. New
+            # event_tickers are almost always short-dated dailies rolled forward
+            # each day, so they land at the TAIL of the fetched list and were
+            # never reached before the deadline fired — CREATION froze for ~a
+            # month (source='kalshi' had zero new rows 2026-06-09 → 2026-07-06,
+            # confirmed against the live Kalshi API + prod DB). Reorder so any
+            # event whose event_ticker is NOT already in the DB is upserted
+            # FIRST; a deadline-truncated run then still creates every new market
+            # it fetched. Existing rows are only updates (kalshi_ws + live poll
+            # keep them fresh anyway), so deferring them is safe.
+            fetched_tickers = [e.event_ticker for e in events if e.event_ticker]
+            existing_tickers: set = set()
+            if fetched_tickers:
+                _rows = await session.execute(
+                    text(
+                        "SELECT external_id FROM futures_markets "
+                        "WHERE source='kalshi' AND external_id = ANY(:tks)"
+                    ),
+                    {"tks": fetched_tickers},
+                )
+                existing_tickers = {r[0] for r in _rows}
+            new_events, existing_events = _partition_new_events_first(
+                events, existing_tickers
+            )
+            events = new_events + existing_events
+            stats["new_events_fetched"] = len(new_events)
+            stats["existing_events_fetched"] = len(existing_events)
+            if new_events:
+                logger.info(
+                    "poll_kalshi: process-new-first — %d NEW event_tickers "
+                    "(of %d fetched) will be upserted before the deadline",
+                    len(new_events), len(events),
+                )
 
             for event in events:
                 try:

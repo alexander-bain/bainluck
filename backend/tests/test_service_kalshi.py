@@ -17,6 +17,7 @@ from app.tasks.kalshi import (
     _build_game_market_name,
     _categorize_kalshi_market,
     _is_kalshi_game_ticker,
+    _partition_new_events_first,
 )
 from app.utils.prediction_market_matching import (
     extract_game_date_from_ticker,
@@ -408,3 +409,48 @@ class TestNullOutStaleOutcomesPreservesResolved:
             "null-out-stale must preserve outcomes with a captured closing line "
             "(calibration_probability) — they are past resolution"
         )
+
+
+class _StubEvent:
+    def __init__(self, ticker):
+        self.event_ticker = ticker
+
+
+class TestPartitionNewEventsFirst:
+    """#995: process-new-first ordering so a deadline-truncated poll still
+    creates every new Kalshi market it fetched (creation froze 2026-06-09 →
+    2026-07-06 because new short-dated events sat at the expiry-DESC tail)."""
+
+    def test_new_events_moved_ahead_of_existing(self):
+        events = [_StubEvent(t) for t in ["OLD1", "NEW1", "OLD2", "NEW2"]]
+        existing = {"OLD1", "OLD2"}
+        new, exist = _partition_new_events_first(events, existing)
+        assert [e.event_ticker for e in new] == ["NEW1", "NEW2"]
+        assert [e.event_ticker for e in exist] == ["OLD1", "OLD2"]
+        # concatenation puts new first, so a truncated loop reaches them
+        combined = [e.event_ticker for e in (new + exist)]
+        assert combined == ["NEW1", "NEW2", "OLD1", "OLD2"]
+
+    def test_relative_order_preserved_within_partitions(self):
+        events = [_StubEvent(t) for t in ["A", "B", "C", "D"]]
+        existing = {"A", "C"}
+        new, exist = _partition_new_events_first(events, existing)
+        assert [e.event_ticker for e in new] == ["B", "D"]
+        assert [e.event_ticker for e in exist] == ["A", "C"]
+
+    def test_all_new_when_db_empty(self):
+        events = [_StubEvent(t) for t in ["X", "Y"]]
+        new, exist = _partition_new_events_first(events, set())
+        assert [e.event_ticker for e in new] == ["X", "Y"]
+        assert exist == []
+
+    def test_all_existing_when_all_known(self):
+        events = [_StubEvent(t) for t in ["X", "Y"]]
+        new, exist = _partition_new_events_first(events, {"X", "Y"})
+        assert new == []
+        assert [e.event_ticker for e in exist] == ["X", "Y"]
+
+    def test_empty_events(self):
+        new, exist = _partition_new_events_first([], {"X"})
+        assert new == []
+        assert exist == []
