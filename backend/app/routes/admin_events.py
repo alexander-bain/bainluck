@@ -686,7 +686,24 @@ async def schedule_accuracy(
     days: int = Query(30, description="Look back period in days"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Per-sport breakdown of commence_time_source to audit date accuracy."""
+    """Per-sport source coverage for the admin Matching page.
+
+    Two distinct dimensions, kept separate on purpose because they used to be
+    conflated (which produced fake "0% Odds API" alarms):
+
+    1. ``sources`` — TRUE source LINKAGE: how many events actually carry each
+       source's external id (``external_id``=Odds API, ``espn_id``, ``statpal_fixture_id``).
+       This is what "is this event linked to Odds API?" really means. An event can
+       (and usually does) link to several sources at once, so these counts overlap.
+
+    2. ``commence_time_sources`` — the distribution of ``commence_time_source``,
+       i.e. which single highest-priority source won the race to set the event's
+       start time (ESPN > StatPal > Odds API > prediction markets). This is a
+       data-provenance audit, NOT a linkage measure: any event ESPN touches shows
+       ``commence_time_source='espn'`` even when ``external_id`` is also set, which
+       is why reading it as "Odds API coverage" wrongly reports ~0% for every
+       ESPN-covered league.
+    """
     _check_admin_secret(secret, request=request)
 
     from app.models import Sport
@@ -694,8 +711,35 @@ async def schedule_accuracy(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
 
-    # Get per-sport breakdown of commence_time_source
-    result = await db.execute(
+    # --- Dimension 1: TRUE source linkage (id columns NOT NULL) -------------
+    linkage_result = await db.execute(
+        select(
+            Sport.key,
+            func.count(Event.id).label("total"),
+            func.count(Event.external_id).label("odds_api"),
+            func.count(Event.espn_id).label("espn"),
+            func.count(Event.statpal_fixture_id).label("statpal"),
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(Event.commence_time >= cutoff)
+        .group_by(Sport.key)
+    )
+
+    sports: dict[str, dict] = {}
+    for row in linkage_result.all():
+        sports[row.key] = {
+            "total": row.total,
+            # "sources" = linkage counts (what the UI labels "Odds API / ESPN / StatPal")
+            "sources": {
+                "odds_api": row.odds_api,
+                "espn": row.espn,
+                "statpal": row.statpal,
+            },
+            "commence_time_sources": {},
+        }
+
+    # --- Dimension 2: commence_time_source provenance (single value/event) ---
+    cts_result = await db.execute(
         select(
             Sport.key,
             Event.commence_time_source,
@@ -706,42 +750,34 @@ async def schedule_accuracy(
         .group_by(Sport.key, Event.commence_time_source)
         .order_by(Sport.key, Event.commence_time_source)
     )
-    rows = result.all()
-
-    # Aggregate by sport
-    sports: dict[str, dict] = {}
-    for row in rows:
+    for row in cts_result.all():
         sport_key = row.key
-        source = row.commence_time_source or "null"
-        count = row.count
-
         if sport_key not in sports:
-            sports[sport_key] = {"total": 0, "sources": {}}
-        sports[sport_key]["total"] += count
-        sports[sport_key]["sources"][source] = count
+            sports[sport_key] = {
+                "total": 0,
+                "sources": {"odds_api": 0, "espn": 0, "statpal": 0},
+                "commence_time_sources": {},
+            }
+        sports[sport_key]["commence_time_sources"][row.commence_time_source or "null"] = row.count
 
-    # Calculate reliability ratings
+    # Reliability rating is based on TRUE Odds API linkage (the sportsbook source
+    # that drives event pages), not on who set the commence_time.
     for sport_key, data in sports.items():
         total = data["total"]
-        espn_count = data["sources"].get("espn", 0)
-        statpal_count = data["sources"].get("statpal", 0)
-        null_count = data["sources"].get("null", 0)
-        corrected = espn_count + statpal_count
-        corrected_pct = round(corrected / total * 100, 1) if total > 0 else 0
-        null_pct = round(null_count / total * 100, 1) if total > 0 else 0
+        odds_api_count = data["sources"].get("odds_api", 0)
+        linked_pct = round(odds_api_count / total * 100, 1) if total > 0 else 0
 
-        if corrected_pct >= 80:
+        if linked_pct >= 80:
             rating = "HIGH"
-        elif corrected_pct >= 40:
+        elif linked_pct >= 40:
             rating = "MEDIUM"
         else:
             rating = "LOW"
 
-        data["corrected_pct"] = corrected_pct
-        data["uncorrected_pct"] = null_pct
+        data["odds_api_linked_pct"] = linked_pct
         data["reliability"] = rating
 
-    # Sort by reliability (LOW first to surface problems)
+    # Sort by reliability (LOW first to surface genuine problems)
     reliability_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
     sorted_sports = dict(
         sorted(

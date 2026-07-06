@@ -23,7 +23,14 @@ interface SourceCounts {
 
 interface SportAccuracy {
   total: number;
+  // sources = TRUE source linkage counts (events carrying external_id / espn_id /
+  // statpal_fixture_id). These overlap — one event can link to several sources.
   sources: Record<string, number>;
+  // commence_time_sources = which single source won the race to set commence_time
+  // (data-provenance audit, NOT linkage). Do not read this as source coverage.
+  commence_time_sources?: Record<string, number>;
+  odds_api_linked_pct?: number;
+  reliability?: string;
 }
 
 interface AccuracyData {
@@ -161,7 +168,7 @@ export default function MatchingPage() {
         ideal="100% of NBA, NHL, MLB, NFL, NCAAB events should have Odds API external_id."
         action={
           tier1Pct < 80
-            ? "The Event Registry cascade may not be matching correctly. Check event_registry.py structured match and the merge_duplicate_events task."
+            ? "These bars now measure TRUE linkage (events carrying external_id / espn_id / statpal_fixture_id), not commence_time_source. A genuinely low Odds API bar means that league's odds polling or ingestion is dropping games — check odds_polling for the sport tier and the Odds API quota circuit breaker, not the Event Registry cascade (which is verified correct)."
             : undefined
         }
         defaultExpanded

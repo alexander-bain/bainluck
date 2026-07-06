@@ -40,6 +40,26 @@ CHECKS: list[dict[str, Any]] = [
         "message": "No Kalshi markets updated in 6 hours — ingestion may be broken",
     },
     {
+        # CREATE-freeze guard. kalshi_freshness above watches updated_at, which
+        # stays fresh via kalshi_ws + backfill_winners even when poll_kalshi_markets
+        # is SIGKILLed before committing any NEW markets — that masked a 17-day
+        # creation outage (2026-06-09 → 06-26). This watches created_at so a frozen
+        # ingestion fires an alert. New game tickers appear daily for in-season
+        # leagues, so a 48h window comfortably clears weekend lulls.
+        "name": "kalshi_ingestion",
+        "query": (
+            "SELECT COUNT(*) FROM futures_markets "
+            "WHERE source = 'kalshi' AND created_at > NOW() - INTERVAL '48 hours'"
+        ),
+        "threshold": 1,
+        "comparison": "gte",
+        "severity": "P0",
+        "message": (
+            "No NEW Kalshi markets created in 48 hours — poll_kalshi_markets may be "
+            "dying before its end-commit (check for SIGKILL at the 660s time_limit)"
+        ),
+    },
+    {
         "name": "polymarket_freshness",
         "query": (
             "SELECT COUNT(*) FROM futures_markets "

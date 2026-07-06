@@ -294,6 +294,8 @@ def _categorize_kalshi_market(
 
 async def _poll_kalshi_markets():
     """Async implementation of Kalshi polling."""
+    import time
+
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
     from app.services.kalshi_api import KalshiAPIService
     from app.utils.odds_math import probability_to_american
@@ -303,6 +305,17 @@ async def _poll_kalshi_markets():
     # Check if Kalshi API key is configured
     if not os.getenv("KALSHI_API_KEY"):
         return {"status": "skipped", "reason": "KALSHI_API_KEY not configured"}
+
+    # The whole event loop historically committed ONCE at the very end. When the
+    # task ran long (the supplementary-fetch expansion in early June 2026 pushed
+    # it past the 660s hard time_limit), Celery SIGKILLed it before that commit
+    # and EVERY new market was lost — silently, because kalshi_ws + backfill keep
+    # existing rows' updated_at fresh. Result: zero new Kalshi markets created for
+    # 17 days. We now commit incrementally and stop cleanly before the hard limit,
+    # so partial progress always persists and successive runs drain the backlog.
+    _task_started = time.monotonic()
+    _LOOP_DEADLINE_S = 480.0  # stop ingesting ~2min before soft_time_limit=600
+    _COMMIT_EVERY = 200  # events between incremental commits
 
     service = KalshiAPIService()
     stats = {
@@ -772,6 +785,22 @@ async def _poll_kalshi_markets():
                 except (httpx.HTTPError, ValueError, KeyError, SQLAlchemyError) as e:
                     stats["errors"].append(f"{event.event_ticker}: {str(e)}")
                     continue
+
+                # Persist progress incrementally so a SIGKILL/timeout never wipes
+                # the whole run. Core upserts hold no ORM rows across the commit,
+                # so periodic commits are safe here. (events_processed is already
+                # incremented above, at the per-event upsert — we only read it.)
+                if stats["events_processed"] % _COMMIT_EVERY == 0:
+                    await session.commit()
+                    if time.monotonic() - _task_started > _LOOP_DEADLINE_S:
+                        stats["deadline_hit"] = True
+                        logger.warning(
+                            "poll_kalshi: loop deadline reached after %d/%d events "
+                            "(%.0fs) — committing partial progress and exiting cleanly",
+                            stats["events_processed"], len(events),
+                            time.monotonic() - _task_started,
+                        )
+                        break
 
             await session.commit()
 
