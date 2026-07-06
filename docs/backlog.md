@@ -4,6 +4,10 @@ All outstanding work items for Bain Luck. Shipped items live in `docs/completed-
 
 GitHub Issues are the execution queue for scoped work packets. This document remains the strategic source of truth for priorities, rationale, and workstream context. When a backlog item becomes ready for a person or agent to pick up, create/link a GitHub issue and mark it with one of: `[idea]`, `[ready]`, `[active]`, `[blocked]`, `[shipped]`. See `docs/github-workflow.md`.
 
+## Instant Answers (program — search-as-answer)
+
+Canonical strategy: [`docs/strategy-instant-answers.md`](strategy-instant-answers.md) (Fable + Alex, 2026-07-06) — treat as a first-class sequence source alongside `.claude/handoff/SEQUENCE.md`. North star: for any question prediction markets can answer, Bain Luck answers it faster and more clearly than the source markets themselves. v1 wedge: **search-as-answer** — typing "lebron" surfaces the answer (e.g. Lakers 62%, Cavs 18%…) directly in typeahead/results, not a link list. Entity-first, all categories (LeBron / Fed chair / Best Picture share one mechanism). North-star metric: the "Alex test" — does Alex stop opening Kalshi.
+
 ## Major-event market coverage (golf majors → Oscars/Super Bowl/etc.)
 
 Vision: for major events, auto-generate a beautifully formatted dashboard that gathers and groups every related market. The US Open (2026-06) surfaced the prerequisite gaps for golf majors — full diagnosis in [`docs/us-open-market-coverage-diagnosis-2026-06-18.md`](us-open-market-coverage-diagnosis-2026-06-18.md). Four fixes, **quick wins first**:
