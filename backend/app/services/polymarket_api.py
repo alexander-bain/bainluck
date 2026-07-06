@@ -268,6 +268,41 @@ class PolymarketAPIService:
         except httpx.TimeoutException:
             raise
 
+    async def get_clob_market_by_condition(self, condition_id: str) -> Optional[dict]:
+        """Fetch a market from the CLOB API by condition_id, including
+        authoritative settlement: the returned ``tokens`` array carries a
+        ``winner`` boolean per outcome once the market has resolved (UMA on
+        Polygon). This survives after the Gamma record ages out (#989 / L2-32:
+        recovered Gamma-404 markets). Returns None ONLY for 404 (genuinely
+        unknown); re-raises 429/5xx/timeout so the caller backs off instead of
+        treating a rate-limit as 'not found' (gotcha #36).
+        """
+        import httpx
+
+        try:
+            response = await self.clob_client.get(f"/markets/{condition_id}")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+        except httpx.TimeoutException:
+            raise
+
+    @staticmethod
+    def clob_winning_outcome(clob_market: Optional[dict]) -> Optional[str]:
+        """Extract the authoritative winning outcome label from a resolved CLOB
+        market, or None if unresolved / true-void (0 winners) / ambiguous (>1
+        winner). A resolved binary/multi market has EXACTLY one token with
+        ``winner == True``. Never guesses — None means 'do not grade'.
+        """
+        tokens = (clob_market or {}).get("tokens") or []
+        winners = [t for t in tokens if t.get("winner") is True]
+        if len(winners) != 1:
+            return None
+        return (str(winners[0].get("outcome") or "")).strip() or None
+
     # =========================================================================
     # CLOB API — Prices & History
     # =========================================================================

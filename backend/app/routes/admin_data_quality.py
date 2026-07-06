@@ -4482,6 +4482,20 @@ async def trigger_backfill_polymarket_winners(
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
+@router.post("/clob-resolve-sample")
+async def clob_resolve_sample_endpoint(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(25, description="Sample size (kept small to run inline)"),
+):
+    """#989 Batch 0 (VERIFY-BEFORE-REGRADE, dry-run): fetch CLOB authoritative
+    winners for a sample of the curve-dropped cohort and report the
+    winner->outcome mapping. Writes NOTHING — used to hand-verify the resolver
+    before any writing drain is built."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks.clob_resolve import clob_resolve_sample
+    return await clob_resolve_sample(limit=limit)
+
+
 @router.get("/audit-pass2-guess")
 async def audit_pass2_guess(
     request: Request, secret: str = Query(None),
