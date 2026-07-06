@@ -12,7 +12,45 @@ from app.routes.events import (
     _is_placeholder_outcome_name,
     _normalize_search_outcome_probs,
     _build_search_top_outcomes,
+    _strip_search_scaffolding,
+    _apply_search_synonyms,
+    _is_field_outcome,
 )
+
+
+class TestScaffoldingStrip:
+    def test_strips_generic_terms_on_long_query(self):
+        assert _strip_search_scaffolding(["fed", "rate", "decision"]) == ["fed", "rate"]
+        assert _strip_search_scaffolding(["where", "will", "lebron", "go"]) == ["lebron"]
+        assert _strip_search_scaffolding(["bitcoin", "price", "2026"]) == ["bitcoin", "2026"]
+
+    def test_two_word_queries_untouched(self):
+        # name collisions must survive ("Will Smith", "The Who")
+        assert _strip_search_scaffolding(["will", "smith"]) == ["will", "smith"]
+        assert _strip_search_scaffolding(["the", "who"]) == ["the", "who"]
+
+    def test_never_strips_to_empty(self):
+        assert _strip_search_scaffolding(["who", "will", "win"]) != []
+
+
+class TestSearchSynonyms:
+    def test_champion_expands_to_winner(self):
+        out = _apply_search_synonyms([("super", None), ("bowl", None), ("champion", None)])
+        assert ("champion", "winner") in out
+
+    def test_existing_expansion_preserved(self):
+        out = _apply_search_synonyms([("la", "los angeles")])
+        assert out == [("la", "los angeles")]
+
+
+class TestFieldOutcome:
+    def test_detects_field(self):
+        for n in ("Other", "The Field", "None of the above", "Neither", "TBD"):
+            assert _is_field_outcome(n) is True, n
+
+    def test_real_names_not_field(self):
+        for n in ("Gavin Newsom", "Rory McIlroy", "Yes", "Over"):
+            assert _is_field_outcome(n) is False, n
 
 
 def _oc(name, prob, mv=None, oid=1, odds=None, rank=None):
@@ -84,3 +122,13 @@ class TestBuildTopOutcomes:
         # 0.62+0.55+0.30 = 1.47 > 1.05 -> normalized
         out = _build_search_top_outcomes(self._market(), limit=3, lean=True)
         assert abs(sum(o["probability"] for o in out) - 1.0) < 0.02
+
+    def test_field_outcome_demoted_below_named_leader(self):
+        m = SimpleNamespace(outcomes=[
+            _oc("Other", 0.67, oid=1),
+            _oc("Gavin Newsom", 0.13, oid=2),
+            _oc("AOC", 0.09, oid=3),
+        ])
+        out = _build_search_top_outcomes(m, limit=3, lean=True)
+        assert out[0]["name"] == "Gavin Newsom"   # named leads
+        assert any(o["name"] == "Other" for o in out)  # field still visible

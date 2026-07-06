@@ -163,6 +163,51 @@ _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "tennis": ["tennis_atp", "tennis_wta"],
 }
 
+# #993 Slice C: multi-word search AND-matches every term against the market NAME,
+# but descriptive/scaffolding words aren't in market names — "fed rate DECISION"
+# (name: "Fed emergency rate cut"), "bitcoin PRICE 2026", "WHERE WILL lebron GO".
+# Strip generic scaffolding so the content terms drive the match. Guarded to
+# >=3-term queries (so "will smith" / "the who" keep their words) and never
+# strips to empty. Ranking still uses the full query where it helps.
+_SEARCH_SCAFFOLDING: frozenset[str] = frozenset({
+    "who", "what", "when", "where", "which", "whose", "why", "how",
+    "will", "would", "is", "are", "be", "does", "do", "did", "can", "could", "should",
+    "the", "a", "an", "of", "to", "in", "on", "for", "by", "at", "with", "about",
+    "go", "going", "get", "happen", "decision", "price", "odds", "chances",
+})
+
+# #993 Slice C: sport-result synonyms — casual fans say "champion", markets say
+# "Winner" ("NFL Super Bowl Winner" vs query "super bowl champion"). Bidirectional
+# so either surfaces the other. Applied as an ILIKE expansion, search-only.
+_SEARCH_TERM_SYNONYMS: dict[str, str] = {
+    "champion": "winner",
+    "champions": "winner",
+    "championship": "winner",
+    "champ": "winner",
+    "winner": "champion",
+}
+
+
+def _strip_search_scaffolding(terms: list[str]) -> list[str]:
+    """Drop generic scaffolding words from a >=3-term query; never strip to empty.
+    Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
+    like 'Will Smith')."""
+    if len(terms) < 3:
+        return terms
+    kept = [t for t in terms if t.lower() not in _SEARCH_SCAFFOLDING]
+    return kept if kept else terms
+
+
+def _apply_search_synonyms(
+    expanded: list[tuple[str, str | None]]
+) -> list[tuple[str, str | None]]:
+    """Fill in a sport-result synonym expansion for terms that lack one, so
+    'champion' also matches 'winner' (and vice versa) in the ILIKE filters."""
+    return [
+        (term, exp if exp else _SEARCH_TERM_SYNONYMS.get(term.lower()))
+        for term, exp in expanded
+    ]
+
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
@@ -828,8 +873,8 @@ async def search_events(
     cutoff = now - timedelta(days=days_back)
 
     search_pattern = f"%{q}%"
-    terms = q.strip().split()
-    expanded = expand_search_terms(terms)
+    terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
+    expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
     # Collect sport alias keys from any term (not just full query)
     sport_alias_keys: list[str] | None = None
@@ -1269,9 +1314,9 @@ async def typeahead_search(
     pattern = f"%{q}%"
     suggestions = []
 
-    terms = q.strip().split()
+    terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
     is_multi_word = len(terms) > 1
-    ta_expanded = expand_search_terms(terms)
+    ta_expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
     # Collect sport alias keys from any term
     sport_alias_keys: list[str] | None = None
@@ -6641,6 +6686,19 @@ def _normalize_search_outcome_probs(outcomes: list[dict]) -> None:
             o["probability"] = round(scaled["p"] / 100, 4)
 
 
+_FIELD_OUTCOME_RE = re.compile(
+    r"^(other|others|the field|field|none( of the above)?|no one( else)?|"
+    r"neither|any other|someone else|another|tbd)$",
+    re.IGNORECASE,
+)
+
+
+def _is_field_outcome(name: str) -> bool:
+    """True for generic catch-all outcomes ('Other', 'The Field', 'None of the
+    above') that shouldn't headline an answer even when they hold plurality."""
+    return bool(_FIELD_OUTCOME_RE.match((name or "").strip()))
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket", limit: int = 5, lean: bool = False
 ) -> list[dict]:
@@ -6677,6 +6735,16 @@ def _build_search_top_outcomes(
             for o in top
         ]
     _normalize_search_outcome_probs(out)
+    # #993 Slice D leader-pick: if a generic "Field"/"Other" outcome sorts first
+    # (holds plurality), demote it below the top NAMED outcome so the answer
+    # leads with a real name — the field's share stays visible in the list.
+    if out and _is_field_outcome(out[0].get("name", "")):
+        named_idx = next(
+            (i for i, o in enumerate(out) if not _is_field_outcome(o.get("name", ""))),
+            None,
+        )
+        if named_idx is not None:
+            out.insert(0, out.pop(named_idx))
     return out
 
 
