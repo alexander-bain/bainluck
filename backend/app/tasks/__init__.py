@@ -447,7 +447,11 @@ def mark_resolved_futures(self):
 
 @celery_app.task(bind=True, name="app.tasks.resolve_winners", soft_time_limit=540, time_limit=600)
 def resolve_winners(self, limit: int = 2000):
-    """Dedicated winner resolution — API settlement + score-based only.
+    """RETIRED from the beat schedule 2026-07-06 (#991) — kept dormant/registered
+    for a cheap re-add, NOT currently dispatched. See the retirement note at the
+    'backfill-historical-links' beat entry for the bounded re-add path.
+
+    Dedicated winner resolution — API settlement + score-based only.
 
     Runs independently from the full backfill_winners pipeline, which
     spends most of its 14-min budget on calibration price computation,
@@ -1856,12 +1860,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_winners",
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
     },
-    "resolve-winners": {
-        "task": "app.tasks.resolve_winners",
-        "schedule": crontab(minute=15, hour="1,3,5,7,9,11,13,15,17,19,21,23"),  # Every 2 hours
-        "kwargs": {"limit": 2000},
-        "options": {"queue": "background"},
-    },
+    # #991: resolve-winners beat entry RETIRED 2026-07-06. The standalone task
+    # stopped being dispatched after 3 soft-limit failures (round 82) and is
+    # redundant — backfill_winners runs the same shared `_resolve_winners_only`
+    # path and covers the clean_resolution work at scale (~559K is_winner marks
+    # /2h, OPS-343). The task def is kept (dormant, unscheduled) for a cheap
+    # re-add. RE-ADD PATH if 2h freshness ever proves insufficient (watch feed
+    # R6 resolved-suppression): re-add as a BOUNDED forward-only pass — small
+    # limit + statement_timeout inner-op bound (NOT limit-only, which is a
+    # non-fix per #969) on the realtime queue.
     "backfill-historical-links": {
         "task": "app.tasks.backfill_historical_links",
         "schedule": crontab(minute=30, hour="2,5,8,11,14,17,20,23"),  # 8x/day

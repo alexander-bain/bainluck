@@ -264,7 +264,7 @@ class TestBeatScheduleCompleteness:
         "backfill-polymarket-winners",
         "clob-resolve-drain",
         "snapshot-coverage-metrics-daily",
-        "resolve-winners",
+        # "resolve-winners",  # RETIRED 2026-07-06 (#991) — redundant with backfill_winners
         "digest-external-feature-requests-weekly",
         "compare-ws-shadow",
     }
