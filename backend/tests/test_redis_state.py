@@ -126,6 +126,81 @@ class TestTaskMetricsConstants:
         assert callable(get_all_task_metrics)
 
 
+class _FakeMetricsRedis:
+    """Fake redis backing get_task_metrics: hash per task + counter keys."""
+
+    def __init__(self, hashes, counters=None):
+        # hashes: {task_name: {b"consecutive_failures": b"3", ...}}
+        self.hashes = hashes
+        self.counters = counters or {}
+
+    def hgetall(self, key):
+        # key = "bainluck:task_metrics:<task_name>"
+        task = key.rsplit(":", 1)[-1]
+        return self.hashes.get(task, {})
+
+    def get(self, key):
+        return self.counters.get(key)
+
+    def keys(self, _pattern):
+        out = []
+        for task in self.hashes:
+            out.append(f"{TASK_METRICS_PREFIX}:{task}".encode())
+        return out
+
+
+class TestRetiredTaskHealth:
+    """A task retired from the beat but kept dormant must not latch the health
+    rollups to degraded/critical via stale metrics (#991 / Queue #123 Item 2)."""
+
+    def test_resolve_winners_is_registered_retired(self):
+        assert "resolve_winners" in redis_state.RETIRED_TASK_LABELS
+
+    def test_retired_task_reports_retired_not_degraded(self, monkeypatch):
+        # consecutive_failures=3 would normally be "degraded"
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"resolve_winners": {b"consecutive_failures": b"3"}}),
+        )
+        result = redis_state.get_task_metrics("resolve_winners")
+        assert result["health"] == "retired"
+        assert result["retired"] is True
+
+    def test_retired_task_reports_retired_even_when_critical(self, monkeypatch):
+        # consecutive_failures=9 would normally be "critical"
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"resolve_winners": {b"consecutive_failures": b"9"}}),
+        )
+        assert redis_state.get_task_metrics("resolve_winners")["health"] == "retired"
+
+    def test_non_retired_task_still_degrades(self, monkeypatch):
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"poll_odds": {b"consecutive_failures": b"3"}}),
+        )
+        result = redis_state.get_task_metrics("poll_odds")
+        assert result["health"] == "degraded"
+        assert "retired" not in result
+
+    def test_retired_task_excluded_from_degraded_rollup(self, monkeypatch):
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({
+                "resolve_winners": {b"consecutive_failures": b"4"},
+                "poll_odds": {b"consecutive_failures": b"0"},
+            }),
+        )
+        tasks = redis_state.get_all_task_metrics()
+        degraded = [t for t in tasks if t.get("health") == "degraded"]
+        critical = [t for t in tasks if t.get("health") == "critical"]
+        assert degraded == []
+        assert critical == []
+        # the retired task is still surfaced, just not as degraded/critical
+        assert any(t.get("task") == "resolve_winners" and t.get("health") == "retired"
+                   for t in tasks)
+
+
 class _FakeQuotaRedis:
     def __init__(self, data):
         self.data = data

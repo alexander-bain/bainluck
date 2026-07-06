@@ -160,6 +160,19 @@ TASK_METRICS_PREFIX = "bainluck:task_metrics"
 # How long to keep metrics (48 hours — enough for dashboard + debugging)
 TASK_METRICS_TTL = 172800
 
+# Task metric labels that were RETIRED from the beat schedule but whose celery
+# task + Redis metrics are intentionally kept dormant/registered (e.g. for a
+# cheap re-add). Their last-run metrics never refresh, so a stale
+# consecutive_failures count would latch the whole health surface to
+# "degraded"/"critical" forever (a permanent false alarm). get_task_metrics
+# reports these as health="retired" so every rollup that filters on
+# "degraded"/"critical" (celery dashboard, build_worker_section, LLM diagnosis)
+# drops them automatically. Re-adding a task to the beat = remove it from here.
+# Match the label passed to _tracked_run(), not the fully-qualified beat name.
+RETIRED_TASK_LABELS = frozenset({
+    "resolve_winners",  # retired 2026-07-06 (#991); dormant, folded into backfill_winners
+})
+
 
 def record_task_success(task_name: str, duration_ms: float, result_summary: dict | None = None):
     """
@@ -247,7 +260,14 @@ def get_task_metrics(task_name: str) -> dict:
             else:
                 result[k_str] = v_str
 
-        # Compute health status
+        # Compute health status. Retired tasks report a distinct "retired"
+        # health so their stale metrics can't latch the health rollups to
+        # degraded/critical (those rollups filter on health == degraded/critical).
+        if task_name in RETIRED_TASK_LABELS:
+            result["retired"] = True
+            result["health"] = "retired"
+            return result
+
         consecutive = int(result.get("consecutive_failures", 0))
         if consecutive >= 5:
             result["health"] = "critical"
