@@ -377,6 +377,13 @@ export interface SearchResultClickParams {
   position: number;
 }
 
+/** #993 Instant Answers: fired when the typeahead dropdown shows probability
+ *  answers inline (measures real exposure for the Alex-test interviews). */
+export interface AnswerVisibleTypeaheadParams {
+  query: string;
+  answers_shown: number;
+}
+
 export interface ReturnVisitParams {
   days_since_last: number;
   session_number: number;
@@ -561,6 +568,7 @@ export interface AnalyticsEventMap {
 
   // Search
   search_submit: SearchSubmitParams;
+  answer_visible_typeahead: AnswerVisibleTypeaheadParams;
 
   // Onboarding
   onboarding_step: OnboardingStepParams;

@@ -104,12 +104,20 @@ export default function SearchBar({
       setSuggestions(data.suggestions);
       setDidYouMean(data.did_you_mean ?? null);
       setIsOpen(data.suggestions.length > 0);
+      // #993 Slice A: measure real exposure of the answer-in-typeahead so the
+      // Alex-test interviews can be cross-checked against it.
+      const withAnswer = data.suggestions.filter(
+        (s) => s.type === "futures" && (s.top_outcomes ?? []).some((o) => o.probability != null)
+      ).length;
+      if (withAnswer > 0) {
+        track("answer_visible_typeahead", { query: q, answers_shown: withAnswer });
+      }
     } catch {
       setSuggestions([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [track]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -416,9 +424,39 @@ export default function SearchBar({
                       : formatEventTime(suggestion.commence_time)}
                   </div>
                 )}
-                {suggestion.type === "futures" && suggestion.market_type_label && (
-                  <div className="text-xs text-accent-brand">{suggestion.market_type_label}</div>
-                )}
+                {suggestion.type === "futures" && (() => {
+                  // #993 Slice A: lead with the answer — leader + probability
+                  // (already #23-normalized server-side), then the runner-up as
+                  // space allows, with a movement arrow when |Δ24h| ≥ 2pts.
+                  const outs = (suggestion.top_outcomes ?? []).filter(
+                    (o) => o.probability != null
+                  );
+                  if (outs.length > 0) {
+                    const leader = outs[0];
+                    const second = outs[1];
+                    const mv = leader.movement ?? 0;
+                    return (
+                      <div className="text-xs text-text-secondary truncate">
+                        <span className="text-text-primary font-medium">
+                          {leader.name} {Math.round((leader.probability as number) * 100)}%
+                        </span>
+                        {Math.abs(mv) >= 0.02 && (
+                          <span className={mv > 0 ? "text-accent-live" : "text-accent-danger"}>
+                            {" "}{mv > 0 ? "↑" : "↓"}{Math.abs(Math.round(mv * 100))}
+                          </span>
+                        )}
+                        {second && (
+                          <span className="text-text-muted">
+                            {" · "}{second.name} {Math.round((second.probability as number) * 100)}%
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+                  return suggestion.market_type_label ? (
+                    <div className="text-xs text-accent-brand">{suggestion.market_type_label}</div>
+                  ) : null;
+                })()}
               </div>
 
               <span className="text-xs text-text-muted flex-shrink-0">

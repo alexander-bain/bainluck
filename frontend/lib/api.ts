@@ -281,6 +281,15 @@ export interface TypeaheadSuggestion {
   market_id?: number;
   market_tier?: number;
   market_type_label?: string;
+  // #993 Slice A: the answer, carried into the dropdown (top 3, #23-normalized)
+  top_outcomes?: TypeaheadOutcome[];
+}
+
+/** Lean outcome shape carried by typeahead futures suggestions (#993). */
+export interface TypeaheadOutcome {
+  name: string;
+  probability: number | null;
+  movement: number | null;
 }
 
 export interface TypeaheadResponse {

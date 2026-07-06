@@ -8,6 +8,9 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 
 Canonical strategy: [`docs/strategy-instant-answers.md`](strategy-instant-answers.md) (Fable + Alex, 2026-07-06) — treat as a first-class sequence source alongside `.claude/handoff/SEQUENCE.md`. North star: for any question prediction markets can answer, Bain Luck answers it faster and more clearly than the source markets themselves. v1 wedge: **search-as-answer** — typing "lebron" surfaces the answer (e.g. Lakers 62%, Cavs 18%…) directly in typeahead/results, not a link list. Entity-first, all categories (LeBron / Fed chair / Best Picture share one mechanism). North-star metric: the "Alex test" — does Alex stop opening Kalshi.
 
+- [shipped] **Phase 0 baseline** — frozen 25-question benchmark (`.claude/handoff/instant_answers_benchmark_v1.md`); coverage is fine (24/25 in DB), the problem is SEARCH (60% UNFINDABLE+UNREADABLE) + SPEED (100% slow). Epic: [#993](https://github.com/alexander-bain/bainluck/issues/993).
+- [active] **Phase 1 slices A+B** — typeahead + search results lead with the #23-normalized answer (placeholder outcomes filtered; "Person B 100%" → real leader). Epic [#993]. Slices C (findability) + D (ranking/dedup) stage from Phase-0 evidence next.
+
 ## Major-event market coverage (golf majors → Oscars/Super Bowl/etc.)
 
 Vision: for major events, auto-generate a beautifully formatted dashboard that gathers and groups every related market. The US Open (2026-06) surfaced the prerequisite gaps for golf majors — full diagnosis in [`docs/us-open-market-coverage-diagnosis-2026-06-18.md`](us-open-market-coverage-diagnosis-2026-06-18.md). Four fixes, **quick wins first**:

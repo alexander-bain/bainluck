@@ -1401,8 +1401,12 @@ async def typeahead_search(
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
+    # selectinload outcomes so the typeahead can carry the ANSWER (top_outcomes)
+    # — the projection is built before the Redis cache write below, so this DB
+    # cost is cache-miss-only (protects the <150ms p50 budget). #993 Slice A.
     futures_query = (
         select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
         .where(
             or_(
                 futures_name_filter,
@@ -1440,6 +1444,9 @@ async def typeahead_search(
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
             "sport_key": market.llm_sport_category,
+            # #993 Slice A: carry the answer (top 3, #23-normalized) so the
+            # dropdown shows "Lakers 62% · Cavs 18%", not just a title to click.
+            "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
         })
 
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
@@ -1533,6 +1540,17 @@ async def typeahead_search(
     result: dict = {"suggestions": suggestions, "query": q}
     if did_you_mean:
         result["did_you_mean"] = did_you_mean
+
+    # Cache the assembled suggestions (incl. top_outcomes) per query. The read at
+    # the top of this endpoint had no matching write — the cache never populated,
+    # so every keystroke ran the full queries. Writing here makes the Slice-A
+    # outcome projection cache-miss-only and holds the <150ms p50 budget. 45s TTL
+    # keeps probabilities fresh without re-querying on every keystroke.
+    try:
+        from app.tasks.redis_state import get_redis_client as _get_rc
+        _get_rc().setex(_cache_key, 45, _json.dumps(result, default=str))
+    except Exception:
+        pass
 
     # Track query for trending searches (fire-and-forget, no PII)
     try:
@@ -6583,37 +6601,87 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
 
 
 def _is_placeholder_outcome_name(name: str) -> bool:
-    """Detect Polymarket placeholder outcome names (e.g., 'Player B', 'Player S')."""
-    return bool(re.match(r"^Player\s+[A-Z]$", (name or "").strip()))
+    """Detect Polymarket placeholder outcome names (anonymized reserved slots).
+
+    Polymarket seeds multi-candidate markets with placeholder outcomes whose
+    names are a generic noun + single letter ("Player B", "Person P", "Movie F",
+    "Candidate W") — often carrying a fake ~100% prob. These leaked into search
+    as bogus leaders (#993 Phase-0: "Person B 100%", "Movie F 100%"). Filter the
+    whole family, not just "Player X".
+    """
+    return bool(
+        re.match(
+            r"^(Player|Person|Candidate|Team|Driver|Fighter|Movie|Nominee)\s+[A-Z]$",
+            (name or "").strip(),
+        )
+    )
+
+
+def _normalize_search_outcome_probs(outcomes: list[dict]) -> None:
+    """Apply the shared #23 normalizer to search top_outcomes (0-1 `probability`).
+
+    Independent candidate binaries (Kalshi/Polymarket "Will X win?" contracts)
+    can sum well over 100%. Reuse the SAME normalizer as the politics page /
+    Discover (``_normalize_outcome_probs``, gotcha #23) — do not fork a second
+    implementation. That util is percentage-scale (>105% threshold), so scale to
+    percent, normalize in place, scale back to 0-1. In-place on ``outcomes``.
+    """
+    from app.routes.politics import _normalize_outcome_probs  # shared #23 util
+
+    pct = [{"p": (o.get("probability") or 0) * 100} for o in outcomes]
+    _normalize_outcome_probs(pct, key="p")
+    for o, scaled in zip(outcomes, pct):
+        if o.get("probability"):
+            o["probability"] = round(scaled["p"] / 100, 4)
+
+
+def _build_search_top_outcomes(
+    market: "FuturesMarket", limit: int = 5, lean: bool = False
+) -> list[dict]:
+    """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
+    full search formatter and the typeahead futures branch.
+
+    ``lean=True`` returns the minimal typeahead payload (name / probability /
+    movement only — no id/odds/rank) to keep the dropdown response small.
+    Placeholder outcomes are filtered; probabilities are #23-normalized so the
+    displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
+    """
+    real = [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
+    real.sort(key=lambda o: o.current_probability or 0, reverse=True)
+    top = real[:limit]
+    if lean:
+        out = [
+            {
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            }
+            for o in top
+        ]
+    else:
+        out = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "american_odds": o.current_american_odds,
+                "rank": o.rank,
+                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            }
+            for o in top
+        ]
+    _normalize_search_outcome_probs(out)
+    return out
 
 
 def _format_futures_for_search(market: FuturesMarket) -> dict:
-    """Format a futures market for search results."""
-    # Filter out Polymarket placeholder outcomes before sorting/display.
-    # These are reserved slots with names like "Player B" and fake 100% probs.
-    real_outcomes = [
-        o for o in market.outcomes
-        if not _is_placeholder_outcome_name(o.name)
-    ]
-
-    # Sort outcomes by probability to get top outcomes
-    sorted_outcomes = sorted(
-        real_outcomes,
-        key=lambda o: o.current_probability or 0,
-        reverse=True
+    """Format a futures market for search results (answer-first, #23-normalized)."""
+    # top_outcomes: top 5 real outcomes, placeholder-filtered + #23-normalized
+    # (shared with typeahead via _build_search_top_outcomes).
+    top_outcomes = _build_search_top_outcomes(market, limit=5, lean=False)
+    real_count = len(
+        [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
     )
-
-    top_outcomes = [
-        {
-            "id": o.id,
-            "name": o.name,
-            "probability": float(o.current_probability) if o.current_probability else None,
-            "american_odds": o.current_american_odds,
-            "rank": o.rank,
-            "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
-        }
-        for o in sorted_outcomes[:5]
-    ]
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
@@ -6629,6 +6697,6 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
-        "outcome_count": len(real_outcomes),
+        "outcome_count": real_count,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
