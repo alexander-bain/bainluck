@@ -1,0 +1,38 @@
+{
+  "date": "2026-07-06",
+  "mode": "light",
+  "new_findings_count": 4,
+  "tasks": {
+    "feed": {
+      "task_id": "aFBL6LHkcA3Wn47wWgQYyR",
+      "status": "complete",
+      "task_url": "https://manus.im/app/aFBL6LHkcA3Wn47wWgQYyR",
+      "credits": 0
+    },
+    "event_detail": {
+      "task_id": "FrrtjyzMF6Mqc2LzHgZ5Wm",
+      "status": "complete",
+      "task_url": "https://manus.im/app/FrrtjyzMF6Mqc2LzHgZ5Wm",
+      "credits": 1966
+    },
+    "league_page": {
+      "task_id": "W5JtGWgBCdAC74WUgC6HhV",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/W5JtGWgBCdAC74WUgC6HhV",
+      "credits": 0
+    }
+  },
+  "diagnostics": {
+    "feed": {
+      "critical": 2,
+      "broken": 1,
+      "0%": 3,
+      "fail": 2
+    },
+    "event_detail": {
+      "critical": 2,
+      "fail": 2,
+      "bug": 2
+    }
+  }
+}
