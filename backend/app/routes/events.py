@@ -6764,59 +6764,16 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     return response
 
 
-def _is_placeholder_outcome_name(name: str) -> bool:
-    """Detect Polymarket placeholder outcome names (anonymized reserved slots).
-
-    Polymarket seeds multi-candidate markets with placeholder outcomes whose
-    names are a generic noun + a 1-2 letter code ("Player B", "Person P",
-    "Person CF", "Movie F", "Candidate W") — often carrying a fake ~100% prob.
-    These leaked into search as bogus leaders (#993 Phase-0: "Person B 100%",
-    "Movie F 100%"; live-verify also found two-letter "Person CF"). Filter the
-    whole anonymized family, not just "Player X".
-
-    "Team X" is handled specially: "Team A".."Team E" placeholders (SINGLE letter)
-    appear at 100% on markets like "NBA: LeBron James Next Team" (#993 interview
-    #1) — but "Team GB"/"Team USA" (2+ letter codes) are REAL Olympic entrants, so
-    Team is matched at single-letter only. Bare two-letter codes with no leading
-    noun ("BF"/"BD" on Ballon d'Or) are left alone — indistinguishable from legit
-    abbreviations without a data-layer signal.
-    """
-    n = (name or "").strip()
-    return bool(
-        re.match(r"^(Player|Person|Candidate|Movie|Nominee)\s+[A-Z]{1,2}$", n)
-        or re.match(r"^Team\s+[A-Z]$", n)  # "Team C" placeholder; NOT "Team GB/USA"
-    )
-
-
-def _normalize_search_outcome_probs(outcomes: list[dict]) -> None:
-    """Apply the shared #23 normalizer to search top_outcomes (0-1 `probability`).
-
-    Independent candidate binaries (Kalshi/Polymarket "Will X win?" contracts)
-    can sum well over 100%. Reuse the SAME normalizer as the politics page /
-    Discover (``_normalize_outcome_probs``, gotcha #23) — do not fork a second
-    implementation. That util is percentage-scale (>105% threshold), so scale to
-    percent, normalize in place, scale back to 0-1. In-place on ``outcomes``.
-    """
-    from app.routes.politics import _normalize_outcome_probs  # shared #23 util
-
-    pct = [{"p": (o.get("probability") or 0) * 100} for o in outcomes]
-    _normalize_outcome_probs(pct, key="p")
-    for o, scaled in zip(outcomes, pct):
-        if o.get("probability"):
-            o["probability"] = round(scaled["p"] / 100, 4)
-
-
-_FIELD_OUTCOME_RE = re.compile(
-    r"^(other|others|the field|field|none( of the above)?|no one( else)?|"
-    r"neither|any other|someone else|another|tbd)$",
-    re.IGNORECASE,
+# #993: the placeholder / #23-normalization / leader-pick RULES live in ONE
+# place (app.utils.outcome_display) so search, typeahead, and the futures detail
+# page can't diverge. These private aliases keep the existing call-sites + tests
+# stable while sourcing the shared implementation.
+from app.utils.outcome_display import (  # noqa: E402
+    is_placeholder_outcome_name as _is_placeholder_outcome_name,
+    is_field_outcome as _is_field_outcome,
+    normalize_display_probs as _normalize_search_outcome_probs,
+    leader_pick_order as _leader_pick_order,
 )
-
-
-def _is_field_outcome(name: str) -> bool:
-    """True for generic catch-all outcomes ('Other', 'The Field', 'None of the
-    above') that shouldn't headline an answer even when they hold plurality."""
-    return bool(_FIELD_OUTCOME_RE.match((name or "").strip()))
 
 
 def _build_search_top_outcomes(
@@ -6855,17 +6812,7 @@ def _build_search_top_outcomes(
             for o in top
         ]
     _normalize_search_outcome_probs(out)
-    # #993 Slice D leader-pick: if a generic "Field"/"Other" outcome sorts first
-    # (holds plurality), demote it below the top NAMED outcome so the answer
-    # leads with a real name — the field's share stays visible in the list.
-    if out and _is_field_outcome(out[0].get("name", "")):
-        named_idx = next(
-            (i for i, o in enumerate(out) if not _is_field_outcome(o.get("name", ""))),
-            None,
-        )
-        if named_idx is not None:
-            out.insert(0, out.pop(named_idx))
-    return out
+    return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 
 def _format_futures_for_search(market: FuturesMarket) -> dict:

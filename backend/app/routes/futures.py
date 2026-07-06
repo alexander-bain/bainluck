@@ -2993,12 +2993,22 @@ async def _get_source_breakdown(
 
 
 def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:
-    """Format a market for detail view with all outcomes."""
-    # Filter out orphan placeholder outcomes ("player A", "player AB")
-    # from old Polymarket polling code with NULL external_id
+    """Format a market for detail view with all outcomes.
+
+    #993: the click-through must MATCH the answer search shows. Apply the SAME
+    shared display pipeline (app.utils.outcome_display) — placeholder filter
+    (incl. "Team C"), #23 normalization, leader-pick — so the detail page never
+    leads with "Other 100%" while search shows "Cleveland Cavaliers 31%".
+    """
+    from app.utils.outcome_display import (
+        is_placeholder_outcome_name,
+        normalize_display_probs,
+        leader_pick_order,
+    )
+
     valid_outcomes = [
         o for o in market.outcomes
-        if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+        if not is_placeholder_outcome_name(o.name)
     ]
     sorted_outcomes = sorted(
         valid_outcomes,
@@ -3022,6 +3032,10 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         }
         for o in sorted_outcomes
     ]
+    # #993: #23-normalize the displayed distribution + demote a generic
+    # "Other/Field" from the headline (same rules as search).
+    normalize_display_probs(outcomes)
+    leader_pick_order(outcomes)
 
     return {
         "id": market.id,
