@@ -236,11 +236,19 @@ class TestEconomicsSeededFed:
         ]
 
     async def test_fomc_meeting_populates(self, client, mock_db):
+        # Date-robust: seed the FOMC meeting a few months in the FUTURE so the
+        # route's _is_past_date filter (economics.py) never drops it as the
+        # calendar advances. Was hardcoded "Jun 2026" and began failing once the
+        # run date passed June 2026 — a date-drift bug in the test, not a route
+        # regression. (Latent: the Aug/Dec 2026 seeds in this file are still
+        # future today but will hit the same drift — flagged for follow-up.)
+        _fut = datetime.now(timezone.utc) + timedelta(days=90)
+        _mon, _yr = _fut.strftime("%b"), _fut.year
         mock_db.execute.return_value = _query_result([
             _market(
                 market_id=11,
-                name="Fed funds rate after Jun 2026 FOMC meeting?",
-                external_id="kxfedfunds-jun2026",
+                name=f"Fed funds rate after {_mon} {_yr} FOMC meeting?",
+                external_id=f"kxfedfunds-{_mon.lower()}{_yr}",
                 source="kalshi",
                 outcomes=[
                     _outcome("4.00%", 0.30, outcome_id=110, rank=1),
