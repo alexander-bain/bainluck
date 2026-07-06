@@ -1928,25 +1928,27 @@ class TestBudgetGuard:
                 patch.stopall()
 
         assert result["status"] == "partial_budget_guard", result
-        # #107: the calibration drain (bookmaker_closing/calibration_prices) was
-        # reordered AHEAD of candlestick, so on budget exhaustion the first
-        # post-resolution guard hit is now "bookmaker_closing" — and the
-        # wall-busting candlestick/trade backfills still never run.
-        assert result["stopped_before"] == "bookmaker_closing", result
+        # #991 (Queue #117): the winner-resolution block now guards the heavy
+        # backlog drainers, so on budget exhaustion the FIRST guard hit is the
+        # new "kalshi_markets_api" pre-phase guard (ahead of the reordered
+        # bookmaker_closing drain). The wall-busting candlestick/trade backfills
+        # still never run.
+        assert result["stopped_before"] == "kalshi_markets_api", result
         candlestick_mock.assert_not_called()
         trade_mock.assert_not_called()
 
-    def test_margin_gives_600s_effective_budget(self):
-        """Guard margin must yield a ~600s budget under the 840s soft limit
-        (240 margin), comfortably under the 900s hard limit."""
+    def test_margin_gives_540s_effective_budget(self):
+        """#991: margin raised 240 -> 300 (effective budget ~540s under the 840s
+        soft limit) after the loop regressed to busting 840s; the winner-res block
+        also now guards its heavy drainers. Comfortably under the 900s hard limit."""
         import inspect
         import app.tasks.backfill_winners as bw
 
         src = inspect.getsource(bw._backfill_all_winners)
         assert "_SOFT_LIMIT_S = 840" in src
-        assert "_BUDGET_MARGIN_S = 240" in src
+        assert "_BUDGET_MARGIN_S = 300" in src
         # effective budget = soft - margin
-        assert (840 - 240) == 600
+        assert (840 - 300) == 540
         # the candlestick/trade block is guarded before _mark("candlestick_trades")
         guard_then_mark = src.split('_partial_result("candlestick_trades")')[1]
         assert '_mark("candlestick_trades")' in guard_then_mark
@@ -2023,3 +2025,30 @@ def test_poly_resolver_rate_limit_aware():
     assert "asyncio.Semaphore(3)" in src                 # low concurrency
     assert "throttled_stop" in src                       # circuit-breaker flag
     assert "_batch_rl >= 0.8 * len(results)" in src      # breaker condition
+
+
+def test_resolve_winners_has_deadline_guard_991():
+    """#991: _resolve_winners_only must early-return before the heavy backlog
+    drainers (poly_api/kalshi_markets) when near its 540s soft limit, so it stops
+    cleanly instead of SoftTimeLimitExceeded. Scheduling only (gotcha #21)."""
+    import inspect
+    from app.tasks.backfill_winners import _resolve_winners_only
+    src = inspect.getsource(_resolve_winners_only)
+    assert "_DEADLINE_S = 450" in src
+    assert "_over_budget()" in src
+    assert "_budget_exit(" in src
+    # guards before the heavy phases
+    assert 'return _budget_exit("before_polymarket_api")' in src
+    assert 'return _budget_exit("before_kalshi_markets")' in src
+
+
+def test_backfill_all_winners_guards_heavy_phases_991():
+    """#991/#116-item2: _backfill_all_winners widened its margin and guards the
+    kalshi_markets_api + polymarket_api drainers so a slow winner-resolution
+    block can't bust the 840s wall before the drain guards run."""
+    import inspect
+    from app.tasks.backfill_winners import _backfill_all_winners
+    src = inspect.getsource(_backfill_all_winners)
+    assert "_BUDGET_MARGIN_S = 300" in src
+    assert 'return _partial_result("kalshi_markets_api")' in src
+    assert 'return _partial_result("polymarket_api")' in src

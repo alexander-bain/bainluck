@@ -4172,6 +4172,23 @@ async def _resolve_winners_only(limit: int = 2000):
     _start = _t.monotonic()
     stats = {}
 
+    # #991: resolve_winners intermittently busts its 540s soft limit — the
+    # cumulative phases (esp. poly_api limit=5000 + kalshi_markets limit=10000,
+    # aggravated by aged backlog rows) occasionally overrun. Add an overall
+    # deadline with margin: the forward-resolution phases (score/props) run first
+    # and always, and the heavy backlog-draining phases early-return before the
+    # wall so partial progress persists (each phase already commits). Scheduling
+    # only — no re-grades (gotcha #21). Same class as #107/#969/#984.
+    _DEADLINE_S = 450.0  # 90s margin under soft_time_limit=540
+
+    def _over_budget():
+        return _t.monotonic() - _start > _DEADLINE_S
+
+    def _budget_exit(reason):
+        stats["deadline_hit"] = reason
+        stats["duration_seconds"] = round(_t.monotonic() - _start, 1)
+        return stats
+
     # Phase 0: Fix stale scheduled events
     # 13,524 events stuck in 'scheduled' despite being completed.
     # Transitioning to 'closed' makes them eligible for ESPN ID matching,
@@ -4337,6 +4354,11 @@ async def _resolve_winners_only(limit: int = 2000):
         "total_bases": total_bases_stats.get("resolved", 0),
     }
 
+    # #991: forward score-resolution done — stop before the heavy backlog
+    # drainers (poly_api/kalshi_markets) if we're near the wall.
+    if _over_budget():
+        return _budget_exit("before_polymarket_api")
+
     # Polymarket API settlement (concurrent condition_id lookups)
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=5000)
     stats["polymarket_api"] = {
@@ -4453,6 +4475,10 @@ async def _resolve_winners_only(limit: int = 2000):
     except Exception as e:
         stats["kalshi_settled_error"] = str(e)[:200]
 
+    # #991: skip the 10K-limit kalshi markets pagination if near the wall.
+    if _over_budget():
+        return _budget_exit("before_kalshi_markets")
+
     # Kalshi markets API pagination
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=10000)
     stats["kalshi_markets"] = {
@@ -4460,6 +4486,10 @@ async def _resolve_winners_only(limit: int = 2000):
         "losers": kalshi_markets_stats.get("losers_set", 0),
         "pages": kalshi_markets_stats.get("pages", 0),
     }
+
+    # #991: last budget gate before the clean-resolution + upgrade tail.
+    if _over_budget():
+        return _budget_exit("before_clean_resolution")
 
     # Clean resolution (Pass 1 only)
     prob_stats = await _backfill_from_current_probability()
@@ -4586,7 +4616,14 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # which the rotating maintenance tail (candlestick/trades + polymarket_api,
     # 131-449s) could still overrun before a guard fired. 600s guarantees the
     # early-return wins the race against SoftTimeLimitExceeded.
-    _BUDGET_MARGIN_S = 240
+    # #991 (Queue #117): raised 240 -> 300 after the loop regressed to busting
+    # 840s again (5 fails/24h; last good run 802.4s = only 38s headroom). The
+    # winner-resolution block below (kalshi_markets_api limit=20000 +
+    # polymarket_api limit=10000, the latter Gamma-throttled) previously ran with
+    # NO budget guard, so a slow run overran the wall before the drain guards.
+    # 300 (effective budget ~540s) + the new pre-phase guards on those two heavy
+    # drainers keep the early-return ahead of SoftTimeLimitExceeded.
+    _BUDGET_MARGIN_S = 300
 
     def _budget_left():
         return _SOFT_LIMIT_S - (_t.monotonic() - _pipeline_start)
@@ -4633,9 +4670,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _start_phase("kalshi_api")
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
     _end_phase("kalshi_api")
+    # #991: score_resolution + kalshi_api (the core forward resolution) have run.
+    # Guard the heavy backlog drainers so a slow one can't overrun the 840s wall
+    # before the drain guards below ever get a turn (early-return; idempotent
+    # phases resume next cycle).
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("kalshi_markets_api")
     _start_phase("kalshi_markets_api")
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
     _end_phase("kalshi_markets_api")
+    if _budget_left() < _BUDGET_MARGIN_S:
+        return _partial_result("polymarket_api")
     _start_phase("polymarket_api")
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
     _end_phase("polymarket_api")
