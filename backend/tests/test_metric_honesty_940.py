@@ -65,3 +65,23 @@ def test_no_is_winner_mutation_in_status_precompute():
     src = inspect.getsource(m)
     assert "SET is_winner" not in src
     assert "UPDATE futures_outcomes" not in src
+
+
+def test_curve_excludes_heuristic_and_nullsource_754_989():
+    """#754-curve + #989: the published calibration curve must exclude the three
+    poisoned resolution classes — pass2_loser, all_losers (heuristic 0%-winrate,
+    measured), and null-source outcomes (0 winners across all sources, measured
+    2026-07-06). Read-side only; no is_winner/cal_prob mutation (gotcha #21).
+    """
+    import inspect
+    import app.tasks.precompute_calibration as pc
+    src = inspect.getsource(pc)
+    # heuristic classes added to the NOT IN exclusion (all 3 curve query sites)
+    assert src.count("'pass2_loser', 'all_losers',") == 3
+    # null-source now EXCLUDED from the curve (predicate flipped IS NULL OR -> IS NOT NULL AND)
+    assert src.count("fo.resolution_source IS NOT NULL\n") >= 3 or \
+        src.count("resolution_source IS NOT NULL") >= 3
+    # the old "IS NULL OR ... NOT IN" curve inclusion must be gone
+    assert "resolution_source IS NULL\n" not in src or "OR fo.resolution_source NOT IN" not in src
+    # transparency surface present
+    assert "heuristic_filter" in src

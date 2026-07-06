@@ -258,8 +258,9 @@ async def _precompute_calibration_main():
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                  AND (fo.resolution_source IS NULL
-                       OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                  AND (fo.resolution_source IS NOT NULL
+                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
                                                     'did_not_play', 'withdrew',
                                                     'no_pregame_trading'))
               AND COALESCE(fo.volume, -1) != 0
@@ -514,6 +515,30 @@ async def _precompute_calibration_main():
         void_result = await db.execute(void_sql)
         void_excluded = int(void_result.scalar() or 0)
 
+        # -----------------------------------------------------------
+        # Query 9: #754-curve heuristic-exclusion transparency — how many
+        # eligible resolved outcomes the heuristic rule (pass2_loser /
+        # all_losers, alongside the long-standing pass2_guess) drops from the
+        # published curve. Lane-2 L2-30 measured poly pass2_loser = 41,069
+        # outcomes @ 0.0% winrate (23,240 priced 0.5-0.9 — statistically
+        # impossible if correct); leaving them in dragged poly MCE to ~10.84pp.
+        # Read-side exclusion only — markets stay resolved, never re-graded
+        # (gotcha #21). 97% lack a polymarket_event_id so Gamma/CLOB re-resolution
+        # is infeasible by construction; exclusion is the correct durable fix.
+        # Surfaced here so the exclusion is transparent, never silent.
+        heur_sql = text("""
+            SELECT fm.source, COUNT(*) AS excluded
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.resolution_source IN ('pass2_loser', 'all_losers')
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            GROUP BY fm.source
+        """)
+        heur_result = await db.execute(heur_sql)
+        heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
+
     # -----------------------------------------------------------
     # Post-processing (runs outside the DB session)
     # -----------------------------------------------------------
@@ -723,6 +748,19 @@ async def _precompute_calibration_main():
             "rule": VOID_FILTER_RULE_TEXT,
             "excluded": void_excluded,
         },
+        "heuristic_filter": {
+            "applies_to": "polymarket",
+            "rule": (
+                "Outcomes resolved by legacy heuristic passes (pass2_guess, "
+                "pass2_loser, all_losers) are excluded from the published curve: "
+                "they were guessed, not authoritatively settled (Lane-2 #754 "
+                "measured pass2_loser at 0.0% winrate even at 0.5-0.9 prices), and "
+                "97% lack a polymarket_event_id so authoritative re-resolution is "
+                "infeasible. Read-side exclusion only; markets stay resolved, "
+                "never re-graded (gotcha #21)."
+            ),
+            "excluded_by_source": heuristic_excluded,
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -761,8 +799,9 @@ async def _compute_time_horizon_calibration():
                       AND fm.resolution_date IS NOT NULL
                       AND fo.opening_probability IS NOT NULL
                       AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                      AND (fo.resolution_source IS NULL
-                           OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                      AND (fo.resolution_source IS NOT NULL
+                           AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
                                                     'did_not_play', 'withdrew',
                                                     'no_pregame_trading'))
               AND COALESCE(fo.volume, -1) != 0
@@ -1054,8 +1093,9 @@ async def _query_futures_fair_fight_impl(db):
               AND fm.source IN ('kalshi', 'polymarket')
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NULL
-                   OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+              AND (fo.resolution_source IS NOT NULL
+                   AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
                                                     'did_not_play', 'withdrew',
                                                     'no_pregame_trading'))
               AND COALESCE(fo.volume, -1) != 0
