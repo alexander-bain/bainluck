@@ -24,11 +24,15 @@ def _oc(name, prob, mv=None, oid=1, odds=None, rank=None):
 
 class TestPlaceholderFamily:
     def test_catches_anonymized_slots(self):
-        for n in ("Player B", "Person P", "Movie F", "Candidate W", "Nominee A", "Driver X"):
+        # single- AND two-letter suffixes (live-verify found "Person CF"/"Person AX")
+        for n in ("Player B", "Person P", "Person CF", "Movie F", "Movie AX",
+                  "Candidate W", "Nominee A"):
             assert _is_placeholder_outcome_name(n) is True, n
 
     def test_keeps_real_names(self):
-        for n in ("Lakers", "A'ja Wilson", "Donald Trump", "The Odyssey", "Over", "Yes"):
+        # "Team GB"/"Team USA" are REAL Olympic entrants — must NOT be filtered.
+        for n in ("Lakers", "A'ja Wilson", "Donald Trump", "The Odyssey", "Over",
+                  "Yes", "Team GB", "Team USA"):
             assert _is_placeholder_outcome_name(n) is False, n
 
     def test_multiword_and_empty_safe(self):

@@ -6604,14 +6604,20 @@ def _is_placeholder_outcome_name(name: str) -> bool:
     """Detect Polymarket placeholder outcome names (anonymized reserved slots).
 
     Polymarket seeds multi-candidate markets with placeholder outcomes whose
-    names are a generic noun + single letter ("Player B", "Person P", "Movie F",
-    "Candidate W") — often carrying a fake ~100% prob. These leaked into search
-    as bogus leaders (#993 Phase-0: "Person B 100%", "Movie F 100%"). Filter the
-    whole family, not just "Player X".
+    names are a generic noun + a 1-2 letter code ("Player B", "Person P",
+    "Person CF", "Movie F", "Candidate W") — often carrying a fake ~100% prob.
+    These leaked into search as bogus leaders (#993 Phase-0: "Person B 100%",
+    "Movie F 100%"; live-verify also found two-letter "Person CF"). Filter the
+    whole anonymized family, not just "Player X".
+
+    Deliberately narrow to nouns with NO real "{noun} {code}" outcomes: NOT
+    "Team" ("Team GB"/"Team USA" are real Olympic entrants). Bare two-letter
+    codes with no leading noun ("BF"/"BD" on Ballon d'Or) are left alone —
+    indistinguishable from legit abbreviations without a data-layer signal.
     """
     return bool(
         re.match(
-            r"^(Player|Person|Candidate|Team|Driver|Fighter|Movie|Nominee)\s+[A-Z]$",
+            r"^(Player|Person|Candidate|Movie|Nominee)\s+[A-Z]{1,2}$",
             (name or "").strip(),
         )
     )
