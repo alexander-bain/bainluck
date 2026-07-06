@@ -1918,9 +1918,11 @@ celery_app.conf.beat_schedule = {
     "clob-resolve-drain": {
         "task": "app.tasks.clob_resolve_drain",
         "schedule": crontab(minute=20, hour="1,7,13,19"),  # Every 6h, clear of :40-:58 cal windows
-        # #989: wired in DRY-RUN first (verify-before-write). Flip to dry_run=False
-        # after the manually-verified bounded write slice proves out over a cycle.
-        "kwargs": {"limit": 300, "dry_run": True},
+        # #989: Batch-0 PASSED (16/16 resolved_direct hand-verified, zero wrong
+        # maps, self-validating exact-label tier; revertible via the distinct
+        # resolution_source). Auto-write enabled for resolved_direct /
+        # resolved_name_match only; ambiguous/void stay excluded.
+        "kwargs": {"limit": 300, "dry_run": False},
         "options": {"queue": "background"},
     },
     "backfill-box-scores": {
