@@ -6774,16 +6774,17 @@ def _is_placeholder_outcome_name(name: str) -> bool:
     "Movie F 100%"; live-verify also found two-letter "Person CF"). Filter the
     whole anonymized family, not just "Player X".
 
-    Deliberately narrow to nouns with NO real "{noun} {code}" outcomes: NOT
-    "Team" ("Team GB"/"Team USA" are real Olympic entrants). Bare two-letter
-    codes with no leading noun ("BF"/"BD" on Ballon d'Or) are left alone —
-    indistinguishable from legit abbreviations without a data-layer signal.
+    "Team X" is handled specially: "Team A".."Team E" placeholders (SINGLE letter)
+    appear at 100% on markets like "NBA: LeBron James Next Team" (#993 interview
+    #1) — but "Team GB"/"Team USA" (2+ letter codes) are REAL Olympic entrants, so
+    Team is matched at single-letter only. Bare two-letter codes with no leading
+    noun ("BF"/"BD" on Ballon d'Or) are left alone — indistinguishable from legit
+    abbreviations without a data-layer signal.
     """
+    n = (name or "").strip()
     return bool(
-        re.match(
-            r"^(Player|Person|Candidate|Movie|Nominee)\s+[A-Z]{1,2}$",
-            (name or "").strip(),
-        )
+        re.match(r"^(Player|Person|Candidate|Movie|Nominee)\s+[A-Z]{1,2}$", n)
+        or re.match(r"^Team\s+[A-Z]$", n)  # "Team C" placeholder; NOT "Team GB/USA"
     )
 
 
