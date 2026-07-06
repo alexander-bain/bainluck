@@ -9,6 +9,8 @@ from app.tasks.clob_resolve import (
     _name_concordance_ok,
     _date_sanity_ok,
     _suffix_of,
+    _ordinal_side,
+    _vintage_bucket,
 )
 
 
@@ -157,3 +159,75 @@ def test_suffix_of():
     assert _suffix_of("0xabc_no") == "_no"
     assert _suffix_of("0xabc") is None
     assert _suffix_of(None) is None
+
+
+# ---- Amendment 1: ordinal tier ----
+
+def test_ordinal_disabled_keeps_spec_skip():
+    # default (spec-conformant): Yes/No-stored handicap -> ambiguous
+    r = map_clob_to_outcome(_clob("Leviatán Esports", True, "XLG Gaming", False),
+                            _outs(COND, "Yes", "No"), False)
+    assert r["skip"] == "ambiguous_skipped"
+
+
+def test_ordinal_enabled_spread_resolves_by_index():
+    # token[0] wins -> _yes side (id 1)
+    r = map_clob_to_outcome(_clob("Leviatán Esports", True, "XLG Gaming", False),
+                            _outs(COND, "Yes", "No"), False, enable_ordinal=True)
+    assert r["tier"] == "resolved_ordinal"
+    assert r["winner_id"] == 1 and r["loser_id"] == 2
+    assert r["ordinal_why"] == "spread_yesno_nogame"
+
+
+def test_ordinal_enabled_spread_index1_resolves_no_side():
+    # token[1] wins -> _no side (id 2)
+    r = map_clob_to_outcome(_clob("Leviatán Esports", False, "XLG Gaming", True),
+                            _outs(COND, "Yes", "No"), False, enable_ordinal=True)
+    assert r["tier"] == "resolved_ordinal"
+    assert r["winner_id"] == 2 and r["loser_id"] == 1
+
+
+def test_ordinal_enabled_totals_stored_yesno():
+    r = map_clob_to_outcome(_clob("Over", False, "Under", True),
+                            _outs(COND, "Yes", "No"), False, enable_ordinal=True)
+    assert r["tier"] == "resolved_ordinal"
+    assert r["winner_id"] == 2  # Under won == token[1] == _no side
+
+
+def test_ordinal_gamelinked_stays_score_based():
+    # game-linked yes/no-vs-line stays score-based even with ordinal on
+    r = map_clob_to_outcome(_clob("Team A", True, "Team B", False),
+                            _outs(COND, "Yes", "No"), True, enable_ordinal=True)
+    assert r["skip"] == "resolved_score_based"
+
+
+def test_ordinal_agree_true_on_aligned_direct():
+    # resolved_direct where label winner == ordinal winner (token[0])
+    r = map_clob_to_outcome(_clob("Yes", True, "No", False),
+                            _outs(COND, "Yes", "No"), False)
+    assert r["tier"] == "resolved_direct"
+    assert r["ordinal_agree"] is True
+
+
+def test_ordinal_agree_false_flags_misaligned_vintage():
+    # CLOB token order reversed vs our _yes/_no: label picks _yes ('Yes'), but
+    # 'Yes' is at index 1 -> ordinal picks _no. Disagreement = broken invariant.
+    r = map_clob_to_outcome(_clob("No", False, "Yes", True),
+                            _outs(COND, "Yes", "No"), False)
+    assert r["tier"] == "resolved_direct"
+    assert r["winner_id"] == 1  # label match: 'Yes' outcome
+    assert r["ordinal_agree"] is False  # ordinal would pick token[1]=_no=id2
+
+
+def test_ordinal_side_helper():
+    assert _ordinal_side({"clob_winner": "Over",
+                          "clob_tokens": ["Over", "Under"]}) == "_yes"
+    assert _ordinal_side({"clob_winner": "Under",
+                          "clob_tokens": ["Over", "Under"]}) == "_no"
+    assert _ordinal_side({"clob_winner": None, "clob_tokens": []}) is None
+
+
+def test_vintage_bucket():
+    assert _vintage_bucket("2026-07-06T00:00:00Z") == "2026-Q3"
+    assert _vintage_bucket("2025-02-01T00:00:00Z") == "2025-Q1"
+    assert _vintage_bucket(None) == "unknown"

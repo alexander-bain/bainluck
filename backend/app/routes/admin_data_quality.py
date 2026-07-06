@@ -4501,14 +4501,32 @@ async def clob_resolve_drain_endpoint(
     request: Request, secret: str = Query(None),
     limit: int = Query(300, description="Markets to process this run"),
     dry_run: bool = Query(True, description="True = report only, no writes"),
+    enable_ordinal: bool = Query(False, description="Amendment 1: resolve the Yes/No-stored ordinal class"),
+    ordinal_cap: int = Query(2000, description="First-batch cap for ordinal writes"),
 ):
     """#989 writing drain: authoritatively re-resolve the curve-dropped
     Polymarket cohort via CLOB. Defaults to dry_run=True (safe). Set
-    dry_run=false to write is_winner (clob_authoritative) for the confident
-    tiers. Runs inline for a bounded slice; the beat task drains continuously."""
+    dry_run=false to write is_winner for the confident tiers. Pass
+    enable_ordinal=true to also resolve the ordinal class (clob_ordinal,
+    capped by ordinal_cap). Runs inline for a bounded slice; the beat drains."""
     _check_admin_secret(secret, request=request)
-    from app.tasks.clob_resolve import clob_resolve_drain
-    return await clob_resolve_drain(limit=limit, dry_run=dry_run)
+    from app.tasks.clob_resolve import clob_resolve_drain, _DEFAULT_WRITE_TIERS
+    tiers = _DEFAULT_WRITE_TIERS + (("resolved_ordinal",) if enable_ordinal else ())
+    return await clob_resolve_drain(limit=limit, dry_run=dry_run, write_tiers=tiers,
+                                    enable_ordinal=enable_ordinal, ordinal_cap=ordinal_cap)
+
+
+@router.post("/clob-ordinal-batch0")
+async def clob_ordinal_batch0_endpoint(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(120, description="Vintage-stratified sample size (>=100)"),
+):
+    """#989 Amendment 1 Batch-0 (dry-run): vintage-stratified proof of the ordinal
+    invariant (ordinal==label per ingestion vintage). Writes NOTHING. Post the
+    result on #989 before enabling ordinal writes."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks.clob_resolve import clob_ordinal_batch0
+    return await clob_ordinal_batch0(limit=limit)
 
 
 @router.get("/audit-pass2-guess")
