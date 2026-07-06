@@ -209,23 +209,11 @@ def _apply_search_synonyms(
     ]
 
 
-def _cohere_by_category(markets: list) -> list:
-    """Stable partition putting the dominant-category markets first. Fires only on
-    a CLEAR plurality (dominant ≥2 and strictly greater than the next category);
-    otherwise leaves order untouched. Deterministic, no LLM."""
-    if len(markets) < 2:
-        return markets
-    from collections import Counter
-
-    counts = Counter(m.llm_sport_category for m in markets if m.llm_sport_category)
-    if len(counts) < 2:
-        return markets
-    (dom, dom_n), (_, next_n) = counts.most_common(2)
-    if dom_n < 2 or dom_n <= next_n:
-        return markets
-    return [m for m in markets if m.llm_sport_category == dom] + [
-        m for m in markets if m.llm_sport_category != dom
-    ]
+def _market_volume(m) -> float:
+    try:
+        return float(m.volume or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # #993 Item 2: league-qualifier awareness. An explicit league token in the query
@@ -280,13 +268,16 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
        candidate). Name-matches rank first. (Without this, election markets that
        list the person as an outcome make an unrelated category the plurality —
        the exact regression the first attempt caused.)
-    2. **Category coherence within the name-matches** — demote a lone
-       cross-category novelty (the politics "Will LeBron announce a Presidential
-       run", which DOES name LeBron) below the dominant basketball markets.
+    2. **Volume ordering within the name-matches** — the market people actually
+       care about wins. This sinks the vol-0 "Will LeBron announce a Presidential
+       run" novelty below the 12.9M-volume "LeBron James Next Team", and (unlike
+       the earlier count-based category coherence) is immune to dedup: "premier
+       league" collapses its 33 EPL soccer markets to one dedup key, which would
+       fool a count-based signal into promoting the 2 lacrosse markets — but EPL
+       soccer's 16M volume vs lacrosse's 8k keeps soccer on top.
 
-    Preserves incoming rank/tier/volume order within each group. Politics queries
-    ("trump approval") are unaffected: those markets name Trump AND politics is
-    the dominant category, so they stay on top.
+    Politics queries ("trump approval") are unaffected: those markets name Trump
+    and lead on their own volume.
     """
     if len(markets) < 2:
         return markets
@@ -298,7 +289,8 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
 
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
-    ordered = _cohere_by_category(name_matches) + outcome_only
+    name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
+    ordered = name_matches + outcome_only
     # Item 2: finally, push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
     return _demote_wrong_league(ordered, expanded)

@@ -15,56 +15,59 @@ from app.routes.events import (
     _strip_search_scaffolding,
     _apply_search_synonyms,
     _is_field_outcome,
-    _cohere_by_category,
     _rerank_search_futures,
     _demote_wrong_league,
 )
 
 
-def _mkt(cat, name="m"):
-    return SimpleNamespace(llm_sport_category=cat, name=name)
+def _mkt(cat, name="m", vol=0):
+    return SimpleNamespace(llm_sport_category=cat, name=name, volume=vol)
 
 
 # expanded-terms shape for _rerank_search_futures: [(term, expansion_or_None)]
 _LEBRON = [("lebron", None), ("james", None)]
 _TRUMP = [("trump", None), ("approval", None)]
+_PL = [("premier", None), ("league", None)]
 
 
 class TestRerankSearchFutures:
     def test_name_match_beats_outcome_only(self):
-        # lebron: real basketball markets NAME him; election markets only list him
-        # as an outcome (name has no 'lebron james') -> those go last.
+        # election markets list LeBron only as an outcome (name has no 'lebron
+        # james') -> below the real name-matches, regardless of volume.
         ms = [
-            _mkt("politics", "Presidential Election Winner 2028"),   # outcome-only
-            _mkt("basketball", "LeBron James Next Team"),            # name-match
-            _mkt("politics", "Will LeBron James announce a Presidential run"),  # name-match, novelty
-            _mkt("basketball", "Will LeBron James retire"),          # name-match
+            _mkt("politics", "Presidential Election Winner 2028", vol=9_000_000),  # outcome-only
+            _mkt("basketball", "LeBron James Next Team", vol=12_900_000),          # name-match
+            _mkt("basketball", "Will LeBron James retire", vol=700_000),           # name-match
         ]
         out = _rerank_search_futures(ms, _LEBRON)
-        assert out[0].name == "LeBron James Next Team"               # basketball leads
-        assert out[-1].name == "Presidential Election Winner 2028"   # outcome-only demoted
+        assert out[0].name == "LeBron James Next Team"
+        assert out[-1].name == "Presidential Election Winner 2028"
 
-    def test_cross_category_novelty_demoted_within_name_matches(self):
+    def test_volume_sinks_vol0_novelty(self):
+        # the tier-2 vol-0 politics novelty (a name-match) sinks below the
+        # high-volume real basketball markets.
         ms = [
-            _mkt("politics", "Will LeBron James announce a Presidential run"),
-            _mkt("basketball", "LeBron James Next Team"),
-            _mkt("basketball", "Will LeBron James retire"),
+            _mkt("politics", "Will LeBron James announce a Presidential run", vol=0),
+            _mkt("basketball", "LeBron James Next Team", vol=12_900_000),
+            _mkt("basketball", "Will LeBron James retire", vol=700_000),
         ]
         out = _rerank_search_futures(ms, _LEBRON)
-        assert out[0].llm_sport_category == "basketball"
+        assert out[0].name == "LeBron James Next Team"
         assert out[-1].llm_sport_category == "politics"
 
-    def test_politics_query_no_regression(self):
+    def test_dedup_immune_volume_beats_count(self):
+        # 'premier league': 1 (deduped) high-volume soccer vs 2 low-volume
+        # lacrosse — volume keeps soccer on top (count-based coherence failed here)
         ms = [
-            _mkt("politics", "Will Trump approval exceed 50%"),
-            _mkt("politics", "Trump approval rating in 2026"),
-            _mkt("economics", "GDP with Trump approval outcome"),   # name has trump+approval too
+            _mkt("lacrosse", "Premier League Lacrosse: 2026 A", vol=8000),
+            _mkt("lacrosse", "Premier League Lacrosse: 2026 B", vol=6000),
+            _mkt("soccer", "English Premier League Winner?", vol=16_000_000),
         ]
-        out = _rerank_search_futures(ms, _TRUMP)
-        assert out[0].llm_sport_category == "politics"
+        out = _rerank_search_futures(ms, _PL)
+        assert out[0].llm_sport_category == "soccer"
 
     def test_single_untouched(self):
-        one = [_mkt("basketball", "LeBron James Next Team")]
+        one = [_mkt("basketball", "LeBron James Next Team", vol=1)]
         assert _rerank_search_futures(one, _LEBRON) is one
 
 
@@ -95,16 +98,6 @@ class TestWrongLeagueDemotion:
         ms = [_mkt("basketball", "WNBA: 2026 MVP"), _mkt("basketball", "NBA MVP Winner")]
         out = _rerank_search_futures(ms, self._NBA)
         assert out[0].name == "NBA MVP Winner"
-
-
-class TestCohereByCategory:
-    def test_clear_plurality_promoted(self):
-        ms = [_mkt("politics"), _mkt("basketball"), _mkt("basketball")]
-        assert _cohere_by_category(ms)[0].llm_sport_category == "basketball"
-
-    def test_balanced_untouched(self):
-        ms = [_mkt("basketball"), _mkt("politics"), _mkt("basketball"), _mkt("politics")]
-        assert _cohere_by_category(ms) == ms
 
 
 class TestScaffoldingStrip:
