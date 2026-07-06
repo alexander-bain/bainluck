@@ -1146,29 +1146,42 @@ async def search_events(
     # FTS on market name (handles stemming) + ILIKE with expansion on name + outcomes.
     fts_futures_filter = _fts_filter(FuturesMarket.name, fts_q)
 
+    # #993 Slice-Speed: outcome recall via a NON-correlated IN-subquery (one
+    # outcome scan) instead of a per-candidate correlated EXISTS/.any() — the
+    # correlated form was the single biggest cost (~293ms of the 659ms query).
+    # Set-identical to the old .any(), so recall is unchanged (person queries
+    # that match an outcome name still resolve).
+    def _outcome_id_match(term, exp):
+        return FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp)
+            )
+        )
+
     if len(terms) > 1:
         futures_name_conditions = [
             _build_expanded_ilike(FuturesMarket.name, term, exp)
             for term, exp in expanded
         ]
         futures_name_ilike = and_(*futures_name_conditions)
-        futures_outcome_conditions = [
-            FuturesMarket.outcomes.any(
-                _build_expanded_ilike(FuturesOutcome.name, term, exp)
-            )
-            for term, exp in expanded
-        ]
-        futures_outcome_match = and_(*futures_outcome_conditions)
+        futures_outcome_match = and_(
+            *[_outcome_id_match(term, exp) for term, exp in expanded]
+        )
     else:
         term, exp = expanded[0]
         futures_name_ilike = _build_expanded_ilike(FuturesMarket.name, term, exp)
-        futures_outcome_match = FuturesMarket.outcomes.any(
-            _build_expanded_ilike(FuturesOutcome.name, term, exp)
-        )
+        futures_outcome_match = _outcome_id_match(term, exp)
 
     futures_name_match = or_(fts_futures_filter, futures_name_ilike)
 
-    futures_search_rank = _search_rank(_futures_search_vector(), fts_q)
+    # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
+    # correlated string_agg(outcome names) computed for every candidate row
+    # (~151ms); outcome text was weight C (minor), so ordering on the proven
+    # name-matched traces is unchanged while dropping the per-row subquery.
+    futures_search_rank = _search_rank(
+        _weighted_search_vector(FuturesMarket.name, _SEARCH_FUTURES_MARKET_WEIGHT),
+        fts_q,
+    )
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
