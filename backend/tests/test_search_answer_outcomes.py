@@ -17,6 +17,7 @@ from app.routes.events import (
     _is_field_outcome,
     _cohere_by_category,
     _rerank_search_futures,
+    _demote_wrong_league,
 )
 
 
@@ -65,6 +66,35 @@ class TestRerankSearchFutures:
     def test_single_untouched(self):
         one = [_mkt("basketball", "LeBron James Next Team")]
         assert _rerank_search_futures(one, _LEBRON) is one
+
+
+class TestWrongLeagueDemotion:
+    _NBA = [("nba", None), ("mvp", None)]
+    _WNBA = [("wnba", None), ("mvp", None)]
+
+    def test_wnba_demoted_for_nba_query(self):
+        ms = [_mkt("basketball", "WNBA: 2026 MVP"), _mkt("basketball", "NBA: 2026 MVP")]
+        out = _demote_wrong_league(ms, self._NBA)
+        assert out[0].name == "NBA: 2026 MVP"
+        assert out[-1].name == "WNBA: 2026 MVP"
+
+    def test_wnba_query_keeps_wnba(self):
+        ms = [_mkt("basketball", "WNBA: 2026 MVP")]
+        assert _demote_wrong_league(ms, self._WNBA) == ms  # query IS wnba -> not demoted
+
+    def test_token_boundary_not_substring(self):
+        # a real NBA market must never be demoted by the nba->wnba rule
+        ms = [_mkt("basketball", "NBA: LeBron James Next Team")]
+        assert _demote_wrong_league(ms, self._NBA) == ms
+
+    def test_no_league_token_noop(self):
+        ms = [_mkt("basketball", "WNBA: 2026 MVP")]
+        assert _demote_wrong_league(ms, [("gavin", None), ("newsom", None)]) == ms
+
+    def test_integrated_in_rerank(self):
+        ms = [_mkt("basketball", "WNBA: 2026 MVP"), _mkt("basketball", "NBA MVP Winner")]
+        out = _rerank_search_futures(ms, self._NBA)
+        assert out[0].name == "NBA MVP Winner"
 
 
 class TestCohereByCategory:

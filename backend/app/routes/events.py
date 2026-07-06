@@ -228,6 +228,47 @@ def _cohere_by_category(markets: list) -> list:
     ]
 
 
+# #993 Item 2: league-qualifier awareness. An explicit league token in the query
+# must not be satisfied by a SUBSTRING cousin ("nba" is inside "WNBA"). When the
+# query names the shorter league, demote markets naming the longer one.
+_LEAGUE_TOKENS: frozenset[str] = frozenset({
+    "nba", "wnba", "nfl", "nhl", "mlb", "mls", "epl", "ncaab", "ncaaf",
+    "wncaab", "wncaaf",
+})
+_LEAGUE_SUPERSETS: dict[str, list[str]] = {
+    "nba": ["wnba"],
+    "ncaab": ["wncaab"],
+    "ncaaf": ["wncaaf"],
+}
+
+
+def _demote_wrong_league(markets: list, expanded: list[tuple[str, str | None]]) -> list:
+    """Stable-demote substring-cousin leagues. If the query says "nba" (and not
+    "wnba"), a market whose name contains the word-boundary token "wnba" is the
+    wrong league → move it below the correctly-scoped results. Token-boundary
+    (\\bwnba\\b), so it never fires on a legitimate "nba" market."""
+    query_leagues = {t.lower() for t, _ in expanded if t.lower() in _LEAGUE_TOKENS}
+    if not query_leagues:
+        return markets
+    demote = {
+        sup
+        for ql in query_leagues
+        for sup in _LEAGUE_SUPERSETS.get(ql, [])
+        if sup not in query_leagues
+    }
+    if not demote:
+        return markets
+    pats = [re.compile(rf"\b{d}\b", re.IGNORECASE) for d in demote]
+
+    def _wrong(m) -> bool:
+        n = m.name or ""
+        return any(p.search(n) for p in pats)
+
+    keep = [m for m in markets if not _wrong(m)]
+    wrong = [m for m in markets if _wrong(m)]
+    return keep + wrong if wrong else markets
+
+
 def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]) -> list:
     """#993 Slice C — surface the entity's real markets on entity queries.
 
@@ -257,7 +298,10 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
 
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
-    return _cohere_by_category(name_matches) + outcome_only
+    ordered = _cohere_by_category(name_matches) + outcome_only
+    # Item 2: finally, push substring-cousin wrong-league markets to the bottom
+    # ("nba mvp" must not lead with "WNBA: 2026 MVP").
+    return _demote_wrong_league(ordered, expanded)
 
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
@@ -1194,8 +1238,15 @@ async def search_events(
     total_pages = (total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome name.
-    # FTS on market name (handles stemming) + ILIKE with expansion on name + outcomes.
-    fts_futures_filter = _fts_filter(FuturesMarket.name, fts_q)
+    # #993 index-usage: recall is trigram-ILIKE only (name + outcome). The old
+    # `to_tsvector(name) @@ tsquery` FTS predicate here was UNINDEXABLE by the
+    # existing `ix_futures_markets_name_trgm` GIN, so its presence in the OR
+    # forced a full seqscan (defeating the index). Dropping it lets the planner
+    # bitmap-scan the trigram index: profiled 252→90ms (single-word) / 257→72ms
+    # (lebron james), IDENTICAL recall on the frozen benchmark (ILIKE substring
+    # covers the stemming FTS caught for these queries). Ranking is unaffected —
+    # ts_rank_cd still orders in the ORDER BY (computed only for the few rows the
+    # trigram WHERE returns). Zero new DDL.
 
     # #993 Slice-Speed: outcome recall via a NON-correlated IN-subquery (one
     # outcome scan) instead of a per-candidate correlated EXISTS/.any() — the
@@ -1223,7 +1274,7 @@ async def search_events(
         futures_name_ilike = _build_expanded_ilike(FuturesMarket.name, term, exp)
         futures_outcome_match = _outcome_id_match(term, exp)
 
-    futures_name_match = or_(fts_futures_filter, futures_name_ilike)
+    futures_name_match = futures_name_ilike
 
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
