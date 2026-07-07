@@ -22,7 +22,6 @@ import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
-import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import ThresholdGrid from "@/components/ThresholdGrid";
 import ProgressionTable from "@/components/ProgressionTable";
@@ -494,17 +493,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
           {trendView === "progression" && hasProgression && progressionData ? (
             <TournamentProgressionTable data={progressionData} />
-          ) : market && market.outcomes.length > 10 ? (
-            <TournamentChart
-              marketId={marketId}
-              canonicalKey={
-                market.canonical_market_key && (market.source_count ?? 1) > 1
-                  ? market.canonical_market_key
-                  : undefined
-              }
-              hours={historyHours}
-            />
           ) : (
+            // #883 slice 2 (L2-47): the hero shows the SINGLE leader blend line for
+            // ALL market sizes — including >10-outcome markets that previously
+            // rendered the multi-line TournamentChart (a tangle of lines that
+            // contradicts "one clean number + why it moved"). selectedOutcomes is
+            // seeded to the leader; the full per-outcome breakdown lives in the
+            // "All Outcomes" table down in the rail. Fixed 0-100% axis, no smoothing.
             <FuturesChart
               historyData={historyOutcomes}
               selectedOutcomes={selectedOutcomes}
