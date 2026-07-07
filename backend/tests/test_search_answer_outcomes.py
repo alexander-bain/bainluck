@@ -182,6 +182,11 @@ class TestSearchSynonyms:
         out = _apply_search_synonyms([("la", "los angeles")])
         assert out == [("la", "los angeles")]
 
+    def test_coach_fired_maps_to_head_coach(self):
+        # #993 L2-43: "next coach fired" must find "…Next Head Coach" markets
+        out = _apply_search_synonyms([("next", None), ("coach", None), ("fired", None)])
+        assert ("fired", "head coach") in out
+
 
 class TestFieldOutcome:
     def test_detects_field(self):

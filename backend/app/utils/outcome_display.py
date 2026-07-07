@@ -25,6 +25,10 @@ _PLACEHOLDER_FAMILY_RE = re.compile(
 _PLACEHOLDER_TEAM_RE = re.compile(r"^Team\s+[A-Z]$")
 # Legacy Polymarket garbage ("player AB", "player ABC") — case-insensitive, up to 3.
 _LEGACY_PLAYER_RE = re.compile(r"^player\s+[A-Z]{1,3}$", re.IGNORECASE)
+# #993 L2-43: bare 1-2 uppercase-letter opaque codes ("AR", "BF", "W") — the
+# Ballon d'Or market is fully anonymized this way (real names not yet ingested,
+# Lane-1 #125). ALL-CAPS required so "No"/"Yes" (mixed case) are never caught.
+_BARE_CODE_RE = re.compile(r"^[A-Z]{1,2}$")
 
 _FIELD_OUTCOME_RE = re.compile(
     r"^(other|others|the field|field|none( of the above)?|no one( else)?|"
@@ -40,6 +44,7 @@ def is_placeholder_outcome_name(name: str | None) -> bool:
         _PLACEHOLDER_FAMILY_RE.match(n)
         or _PLACEHOLDER_TEAM_RE.match(n)
         or _LEGACY_PLAYER_RE.match(n)
+        or _BARE_CODE_RE.match(n)
     )
 
 

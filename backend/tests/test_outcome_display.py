@@ -25,6 +25,16 @@ class TestPlaceholder:
         assert is_placeholder_outcome_name("player AB") is True   # legacy garbage
         assert is_placeholder_outcome_name("Donald Trump") is False
 
+    def test_bare_uppercase_codes_are_placeholders(self):
+        # #993 L2-43: Ballon d'Or fully-anonymized codes
+        for n in ("BF", "BD", "AR", "AY", "W", "Y"):
+            assert is_placeholder_outcome_name(n) is True, n
+
+    def test_binary_and_words_not_bare_codes(self):
+        # Yes/No/Over/Under/real names must survive (mixed case / len>2)
+        for n in ("Yes", "No", "Over", "Under", "Cleveland Cavaliers"):
+            assert is_placeholder_outcome_name(n) is False, n
+
 
 class TestNormalizeAndLeaderPick:
     def test_normalize_over_100(self):

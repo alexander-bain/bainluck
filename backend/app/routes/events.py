@@ -185,6 +185,10 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
     "championship": "winner",
     "champ": "winner",
     "winner": "champion",
+    # #993 L2-43: coaching-change vocab. Markets say "Next Head Coach" /
+    # "Coaches Out", never "fired" — so "fired" also matches "head coach", making
+    # "next coach fired" find the "…Next Head Coach" markets.
+    "fired": "head coach",
 }
 
 
@@ -1346,6 +1350,25 @@ async def search_events(
 
     futures_name_match = futures_name_ilike
 
+    # #993 L2-43: league-token recall. "nfl mvp" must find "MVP Winner?"
+    # (ticker KXNFLMVP, NO "nfl" in the name) — match by the ticker league prefix
+    # + the non-league terms in the name. `kx{league}%` is a prefix LIKE
+    # (index-friendly) and naturally excludes WNBA for "nba" (KXWNBA… ≠ kxnba…).
+    _query_leagues = [t.lower() for t, _ in expanded if t.lower() in _LEAGUE_TOKENS]
+    _non_league = [(t, e) for t, e in expanded if t.lower() not in _LEAGUE_TOKENS]
+    league_ticker_match = None
+    if _query_leagues and _non_league:
+        _branches = []
+        for lg in _query_leagues:
+            conds = [func.lower(FuturesMarket.external_id).like(f"kx{lg}%")]
+            conds += [_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in _non_league]
+            _branches.append(and_(*conds))
+        league_ticker_match = or_(*_branches)
+
+    _futures_where_or = [futures_name_match, futures_outcome_match]
+    if league_ticker_match is not None:
+        _futures_where_or.append(league_ticker_match)
+
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
     # (~151ms); outcome text was weight C (minor), so ordering on the proven
@@ -1359,10 +1382,7 @@ async def search_events(
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            or_(
-                futures_name_match,
-                futures_outcome_match,
-            ),
+            or_(*_futures_where_or),
             FuturesMarket.status == "open",
             or_(
                 FuturesMarket.resolution_date.is_(None),
