@@ -588,3 +588,26 @@ class TestFetchAttempt5Instrumentation:
         assert "asyncio.wait_for(" in src
         assert "progress_cb=_mark_phase" in src
         assert "fetch_walltime_exceeded" in src
+
+
+class TestKalshiSettledPhaseMarker:
+    """#969 CRITICAL instrument-first: kalshi_settled busts its 900s wall with
+    all guards present, so a phase marker must record WHICH sub-phase eats the
+    budget before any fix (do NOT assume fetch)."""
+
+    def _src(self):
+        import inspect
+        import textwrap
+        from app.tasks.kalshi import _backfill_from_settled_events
+        return textwrap.dedent(inspect.getsource(_backfill_from_settled_events))
+
+    def test_uses_stable_marker_key(self):
+        assert "bainluck:kalshi_settled:phase" in self._src()
+
+    def test_marks_key_subphases(self):
+        src = self._src()
+        assert "_mark_ks(" in src
+        assert '_mark_ks("series_discovery")' in src
+        assert 'f"fetch:{series}:p{page_num}"' in src
+        assert 'f"sql:{series}:p{page_num}"' in src
+        assert '_mark_ks("done")' in src

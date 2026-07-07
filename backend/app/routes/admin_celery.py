@@ -105,11 +105,16 @@ async def celery_dashboard(
     # so this phase marker is the only way to see WHERE it died — it holds the
     # stage that was live when the worker was killed. Surface it here.
     poll_kalshi_phase = None
+    kalshi_settled_phase = None
     try:
         _r2 = get_redis_client()
         _pk = _r2.get("bainluck:poll_kalshi:phase")
         if _pk:
             poll_kalshi_phase = _pk.decode() if isinstance(_pk, bytes) else _pk
+        # #969: same instrument-first marker for the CRITICAL kalshi_settled bust.
+        _ks = _r2.get("bainluck:kalshi_settled:phase")
+        if _ks:
+            kalshi_settled_phase = _ks.decode() if isinstance(_ks, bytes) else _ks
     except Exception:
         poll_kalshi_phase = None
 
@@ -139,6 +144,7 @@ async def celery_dashboard(
         "odds_api_quota": odds_api_quota,
         "backfill_phase_timing": backfill_phase_timing,
         "poll_kalshi_phase": poll_kalshi_phase,
+        "kalshi_settled_phase": kalshi_settled_phase,
     }
 
 

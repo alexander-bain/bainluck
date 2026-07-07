@@ -1981,6 +1981,33 @@ async def _backfill_from_settled_events(limit: int = 5000):
         "errors": [],
     }
 
+    # #969 CRITICAL (consec=5, 0 completions/24h): INSTRUMENT-FIRST. The task
+    # busts its 900s soft limit but the guards (statement_timeout, _MAX_SECONDS,
+    # fetch deadline) are all present — so the op eating the budget is UNKNOWN.
+    # This phase marker (same play that cracked #995) records the sub-phase live
+    # at the SoftTimeLimit raise; the next run names the exact culprit before any
+    # fix. Do NOT assume fetch (#128 already bounded the shared HTTP client).
+    import time as _ks_time
+    _ks_started = _ks_time.monotonic()
+    _KS_PHASE_KEY = "bainluck:kalshi_settled:phase"
+    try:
+        from app.tasks.redis_state import get_redis_client as _ks_get_rc
+        _ks_rc = _ks_get_rc()
+    except Exception:
+        _ks_rc = None
+
+    def _mark_ks(phase: str):
+        if _ks_rc is None:
+            return
+        try:
+            _ks_rc.setex(
+                _KS_PHASE_KEY, 7200,
+                f"{phase}@{_ks_time.monotonic() - _ks_started:.0f}s",
+            )
+        except Exception:
+            pass
+
+    _mark_ks("series_discovery")
     # Dynamically discover all Kalshi series with unresolved markets
     # instead of a hardcoded list that misses esports, baseball HR, soccer BTTS, etc.
     async with get_task_session() as session:
@@ -2158,6 +2185,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         # inner-op fix (margin-widening alone already failed).
                         _deadline = _start_time + _MAX_SECONDS
                         _page_cursor = cursor
+                        _mark_ks(f"fetch:{series}:p{page_num}")
                         for _retry in range(3):
                             if (_time.monotonic() - _start_time) > _MAX_SECONDS:
                                 break
@@ -2214,6 +2242,7 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                 break
                             continue
 
+                        _mark_ks(f"sql:{series}:p{page_num}")
                         # --- Phase 1: Always resolve market status ---
                         resolve_result = await session.execute(
                             text("""
@@ -2534,6 +2563,8 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             series_snapshots,
                             stats.get("winners_resolved", 0),
                         )
+
+                _mark_ks("done")
 
         finally:
             await service.close()
