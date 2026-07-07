@@ -11,6 +11,7 @@ from app.tasks.clob_resolve import (
     _suffix_of,
     _ordinal_side,
     _vintage_bucket,
+    _next_cursor_decision,
 )
 
 
@@ -231,3 +232,37 @@ def test_vintage_bucket():
     assert _vintage_bucket("2026-07-06T00:00:00Z") == "2026-Q3"
     assert _vintage_bucket("2025-02-01T00:00:00Z") == "2025-Q1"
     assert _vintage_bucket(None) == "unknown"
+
+
+# ---- #989 Item 1: drain cursor must not advance past rate-limited markets ----
+
+def test_cursor_clean_full_batch_advances_to_min():
+    # No errors, full batch (rows_len == limit): advance to the min id seen.
+    assert _next_cursor_decision(1000, [], 300, 300) == ("set", 1000)
+
+
+def test_cursor_clean_partial_batch_wraps():
+    # No errors, batch smaller than limit == fully drained -> wraparound.
+    assert _next_cursor_decision(1000, [], 120, 300) == ("delete", None)
+
+
+def test_cursor_errors_hold_above_highest_error():
+    # Errors present -> resume just ABOVE the highest errored id, so every
+    # errored market is re-fetched next run (retry-in-place).
+    assert _next_cursor_decision(1000, [2500, 4000, 3100], 300, 300) == ("set", 4001)
+
+
+def test_cursor_errors_override_wraparound():
+    # Even on a partial (final) batch, errors must NOT trigger a wraparound —
+    # otherwise the tail's rate-limited markets are lost.
+    assert _next_cursor_decision(1000, [1500], 50, 300) == ("set", 1501)
+
+
+def test_cursor_error_below_min_still_reloads():
+    # A single errored id lower than other work: resume above it.
+    assert _next_cursor_decision(2000, [1200], 300, 300) == ("set", 1201)
+
+
+def test_cursor_noop_when_nothing_processed():
+    assert _next_cursor_decision(None, [], 0, 300) == ("noop", None)
+    assert _next_cursor_decision(None, [123], 0, 300) == ("noop", None)

@@ -277,18 +277,35 @@ class PolymarketAPIService:
         unknown); re-raises 429/5xx/timeout so the caller backs off instead of
         treating a rate-limit as 'not found' (gotcha #36).
         """
+        import asyncio
         import httpx
 
-        try:
-            response = await self.clob_client.get(f"/markets/{condition_id}")
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return None
-            raise
-        except httpx.TimeoutException:
-            raise
+        # Honor Retry-After on 429 with bounded backoff (#989 Item 1). At scale
+        # the CLOB drain hit ~49% 429s; a surfaced 429 both skips the market AND
+        # (pre-fix) advanced the drain cursor past it. Absorbing transient 429s
+        # here keeps them from surfacing as errors at all. Bounded so a single
+        # market can't burn the caller's 900s budget: <=3 attempts, delay capped
+        # at 10s. A 429 that survives all attempts is re-raised so the drain
+        # retries it in place next run (never treated as 'not found').
+        for attempt in range(3):
+            try:
+                response = await self.clob_client.get(f"/markets/{condition_id}")
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    return None
+                if e.response.status_code == 429 and attempt < 2:
+                    ra = e.response.headers.get("Retry-After")
+                    try:
+                        delay = float(ra) if ra else 2.0 * (attempt + 1)
+                    except (TypeError, ValueError):
+                        delay = 2.0 * (attempt + 1)
+                    await asyncio.sleep(min(delay, 10.0))
+                    continue
+                raise
+            except httpx.TimeoutException:
+                raise
 
     @staticmethod
     def clob_winning_outcome(clob_market: Optional[dict]) -> Optional[str]:

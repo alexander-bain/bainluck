@@ -77,8 +77,11 @@ _DEFAULT_WRITE_TIERS = ("resolved_direct", "resolved_name_match")
 _ORDINAL_FIRST_BATCH_CAP = 2000
 _ORDINAL_WRITTEN_KEY = "clob_resolve:ordinal_written"
 
-# Politeness: CLOB tolerates low concurrency (L2-32). ~1.2s effective spacing.
-_CONCURRENCY = 5
+# Politeness: the L2-32 "not throttle-bound" read (24 markets @ ~1.2s) did NOT
+# hold at scale — the first 500-market drain hit ~49% CLOB 429s at concurrency=5
+# (#989 Item 1). Drop to 2 in-flight; combined with Retry-After honoring in
+# get_clob_market_by_condition this keeps the surfaced-429 rate near zero.
+_CONCURRENCY = 2
 _CURSOR_KEY = "clob_resolve:cursor_max_id"
 _DATE_TOLERANCE_DAYS = 14
 
@@ -353,6 +356,27 @@ _COUNTERS = ("resolved_direct", "resolved_name_match", "resolved_ordinal",
              "ambiguous_skipped", "not_found")
 
 
+def _next_cursor_decision(min_id_seen, error_ids, rows_len, limit):
+    """Decide how the drain's resume cursor advances. Returns ``(op, value)``
+    where ``op`` is ``"set"`` (value = new cursor), ``"delete"`` (wraparound to
+    newest), or ``"noop"`` (nothing processed).
+
+    #989 Item 1: a 429/5xx/timeout market was NOT processed, so the cursor must
+    never advance past it — otherwise it is silently skipped until a full
+    wraparound. When any market errored, resume just ABOVE the highest errored
+    id so every errored market (and only some already-done ones below it, which
+    is idempotent) is re-fetched next run, and never wraparound while errors
+    remain. Only a clean, fully-drained batch (``rows_len < limit``, no errors)
+    resets the cursor."""
+    if min_id_seen is None:
+        return ("noop", None)
+    if error_ids:
+        return ("set", max(error_ids) + 1)
+    if rows_len < limit:
+        return ("delete", None)
+    return ("set", min_id_seen)
+
+
 def _tally(out: dict, res: dict) -> None:
     """Fold one mapped result into the spec counters."""
     if res.get("error"):
@@ -572,6 +596,7 @@ async def clob_resolve_drain(
                                         enable_ordinal=enable_ordinal)
 
     min_id_seen: int | None = None
+    error_ids: list[int] = []
     try:
         results = await asyncio.gather(*[_one(r) for r in rows])
         async with get_task_session() as wsession:
@@ -580,6 +605,12 @@ async def clob_resolve_drain(
                 mid = res.get("market_id")
                 if mid is not None:
                     min_id_seen = mid if min_id_seen is None else min(min_id_seen, mid)
+                    # 429/5xx/timeout markets were NOT processed. The cursor must
+                    # not advance past them (#989 Item 1) — otherwise they are
+                    # silently skipped until a full wraparound. Collect their ids
+                    # so we resume just above the highest one and retry in place.
+                    if res.get("error"):
+                        error_ids.append(mid)
                 _tally(out, res)
                 if res.get("skip") or res.get("error") or res.get("not_found"):
                     continue
@@ -621,14 +652,18 @@ async def clob_resolve_drain(
         out["ordinal_written_total"] = ordinal_written_total
         out["ordinal_cap"] = ordinal_cap
 
+    out["errored"] = len(error_ids)
     if redis and min_id_seen is not None:
+        op, value = _next_cursor_decision(min_id_seen, error_ids, len(rows), limit)
         try:
-            if len(rows) < limit:
+            if op == "delete":
                 redis.delete(_CURSOR_KEY)
                 out["cursor_reset"] = True
-            else:
-                redis.set(_CURSOR_KEY, str(min_id_seen))
-                out["next_cursor"] = min_id_seen
+            elif op == "set":
+                redis.set(_CURSOR_KEY, str(value))
+                out["next_cursor"] = value
+                if error_ids:
+                    out["cursor_held_for_retry"] = True
         except Exception as e:
             logger.warning("clob_resolve_drain: cursor advance failed: %s", e)
 
