@@ -253,10 +253,7 @@ private func sourceColor(_ source: String?) -> Color {
     }
 }
 
-private func formatOdds(_ odds: Int?) -> String {
-    guard let odds else { return "" }
-    return odds > 0 ? "+\(odds)" : "\(odds)"
-}
+// L2-48: formatOdds (American moneyline) removed — probability only (no-odds thesis).
 
 // MARK: - Playoff Stage Classification
 // Playoff stage classification is now computed server-side in
@@ -1488,11 +1485,7 @@ private struct AwardCard: View {
                             .foregroundStyle(teamColor)
                         MovementPill(change: future.probabilityChange24h)
                     }
-                    if let odds = future.americanOdds {
-                        Text(formatOdds(odds))
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.tertiary)
-                    }
+                    // L2-48: American moneyline removed — probability only (no-odds thesis).
                 }
             }
             .padding(12)

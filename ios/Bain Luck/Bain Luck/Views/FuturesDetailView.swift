@@ -666,11 +666,8 @@ struct FuturesDetailView: View {
                     }
 
                     HStack(spacing: 8) {
-                        if let odds = outcome.americanOdds {
-                            Text(odds > 0 ? "+\(odds)" : "\(odds)")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(DS.textMuted)
-                        }
+                        // L2-48: American moneyline removed — probability only
+                        // (no-odds thesis: "60% vs 40%", never "-150/+130").
                         // 24h movement via DeltaBadge
                         if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
                             DeltaBadge(value: change * 100)
