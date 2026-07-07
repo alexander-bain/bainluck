@@ -33,15 +33,6 @@ function formatSportName(sportKey: string | null, sportName: string | null): str
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatSourceName(source: string): string {
-  const names: Record<string, string> = {
-    odds_api: "Sportsbooks",
-    kalshi: "Kalshi",
-    polymarket: "Polymarket",
-  };
-  return names[source] || source.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 // ---------------------------------------------------------------------------
 // Category accent border — top border color based on market category
 // ---------------------------------------------------------------------------
@@ -210,12 +201,13 @@ export default function FuturesCard({
           {/* Footer */}
           <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center">
             <div className="text-micro text-text-muted">
+              {/* D1 (blend-only): show the source-agnostic blend count when we
+                  have multiple sources; NEVER the provider name. A single source
+                  renders nothing — users see one clean number, not "Kalshi". */}
               {market.source_count && market.source_count > 1 ? (
                 <span className="bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
                   {market.source_count} sources
                 </span>
-              ) : market.source ? (
-                <span>{formatSourceName(market.source)}</span>
               ) : null}
             </div>
             {market.updated_at && (

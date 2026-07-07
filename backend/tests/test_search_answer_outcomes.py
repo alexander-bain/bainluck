@@ -17,6 +17,7 @@ from app.routes.events import (
     _is_field_outcome,
     _rerank_search_futures,
     _demote_wrong_league,
+    _demote_narrower_scope,
     _compose_futures_families,
     _query_name_match,
 )
@@ -156,6 +157,54 @@ class TestWrongLeagueDemotion:
         ms = [_mkt("basketball", "WNBA: 2026 MVP"), _mkt("basketball", "NBA MVP Winner")]
         out = _rerank_search_futures(ms, self._NBA)
         assert out[0].name == "NBA MVP Winner"
+
+
+class TestNarrowerScopeDemotion:
+    """#993 L2-44 Item 2: a bare award query headlines the season/full award,
+    not a higher-volume narrower sub-award."""
+
+    _NBA_MVP = [("nba", None), ("mvp", None)]
+
+    def test_bare_query_demotes_conference_finals_mvp(self):
+        # the sub-award has HIGHER volume but must not headline the bare query
+        ms = [
+            _mkt("basketball", "Eastern Conference Finals MVP", vol=5_000_000),
+            _mkt("basketball", "NBA MVP Winner", vol=2_000_000),
+        ]
+        out = _demote_narrower_scope(ms, self._NBA_MVP)
+        assert out[0].name == "NBA MVP Winner"
+        assert out[-1].name == "Eastern Conference Finals MVP"
+
+    def test_scoped_query_keeps_the_scoped_market(self):
+        # query names 'finals' -> the Finals MVP is what the user asked for
+        low = [("nba", None), ("finals", None), ("mvp", None)]
+        ms = [
+            _mkt("basketball", "NBA Finals MVP", vol=5_000_000),
+            _mkt("basketball", "NBA MVP Winner", vol=2_000_000),
+        ]
+        out = _demote_narrower_scope(ms, low)
+        assert out[0].name == "NBA Finals MVP"  # volume order, not demoted
+
+    def test_volume_order_preserved_within_broad_group(self):
+        ms = [
+            _mkt("basketball", "NBA MVP Winner", vol=1_000_000),
+            _mkt("basketball", "NBA Most Valuable Player", vol=3_000_000),
+        ]
+        # neither carries an absent qualifier -> untouched (stable, volume order)
+        out = _demote_narrower_scope(ms, self._NBA_MVP)
+        assert out == ms
+
+    def test_integrated_headline_is_season_award(self):
+        ms = [
+            _mkt("basketball", "Eastern Conference Finals MVP", vol=5_000_000),
+            _mkt("basketball", "NBA MVP Winner", vol=2_000_000),
+        ]
+        out = _rerank_search_futures(ms, self._NBA_MVP)
+        assert out[0].name == "NBA MVP Winner"
+
+    def test_single_untouched(self):
+        one = [_mkt("basketball", "Eastern Conference Finals MVP")]
+        assert _demote_narrower_scope(one, self._NBA_MVP) is one
 
 
 class TestScaffoldingStrip:

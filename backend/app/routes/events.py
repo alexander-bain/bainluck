@@ -261,6 +261,44 @@ def _demote_wrong_league(markets: list, expanded: list[tuple[str, str | None]]) 
     return keep + wrong if wrong else markets
 
 
+# Award-narrowing scope tokens. A market whose NAME carries one of these but the
+# QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
+# season "MVP Winner"). Word-boundary matched so "final" inside another word can't
+# false-fire. #993 L2-44.
+_SCOPE_QUALIFIERS = frozenset({
+    "conference", "eastern", "western", "division", "divisional",
+    "finals", "semifinal", "semifinals", "quarterfinal", "quarterfinals",
+    "all-star", "all star", "allstar", "in-season", "play-in", "playin",
+    "summer league", "preseason",
+})
+
+
+def _demote_narrower_scope(name_matches: list, low: list[tuple[str, str]]) -> list:
+    """#993 L2-44: for a bare award query ("nba mvp"), a market that adds a
+    narrower scope the user did NOT ask for ("Eastern Conference Finals MVP")
+    must not headline over the season/full award on raw volume alone. Stable
+    partition: name-matches carrying a scope qualifier ABSENT from the query sink
+    below those that don't, preserving volume order within each group. No-op when
+    the query itself names the scope ("nba finals mvp" keeps the Finals market on
+    top) — so it only ever corrects the bare-query headline, never regressing a
+    scoped query. Reorders only; nothing is dropped (findability untouched)."""
+    if len(name_matches) < 2:
+        return name_matches
+    query_blob = " ".join(t for t, _ in low)
+    absent = [q for q in _SCOPE_QUALIFIERS if q not in query_blob]
+    if not absent:
+        return name_matches
+    pats = [re.compile(rf"\b{re.escape(q)}\b", re.IGNORECASE) for q in absent]
+
+    def _extra_scope(m) -> bool:
+        n = m.name or ""
+        return any(p.search(n) for p in pats)
+
+    broad = [m for m in name_matches if not _extra_scope(m)]
+    narrow = [m for m in name_matches if _extra_scope(m)]
+    return broad + narrow if narrow else name_matches
+
+
 def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]) -> list:
     """#993 Slice C — surface the entity's real markets on entity queries.
 
@@ -294,6 +332,10 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
     name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
+    # Item 2 (L2-44): a bare award query should headline the season/full award,
+    # not a higher-volume narrower sub-award ("Eastern Conf Finals MVP"). Stable,
+    # so volume order holds within each scope group; no-op for scoped queries.
+    name_matches = _demote_narrower_scope(name_matches, low)
     ordered = name_matches + outcome_only
     # Item 2: finally, push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
