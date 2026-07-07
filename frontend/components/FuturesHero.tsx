@@ -14,6 +14,12 @@ interface FuturesHeroProps {
   categoryLabel?: string;
   sparklinePoints?: number[];
   isMultiOutcome?: boolean;
+  /** #883 L2-49: resolved (settled) market. Suppresses the live movement pill
+   *  and labels the featured outcome as the final result, so a settled market
+   *  never reads like an ongoing "58%". */
+  resolved?: boolean;
+  /** Whether the featured outcome won (for the resolved chip styling). */
+  resolvedWon?: boolean;
 }
 
 export function FuturesHero({
@@ -28,11 +34,14 @@ export function FuturesHero({
   categoryLabel,
   sparklinePoints,
   isMultiOutcome,
+  resolved = false,
+  resolvedWon,
 }: FuturesHeroProps) {
   const pct = probability != null ? Math.round(probability * 100) : null;
   const movementUp = movement != null && movement > 0;
+  // Resolved markets show the final result, not a live movement pill.
   const movementStr =
-    movement != null && Math.abs(movement) >= 0.1
+    !resolved && movement != null && Math.abs(movement) >= 0.1
       ? `${movementUp ? "↑" : "↓"} ${Math.abs(movement).toFixed(1)} pts`
       : null;
 
@@ -62,6 +71,17 @@ export function FuturesHero({
             <div className="flex items-center gap-2 mt-2">
               {outcomeName && (
                 <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
+              )}
+              {resolved && (
+                <span
+                  className={`text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                    resolvedWon
+                      ? "bg-accent-live/15 text-accent-live"
+                      : "bg-text-muted/15 text-text-secondary"
+                  }`}
+                >
+                  {resolvedWon ? "Won" : "Resolved"}
+                </span>
               )}
               {movementStr && (
                 <span

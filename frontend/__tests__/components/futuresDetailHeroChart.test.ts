@@ -39,3 +39,23 @@ describe("futures-detail hero chart (#883 blend-only, single leader line)", () =
     expect(code).toContain("TournamentProgressionTable");
   });
 });
+
+describe("futures-detail edge states (#883 L2-49)", () => {
+  test("loading renders an anatomy skeleton, not a spinner void", () => {
+    expect(code).toMatch(/animate-pulse/);
+    expect(code).not.toContain("LoadingSpinner");
+  });
+
+  test("resolved-aware hero (featured winner + resolved flag)", () => {
+    expect(code).toContain("pickHeroOutcome");
+    expect(code).toContain("resolved={isResolved}");
+  });
+
+  test("movement explanation is suppressed on resolved markets", () => {
+    expect(code).toMatch(/movementExplanation\s*&&\s*!isResolved/);
+  });
+
+  test("honest empty state instead of a broken sparse chart", () => {
+    expect(code).toContain("Not enough price history yet");
+  });
+});

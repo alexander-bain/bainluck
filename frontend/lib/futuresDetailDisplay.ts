@@ -12,6 +12,21 @@ export interface MovementLeader {
   probability_change_24h?: number | null;
 }
 
+/**
+ * #883 L2-49 (resolved edge state): the outcome the hero features. On a resolved
+ * market that's the actual WINNER (is_winner === true), which can differ from the
+ * highest-probability outcome — falling back to the leader if none is flagged.
+ * On a live market it's just the leader.
+ */
+export function pickHeroOutcome<T extends { is_winner?: boolean | null }>(
+  outcomes: readonly T[],
+  leader: T | null,
+  resolved: boolean,
+): T | null {
+  if (!resolved) return leader;
+  return outcomes.find((o) => o.is_winner === true) ?? leader;
+}
+
 /** Generic binary-style outcome names that read better as "Yes" in a headline. */
 export function isGenericOutcomeLabel(name: string | null | undefined): boolean {
   const n = (name || "").trim().toLowerCase();

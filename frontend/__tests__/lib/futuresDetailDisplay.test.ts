@@ -4,6 +4,7 @@ import {
   isGenericOutcomeLabel,
   leaderLabel,
   movementExplanation,
+  pickHeroOutcome,
 } from "../../lib/futuresDetailDisplay";
 
 describe("leaderLabel", () => {
@@ -80,5 +81,31 @@ describe("movementExplanation", () => {
       opening_probability: 0.08,
     });
     expect(s).toBe("Yes up 12.0 pts from opening.");
+  });
+});
+
+describe("pickHeroOutcome (resolved edge state)", () => {
+  const leader = { name: "Favorite", probability: 0.58, is_winner: false };
+  const winner = { name: "Underdog", probability: 0.30, is_winner: true };
+  const other = { name: "Third", probability: 0.12, is_winner: false };
+
+  test("live market -> the leader", () => {
+    expect(pickHeroOutcome([leader, winner, other], leader, false)).toBe(leader);
+  });
+
+  test("resolved market -> the actual winner (not the highest-probability)", () => {
+    expect(pickHeroOutcome([leader, winner, other], leader, true)).toBe(winner);
+  });
+
+  test("resolved with no winner flagged -> falls back to the leader", () => {
+    const none = [
+      { name: "A", probability: 0.5, is_winner: false },
+      { name: "B", probability: 0.5, is_winner: null },
+    ];
+    expect(pickHeroOutcome(none, none[0], true)).toBe(none[0]);
+  });
+
+  test("empty outcomes -> leader (or null)", () => {
+    expect(pickHeroOutcome([], null, true)).toBeNull();
   });
 });

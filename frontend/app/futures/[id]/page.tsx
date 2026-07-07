@@ -13,7 +13,6 @@ import {
   formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
-import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -27,7 +26,7 @@ import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
-import { movementExplanation as movementExplanationHelper } from "@/lib/futuresDetailDisplay";
+import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -324,11 +323,33 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   );
 
   if (marketLoading) {
+    // #883 L2-49: skeleton mirrors the blend-only anatomy (title → big number →
+    // chart → movement → related), not a spinner void, so the layout doesn't
+    // jump when data lands.
     return (
-      <div className="space-y-6">
+      <div className="space-y-6" aria-busy="true" aria-label="Loading market">
         {backLink}
-        <div className="py-12">
-          <LoadingSpinner text="Loading market..." />
+        <div className="animate-pulse space-y-6">
+          {/* Hero: category + title + big number */}
+          <div className="space-y-4">
+            <div className="h-3 w-24 rounded bg-surface-elevated" />
+            <div className="h-6 w-3/4 rounded bg-surface-elevated" />
+            <div className="h-14 w-40 rounded bg-surface-elevated" />
+          </div>
+          {/* Chart card + movement line */}
+          <div className="bg-surface-card rounded-card shadow-card p-6 space-y-4">
+            <div className="h-5 w-40 rounded bg-surface-elevated" />
+            <div className="h-40 w-full rounded bg-surface-elevated" />
+            <div className="h-3 w-56 rounded bg-surface-elevated" />
+          </div>
+          {/* Related / outcomes cards */}
+          {[0, 1].map((i) => (
+            <div key={i} className="bg-surface-card rounded-card shadow-card p-6 space-y-3">
+              <div className="h-5 w-36 rounded bg-surface-elevated" />
+              <div className="h-4 w-full rounded bg-surface-elevated" />
+              <div className="h-4 w-5/6 rounded bg-surface-elevated" />
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -357,6 +378,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #883 L2-49: on a resolved market the hero features the actual WINNER (which
+  // may differ from the highest-probability outcome), labeled as final — not a
+  // live probability. Falls back to the leader if no winner is flagged yet.
+  const resolvedWinner = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
+  const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
 
   return (
     <div className="space-y-6">
@@ -387,17 +413,25 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Probability Hero — design spec FD-1 */}
+      {/* Probability Hero — design spec FD-1 (resolved-aware, #883 L2-49) */}
       <FuturesHero
         name={market.name}
-        probability={leader?.probability ?? null}
-        outcomeName={leader ? (isGenericOutcomeName(leader.name) ? "Yes" : leader.name) : undefined}
-        movement={leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        probability={heroOutcome?.probability ?? null}
+        outcomeName={heroOutcome ? (isGenericOutcomeName(heroOutcome.name) ? "Yes" : heroOutcome.name) : undefined}
+        movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         sourceCount={market.source_count ?? undefined}
-        resolveDate={market.resolution_date ? `Resolves ${new Date(market.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : undefined}
+        resolveDate={
+          isResolved
+            ? undefined
+            : market.resolution_date
+              ? `Resolves ${new Date(market.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+              : undefined
+        }
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
         categoryLabel={market.sport_name || market.llm_sport_category || undefined}
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
+        resolved={isResolved}
+        resolvedWon={resolvedWinner?.is_winner === true}
       />
 
       {/* Context line (auto-upgrades when #870 ships) */}
@@ -507,12 +541,36 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               fixedYAxis
             />
           )}
-          {/* The clarification: WHY the blend line moved (#871-style). */}
-          {movementExplanation && (
+          {/* The clarification: WHY the blend line moved (#871-style). Suppressed
+              on resolved markets — the present-tense mover reads wrong once final
+              (#883 L2-49); the resolved result is shown in the hero + outcomes. */}
+          {movementExplanation && !isResolved && (
             <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
               {movementExplanation}
             </p>
           )}
+          {isResolved && resolvedWinner && (
+            <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
+              Settled{resolvedWinner.is_winner === true ? ` — ${isGenericOutcomeName(resolvedWinner.name) ? "Yes" : resolvedWinner.name} won.` : "."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Honest empty/sparse state: market loaded but no usable price history.
+          Never render a broken/degenerate chart — say so plainly. (#883 L2-49) */}
+      {!historyLoading && !historyError && historyOutcomes.length === 0 && (
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2 mb-3">
+            <span>📈</span>
+            Probability Trend
+          </h2>
+          <div className="h-24 flex flex-col items-center justify-center gap-1.5 text-sm text-text-secondary">
+            <span>Not enough price history yet</span>
+            <span className="text-xs text-text-muted">
+              The trend line appears once this market has a few price points.
+            </span>
+          </div>
         </div>
       )}
 
