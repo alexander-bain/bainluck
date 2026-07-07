@@ -296,6 +296,78 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
     return _demote_wrong_league(ordered, expanded)
 
 
+def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
+    """True if the market NAME contains every query term (or its expansion) —
+    i.e. the market is ABOUT the query, not merely an outcome match."""
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+    if not low:
+        return False
+    n = (market.name or "").lower()
+    return all((t in n) or (e and e in n) for t, e in low)
+
+
+def _compose_futures_families(
+    markets: list, expanded: list[tuple[str, str | None]], formatter
+) -> list[dict]:
+    """#993 L2-41 search curation. Compose the reranked, deduped, stale-suppressed
+    candidate markets into topical FAMILIES (docs/search-curation-spec.md).
+
+    v1 family signals (all DB-only, deterministic):
+    - `story:*` topical keys (feed machinery) — clusters e.g. the Fed markets
+      (`story:macro_rates`), geopolitics, etc.
+    - entity family — name-match markets sharing the query (LeBron, Super Bowl),
+      which have no shared group/series/story signal but are one topic.
+    (group_id sibling-collapse + cross-source blend happen upstream in dedup /
+    are deferred to v1.1 — see REPORT; series-prefix didn't form the Fed family.)
+
+    A family forms only with >=2 distinct members. Headline = the reranked leader
+    (name-match then volume — the volume-winning name-match). Members: the rest,
+    <=4 + more_count. Every row is `formatter(market)` → the shared outcome_display
+    pipeline (leader-pick, #23, placeholder). Ordered by headline rank (families
+    are additive — flat `futures` is unchanged; the frontend interleaves).
+    """
+    from collections import OrderedDict
+
+    from app.utils.feed_market_quality import _story_key
+
+    query_label = " ".join(t for t, _ in expanded).strip()
+    entity_key = f"entity:{query_label.lower()}" if query_label else None
+
+    def _family_key(m):
+        sk = _story_key(m.name or "", m.llm_sport_category or "")
+        if sk:
+            return sk
+        if entity_key and _query_name_match(m, expanded):
+            return entity_key
+        return None
+
+    groups: "OrderedDict[str, list]" = OrderedDict()  # reranked order preserved
+    for m in markets:
+        k = _family_key(m)
+        if k:
+            groups.setdefault(k, []).append(m)
+
+    families: list[dict] = []
+    for key, members in groups.items():
+        if len(members) < 2:
+            continue  # a lone answer needs no family scaffolding
+        if key.startswith("story:"):
+            label = key.split(":", 1)[1].replace("_", " ").title()
+        else:  # entity:
+            label = query_label.title()
+        headline = members[0]  # reranked: name-match then volume
+        rest = members[1:]
+        families.append({
+            "family_key": key,
+            "label": label,
+            "headline": formatter(headline),
+            "members": [formatter(m) for m in rest[:4]],
+            "more_count": max(0, len(rest) - 4),
+            "member_count": len(members),
+        })
+    return families
+
+
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
@@ -1316,20 +1388,25 @@ async def search_events(
     # volume sort to lacrosse.) #993
     reranked_futures = _rerank_search_futures(futures_markets_raw, expanded)
     seen_search_keys: set[str] = set()
-    futures_markets = []
+    deduped_futures = []
     for m in reranked_futures:
         dkey = _normalize_futures_dedup_key(m)
         if dkey in seen_search_keys:
             continue
         seen_search_keys.add(dkey)
-        futures_markets.append(m)
-        if len(futures_markets) >= 10:
-            break
+        deduped_futures.append(m)
+    futures_markets = deduped_futures[:10]  # flat list (unchanged shape/behavior)
 
     formatted_futures = [
         _format_futures_for_search(market)
         for market in futures_markets
     ]
+
+    # #993 L2-41: backend-composed topical families (additive; flat `futures`
+    # above is unchanged for compatibility). Composed from the full deduped set.
+    futures_families = _compose_futures_families(
+        deduped_futures, expanded, _format_futures_for_search
+    )
 
     # Search teams (ILIKE with expansion — table is small, no FTS needed)
     team_ilike_parts = []
@@ -1381,6 +1458,7 @@ async def search_events(
         "teams": matched_teams,
         "results": formatted_results,
         "futures": formatted_futures,
+        "futures_families": futures_families,
         "pagination": {
             "page": page,
             "per_page": per_page,

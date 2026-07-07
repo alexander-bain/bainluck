@@ -17,7 +17,55 @@ from app.routes.events import (
     _is_field_outcome,
     _rerank_search_futures,
     _demote_wrong_league,
+    _compose_futures_families,
+    _query_name_match,
 )
+
+
+def _fmt(m):
+    return {"name": m.name}
+
+
+class TestFamilyComposition:
+    _FED = [("fed", None), ("rate", None)]
+    _LEBRON = [("lebron", None), ("james", None)]
+
+    def test_story_key_family_forms(self):
+        # Fed markets share story:macro_rates -> one family (>=2 members)
+        ms = [
+            _mkt("economics", "How many Fed rate cuts in 2026?", vol=40_000_000),
+            _mkt("economics", "Fed rate cut before 2027?", vol=300_000),
+            _mkt("economics", "What will the Fed rate be at the end of 2026?", vol=6_000_000),
+        ]
+        fams = _compose_futures_families(ms, self._FED, _fmt)
+        assert len(fams) == 1
+        assert fams[0]["family_key"] == "story:macro_rates"
+        assert fams[0]["headline"]["name"] == "How many Fed rate cuts in 2026?"  # reranked leader
+        assert fams[0]["member_count"] == 3
+
+    def test_entity_family_forms_for_name_matches(self):
+        ms = [
+            _mkt("basketball", "NBA: LeBron James Next Team", vol=12_000_000),
+            _mkt("basketball", "Will LeBron James retire", vol=700_000),
+        ]
+        fams = _compose_futures_families(ms, self._LEBRON, _fmt)
+        assert len(fams) == 1
+        assert fams[0]["family_key"] == "entity:lebron james"
+        assert fams[0]["label"] == "Lebron James"
+
+    def test_single_member_no_family(self):
+        ms = [_mkt("basketball", "NBA: LeBron James Next Team", vol=1)]
+        assert _compose_futures_families(ms, self._LEBRON, _fmt) == []
+
+    def test_more_count_caps_members_at_4(self):
+        ms = [_mkt("economics", f"Fed rate scenario {i}", vol=100 - i) for i in range(7)]
+        fams = _compose_futures_families(ms, self._FED, _fmt)
+        assert len(fams[0]["members"]) == 4          # headline + 4 shown
+        assert fams[0]["more_count"] == 2            # 7 total - headline - 4 = 2
+
+    def test_query_name_match(self):
+        assert _query_name_match(_mkt("x", "LeBron James Next Team"), self._LEBRON) is True
+        assert _query_name_match(_mkt("x", "Presidential Election 2028"), self._LEBRON) is False
 
 
 def _mkt(cat, name="m", vol=0):

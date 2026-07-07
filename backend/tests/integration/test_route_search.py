@@ -37,10 +37,16 @@ class TestSearchEndpoint:
             "teams",
             "results",
             "futures",
+            "futures_families",
             "pagination",
             "sports",
             "filters",
         }
+
+    async def test_futures_families_is_list(self, client):
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        assert isinstance(body["futures_families"], list)
 
     async def test_response_has_query_field(self, client):
         resp = await client.get("/api/events/search?q=test")
