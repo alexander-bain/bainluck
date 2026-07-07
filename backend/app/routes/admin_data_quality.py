@@ -4503,13 +4503,27 @@ async def clob_resolve_drain_endpoint(
     dry_run: bool = Query(True, description="True = report only, no writes"),
     enable_ordinal: bool = Query(False, description="Amendment 1: resolve the Yes/No-stored ordinal class"),
     ordinal_cap: int = Query(2000, description="First-batch cap for ordinal writes"),
+    enqueue: bool = Query(False, description="Dispatch to the Celery worker (soft 840s) instead of running inline"),
 ):
     """#989 writing drain: authoritatively re-resolve the curve-dropped
     Polymarket cohort via CLOB. Defaults to dry_run=True (safe). Set
     dry_run=false to write is_winner for the confident tiers. Pass
     enable_ordinal=true to also resolve the ordinal class (clob_ordinal,
-    capped by ordinal_cap). Runs inline for a bounded slice; the beat drains."""
+    capped by ordinal_cap).
+
+    enqueue=true dispatches the Celery task (soft 840s budget) and returns its
+    id immediately — use this for bulk drains: the inline path 503s past the 30s
+    Heroku router because concurrency=2 + Retry-After backoff (#989 Item 1) makes
+    it slow, so the documented INLINE bound is limit<=80. The enqueued task uses
+    the beat's config (capped-ordinal per Amendment 1); enable_ordinal/ordinal_cap
+    apply to the inline path only."""
     _check_admin_secret(secret, request=request)
+    if enqueue:
+        from app.tasks import clob_resolve_drain as _celery_drain
+        result = _celery_drain.delay(limit=limit, dry_run=dry_run)
+        return {"enqueued": True, "task_id": result.id, "limit": limit,
+                "dry_run": dry_run, "note": "runs on the Celery worker (soft 840s); "
+                "poll /api/admin/celery/task-metrics/clob_resolve_drain for the result"}
     from app.tasks.clob_resolve import clob_resolve_drain, _DEFAULT_WRITE_TIERS
     tiers = _DEFAULT_WRITE_TIERS + (("resolved_ordinal",) if enable_ordinal else ())
     return await clob_resolve_drain(limit=limit, dry_run=dry_run, write_tiers=tiers,
