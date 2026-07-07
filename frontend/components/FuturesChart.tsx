@@ -49,6 +49,11 @@ interface FuturesChartProps {
   className?: string;
   /** Use step interpolation (hold value until next point) for sparse data */
   stepInterpolation?: boolean;
+  /** Pin the y-axis to a fixed 0–100% domain (#883 blend-line principle: the
+   *  futures-detail blend chart never rescales to the data max — movement stays
+   *  honestly proportional). Default false preserves the auto-scaled behavior
+   *  other surfaces (e.g. golf) rely on. */
+  fixedYAxis?: boolean;
 }
 
 export function FuturesChart({
@@ -63,6 +68,7 @@ export function FuturesChart({
   greenTheme = false,
   className,
   stepInterpolation = false,
+  fixedYAxis = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -129,7 +135,7 @@ export function FuturesChart({
     );
   }
 
-  maxProb = Math.min(1, maxProb * 1.1);
+  maxProb = fixedYAxis ? 1 : Math.min(1, maxProb * 1.1);
 
   const chartWidth = mini ? 400 : 800;
   const effectiveHeight = height ?? (mini ? 80 : 200);

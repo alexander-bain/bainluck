@@ -21,16 +21,15 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
-import { SourceAggregationBlock } from "@/components/SourceAggregationBlock";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
-import CombinedMarketCard from "@/components/CombinedMarketCard";
 import ThresholdGrid from "@/components/ThresholdGrid";
 import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
+import { movementExplanation as movementExplanationHelper } from "@/lib/futuresDetailDisplay";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -218,10 +217,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchFuturesGroup(market!.group_id!),
     { revalidateOnFocus: false }
   );
-  const groupSources = Array.isArray(groupData?.sources) ? groupData.sources : [];
   const groupMarkets = Array.isArray(groupData?.markets) ? groupData.markets : [];
   const thresholdGroups = groupData?.threshold_groups ?? {};
-  const hasMultipleSources = groupSources.length >= 2;
   const thresholdEntries = Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
   // Progression-ordered markets (e.g., playoff rounds)
   const progressionMarkets = groupMarkets
@@ -268,6 +265,25 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
     )[0];
   }, [market?.outcomes]);
+
+  // #883 blend-only detail page: the chart defaults to the SINGLE leader blend
+  // line (the answer), not every outcome at once. Users can still add lines from
+  // the outcomes table below; this only seeds the default once per market.
+  const didInitSelection = useRef(false);
+  useEffect(() => {
+    if (!didInitSelection.current && leader) {
+      didInitSelection.current = true;
+      setSelectedOutcomes(new Set([leader.id]));
+    }
+  }, [leader]);
+
+  // #883: the clarification that EXPLAINS the blend line's movement (#871-style,
+  // deterministic from opening vs current — no per-source detail, blend-only).
+  // Pure logic in lib/futuresDetailDisplay.ts (unit-tested).
+  const movementExplanation = useMemo(
+    () => movementExplanationHelper(leader),
+    [leader]
+  );
 
   // Limit displayed outcomes unless "show all" is enabled
   const displayedOutcomes = showAllOutcomes
@@ -404,26 +420,106 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </button>
       </div>
 
-      {/* Cross-Source Comparison (when market is tracked by multiple sources) */}
-      {hasMultipleSources && groupData && (
-        <CombinedMarketCard
-          title={groupData.group_title}
-          markets={groupMarkets.map((m) => ({
-            id: m.id,
-            name: m.name,
-            source: m.source,
-            external_id: m.external_id,
-            status: m.status,
-            outcome_count: m.outcome_count,
-            outcomes: m.outcomes.map((o) => ({
-              id: o.id,
-              name: o.name,
-              probability: o.probability,
-              american_odds: o.american_odds,
-              source: m.source,
-            })),
-          }))}
-        />
+      {/* #883 blend-only: cross-source CombinedMarketCard removed — one blended
+          number, not a source-by-source comparison table. */}
+
+      {/* Blended probability trend line — directly under the hero (anatomy:
+          title → blend line → why it moved → related markets). Single leader
+          line by default, fixed 0–100 axis, no smoothing. */}
+      {historyError && !historyLoading && (
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2 mb-4">
+            <span>📈</span>
+            Probability Trend
+          </h2>
+          <div className="h-32 flex flex-col items-center justify-center gap-2 text-sm text-text-secondary">
+            <svg className="w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            <span>Limited price history available</span>
+            <span className="text-xs text-text-muted">
+              Prices update every 1{"–"}2 hours for this market
+            </span>
+          </div>
+        </div>
+      )}
+      {historyData && historyOutcomes.length > 0 && (
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
+                <span>📈</span>
+                Probability Trend
+              </h2>
+              {historyData.sparse && (
+                <p className="text-xs text-text-muted mt-1">
+                  Showing all available data
+                  {historyData.auto_extended && historyData.actual_hours
+                    ? ` (${Math.round(historyData.actual_hours / 24)}d window)`
+                    : ""}
+                  {" · "}Prices update every 1{"-"}2 hours
+                </p>
+              )}
+              {!historyData.sparse && historyData.auto_extended && historyData.actual_hours && (
+                <p className="text-xs text-text-muted mt-1">
+                  Extended to {Math.round(historyData.actual_hours / 24)} days for more data
+                </p>
+              )}
+            </div>
+            {/* Tab toggle: Over Time / By Stage */}
+            {hasProgression && (
+              <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
+                <button
+                  onClick={() => setTrendView("evolution")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    trendView === "evolution"
+                      ? "bg-white/10 text-text-primary"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  Over Time
+                </button>
+                <button
+                  onClick={() => setTrendView("progression")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    trendView === "progression"
+                      ? "bg-white/10 text-text-primary"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  By Stage
+                </button>
+              </div>
+            )}
+          </div>
+          {trendView === "progression" && hasProgression && progressionData ? (
+            <TournamentProgressionTable data={progressionData} />
+          ) : market && market.outcomes.length > 10 ? (
+            <TournamentChart
+              marketId={marketId}
+              canonicalKey={
+                market.canonical_market_key && (market.source_count ?? 1) > 1
+                  ? market.canonical_market_key
+                  : undefined
+              }
+              hours={historyHours}
+            />
+          ) : (
+            <FuturesChart
+              historyData={historyOutcomes}
+              selectedOutcomes={selectedOutcomes}
+              onToggleOutcome={toggleOutcomeSelection}
+              stepInterpolation={historyData.sparse}
+              fixedYAxis
+            />
+          )}
+          {/* The clarification: WHY the blend line moved (#871-style). */}
+          {movementExplanation && (
+            <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
+              {movementExplanation}
+            </p>
+          )}
+        </div>
       )}
 
       {/* Threshold Variants (e.g., "Bitcoin > $80K / $90K / $100K") */}
@@ -488,106 +584,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         />
       )}
 
-      {/* Probability Chart (if history available) */}
-      {historyError && !historyLoading && (
-        <div className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2 mb-4">
-            <span>📈</span>
-            Probability Trends
-          </h2>
-          <div className="h-32 flex flex-col items-center justify-center gap-2 text-sm text-text-secondary">
-            <svg className="w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            <span>Limited price history available</span>
-            <span className="text-xs text-text-muted">
-              Prices update every 1{"–"}2 hours for this market
-            </span>
-          </div>
-        </div>
-      )}
-      {historyOutcomes.length > 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
-                <span>📈</span>
-                Probability Trends
-              </h2>
-              {historyData.sparse && (
-                <p className="text-xs text-text-muted mt-1">
-                  Showing all available data
-                  {historyData.auto_extended && historyData.actual_hours
-                    ? ` (${Math.round(historyData.actual_hours / 24)}d window)`
-                    : ""}
-                  {" · "}Prices update every 1{"-"}2 hours
-                </p>
-              )}
-              {!historyData.sparse && historyData.auto_extended && historyData.actual_hours && (
-                <p className="text-xs text-text-muted mt-1">
-                  Extended to {Math.round(historyData.actual_hours / 24)} days for more data
-                </p>
-              )}
-            </div>
-            {/* Tab toggle: Over Time / By Stage */}
-            {hasProgression && (
-              <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
-                <button
-                  onClick={() => setTrendView("evolution")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "evolution"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  Over Time
-                </button>
-                <button
-                  onClick={() => setTrendView("progression")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "progression"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  By Stage
-                </button>
-              </div>
-            )}
-          </div>
-          {trendView === "progression" && hasProgression && progressionData ? (
-            <TournamentProgressionTable data={progressionData} />
-          ) : market && market.outcomes.length > 10 ? (
-            <TournamentChart
-              marketId={marketId}
-              canonicalKey={
-                market.canonical_market_key && (market.source_count ?? 1) > 1
-                  ? market.canonical_market_key
-                  : undefined
-              }
-              hours={historyHours}
-            />
-          ) : (
-            <FuturesChart
-              historyData={historyOutcomes}
-              selectedOutcomes={selectedOutcomes}
-              onToggleOutcome={toggleOutcomeSelection}
-              stepInterpolation={historyData.sparse}
-            />
-          )}
-        </div>
-      )}
-
-      {/* Source Aggregation Block — per-bookmaker breakdown */}
-      {market.source_breakdown && market.source_breakdown.length >= 2 && leader && (
-        <div className="mb-4">
-          <SourceAggregationBlock
-            sources={market.source_breakdown}
-            primaryOutcomeId={leader.id}
-            aggregatedProbability={leader.probability != null ? leader.probability * 100 : null}
-          />
-        </div>
-      )}
+      {/* #883 blend-only: per-source SourceAggregationBlock removed — the blend
+          is the product; source divergence is an upstream data-quality bug, not a
+          surface to expose. Users see ONE clean number. */}
 
       {/* All Outcomes Table */}
       <div className="bg-surface-card rounded-card shadow-card p-6">
