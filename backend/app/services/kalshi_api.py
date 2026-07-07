@@ -564,6 +564,7 @@ class KalshiAPIService(BaseAPIClient):
     async def get_all_events(
         self,
         categories: Optional[list[str]] = None,
+        deadline: Optional[float] = None,
     ) -> list[KalshiEvent]:
         """
         Fetch all open events across specified categories.
@@ -574,6 +575,11 @@ class KalshiAPIService(BaseAPIClient):
 
         Args:
             categories: List of Kalshi category names to fetch, or None for all
+            deadline: Optional time.monotonic() budget. When set, fetching stops
+                and returns whatever has been collected so far once reached, so
+                the caller (poll_kalshi) never SIGKILLs mid-fetch and always has
+                time left to process+commit (#995). Checked before each page —
+                the LONGEST single uninterrupted op is one page fetch.
 
         Returns:
             List of KalshiEvent objects (deduplicated by event_ticker)
@@ -582,7 +588,7 @@ class KalshiAPIService(BaseAPIClient):
 
         # If no categories specified, fetch all events without filtering
         if not categories:
-            return await self._fetch_all_events_unfiltered()
+            return await self._fetch_all_events_unfiltered(deadline=deadline)
 
         # Step 1: Discover series tickers for these categories + tags
         # Tags find subcategory series (e.g., Olympics under Sports)
@@ -635,14 +641,28 @@ class KalshiAPIService(BaseAPIClient):
         )
         return list(all_events.values())
 
-    async def _fetch_all_events_unfiltered(self) -> list[KalshiEvent]:
+    async def _fetch_all_events_unfiltered(
+        self, deadline: Optional[float] = None
+    ) -> list[KalshiEvent]:
         """Fetch all events from Kalshi without category filtering (paginated).
 
         Kalshi neg-risk events (championships, conferences) can have
         status=None even when they have open markets. Omitting the status
         filter ensures we discover them.
+
+        ``deadline`` (time.monotonic()) bounds total fetch time (#995): this
+        method is otherwise uncapped (50-page main scan + a supplementary series
+        loop) and blew poll_kalshi's 660s hard limit → SIGKILL mid-fetch → a
+        month of zero market creation. The deadline is checked BEFORE every page
+        (a page is the longest single uninterrupted op — budget-guard-inner-op),
+        so we always return what we have with time left for the caller to
+        process+commit.
         """
         import asyncio
+        import time as _time
+
+        def _past_deadline() -> bool:
+            return deadline is not None and _time.monotonic() >= deadline
 
         all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
         cursor = None
@@ -651,6 +671,12 @@ class KalshiAPIService(BaseAPIClient):
         categories_seen: dict[str, int] = {}
 
         while page_count < max_pages:
+            if _past_deadline():
+                logger.warning(
+                    "Kalshi fetch deadline hit during main scan at page %d "
+                    "(%d events so far) — returning partial", page_count, len(all_events),
+                )
+                break
             if page_count > 0:
                 await asyncio.sleep(0.5)
 
@@ -658,6 +684,7 @@ class KalshiAPIService(BaseAPIClient):
                 status=None,
                 with_nested_markets=True,
                 cursor=cursor,
+                deadline=deadline,
             )
 
             for event_data in events:
@@ -706,36 +733,44 @@ class KalshiAPIService(BaseAPIClient):
         supplemented = 0
         _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
         for st in _SPORTS_SERIES_TICKERS:
+            if _past_deadline():
+                logger.warning(
+                    "Kalshi fetch deadline hit before supplementary series %s "
+                    "(%d events so far) — returning partial", st, len(all_events),
+                )
+                break
             # Game series always need the supplementary fetch — the main scan
-            # finds open events but misses thousands of settled ones.
+            # finds open events but misses some open game events.
             if st not in _GAME_SERIES and any(
                 e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()
             ):
                 continue
             try:
-                # Game series need both open AND settled events.
-                # Kalshi API with no status filter returns only open events;
-                # settled events require explicit status=settled.
-                statuses = [None, "settled"] if st in _GAME_SERIES else [None]
-                max_series_pages = 25 if st in _GAME_SERIES else 5
-                for fetch_status in statuses:
-                    series_cursor = None
-                    for _sp in range(max_series_pages):
-                        await asyncio.sleep(0.3)
-                        events_page, series_cursor = await self.get_events(
-                            status=fetch_status,
-                            series_ticker=st,
-                            with_nested_markets=True,
-                            limit=200,
-                            cursor=series_cursor,
-                        )
-                        for event_data in events_page:
-                            parsed_event = self._parse_event(event_data)
-                            if parsed_event and parsed_event.event_ticker not in all_events:
-                                all_events[parsed_event.event_ticker] = parsed_event
-                                supplemented += 1
-                        if not series_cursor:
-                            break
+                # #995: OPEN events only. The settled-game-series fetch
+                # ([None,"settled"] x 25 pages for 4 game series ~= 200 nested
+                # pages) is what blew the 660s budget → SIGKILL before the create
+                # loop, freezing creation. Settled capture is `kalshi_settled`'s
+                # job, not the create/update poll's. Uniform 5-page open scan.
+                series_cursor = None
+                for _sp in range(5):
+                    if _past_deadline():
+                        break
+                    await asyncio.sleep(0.3)
+                    events_page, series_cursor = await self.get_events(
+                        status=None,
+                        series_ticker=st,
+                        with_nested_markets=True,
+                        limit=200,
+                        cursor=series_cursor,
+                        deadline=deadline,
+                    )
+                    for event_data in events_page:
+                        parsed_event = self._parse_event(event_data)
+                        if parsed_event and parsed_event.event_ticker not in all_events:
+                            all_events[parsed_event.event_ticker] = parsed_event
+                            supplemented += 1
+                    if not series_cursor:
+                        break
             except Exception as e:
                 logger.debug("Supplementary fetch for %s failed: %s", st, e)
         if supplemented:
@@ -749,13 +784,19 @@ class KalshiAPIService(BaseAPIClient):
             e for e in all_events.values()
             if not e.markets and e.category and "sport" in (e.category or "").lower()
         ]
-        if empty_events:
+        if empty_events and not _past_deadline():
             logger.info(
                 "Backfilling markets for %d sports events with 0 nested markets",
                 len(empty_events),
             )
             backfilled = 0
             for event in empty_events:
+                if _past_deadline():
+                    logger.warning(
+                        "Kalshi fetch deadline hit during empty-event backfill "
+                        "(%d/%d done)", backfilled, len(empty_events),
+                    )
+                    break
                 try:
                     await asyncio.sleep(0.3)
                     raw_markets, _ = await self.get_markets(

@@ -329,6 +329,11 @@ async def _poll_kalshi_markets():
     # so partial progress always persists and successive runs drain the backlog.
     _task_started = time.monotonic()
     _LOOP_DEADLINE_S = 480.0  # stop ingesting ~2min before soft_time_limit=600
+    # #995: the FETCH itself was uncapped and blew the 660s hard limit → SIGKILL
+    # before the create loop → a month of zero market creation. Bound the fetch
+    # to the first ~240s so the create/process loop (and its incremental commits)
+    # always gets the remaining budget. Leaves ample margin under soft=600.
+    _FETCH_DEADLINE_S = 240.0
     _COMMIT_EVERY = 200  # events between incremental commits
 
     service = KalshiAPIService()
@@ -348,8 +353,13 @@ async def _poll_kalshi_markets():
         # This captures sports (including Olympics subcategories like curling,
         # figure skating, etc.) + non-sports markets (politics, economics,
         # entertainment) as the site expands beyond sports.
-        events = await service.get_all_events(categories=None)
+        events = await service.get_all_events(
+            categories=None, deadline=_task_started + _FETCH_DEADLINE_S
+        )
         stats["total_api_events"] = len(events)
+        stats["fetch_deadline_hit"] = (
+            time.monotonic() - _task_started >= _FETCH_DEADLINE_S
+        )
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)

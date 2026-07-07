@@ -454,3 +454,48 @@ class TestPartitionNewEventsFirst:
         new, exist = _partition_new_events_first([], {"X"})
         assert new == []
         assert exist == []
+
+
+async def _no_sleep(*_a, **_k):
+    return None
+
+
+class TestFetchDeadlineAndSettledTrim:
+    """#995: poll_kalshi's unfiltered fetch must (a) honor a monotonic deadline
+    so it never SIGKILLs mid-fetch, and (b) never request settled game events
+    (settled capture belongs to kalshi_settled — the 200-page settled loop is
+    what froze market creation for a month)."""
+
+    async def test_fetch_returns_early_when_deadline_passed(self, client, monkeypatch):
+        import time
+        calls = []
+
+        async def fake_get_events(**kw):
+            calls.append(kw)
+            return ([], None)
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        res = await client._fetch_all_events_unfiltered(deadline=time.monotonic() - 1)
+        assert res == []
+        # deadline is checked before the first page — zero API calls
+        assert calls == []
+
+    async def test_fetch_never_requests_settled_status(self, client, monkeypatch):
+        import asyncio
+        statuses = []
+        seen_kw = []
+
+        async def fake_get_events(status=None, **kw):
+            statuses.append(status)
+            seen_kw.append(kw)
+            return ([], None)  # no cursor -> one page per scan
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(deadline=None)
+        assert statuses, "expected at least the main-scan page"
+        assert "settled" not in statuses
+        assert all(s is None for s in statuses)
+        # deadline is threaded through to every get_events call so page-level
+        # 429 backoff also honors it (#995).
+        assert all("deadline" in kw for kw in seen_kw)
