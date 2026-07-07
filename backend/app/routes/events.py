@@ -351,6 +351,12 @@ def _compose_futures_families(
     for key, members in groups.items():
         if len(members) < 2:
             continue  # a lone answer needs no family scaffolding
+        # Relevance guard: a family needs >=1 member the query NAMES — otherwise
+        # it's an outcome-only cluster (e.g. "lebron james" matched the 2028
+        # election markets only because he's a listed candidate → not a LeBron
+        # family). Spec: "family relevance = best member's name-match score".
+        if not any(_query_name_match(m, expanded) for m in members):
+            continue
         if key.startswith("story:"):
             label = key.split(":", 1)[1].replace("_", " ").title()
         else:  # entity:

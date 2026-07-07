@@ -67,6 +67,16 @@ class TestFamilyComposition:
         assert _query_name_match(_mkt("x", "LeBron James Next Team"), self._LEBRON) is True
         assert _query_name_match(_mkt("x", "Presidential Election 2028"), self._LEBRON) is False
 
+    def test_outcome_only_cluster_suppressed(self):
+        # election markets that match "lebron" only as an outcome (name has no
+        # 'lebron james') + share a story key must NOT form a LeBron family.
+        ms = [
+            _mkt("politics", "Democratic Presidential Nominee 2028", vol=5_000_000),
+            _mkt("politics", "2028 Democratic presidential nominee", vol=1_000_000),
+        ]
+        # story:us_2028_election groups them, but none name-match "lebron james"
+        assert _compose_futures_families(ms, self._LEBRON, _fmt) == []
+
 
 def _mkt(cat, name="m", vol=0):
     return SimpleNamespace(llm_sport_category=cat, name=name, volume=vol)
