@@ -1,14 +1,3 @@
-# Manus Health Audit — 2026-07-07
-
-**Modules run:** 3
-**Completed:** 2
-**Failed/Timeout:** 1
-- market_completeness: timeout
-
----
-
-## Feed & Discovery Audit
-
 Starting the Feed & Discovery Audit for bainluck.com. I'll systematically evaluate the home feed, category pages, navigation, and mobile experience, then compile a comprehensive report with screenshots.
 
 The Feed & Discovery Audit for bainluck.com is complete. I have evaluated the home feed, category pages, navigation, and mobile experience. 
@@ -46,11 +35,3 @@ You can review the detailed findings, including screenshots of the critical issu
 
 
 **Attachment:** None — https://private-us-east-1.manuscdn.com/sessionFile/eccKdqe5oYc4EL2MryZbrJ/sandbox/6ucq3jua5NV5bzSGXUY35M_1783442462970_na1fn_L2hvbWUvdWJ1bnR1L2F1ZGl0X3NjcmVlbnNob3RzLzAxX2hvbWVfZmVlZF9kZXNrdG9wX3RvcA.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZWNjS2RxZTVvWWM0RUwyTXJ5WmJySi9zYW5kYm94LzZ1Y3EzanVhNU5WNWJ6U0dYVVkzNU1fMTc4MzQ0MjQ2Mjk3MF9uYTFmbl9MMmh2YldVdmRXSjFiblIxTDJGMVpHbDBYM05qY21WbGJuTm9iM1J6THpBeFgyaHZiV1ZmWm1WbFpGOWtaWE5yZEc5d1gzUnZjQS53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxODMwMjk3NjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=S0P6Giv~RFU8fY9gxNZmoGAbfVLRNy8HbR5nggldZDMdbU27wF1iOdNH3rWsMEyt73lMch4YYGxKjPNR~gYF~PodP0Fb4n24Fn5gfX7UtlALJaKbmG5Hj~uUY2uirxcCNqAqew-iYNPKZOr1N1dK3X2oJa4gxtVQPsSFmDiOXYcGyonrWowVtkfFsdmEnhf~iyaSR2SQdqd4u6P~ki16wukj57f1uF1Wy3-fgbkvXJ2hvRaD6HuH6-EGn1lQKXNaAPfZTJ28gR~G8DL5QzD9UU0THUEMRGMDqIFXqIavFSrPNmh45GNneYyRjiwNmgo7MerbFXeng2to-MGDa2Jb1w__
-
----
-
-## Event Detail Deep Audit
-
-Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit of each event detail page.
-
-I've found the events and started auditing. I've identified the Connecticut Sun vs Minnesota Lynx event (ID: 14970408). Now proceeding with the full audit of all 6 events. This will take some time as I need to thoroughly examine each event page.

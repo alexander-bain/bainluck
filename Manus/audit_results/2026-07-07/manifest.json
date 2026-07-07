@@ -4,27 +4,29 @@
   "new_findings_count": 1,
   "tasks": {
     "feed": {
-      "task_id": "PsueLevEECGDbGZSJnfq2z",
-      "status": "timeout",
-      "task_url": "https://manus.im/app/PsueLevEECGDbGZSJnfq2z",
+      "task_id": "eccKdqe5oYc4EL2MryZbrJ",
+      "status": "complete",
+      "task_url": "https://manus.im/app/eccKdqe5oYc4EL2MryZbrJ",
       "credits": 0
     },
     "event_detail": {
-      "task_id": "7M8BhVWdKTGYzMvw2VAY3a",
+      "task_id": "A2WHbegp6Uyobi79gDrDrN",
       "status": "complete",
-      "task_url": "https://manus.im/app/7M8BhVWdKTGYzMvw2VAY3a",
+      "task_url": "https://manus.im/app/A2WHbegp6Uyobi79gDrDrN",
       "credits": 0
     },
     "market_completeness": {
-      "task_id": "JNmRiaPSWBFLgexFoYjtV3",
+      "task_id": "aQws7MjKAWNLR4wHnFSk5W",
       "status": "timeout",
-      "task_url": "https://manus.im/app/JNmRiaPSWBFLgexFoYjtV3",
+      "task_url": "https://manus.im/app/aQws7MjKAWNLR4wHnFSk5W",
       "credits": 0
     }
   },
   "diagnostics": {
-    "event_detail": {
-      "critical": 1
-    }
+    "feed": {
+      "critical": 2,
+      "0%": 2
+    },
+    "event_detail": {}
   }
 }
