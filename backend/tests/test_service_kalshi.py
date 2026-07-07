@@ -611,3 +611,47 @@ class TestKalshiSettledPhaseMarker:
         assert 'f"fetch:{series}:p{page_num}"' in src
         assert 'f"sql:{series}:p{page_num}"' in src
         assert '_mark_ks("done")' in src
+
+
+class TestFetchAttempt6PageBound:
+    """#995 attempt-6: a hung/erroring main-scan page must NOT hang the whole
+    fetch — break gracefully, keep prior pages, emit :err/:done markers so the
+    poll reaches the create step."""
+
+    async def test_hung_page_breaks_scan_and_keeps_prior_pages(self, client, monkeypatch):
+        import asyncio
+        seen = []
+        calls = {"n": 0}
+
+        def _ev(t):
+            return {"event_ticker": t, "title": t, "markets": [
+                {"ticker": f"{t}-M", "status": "active"}]}
+
+        async def fake_get_events(**kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ([_ev("KXAAA")], "cursor1")   # page 0 ok
+            raise asyncio.TimeoutError()             # page 1 hangs
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        res = await client._fetch_all_events_unfiltered(
+            deadline=None, progress_cb=lambda s: seen.append(s)
+        )
+        # page 0's event survived; scan stopped instead of hanging
+        assert any(e.event_ticker == "KXAAA" for e in res)
+        assert any(s.startswith("fetch:unfiltered:p0:recv") for s in seen)
+        assert any(s == "fetch:unfiltered:p1:err" for s in seen)
+        assert any(s.startswith("fetch:unfiltered:done") for s in seen)
+
+    def test_source_wraps_page_in_wait_for(self):
+        import inspect
+        import textwrap
+        from app.services.kalshi_api import KalshiAPIService
+        src = textwrap.dedent(inspect.getsource(
+            KalshiAPIService._fetch_all_events_unfiltered))
+        assert "asyncio.wait_for(" in src
+        assert "fetch:unfiltered:done" in src

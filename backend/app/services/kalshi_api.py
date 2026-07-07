@@ -706,12 +706,33 @@ class KalshiAPIService(BaseAPIClient):
             if page_count > 0:
                 await asyncio.sleep(0.5)
 
-            events, cursor = await self.get_events(
-                status=None,
-                with_nested_markets=True,
-                cursor=cursor,
-                deadline=deadline,
-            )
+            # #995 attempt-6: the poll consistently froze at `fetch:unfiltered:p26`
+            # — 26 pages fine, then this call never returns. #128's httpx read
+            # timeout (25s) bounds a network stall, but NOT a huge-response
+            # download/parse. Wrap each page in a hard per-page wait_for so ONE
+            # bad page can't hang the whole scan; on timeout/error, mark it and
+            # STOP the scan, returning the pages we DID get so the caller reaches
+            # the create step (process-new-first) instead of SIGKILLing. Bounds
+            # the fetch op the finer marker fingered — does not touch create/dedup.
+            try:
+                events, cursor = await asyncio.wait_for(
+                    self.get_events(
+                        status=None,
+                        with_nested_markets=True,
+                        cursor=cursor,
+                        deadline=deadline,
+                    ),
+                    timeout=45.0,
+                )
+            except Exception as e:  # asyncio.TimeoutError is an Exception subclass
+                _progress(f"fetch:unfiltered:p{page_count}:err")
+                logger.error(
+                    "Kalshi main-scan page %d failed/timed out (%s) — stopping "
+                    "scan with %d events collected so the poll reaches create.",
+                    page_count, type(e).__name__, len(all_events),
+                )
+                break
+            _progress(f"fetch:unfiltered:p{page_count}:recv{len(events)}")
 
             for event_data in events:
                 parsed_event = self._parse_event(event_data)
@@ -724,6 +745,7 @@ class KalshiAPIService(BaseAPIClient):
             if not cursor:
                 break
 
+        _progress(f"fetch:unfiltered:done:{page_count}pages")
         logger.info(
             "Fetched %d unique events across %d pages. Categories: %s",
             len(all_events), page_count, dict(sorted(categories_seen.items())),
