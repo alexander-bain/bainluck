@@ -444,13 +444,8 @@ export function getBestProbability(event: {
   return { homeProb: bettingHome, awayProb: bettingAway, source: "betting", sourceName: null };
 }
 
-/**
- * Format moneyline odds for display
- */
-export function formatMoneyline(odds: number | null | undefined): string {
-  if (odds === null || odds === undefined) return "-";
-  return odds > 0 ? `+${odds}` : `${odds}`;
-}
+// L2-48: formatMoneyline removed — the no-odds thesis is categorical (probability
+// only, never "-150/+130"). Do not reintroduce an American-odds formatter.
 
 /**
  * Format date for display
@@ -833,13 +828,8 @@ export interface LineMovement {
   is_major: boolean;
 }
 
-/**
- * Format American odds for display
- */
-export function formatAmericanOdds(odds: number | null | undefined): string {
-  if (odds === null || odds === undefined) return "-";
-  return odds > 0 ? `+${odds}` : `${odds}`;
-}
+// L2-48: formatAmericanOdds removed — the no-odds thesis is categorical
+// (probability only). Do not reintroduce an American-odds formatter.
 
 // ============================================================================
 // Unified Feed API

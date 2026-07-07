@@ -144,11 +144,6 @@ function cleanMarketName(name: string): string {
     .trim();
 }
 
-/** Format American odds */
-function formatOdds(odds: number | null | undefined): string {
-  if (odds === null || odds === undefined) return "";
-  return odds > 0 ? `+${odds}` : `${odds}`;
-}
 
 /** Normalize a name for deduplication: lowercase, trim, collapse whitespace */
 function normalizeName(name: string): string {
@@ -370,9 +365,7 @@ function HeroFutureCard({
             </span>
             <MovementPill change={future.probability_change_24h} />
           </div>
-          <div className="text-[11px] text-text-muted font-mono mt-0.5">
-            {formatOdds(future.american_odds)}
-          </div>
+          {/* L2-48: American moneyline removed — probability only (no-odds thesis). */}
         </div>
         {future.rank && (
           <div className="text-right">
@@ -509,9 +502,7 @@ function AwardCard({
           </span>
           <MovementPill change={future.probability_change_24h} />
         </div>
-        <div className="text-[10px] text-text-muted font-mono">
-          {formatOdds(future.american_odds)}
-        </div>
+        {/* L2-48: American moneyline removed — probability only (no-odds thesis). */}
       </div>
     </Link>
   );
@@ -1143,9 +1134,7 @@ function TitleComparison({
               {formatProbability(homeChamp.probability)}
             </span>
           </div>
-          <div className="text-[10px] font-mono text-text-muted/50 mt-0.5">
-            {formatOdds(homeChamp.american_odds)}
-          </div>
+          {/* L2-48: American moneyline removed — probability only (no-odds thesis). */}
         </div>
 
         {/* Divider */}
@@ -1165,9 +1154,7 @@ function TitleComparison({
             </span>
             <MovementPill change={awayChamp.probability_change_24h} />
           </div>
-          <div className="text-[10px] font-mono text-text-muted/50 mt-0.5">
-            {formatOdds(awayChamp.american_odds)}
-          </div>
+          {/* L2-48: American moneyline removed — probability only (no-odds thesis). */}
         </div>
       </div>
     </div>

@@ -11,7 +11,6 @@ import {
   fetchProgression,
   fetchFuturesGroup,
   formatProbability,
-  formatAmericanOdds,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -878,9 +877,8 @@ function OutcomeRow({
             >
               {formatProbability(outcome.probability)}
             </div>
-            <div className="text-xs text-text-secondary font-mono">
-              {formatAmericanOdds(outcome.american_odds)}
-            </div>
+            {/* #883/L2-48: American moneyline (+9900) removed — probability only.
+                The standing no-odds thesis: "60% vs 40%", never "-150/+130". */}
           </>
         )}
       </div>
