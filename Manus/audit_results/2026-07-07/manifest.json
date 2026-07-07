@@ -1,0 +1,30 @@
+{
+  "date": "2026-07-07",
+  "mode": "light",
+  "new_findings_count": 1,
+  "tasks": {
+    "feed": {
+      "task_id": "PsueLevEECGDbGZSJnfq2z",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/PsueLevEECGDbGZSJnfq2z",
+      "credits": 0
+    },
+    "event_detail": {
+      "task_id": "7M8BhVWdKTGYzMvw2VAY3a",
+      "status": "complete",
+      "task_url": "https://manus.im/app/7M8BhVWdKTGYzMvw2VAY3a",
+      "credits": 0
+    },
+    "market_completeness": {
+      "task_id": "JNmRiaPSWBFLgexFoYjtV3",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/JNmRiaPSWBFLgexFoYjtV3",
+      "credits": 0
+    }
+  },
+  "diagnostics": {
+    "event_detail": {
+      "critical": 1
+    }
+  }
+}
