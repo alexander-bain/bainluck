@@ -8,7 +8,7 @@ Kalshi markets provide bid/ask spreads and last traded prices.
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -77,7 +77,17 @@ class KalshiAPIService(BaseAPIClient):
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        super().__init__(timeout=30.0, headers=headers)
+        # #995 attempt-5: EXPLICIT per-phase timeouts. The plain `timeout=30.0`
+        # left the poll stuck in the FETCH phase to the 660s SIGKILL (attempt-4
+        # phase marker read `fetch@0s`). A generic scalar timeout resets its read
+        # window on every received byte, so a huge nested-markets response that
+        # trickles never trips it. An explicit read timeout + short connect
+        # timeout bounds each call hard; the wall-time cap in poll_kalshi is the
+        # backstop for anything that still slips through.
+        super().__init__(
+            timeout=httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=10.0),
+            headers=headers,
+        )
 
     async def get_events(
         self,
@@ -565,6 +575,7 @@ class KalshiAPIService(BaseAPIClient):
         self,
         categories: Optional[list[str]] = None,
         deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
     ) -> list[KalshiEvent]:
         """
         Fetch all open events across specified categories.
@@ -588,7 +599,9 @@ class KalshiAPIService(BaseAPIClient):
 
         # If no categories specified, fetch all events without filtering
         if not categories:
-            return await self._fetch_all_events_unfiltered(deadline=deadline)
+            return await self._fetch_all_events_unfiltered(
+                deadline=deadline, progress_cb=progress_cb
+            )
 
         # Step 1: Discover series tickers for these categories + tags
         # Tags find subcategory series (e.g., Olympics under Sports)
@@ -642,7 +655,9 @@ class KalshiAPIService(BaseAPIClient):
         return list(all_events.values())
 
     async def _fetch_all_events_unfiltered(
-        self, deadline: Optional[float] = None
+        self,
+        deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
     ) -> list[KalshiEvent]:
         """Fetch all events from Kalshi without category filtering (paginated).
 
@@ -664,6 +679,16 @@ class KalshiAPIService(BaseAPIClient):
         def _past_deadline() -> bool:
             return deadline is not None and _time.monotonic() >= deadline
 
+        def _progress(sub: str) -> None:
+            # #995 attempt-5 sub-phase marker: names the exact fetch call in
+            # flight, so if the poll still SIGKILLs the next run pinpoints the
+            # hanging page/endpoint (not just "fetch").
+            if progress_cb is not None:
+                try:
+                    progress_cb(sub)
+                except Exception:
+                    pass
+
         all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
         cursor = None
         page_count = 0
@@ -671,6 +696,7 @@ class KalshiAPIService(BaseAPIClient):
         categories_seen: dict[str, int] = {}
 
         while page_count < max_pages:
+            _progress(f"fetch:unfiltered:p{page_count}")
             if _past_deadline():
                 logger.warning(
                     "Kalshi fetch deadline hit during main scan at page %d "
@@ -733,6 +759,7 @@ class KalshiAPIService(BaseAPIClient):
         supplemented = 0
         _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
         for st in _SPORTS_SERIES_TICKERS:
+            _progress(f"fetch:supp:{st}")
             if _past_deadline():
                 logger.warning(
                     "Kalshi fetch deadline hit before supplementary series %s "
@@ -790,7 +817,8 @@ class KalshiAPIService(BaseAPIClient):
                 len(empty_events),
             )
             backfilled = 0
-            for event in empty_events:
+            for _bi, event in enumerate(empty_events):
+                _progress(f"fetch:markets_backfill:{_bi}")
                 if _past_deadline():
                     logger.warning(
                         "Kalshi fetch deadline hit during empty-event backfill "

@@ -308,6 +308,7 @@ def _partition_new_events_first(events, existing_tickers):
 
 async def _poll_kalshi_markets():
     """Async implementation of Kalshi polling."""
+    import asyncio
     import time
 
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
@@ -375,9 +376,33 @@ async def _poll_kalshi_markets():
         # This captures sports (including Olympics subcategories like curling,
         # figure skating, etc.) + non-sports markets (politics, economics,
         # entertainment) as the site expands beyond sports.
-        events = await service.get_all_events(
-            categories=None, deadline=_task_started + _FETCH_DEADLINE_S
-        )
+        #
+        # #995 attempt-5: attempt-4's phase marker proved the task SIGKILLs INSIDE
+        # the fetch phase (`fetch@0s`) — the internal deadline (checked only
+        # BETWEEN pages) can't interrupt a single hung HTTP call, and #125's
+        # deadline never fired. asyncio.wait_for CANCELS a hung await, so the
+        # whole fetch phase is hard-capped regardless of where it stalls; the
+        # sub-phase progress marker names the exact page/endpoint in flight.
+        _FETCH_WALL_S = 300.0  # > _FETCH_DEADLINE_S so a healthy fetch returns
+                               # partial before the cancel fires.
+        try:
+            events = await asyncio.wait_for(
+                service.get_all_events(
+                    categories=None,
+                    deadline=_task_started + _FETCH_DEADLINE_S,
+                    progress_cb=_mark_phase,
+                ),
+                timeout=_FETCH_WALL_S,
+            )
+        except asyncio.TimeoutError:
+            _mark_phase("fetch_walltime_exceeded")
+            logger.error(
+                "poll_kalshi: fetch exceeded the %.0fs hard wall — cancelled. "
+                "The phase marker names the hung call. Proceeding with 0 events "
+                "this cycle; the next cycle resumes.", _FETCH_WALL_S,
+            )
+            events = []
+            stats["fetch_walltime_exceeded"] = True
         stats["total_api_events"] = len(events)
         stats["fetch_deadline_hit"] = (
             time.monotonic() - _task_started >= _FETCH_DEADLINE_S

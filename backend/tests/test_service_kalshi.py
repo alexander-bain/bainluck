@@ -536,3 +536,55 @@ class TestPollKalshiSigkillHardening:
     def test_phase_marker_uses_stable_redis_key(self):
         src = self._src()
         assert "bainluck:poll_kalshi:phase" in src
+
+
+class TestFetchAttempt5Instrumentation:
+    """#995 attempt-5: the fetch phase is where poll_kalshi SIGKILLs (marker
+    `fetch@0s`). Guard the sub-phase progress marker + the wall-time cancel."""
+
+    async def test_progress_cb_called_with_subphase(self, client, monkeypatch):
+        import asyncio
+        seen = []
+
+        async def fake_get_events(**kw):
+            return ([], None)
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(
+            deadline=None, progress_cb=lambda s: seen.append(s)
+        )
+        assert "fetch:unfiltered:p0" in seen
+        assert any(s.startswith("fetch:supp:") for s in seen)
+
+    async def test_progress_cb_none_is_safe(self, client, monkeypatch):
+        import asyncio
+
+        async def fake_get_events(**kw):
+            return ([], None)
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        res = await client._fetch_all_events_unfiltered(deadline=None)
+        assert res == []
+
+    def test_client_has_explicit_read_timeout(self):
+        import httpx
+        c = KalshiAPIService()
+        assert isinstance(c.client.timeout, httpx.Timeout)
+        assert c.client.timeout.read is not None
+
+    def test_poll_hardcaps_fetch_with_wait_for(self):
+        import inspect
+        import textwrap
+        from app.tasks.kalshi import _poll_kalshi_markets
+        src = textwrap.dedent(inspect.getsource(_poll_kalshi_markets))
+        assert "asyncio.wait_for(" in src
+        assert "progress_cb=_mark_phase" in src
+        assert "fetch_walltime_exceeded" in src
