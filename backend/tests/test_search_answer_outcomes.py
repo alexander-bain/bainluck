@@ -195,12 +195,18 @@ class TestNarrowerScopeDemotion:
         assert out == ms
 
     def test_integrated_headline_is_season_award(self):
+        # Real scenario: award markets reach results via league-ticker recall, so
+        # their names lack "nba" (outcome_only, not name_matches). Narrower-scope
+        # demotion must still apply, AND WNBA (wrong league) stays last.
         ms = [
-            _mkt("basketball", "Eastern Conference Finals MVP", vol=5_000_000),
-            _mkt("basketball", "NBA MVP Winner", vol=2_000_000),
+            _mkt("basketball", "Eastern Conference Finals MVP Winner", vol=5_000_000),
+            _mkt("basketball", "MVP Winner", vol=2_000_000),
+            _mkt("basketball", "WNBA: 2026 MVP", vol=9_000_000),
         ]
         out = _rerank_search_futures(ms, self._NBA_MVP)
-        assert out[0].name == "NBA MVP Winner"
+        assert out[0].name == "MVP Winner"                        # season award headlines
+        assert out[1].name == "Eastern Conference Finals MVP Winner"  # sub-award #2
+        assert out[-1].name == "WNBA: 2026 MVP"                   # wrong league last
 
     def test_single_untouched(self):
         one = [_mkt("basketball", "Eastern Conference Finals MVP")]

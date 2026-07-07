@@ -332,12 +332,16 @@ def _rerank_search_futures(markets: list, expanded: list[tuple[str, str | None]]
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
     name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
-    # Item 2 (L2-44): a bare award query should headline the season/full award,
-    # not a higher-volume narrower sub-award ("Eastern Conf Finals MVP"). Stable,
-    # so volume order holds within each scope group; no-op for scoped queries.
-    name_matches = _demote_narrower_scope(name_matches, low)
     ordered = name_matches + outcome_only
-    # Item 2: finally, push substring-cousin wrong-league markets to the bottom
+    # Item 2 (L2-44): for a bare award query, headline the season/full award over
+    # a narrower sub-award ("Eastern Conf Finals MVP"). Applied to the FULL list,
+    # not just name_matches — award markets often reach results via league-ticker
+    # recall (external_id kx<league>%), so their names lack the league token and
+    # they live in outcome_only, not name_matches. Runs BEFORE wrong-league so a
+    # correct-league sub-award still outranks a wrong-league market (WNBA stays
+    # last). Both are stable partitions; composition preserves within-group order.
+    ordered = _demote_narrower_scope(ordered, low)
+    # Finally, push substring-cousin wrong-league markets to the absolute bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
     return _demote_wrong_league(ordered, expanded)
 
