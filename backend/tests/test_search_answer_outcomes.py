@@ -18,6 +18,7 @@ from app.routes.events import (
     _rerank_search_futures,
     _demote_wrong_league,
     _demote_narrower_scope,
+    _build_league_ticker_match,
     _compose_futures_families,
     _query_name_match,
 )
@@ -211,6 +212,50 @@ class TestNarrowerScopeDemotion:
     def test_single_untouched(self):
         one = [_mkt("basketball", "Eastern Conference Finals MVP")]
         assert _demote_narrower_scope(one, self._NBA_MVP) is one
+
+
+class TestLeagueTickerMatch:
+    """#993 L2-45: the league-token recall clause, SHARED by /search and
+    /typeahead so the dropdown fetches the same correct-league market."""
+
+    def test_returns_clause_for_league_plus_nonleague(self):
+        # "nba mvp" -> a real SQL clause (kxnba% + name ilike mvp)
+        clause = _build_league_ticker_match([("nba", None), ("mvp", None)])
+        assert clause is not None
+
+    def test_none_without_league_token(self):
+        assert _build_league_ticker_match([("mvp", None)]) is None
+
+    def test_none_without_nonleague_term(self):
+        # bare league only -> nothing to disambiguate by name
+        assert _build_league_ticker_match([("nba", None)]) is None
+
+
+class TestTypeaheadSearchParity:
+    """#993 L2-45: the search-bar dropdown must rank by the SAME logic as the
+    full /search results (league-token divergence flagged for LeBron round 87 and
+    nba mvp round 90). Assert both endpoints call the shared recall + rerank
+    helpers — the structural guarantee that they can't silently diverge again.
+    Source-inspection (like the _format_market_detail guard) rather than a DB
+    integration mock; the live browser trace proves it end-to-end."""
+
+    def _src(self, fn_name):
+        import inspect
+        from app.routes import events
+        return inspect.getsource(getattr(events, fn_name))
+
+    def test_typeahead_uses_shared_league_recall(self):
+        src = self._src("typeahead_search")
+        assert "_build_league_ticker_match" in src
+
+    def test_typeahead_uses_shared_reranker(self):
+        src = self._src("typeahead_search")
+        assert "_rerank_search_futures" in src
+
+    def test_search_uses_the_same_two_helpers(self):
+        src = self._src("search_events")
+        assert "_build_league_ticker_match" in src
+        assert "_rerank_search_futures" in src
 
 
 class TestScaffoldingStrip:

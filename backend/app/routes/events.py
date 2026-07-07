@@ -508,6 +508,30 @@ def _build_expanded_fts(column, term: str, expansion: str | None):
     return base
 
 
+def _build_league_ticker_match(expanded: list[tuple[str, str | None]]):
+    """#993 L2-43/L2-45: league-token recall for futures. "nfl mvp" must find
+    "MVP Winner?" (ticker KXNFLMVP, NO "nfl" in the name) — match by the ticker
+    league prefix + the non-league query terms in the name. ``kx{league}%`` is a
+    prefix LIKE (index-friendly, 150ms-safe) and naturally excludes WNBA for
+    "nba" (KXWNBA… ≠ kxnba…). Returns an OR-of-ANDs clause, or None when the query
+    has no league token or no non-league term.
+
+    SHARED by /search and /typeahead so the two paths agree — the typeahead
+    dropdown was surfacing WNBA first because it lacked this recall branch, so the
+    correct-league market was never fetched for the shared reranker to surface
+    (L2-45). Keep this the single source of truth; do not re-inline it."""
+    query_leagues = [t.lower() for t, _ in expanded if t.lower() in _LEAGUE_TOKENS]
+    non_league = [(t, e) for t, e in expanded if t.lower() not in _LEAGUE_TOKENS]
+    if not (query_leagues and non_league):
+        return None
+    branches = []
+    for lg in query_leagues:
+        conds = [func.lower(FuturesMarket.external_id).like(f"kx{lg}%")]
+        conds += [_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in non_league]
+        branches.append(and_(*conds))
+    return or_(*branches)
+
+
 @router.post("/discover")
 @router.get("/discover")
 async def discover_all_events(
@@ -1397,19 +1421,9 @@ async def search_events(
     futures_name_match = futures_name_ilike
 
     # #993 L2-43: league-token recall. "nfl mvp" must find "MVP Winner?"
-    # (ticker KXNFLMVP, NO "nfl" in the name) — match by the ticker league prefix
-    # + the non-league terms in the name. `kx{league}%` is a prefix LIKE
-    # (index-friendly) and naturally excludes WNBA for "nba" (KXWNBA… ≠ kxnba…).
-    _query_leagues = [t.lower() for t, _ in expanded if t.lower() in _LEAGUE_TOKENS]
-    _non_league = [(t, e) for t, e in expanded if t.lower() not in _LEAGUE_TOKENS]
-    league_ticker_match = None
-    if _query_leagues and _non_league:
-        _branches = []
-        for lg in _query_leagues:
-            conds = [func.lower(FuturesMarket.external_id).like(f"kx{lg}%")]
-            conds += [_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in _non_league]
-            _branches.append(and_(*conds))
-        league_ticker_match = or_(*_branches)
+    # (ticker KXNFLMVP, NO "nfl" in the name). Shared helper — same recall in
+    # /typeahead so the two paths agree (L2-45).
+    league_ticker_match = _build_league_ticker_match(expanded)
 
     _futures_where_or = [futures_name_match, futures_outcome_match]
     if league_ticker_match is not None:
@@ -1711,14 +1725,22 @@ async def typeahead_search(
     # selectinload outcomes so the typeahead can carry the ANSWER (top_outcomes)
     # — the projection is built before the Redis cache write below, so this DB
     # cost is cache-miss-only (protects the <150ms p50 budget). #993 Slice A.
+    # #993 L2-45: league-token recall — SAME clause /search uses, so the dropdown
+    # fetches the correct-league market ("nba mvp" → NBA "MVP Winner", ticker
+    # kxnba%, no "nba" in the name) that the shared reranker then surfaces over the
+    # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
+    ta_futures_where = [
+        futures_name_filter,
+        FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(pattern)),
+    ]
+    ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
+    if ta_league_ticker_match is not None:
+        ta_futures_where.append(ta_league_ticker_match)
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            or_(
-                futures_name_filter,
-                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(pattern)),
-            ),
+            or_(*ta_futures_where),
             FuturesMarket.status == "open",
             or_(
                 FuturesMarket.resolution_date.is_(None),
@@ -1732,10 +1754,11 @@ async def typeahead_search(
         .limit(20)
     )
     futures_result = await db.execute(futures_query)
-    # #993 typeahead parity: same category-coherence demotion as /search, so the
-    # dropdown surfaces the entity's real market (e.g. "LeBron James Next Team")
-    # instead of a cross-category novelty (tier-2 "presidential run") before the
-    # 5-item cut. Shared helper — no duplicated ranking logic.
+    # #993 typeahead parity: the SAME reranker /search uses (name-match priority +
+    # volume + narrower-scope + wrong-league demotion) — so the dropdown surfaces
+    # the entity's real correct-league market instead of a cross-category novelty
+    # or a substring-cousin league before the 5-item cut. Shared helpers end-to-end
+    # (query recall + rerank) → the two paths agree (L2-45).
     ta_futures_ranked = _rerank_search_futures(
         futures_result.scalars().unique().all(), ta_expanded
     )
