@@ -1397,15 +1397,15 @@ async def search_events(
         deduped_futures.append(m)
     futures_markets = deduped_futures[:10]  # flat list (unchanged shape/behavior)
 
-    formatted_futures = [
-        _format_futures_for_search(market)
-        for market in futures_markets
-    ]
+    # Format each deduped market ONCE and reuse in both flat + families (avoids
+    # double outcome_display work — protects the L2-38 latency gains). #993 L2-41
+    _formatted_by_id = {m.id: _format_futures_for_search(m) for m in deduped_futures}
+    formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
     # #993 L2-41: backend-composed topical families (additive; flat `futures`
     # above is unchanged for compatibility). Composed from the full deduped set.
     futures_families = _compose_futures_families(
-        deduped_futures, expanded, _format_futures_for_search
+        deduped_futures, expanded, lambda m: _formatted_by_id[m.id]
     )
 
     # Search teams (ILIKE with expansion — table is small, no FTS needed)
