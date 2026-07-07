@@ -348,7 +348,29 @@ async def _poll_kalshi_markets():
         "total_api_events": 0,
     }
 
+    # #995 attempt-4 (observability-first): a Redis phase marker records which
+    # stage the poll is in. This task SIGKILLs before recording any metric
+    # (no_data), so the ONLY way to locate the kill without heroku logs is a
+    # marker that survives the kill — the next run reads the phase that was live
+    # when the worker died. Ship this WITH the fix so even a miss is diagnosable.
+    _PHASE_KEY = "bainluck:poll_kalshi:phase"
     try:
+        from app.tasks.redis_state import get_redis_client as _get_rc
+        _phase_rc = _get_rc()
+    except Exception:
+        _phase_rc = None
+
+    def _mark_phase(phase: str):
+        if _phase_rc is None:
+            return
+        try:
+            elapsed = time.monotonic() - _task_started
+            _phase_rc.setex(_PHASE_KEY, 7200, f"{phase}@{elapsed:.0f}s")
+        except Exception:
+            pass
+
+    try:
+        _mark_phase("fetch")
         # Fetch ALL open Kalshi events (no category filter).
         # This captures sports (including Olympics subcategories like curling,
         # figure skating, etc.) + non-sports markets (politics, economics,
@@ -364,6 +386,21 @@ async def _poll_kalshi_markets():
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
 
+            # #995 attempt-4: bound the LONGEST single uninterrupted DB op
+            # (budget-guard-inner-op). poll_kalshi set NO timeouts, so the
+            # pre-loop orphan-cleanup DELETE below could hang on a row lock held
+            # by the live prediction-market poller (gotcha #6/#13 per-market
+            # commits) all the way to the 660s hard wall → SIGKILL before any
+            # market is created. A loop-boundary guard can't interrupt a hung
+            # statement; only a DB timeout can. Mirrors kalshi_settled's fix.
+            # statement_timeout raises → caught by the outer try → graceful
+            # return; the next run retries (orphan cleanup + upserts are
+            # idempotent). SET (not SET LOCAL) persists across the incremental
+            # commits on this one connection.
+            await session.execute(text("SET statement_timeout = '90s'"))
+            await session.execute(text("SET lock_timeout = '20s'"))
+
+            _mark_phase("orphan_cleanup")
             # One-time bulk cleanup: delete ALL orphan outcomes with NULL
             # external_id across all Kalshi markets.  These were created by
             # an older code path and can never match the upsert ON CONFLICT
@@ -428,6 +465,7 @@ async def _poll_kalshi_markets():
                     len(new_events), len(events),
                 )
 
+            _mark_phase("upsert_loop")
             for event in events:
                 try:
                     # Each Kalshi event can have multiple markets
@@ -868,19 +906,29 @@ async def _poll_kalshi_markets():
         # Post-commit: fix commence_time for golf and hockey markets.
         # Kalshi sets commence_time = market close_time (resolution date), but
         # calibration and feed need the actual event start date.
-        try:
-            golf_fixed = await _fix_golf_commence_times()
-            stats["golf_commence_fixed"] = golf_fixed
-        except Exception as e:
-            logger.warning("Golf commence_time fix failed: %s", e)
-            stats["golf_commence_fixed"] = 0
+        # #995 attempt-4: these open their OWN sessions (no statement_timeout)
+        # and run AFTER the create commit — deadline-guard them so a slow fix-up
+        # can't push the task into the 660s wall. New markets are already
+        # persisted; a skipped fix-up resumes next run.
+        if time.monotonic() - _task_started < _LOOP_DEADLINE_S:
+            _mark_phase("post_loop")
+            try:
+                golf_fixed = await _fix_golf_commence_times()
+                stats["golf_commence_fixed"] = golf_fixed
+            except Exception as e:
+                logger.warning("Golf commence_time fix failed: %s", e)
+                stats["golf_commence_fixed"] = 0
 
-        try:
-            hockey_fixed = await _fix_hockey_commence_times()
-            stats["hockey_commence_fixed"] = hockey_fixed
-        except Exception as e:
-            logger.warning("Hockey commence_time fix failed: %s", e)
-            stats["hockey_commence_fixed"] = 0
+            try:
+                hockey_fixed = await _fix_hockey_commence_times()
+                stats["hockey_commence_fixed"] = hockey_fixed
+            except Exception as e:
+                logger.warning("Hockey commence_time fix failed: %s", e)
+                stats["hockey_commence_fixed"] = 0
+        else:
+            stats["post_loop_skipped_deadline"] = True
+
+        _mark_phase("done")
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")

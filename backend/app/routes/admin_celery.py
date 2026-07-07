@@ -101,6 +101,18 @@ async def celery_dashboard(
     except Exception:
         backfill_phase_timing = None
 
+    # #995 attempt-4: poll_kalshi SIGKILLs before recording any metric (no_data),
+    # so this phase marker is the only way to see WHERE it died — it holds the
+    # stage that was live when the worker was killed. Surface it here.
+    poll_kalshi_phase = None
+    try:
+        _r2 = get_redis_client()
+        _pk = _r2.get("bainluck:poll_kalshi:phase")
+        if _pk:
+            poll_kalshi_phase = _pk.decode() if isinstance(_pk, bytes) else _pk
+    except Exception:
+        poll_kalshi_phase = None
+
     # Compute overall health
     critical_tasks = [t for t in tasks if t.get("health") == "critical"]
     degraded_tasks = [t for t in tasks if t.get("health") == "degraded"]
@@ -126,6 +138,7 @@ async def celery_dashboard(
         "tasks": tasks,
         "odds_api_quota": odds_api_quota,
         "backfill_phase_timing": backfill_phase_timing,
+        "poll_kalshi_phase": poll_kalshi_phase,
     }
 
 

@@ -499,3 +499,40 @@ class TestFetchDeadlineAndSettledTrim:
         # deadline is threaded through to every get_events call so page-level
         # 429 backoff also honors it (#995).
         assert all("deadline" in kw for kw in seen_kw)
+
+
+class TestPollKalshiSigkillHardening:
+    """#995 attempt-4 (observability-first): poll_kalshi SIGKILLs before it can
+    record any metric (no_data). Guard the source so the timeouts + phase marker
+    that make the 4th fix diagnosable can't be silently removed."""
+
+    def _src(self):
+        import inspect
+        import textwrap
+        from app.tasks.kalshi import _poll_kalshi_markets
+        return textwrap.dedent(inspect.getsource(_poll_kalshi_markets))
+
+    def test_sets_statement_and_lock_timeout(self):
+        src = self._src()
+        assert "SET statement_timeout" in src, (
+            "poll_kalshi must bound its longest single DB op (the orphan-cleanup "
+            "DELETE) with statement_timeout so it can't hang to the 660s wall"
+        )
+        assert "SET lock_timeout" in src, (
+            "poll_kalshi must set lock_timeout so a DELETE blocked on a "
+            "live-poller row lock fails fast instead of SIGKILLing"
+        )
+
+    def test_writes_phase_marker_for_each_stage(self):
+        src = self._src()
+        assert "_mark_phase" in src
+        for phase in ('"fetch"', '"orphan_cleanup"', '"upsert_loop"',
+                      '"post_loop"', '"done"'):
+            assert f"_mark_phase({phase})" in src, (
+                f"missing phase marker {phase} — the marker is how the next run "
+                f"locates the SIGKILL without heroku logs"
+            )
+
+    def test_phase_marker_uses_stable_redis_key(self):
+        src = self._src()
+        assert "bainluck:poll_kalshi:phase" in src
