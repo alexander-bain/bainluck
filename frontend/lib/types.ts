@@ -730,9 +730,22 @@ export interface SearchTeam {
   sport_key: string | null;
 }
 
+/** #993 L2-41: a backend-composed topical family of related futures markets.
+ *  headline/members reuse the formatted-market shape; members is capped at 4
+ *  (the rest counted in more_count). */
+export interface FuturesFamily {
+  family_key: string;
+  label: string;
+  headline: FuturesMarket;
+  members: FuturesMarket[];
+  more_count: number;
+  member_count: number;
+}
+
 export interface SearchResponse {
   results: Event[];
   futures: FuturesMarket[];
+  futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
   teams: SearchTeam[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];

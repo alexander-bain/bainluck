@@ -372,7 +372,8 @@ export interface OnboardingSkipParams {
 
 export interface SearchResultClickParams {
   query: string;
-  result_type: 'event' | 'futures' | 'team';
+  // #993 L2-42: family_headline/family_member for composed family rows
+  result_type: 'event' | 'futures' | 'team' | 'family_headline' | 'family_member';
   result_id: number | string;
   position: number;
 }

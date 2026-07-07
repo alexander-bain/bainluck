@@ -8,6 +8,8 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
+import SearchFamilyCard from "@/components/SearchFamilyCard";
+import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
@@ -216,6 +218,15 @@ function SearchContent() {
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
 
+  // #993 L2-42: composed families render first; the market_ids shown inside a
+  // family (headline + its shown members) are filtered from the flat list so
+  // nothing double-renders. Backend is the composition source of truth.
+  const families = results?.futures_families ?? [];
+  const shownIds = familyShownIds(families);
+  const flatFutures = (results?.futures ?? []).filter((m) => !shownIds.has(m.id));
+  const hasFamilies = families.length > 0;
+  const hasFlatFutures = flatFutures.length > 0;
+
   if (!results || (!hasEvents && !hasFutures && !hasTeams)) {
     return (
       <div>
@@ -343,12 +354,35 @@ function SearchContent() {
         </section>
       )}
 
-      {/* Futures & Markets section */}
-      {hasFutures && (
+      {/* #993 L2-42: composed topical families (backend-composed) render first */}
+      {hasFamilies && (
         <section className="mb-8">
-          <SectionHeader title="Futures & Markets" count={results.futures.length} />
+          <SectionHeader title="Answers" count={families.length} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {families.map((family) => (
+              <SearchFamilyCard
+                key={family.family_key}
+                family={family}
+                onRowClick={(result_type, result_id) =>
+                  track('search_result_click', {
+                    query: query,
+                    result_type,
+                    result_id,
+                    position: 0,
+                  })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Futures & Markets section (flat — family-shown markets filtered out) */}
+      {hasFlatFutures && (
+        <section className="mb-8">
+          <SectionHeader title="Futures & Markets" count={flatFutures.length} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.futures.map((market, index) => (
+            {flatFutures.map((market, index) => (
               <div key={market.id} onClick={() => {
                 track('search_result_click', {
                   query: query,
