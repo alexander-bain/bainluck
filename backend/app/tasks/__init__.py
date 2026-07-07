@@ -411,8 +411,20 @@ def clob_resolve_drain(self, limit: int = 300, dry_run: bool = False):
     (pass2_loser/all_losers) via the CLOB API. Writes is_winner with
     resolution_source='clob_authoritative' for the confident resolved_direct /
     resolved_name_match tiers only; void/ambiguous stay excluded. Cursor-resumable."""
-    from app.tasks.clob_resolve import clob_resolve_drain as _drain
-    return _tracked_run("clob_resolve_drain", _drain(limit=limit, dry_run=dry_run))
+    from app.tasks.clob_resolve import (
+        clob_resolve_drain as _drain,
+        _DEFAULT_WRITE_TIERS,
+    )
+    # Amendment 1 — ordinal tier CAPPED ENABLE (#989 Item 2, Queue #124). Batch-0
+    # PASSED (25/25 label-agree, 0 disagreements, vintage-stratified). Enable the
+    # ordinal tier in the beat, capped at _ORDINAL_FIRST_BATCH_CAP=2,000 cumulative
+    # writes (Redis-tracked; the drain stops writing ordinal once the cap is hit).
+    # The cap holds until winrate + curve stability are verified on the first
+    # ≤2,000; uncapping for the full ~15K drain is a deliberate later step.
+    tiers = _DEFAULT_WRITE_TIERS + ("resolved_ordinal",)
+    return _tracked_run("clob_resolve_drain", _drain(
+        limit=limit, dry_run=dry_run, write_tiers=tiers, enable_ordinal=True,
+    ))
 
 
 # --- Categorization ---
