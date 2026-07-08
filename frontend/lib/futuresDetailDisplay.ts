@@ -40,6 +40,28 @@ export function leaderLabel(leader: MovementLeader | null): string | null {
 }
 
 /**
+ * #883 L2-55: the <title>/SEO text for a futures-detail page. On a SETTLED market
+ * the title is "<winner> won - <market>" — NO percentage (the last-traded % read
+ * as a bug in the hero, and it was still leaking via metadata). Live markets keep
+ * "<leader> <prob>% - <market>". Pure so it's unit-tested.
+ */
+export function futuresTitleText(opts: {
+  marketName: string;
+  isResolved: boolean;
+  winnerName?: string | null;
+  leaderName?: string | null;
+  probabilityLabel?: string | null;
+}): string {
+  if (opts.isResolved && opts.winnerName) {
+    return `${opts.winnerName} won - ${opts.marketName}`;
+  }
+  if (opts.leaderName && opts.probabilityLabel) {
+    return `${opts.leaderName} ${opts.probabilityLabel} - ${opts.marketName}`;
+  }
+  return opts.marketName;
+}
+
+/**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements

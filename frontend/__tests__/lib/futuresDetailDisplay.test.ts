@@ -5,6 +5,7 @@ import {
   leaderLabel,
   movementExplanation,
   pickHeroOutcome,
+  futuresTitleText,
 } from "../../lib/futuresDetailDisplay";
 
 describe("leaderLabel", () => {
@@ -107,5 +108,46 @@ describe("pickHeroOutcome (resolved edge state)", () => {
 
   test("empty outcomes -> leader (or null)", () => {
     expect(pickHeroOutcome([], null, true)).toBeNull();
+  });
+});
+
+describe("futuresTitleText (#883 L2-55 — no % on settled titles)", () => {
+  test("resolved -> '<winner> won - <market>' with NO percentage", () => {
+    const t = futuresTitleText({
+      marketName: "2026 NBA Draft Pick 1",
+      isResolved: true,
+      winnerName: "Brayden Burries",
+      leaderName: "Brayden Burries",
+      probabilityLabel: "10%",
+    });
+    expect(t).toBe("Brayden Burries won - 2026 NBA Draft Pick 1");
+    expect(t).not.toMatch(/%/);
+  });
+
+  test("live -> '<leader> <prob>% - <market>'", () => {
+    const t = futuresTitleText({
+      marketName: "NBA MVP",
+      isResolved: false,
+      leaderName: "Shai Gilgeous-Alexander",
+      probabilityLabel: "58%",
+    });
+    expect(t).toBe("Shai Gilgeous-Alexander 58% - NBA MVP");
+  });
+
+  test("resolved without a winner falls back to market name (no %)", () => {
+    const t = futuresTitleText({
+      marketName: "Some Market",
+      isResolved: true,
+      winnerName: null,
+      leaderName: "X",
+      probabilityLabel: "10%",
+    });
+    // no winner -> not the live form either (isResolved short-circuits the % form
+    // only when winnerName exists); falls through to leader+prob or market name.
+    expect(t).toBe("X 10% - Some Market");
+  });
+
+  test("no leader/prob -> just the market name", () => {
+    expect(futuresTitleText({ marketName: "Bare", isResolved: false })).toBe("Bare");
   });
 });

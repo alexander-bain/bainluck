@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { buildShareUrl, formatShareProbability, truncateShareText } from "@/lib/share";
+import { pickHeroOutcome, leaderLabel, futuresTitleText } from "@/lib/futuresDetailDisplay";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
   image_url?: string | null;
@@ -46,14 +47,26 @@ export async function generateMetadata({
 
   const leader = topOutcome(market);
   const probability = formatShareProbability(leader?.probability);
-  const titleText = leader && probability
-    ? `${leader.name} ${probability} - ${market.name}`
-    : market.name;
+  // #883 L2-55: a settled market's title must NOT carry the last-traded % — it's
+  // "<winner> won", mirroring the L2-53 hero. Same winner selection as the page.
+  const isResolved = market.status === "resolved";
+  const outcomes = market.outcomes ?? market.top_outcomes ?? [];
+  const winnerName = isResolved ? leaderLabel(pickHeroOutcome(outcomes, leader, true)) : null;
+
+  const titleText = futuresTitleText({
+    marketName: market.name,
+    isResolved,
+    winnerName,
+    leaderName: leader?.name,
+    probabilityLabel: probability,
+  });
   const description = truncateShareText(
     market.hook_description ||
-      (leader && probability
-        ? `${leader.name} leads ${market.name} at ${probability}. See the full probability board on Bain Luck.`
-        : `See ${market.name} translated into intuitive probabilities on Bain Luck.`)
+      (isResolved && winnerName
+        ? `${winnerName} won ${market.name}. See the full probability board on Bain Luck.`
+        : leader && probability
+          ? `${leader.name} leads ${market.name} at ${probability}. See the full probability board on Bain Luck.`
+          : `See ${market.name} translated into intuitive probabilities on Bain Luck.`)
   );
   const url = buildShareUrl(`/futures/${market.id}`);
   const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
