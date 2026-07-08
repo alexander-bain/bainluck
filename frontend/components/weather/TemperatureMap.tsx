@@ -83,6 +83,28 @@ export default function TemperatureMap() {
     );
   }
 
+  // Loaded but EMPTY (200 with no fresh daily city markets — a #995 freeze
+  // symptom) must show an honest empty state, NOT an infinite skeleton. Only
+  // `undefined` means still-loading; `[]` means loaded-and-empty. The data gap
+  // is upstream (Lane 1) — this is resilience only.
+  if (liveCities !== undefined && !allCities) {
+    return (
+      <section className="pt-10 px-4 md:px-6">
+        <div className="max-w-[1280px] mx-auto">
+          <SectionHeader
+            kicker="Global temperature map"
+            title="Tomorrow's high, as a probability distribution."
+            meta="Polymarket & Kalshi"
+          />
+          <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+            <p className="text-text-secondary text-sm">No live temperature markets right now</p>
+            <p className="text-text-muted text-xs mt-1.5">Daily city markets appear here when they reopen.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   if (!allCities) return <TemperatureMapSkeleton />;
 
   const cities = citySearch.trim()

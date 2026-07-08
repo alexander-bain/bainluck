@@ -57,6 +57,11 @@ function ClimateColumn({
 
       {/* Market rows */}
       <div className="flex flex-col" style={{ gap: 14 }}>
+        {items.length === 0 && (
+          <p className="text-text-muted" style={{ fontSize: 12.5 }}>
+            No live markets for this horizon yet.
+          </p>
+        )}
         {items.map((item, i) => {
           const color = probColor(item.prob);
 
@@ -163,12 +168,24 @@ export default function ClimateDashboard() {
     );
   }
 
-  if (!climate) {
+  // Still loading (undefined) → skeletons. Loaded-but-empty ([]) → honest empty
+  // state, NOT infinite bare-header skeletons (#995 freeze symptom; data gap is
+  // upstream/Lane 1, this is resilience only).
+  if (liveClimate === undefined) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         {COLUMNS.map((col) => (
           <ClimateColumnSkeleton key={col.scale} label={col.label} kicker={col.kicker} />
         ))}
+      </div>
+    );
+  }
+
+  if (!climate) {
+    return (
+      <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+        <p className="text-text-secondary text-sm">No live climate markets right now</p>
+        <p className="text-text-muted text-xs mt-1.5">Long-horizon climate markets appear here when they reopen.</p>
       </div>
     );
   }

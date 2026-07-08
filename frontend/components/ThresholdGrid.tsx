@@ -111,10 +111,8 @@ export default function ThresholdGrid({ outcomes, title, highlightedValue }: Thr
                 />
               </div>
 
-              {/* Source */}
-              <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">
-                {o.source === "polymarket" ? "Polymarket" : o.source === "kalshi" ? "Kalshi" : o.source}
-              </div>
+              {/* L2-51: source-name attribution removed — blend-only, probability
+                  rows only (D1; the standing no-source-names rule). */}
             </motion.div>
           );
         })}

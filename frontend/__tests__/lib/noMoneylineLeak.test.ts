@@ -24,6 +24,13 @@ describe("no American-moneyline leak (L2-48)", () => {
     "components/RelatedFutures.tsx",
   ];
 
+  test("ThresholdGrid (ladder rail) renders no source-provider name (D1)", () => {
+    // L2-51: the ladder cells used to print "Polymarket"/"Kalshi" per outcome.
+    const src = read("components/ThresholdGrid.tsx");
+    expect(src).not.toContain('"Polymarket"');
+    expect(src).not.toContain('"Kalshi"');
+  });
+
   for (const rel of SURFACES) {
     test(`${rel} calls no odds formatter`, () => {
       const src = read(rel);
