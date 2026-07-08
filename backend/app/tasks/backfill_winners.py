@@ -3138,13 +3138,16 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         continue
                     tour, event_id = parts[1], parts[2]
 
+                    # #994: pace BEFORE every request. DataGolf caps at 45 req/min;
+                    # the pacing MUST wrap error paths too — invalid-tour (400) and
+                    # other raised calls skip an after-the-call sleep, so 24 rapid
+                    # 400s blew the cap and tripped a 429 mid-run. Sleeping before
+                    # the call paces every request regardless of outcome (1.5s =
+                    # 40/min, under the cap).
+                    await asyncio.sleep(1.5)
                     historical = await service.get_historical_results(
                         tour=tour, event_id=event_id, year=row.yr,
                     )
-                    # #994: DataGolf caps at 45 requests/minute (a 0.5s sleep =
-                    # 120/min tripped 429s that looked like 400s). 1.5s = 40/min,
-                    # under the cap with headroom.
-                    await asyncio.sleep(1.5)
 
                     if not historical:
                         # Event genuinely not found → residual; symmetric-exclude.
@@ -3213,6 +3216,8 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                             _detail += f" {_status}: {_resp.text[:150]}"
                         except Exception:
                             pass
+                    else:
+                        _detail += f": {str(_me)[:150]}"
                     stats["errors"].append(f"{ext_id}: {_detail}")
                     logger.warning("DataGolf recovery: skipping %s (%s)", ext_id, _me)
                     try:
