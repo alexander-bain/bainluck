@@ -3180,7 +3180,18 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         await session.commit()
                         stats["played_lost_recovered"] += r_played.rowcount
                 except Exception as _me:
-                    stats["errors"].append(f"{ext_id}: {type(_me).__name__}")
+                    # #994 diag: capture the HTTP status + response body so the
+                    # 400 blocker is diagnosable from the task result (no heroku
+                    # log access). e.response.text names WHAT the historical
+                    # endpoint rejected.
+                    _detail = type(_me).__name__
+                    _resp = getattr(_me, "response", None)
+                    if _resp is not None:
+                        try:
+                            _detail += f" {_resp.status_code}: {_resp.text[:200]}"
+                        except Exception:
+                            pass
+                    stats["errors"].append(f"{ext_id}: {_detail}")
                     logger.warning("DataGolf recovery: skipping %s (%s)", ext_id, _me)
                     await asyncio.sleep(0.2)
                 finally:

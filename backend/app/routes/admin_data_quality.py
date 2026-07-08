@@ -2777,6 +2777,19 @@ async def trigger_backfill_kalshi_settled(
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
+@router.post("/precompute-category-pages")
+async def trigger_precompute_category_pages(
+    request: Request, secret: str = Query(None),
+):
+    """Force-refresh the category-page Redis caches (weather/politics/economics/
+    entertainment/golf). The cache is the only thing gating /api/weather/cities
+    from returning the 47+ markets that already exist (Manus #943)."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.precompute_category_pages")
+    return {"status": "queued", "task_id": str(result.id)}
+
+
 @router.post("/recover-datagolf-participation")
 async def trigger_recover_datagolf_participation(
     request: Request, secret: str = Query(None),
