@@ -1,23 +1,32 @@
 "use client";
 
-// #999 Event Concept Pages — slice 1. Generic /event/[key] rendering any
-// individual-competitor event via /api/event/{key}. Golf renders here at parity
-// (winner field + sections + matchups). Probability-only (no odds), light-mode
-// tokens, blend-only (no source names on plain rows).
+// #999 Event Concept Pages — L2-64 visual design. Generic /event/[key] rendering
+// any individual-competitor event via /api/event/{key}. Event-framed header +
+// today's movers + "race to the title" chart + winner-field leaderboard +
+// matchups rail + (settled) path-to-resolution. Co-equal domains (fights) get a
+// two-sided timeline instead of the race chart. Probability-only (no odds),
+// light-mode tokens, blend-only (no source names on rows), straight segments.
 
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchEventConcept, formatProbability } from "@/lib/api";
-import {
-  statusLabel,
-  fieldOrder,
-  childLeader,
-  eventDateRange,
-  splitChildren,
-} from "@/lib/eventConceptDisplay";
+import { fetchEventConcept, fetchFuturesHistory } from "@/lib/api";
+import { marketsTracked } from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
+import EventHeader from "@/components/event/EventHeader";
+import MoversStrip from "@/components/event/MoversStrip";
+import RaceToTitleChart from "@/components/event/RaceToTitleChart";
+import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
+import EventLeaderboard from "@/components/event/EventLeaderboard";
+import MatchupsRail from "@/components/event/MatchupsRail";
+import SettledPathChart from "@/components/event/SettledPathChart";
+
+// Design tweaks (queue L2-64): global on/off for per-row sparklines and the
+// today's-movers strip. Sparklines still degrade to nothing per-row when a
+// competitor has no real history — we never invent a series.
+const SHOW_SPARKLINE = true;
+const SHOW_MOVERS = true;
 
 export default function EventConceptPage() {
   // Next.js 14: dynamic params for a CLIENT component come from useParams().
@@ -47,6 +56,17 @@ export default function EventConceptPage() {
     { revalidateOnFocus: false },
   );
 
+  // Shared history for per-row sparklines — one fetch over the evolution market
+  // covers every competitor. Keyed on the market id so hook order stays stable
+  // even before the envelope resolves. Only fetched for winner-field events.
+  const evolutionId = data?.primary?.evolution_market_id ?? null;
+  const isWinnerField = data?.primary?.kind === "winner_field";
+  const { data: sparkData } = useSWR(
+    SHOW_SPARKLINE && isWinnerField && evolutionId ? ["event-spark", evolutionId] : null,
+    () => fetchFuturesHistory(evolutionId as number, 168, undefined, 24),
+    { revalidateOnFocus: false },
+  );
+
   if (isLoading) {
     return (
       <div className="max-w-4xl mx-auto py-12">
@@ -65,128 +85,61 @@ export default function EventConceptPage() {
     );
   }
 
-  const { event, primary, sections, children } = data;
-  const dateRange = eventDateRange(event.start_date, event.end_date);
-  const competitors = fieldOrder(primary.competitors).slice(0, 20);
+  const { event, primary, children, movers } = data;
+  const competitors = primary.competitors || [];
+  const isCoEqual = primary.kind === "co_equal_list";
+  const isSettled = event.status === "settled";
+  const isLive = event.status === "live";
+  const hasWinnerField = primary.kind === "winner_field" && competitors.length > 0;
+
+  // Section nav — only the sections that will actually render.
+  const nav: { id: string; label: string }[] = [];
+  if (hasWinnerField && evolutionId && !isSettled) nav.push({ id: "race", label: "Race" });
+  if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
+  if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
+  if (children.length > 0) nav.push({ id: "matchups", label: "Matchups" });
+  if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="border-b border-surface-border pb-4">
-        <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-widest text-text-muted">
-          <span>{event.domain}</span>
-          <span
-            className={`px-1.5 py-0.5 rounded font-semibold ${
-              event.status === "live"
-                ? "bg-accent-live/15 text-accent-live"
-                : event.status === "settled"
-                  ? "bg-text-muted/15 text-text-secondary"
-                  : "bg-accent-brand/10 text-accent-brand"
-            }`}
-          >
-            {statusLabel(event.status)}
-          </span>
-        </div>
-        <h1 className="text-title-1 font-semibold text-text-primary tracking-tight">
-          {event.name || decodedKey}
-        </h1>
-        {(dateRange || event.venue || event.location) && (
-          <p className="text-sm text-text-secondary mt-1.5">
-            {[dateRange, event.venue, event.location].filter(Boolean).join(" · ")}
-          </p>
-        )}
-      </div>
+      <EventHeader
+        event={event}
+        marketsTracked={marketsTracked(data)}
+        nav={nav}
+        fallbackName={decodedKey}
+      />
 
-      {/* Primary block — winner-field leaderboard (flexes to co-equal list in a
-          future slice via primary.kind). Probability-only. */}
-      {primary.kind === "winner_field" && competitors.length > 0 && (
-        <section className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary mb-4">
-            {primary.label || "Winner"}
-          </h2>
-          <div className="space-y-1.5">
-            {competitors.map((c, i) => (
-              <div
-                key={`${c.name}-${i}`}
-                className="flex items-center justify-between py-1.5 border-b border-surface-border/40 last:border-0"
-              >
-                <span className="text-sm text-text-primary">
-                  <span className="text-text-muted font-mono text-xs mr-2">{i + 1}</span>
-                  {c.name}
-                </span>
-                <span className="font-mono text-sm font-semibold text-text-primary tabular-nums">
-                  {formatProbability(c.probability)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+      <MoversStrip movers={movers} show={SHOW_MOVERS} />
+
+      {/* Race to the title (winner-field, live/upcoming) OR co-equal two-sided
+          timeline. Settled events show the path-to-resolution chart below. */}
+      {isCoEqual ? (
+        <TwoSidedTimeline
+          competitors={competitors}
+          label={primary.label}
+          evolutionMarketId={evolutionId}
+        />
+      ) : (
+        hasWinnerField &&
+        evolutionId &&
+        !isSettled && <RaceToTitleChart marketId={evolutionId} domain={event.domain} />
       )}
 
-      {/* Market sections (winner / top-N / props) */}
-      {sections.length > 0 && (
-        <section className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary mb-3">Markets</h2>
-          <div className="flex flex-wrap gap-2">
-            {sections.map((s) => (
-              <span
-                key={s.type}
-                className="text-xs px-2 py-1 rounded-full bg-surface-elevated text-text-secondary"
-              >
-                {s.label}
-                {s.market_ids && s.market_ids.length > 0 ? ` · ${s.market_ids.length}` : ""}
-              </span>
-            ))}
-          </div>
-        </section>
+      {hasWinnerField && (
+        <EventLeaderboard
+          competitors={competitors}
+          label={primary.label}
+          historyOutcomes={sparkData?.outcomes}
+          showSparkline={SHOW_SPARKLINE}
+          live={isLive}
+        />
       )}
 
-      {/* Children — matchups / props. Live prominent; completed (decided)
-          matches grouped + de-emphasized so a settled 99% never reads as live
-          (L2-63 Item 2). */}
-      {children.length > 0 && (() => {
-        const { live, settled } = splitChildren(children);
-        const Row = ({ child, dim }: { child: (typeof children)[number]; dim?: boolean }) => {
-          const lead = childLeader(child);
-          return (
-            <div className="flex items-center justify-between py-1.5 border-b border-surface-border/40 last:border-0">
-              <span className={`text-sm truncate mr-3 ${dim ? "text-text-muted" : "text-text-secondary"}`}>
-                {child.market_name || child.name || "Market"}
-              </span>
-              {lead && (
-                <span className={`text-sm whitespace-nowrap ${dim ? "text-text-muted" : "text-text-primary"}`}>
-                  {lead.name}{" "}
-                  {dim ? (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-text-muted/15 text-text-secondary">Final</span>
-                  ) : (
-                    <span className="font-mono font-semibold tabular-nums">{formatProbability(lead.probability)}</span>
-                  )}
-                </span>
-              )}
-            </div>
-          );
-        };
-        return (
-          <section className="bg-surface-card rounded-card shadow-card p-6">
-            <h2 className="text-title-3 font-semibold text-text-primary mb-4">Matchups &amp; props</h2>
-            {live.length > 0 && (
-              <div className="space-y-2">
-                {live.map((child) => <Row key={child.market_id} child={child} />)}
-              </div>
-            )}
-            {settled.length > 0 && (
-              <details className="mt-4">
-                <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
-                  Completed ({settled.length})
-                </summary>
-                <div className="space-y-2 mt-2 opacity-70">
-                  {settled.map((child) => <Row key={child.market_id} child={child} dim />)}
-                </div>
-              </details>
-            )}
-          </section>
-        );
-      })()}
+      <MatchupsRail items={children} />
+
+      {isSettled && evolutionId && (
+        <SettledPathChart marketId={evolutionId} domain={event.domain} />
+      )}
     </div>
   );
 }

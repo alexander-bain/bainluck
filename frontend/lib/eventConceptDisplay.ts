@@ -5,6 +5,8 @@
 import type {
   EventConceptCompetitor,
   EventConceptChild,
+  EventConceptResponse,
+  FuturesOutcomeHistory,
 } from "./types";
 
 export function statusLabel(status: string): string {
@@ -59,6 +61,65 @@ export function splitChildren(
     (decided ? settled : live).push(c);
   }
   return { live, settled };
+}
+
+/** Count of distinct markets tracked on this page — for the header "N markets"
+ *  chip. Unions section market_ids, child market_ids, and the evolution market so
+ *  the count reflects what the page actually surfaces (not a fabricated total). */
+export function marketsTracked(data: EventConceptResponse): number {
+  const ids = new Set<number>();
+  for (const s of data.sections || []) {
+    for (const id of s.market_ids || []) ids.add(id);
+  }
+  for (const c of data.children || []) {
+    if (typeof c.market_id === "number") ids.add(c.market_id);
+  }
+  const ev = data.primary?.evolution_market_id;
+  if (typeof ev === "number") ids.add(ev);
+  return ids.size;
+}
+
+/** 24h probability movement for a competitor, read defensively from either the
+ *  golf-shaped `movement_24h` or the generic `probability_change_24h` extra key.
+ *  Returns a signed FRACTION (e.g. +0.03), or null when absent. */
+export function competitorMovement(c: EventConceptCompetitor): number | null {
+  const raw =
+    (c as Record<string, unknown>).movement_24h ??
+    (c as Record<string, unknown>).probability_change_24h;
+  if (typeof raw !== "number" || Number.isNaN(raw)) return null;
+  // Golf movement_24h is already a probability fraction; a value with abs>1 is
+  // almost certainly already in points — normalize both to fraction.
+  return Math.abs(raw) > 1 ? raw / 100 : raw;
+}
+
+/** Format a signed probability fraction as movement points, e.g. +3.2 / -1.0.
+ *  Returns null for a null/zero-rounding change so callers can omit the chip. */
+export function formatMovement(
+  change: number | null | undefined,
+): { text: string; dir: "up" | "down" } | null {
+  if (change == null || Number.isNaN(change)) return null;
+  const pts = change * 100;
+  if (Math.abs(pts) < 0.05) return null;
+  const dir = pts > 0 ? "up" : "down";
+  return { text: `${pts > 0 ? "+" : "−"}${Math.abs(pts).toFixed(1)}`, dir };
+}
+
+/** Extract a competitor's probability series (0–1) from fetched history, matched
+ *  by normalized name. Returns time-ordered probabilities (nulls dropped). Empty
+ *  when the competitor has no matching series — the caller then omits the
+ *  sparkline rather than inventing history. */
+export function seriesForName(
+  outcomes: FuturesOutcomeHistory[] | undefined,
+  name: string,
+): number[] {
+  if (!outcomes || !name) return [];
+  const norm = (s: string) => s.trim().toLowerCase();
+  const target = norm(name);
+  const match = outcomes.find((o) => norm(o.name) === target);
+  if (!match) return [];
+  return match.history
+    .filter((p) => p.probability != null)
+    .map((p) => p.probability as number);
 }
 
 /** A readable event date range (either bound optional). */

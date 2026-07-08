@@ -1,8 +1,9 @@
-// #999 L2-60: render guard for /event/[key]. The page P1-crashed in prod (SSR)
-// while the unit suite stayed green because it only tested pure helpers. This
-// SSR-renders the actual page component (renderToStaticMarkup — the same server
-// path that crashed) with a real envelope, so a render-time throw (e.g. the
-// `use(params)` bug) fails the test.
+// #999 L2-60/L2-64: render guard for /event/[key]. The page P1-crashed in prod
+// (SSR) while the unit suite stayed green because it only tested pure helpers.
+// This SSR-renders the ACTUAL page component AND its L2-64 children (header,
+// movers strip, race chart, leaderboard w/ sparklines, matchups rail) via
+// renderToStaticMarkup — the same server path that crashed — with a real envelope
+// + real history, so a render-time throw fails the test.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
@@ -35,8 +36,8 @@ const ENVELOPE = {
     kind: "winner_field" as const,
     label: "Winner",
     competitors: [
-      { name: "Scottie Scheffler", probability: 0.22 },
-      { name: "Rory McIlroy", probability: 0.15 },
+      { name: "Scottie Scheffler", probability: 0.22, movement_24h: 0.03 },
+      { name: "Rory McIlroy", probability: 0.15, movement_24h: -0.01 },
     ],
     evolution_market_id: 1,
   },
@@ -51,16 +52,46 @@ const ENVELOPE = {
       ],
     },
   ],
-  movers: [],
+  movers: [{ name: "Rory McIlroy", change: 0.03 }],
 };
 
-// Call the fetcher (unlike a plain data-return mock) so we observe the key the
-// page passes to fetchEventConcept — that's where the double-encoding bug lived.
+// Real 2-point history so the race chart + per-row sparklines actually render
+// (exercises FuturesChart + Sparkline under SSR).
+const HISTORY = {
+  market_id: 1,
+  market_name: "Winner",
+  hours: 168,
+  outcomes: [
+    {
+      outcome_id: 1,
+      name: "Scottie Scheffler",
+      history: [
+        { timestamp: "2026-07-01T00:00:00Z", probability: 0.2, american_odds: null, bookmaker: "" },
+        { timestamp: "2026-07-02T00:00:00Z", probability: 0.22, american_odds: null, bookmaker: "" },
+      ],
+    },
+    {
+      outcome_id: 2,
+      name: "Rory McIlroy",
+      history: [
+        { timestamp: "2026-07-01T00:00:00Z", probability: 0.16, american_odds: null, bookmaker: "" },
+        { timestamp: "2026-07-02T00:00:00Z", probability: 0.15, american_odds: null, bookmaker: "" },
+      ],
+    },
+  ],
+};
+
+// Key-aware swr mock: envelope for the page, history for chart/sparkline fetches.
+// Calls the fetcher (unlike a plain data-return mock) so we observe the decoded
+// key the page passes to fetchEventConcept — where the double-encoding bug lived.
 jest.mock("swr", () => ({
   __esModule: true,
-  default: (_key: unknown, fetcher?: () => unknown) => {
+  default: (key: unknown, fetcher?: () => unknown) => {
     if (fetcher) { try { fetcher(); } catch { /* ignore */ } }
-    return { data: ENVELOPE, error: null, isLoading: false };
+    const tag = Array.isArray(key) ? key[0] : key;
+    if (key == null) return { data: undefined, error: null, isLoading: false };
+    if (tag === "event-concept") return { data: ENVELOPE, error: null, isLoading: false };
+    return { data: HISTORY, error: null, isLoading: false };
   },
 }));
 
@@ -72,6 +103,7 @@ jest.mock("@/hooks", () => ({
 
 jest.mock("@/lib/api", () => ({
   fetchEventConcept: (k: string) => { fetchCalls.push(k); return Promise.resolve(null); },
+  fetchFuturesHistory: () => Promise.resolve(HISTORY),
   formatProbability: (p: number | null) =>
     p == null ? "—" : `${Math.round(p * 100)}%`,
 }));
@@ -79,17 +111,21 @@ jest.mock("@/lib/api", () => ({
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import EventConceptPage from "../../app/event/[key]/page";
 
-describe("EventConceptPage SSR render (L2-60 guard)", () => {
-  test("renders the winner field + sections + children without throwing", () => {
+describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
+  test("renders header + movers + race chart + leaderboard + matchups without throwing", () => {
     const html = renderToStaticMarkup(<EventConceptPage />);
-    // header
+    // event-framed header
     expect(html).toContain("The Open Championship");
     expect(html).toContain("Live");
-    // winner field competitors (the render path that crashed)
+    expect(html).toContain("markets tracked"); // markets-tracked count
+    // today's movers strip
+    expect(html).toContain("movers");
+    // race-to-the-title chart section
+    expect(html).toContain("Race to the title");
+    // winner-field leaderboard competitors (the render path that crashed)
     expect(html).toContain("Scottie Scheffler");
     expect(html).toContain("Rory McIlroy");
-    // sections + children
-    expect(html).toContain("Markets");
+    // matchups rail
     expect(html).toContain("H2H: Scheffler vs McIlroy");
     // probability-only: no American-odds moneyline strings
     expect(html).not.toMatch(/[+-]\d{3,}/);

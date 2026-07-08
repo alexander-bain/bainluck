@@ -6,6 +6,10 @@ import {
   childLeader,
   eventDateRange,
   splitChildren,
+  marketsTracked,
+  competitorMovement,
+  formatMovement,
+  seriesForName,
 } from "../../lib/eventConceptDisplay";
 
 describe("statusLabel", () => {
@@ -77,5 +81,79 @@ describe("eventDateRange", () => {
     expect(eventDateRange("2026-04-09", "2026-04-12")).toMatch(/–/);
     expect(eventDateRange("2026-04-09", null)).not.toMatch(/–/);
     expect(eventDateRange(null, null)).toBeNull();
+  });
+});
+
+describe("marketsTracked (L2-64 header count)", () => {
+  const base = {
+    event: { key: "k", domain: "golf", name: "T", status: "live" as const },
+    primary: { kind: "winner_field" as const, label: "Winner", competitors: [], evolution_market_id: 5 },
+    sections: [{ type: "winner", label: "Winner", market_ids: [1, 2] }],
+    children: [{ market_id: 2 }, { market_id: 9 }],
+    movers: [],
+  };
+  test("unions section + child + evolution market ids (distinct)", () => {
+    // {1,2} ∪ {2,9} ∪ {5} = {1,2,5,9}
+    expect(marketsTracked(base)).toBe(4);
+  });
+  test("no evolution / no sections is safe", () => {
+    expect(
+      marketsTracked({
+        ...base,
+        primary: { ...base.primary, evolution_market_id: null },
+        sections: [],
+        children: [],
+      }),
+    ).toBe(0);
+  });
+});
+
+describe("competitorMovement", () => {
+  test("reads golf movement_24h fraction", () => {
+    expect(competitorMovement({ name: "A", probability: 0.2, movement_24h: 0.03 })).toBeCloseTo(0.03);
+  });
+  test("reads generic probability_change_24h", () => {
+    expect(
+      competitorMovement({ name: "A", probability: 0.2, probability_change_24h: -0.05 }),
+    ).toBeCloseTo(-0.05);
+  });
+  test("normalizes an abs>1 points value to a fraction", () => {
+    expect(competitorMovement({ name: "A", probability: 0.2, movement_24h: 3.2 })).toBeCloseTo(0.032);
+  });
+  test("null when absent", () => {
+    expect(competitorMovement({ name: "A", probability: 0.2 })).toBeNull();
+  });
+});
+
+describe("formatMovement", () => {
+  test("signs and points", () => {
+    expect(formatMovement(0.032)).toEqual({ text: "+3.2", dir: "up" });
+    expect(formatMovement(-0.01)).toEqual({ text: "−1.0", dir: "down" });
+  });
+  test("omits negligible / null", () => {
+    expect(formatMovement(0)).toBeNull();
+    expect(formatMovement(0.0001)).toBeNull();
+    expect(formatMovement(null)).toBeNull();
+  });
+});
+
+describe("seriesForName", () => {
+  const outcomes = [
+    {
+      outcome_id: 1,
+      name: "Scottie Scheffler",
+      history: [
+        { timestamp: "2026-07-01T00:00:00Z", probability: 0.2, american_odds: null, bookmaker: "" },
+        { timestamp: "2026-07-02T00:00:00Z", probability: null, american_odds: null, bookmaker: "" },
+        { timestamp: "2026-07-03T00:00:00Z", probability: 0.24, american_odds: null, bookmaker: "" },
+      ],
+    },
+  ];
+  test("returns the time-ordered series with nulls dropped, name-insensitive", () => {
+    expect(seriesForName(outcomes, "scottie scheffler ")).toEqual([0.2, 0.24]);
+  });
+  test("empty when no match or no data", () => {
+    expect(seriesForName(outcomes, "Rory McIlroy")).toEqual([]);
+    expect(seriesForName(undefined, "x")).toEqual([]);
   });
 });
