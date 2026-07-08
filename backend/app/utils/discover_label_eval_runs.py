@@ -25,6 +25,11 @@ SCALAR_METRIC_KEYS = [
     "tapworthy_recall_at_k",
 ]
 
+# #142/RANK-2: minimum labels a stratum needs before its per-stratum metrics are
+# trustworthy. Strata below the gate are "thin" and should be routed to Alex's
+# on-demand grading batches. Matches the ranking-audit 50-label gate.
+LABEL_STRATUM_GATE = 50
+
 
 async def snapshot_discover_label_eval_run(
     db: AsyncSession,
@@ -48,6 +53,7 @@ async def snapshot_discover_label_eval_run(
     )
     metric_summary = evaluate_gold_set(rows, top_k=top_k)
     category_breakdowns = build_category_breakdowns(rows)
+    stratum_coverage = build_stratum_coverage(rows)
     previous = await load_previous_run(
         db,
         top_k=top_k,
@@ -69,7 +75,11 @@ async def snapshot_discover_label_eval_run(
         metric_summary=metric_summary,
         category_breakdowns=category_breakdowns,
         notable_regressions=notable_regressions,
-        eval_metadata={"days": days, "limit": limit},
+        eval_metadata={
+            "days": days,
+            "limit": limit,
+            "stratum_coverage": stratum_coverage,
+        },
         **scalar_metric_values(metric_summary, top_k=top_k),
     )
     db.add(run)
@@ -146,6 +156,47 @@ def build_category_breakdowns(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "fixable_interest": metrics["fixable_interest"],
         }
     return dict(sorted(breakdowns.items()))
+
+
+def build_stratum_coverage(
+    rows: list[dict[str, Any]],
+    *,
+    gate: int = LABEL_STRATUM_GATE,
+    stratum_key: str = "category",
+) -> dict[str, Any]:
+    """Labels-per-stratum vs the gate, so thin strata are visible (#142/RANK-2).
+
+    Grading batches are routed per category; a stratum below ``gate`` labels
+    can't support trustworthy per-stratum metrics and should be prioritized for
+    Alex's next on-demand grading batch.
+    """
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        stratum = str(row.get(stratum_key) or "unknown")
+        counts[stratum] = counts.get(stratum, 0) + 1
+
+    strata = {
+        stratum: {
+            "label_count": count,
+            "meets_gate": count >= gate,
+            "deficit": max(0, gate - count),
+        }
+        for stratum, count in sorted(counts.items())
+    }
+    thin = sorted(
+        (s for s, info in strata.items() if not info["meets_gate"]),
+        key=lambda s: strata[s]["label_count"],
+    )
+    return {
+        "stratum_key": stratum_key,
+        "gate": gate,
+        "total_labels": len(rows),
+        "stratum_count": len(strata),
+        "strata_meeting_gate": sum(1 for info in strata.values() if info["meets_gate"]),
+        "thin_strata": thin,
+        "strata": strata,
+    }
 
 
 async def load_previous_run(
@@ -247,11 +298,19 @@ def serialize_eval_run(run: DiscoverLabelEvalRun, *, include_details: bool = Fal
         **{key: getattr(run, key) for key in SCALAR_METRIC_KEYS},
         "notable_regressions": run.notable_regressions or [],
     }
+    # Always surface a thin-strata summary so gaps are visible in the runs list,
+    # not just the detail view (#142/RANK-2).
+    stratum_coverage = (run.eval_metadata or {}).get("stratum_coverage")
+    if isinstance(stratum_coverage, dict):
+        payload["thin_strata"] = stratum_coverage.get("thin_strata", [])
+        payload["strata_meeting_gate"] = stratum_coverage.get("strata_meeting_gate")
+        payload["label_stratum_gate"] = stratum_coverage.get("gate")
     if include_details:
         payload.update(
             {
                 "metric_summary": run.metric_summary or {},
                 "category_breakdowns": run.category_breakdowns or {},
+                "stratum_coverage": stratum_coverage or {},
                 "metadata": run.eval_metadata or {},
                 "error": run.error,
             }

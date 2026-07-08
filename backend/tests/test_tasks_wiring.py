@@ -231,6 +231,8 @@ class TestBeatScheduleCompleteness:
         "generate-discover-comparison-candidates",
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",
+        "snapshot-discover-label-eval-run-daily",
+        "snapshot-discover-candidate-pool-daily",
         "import-external-curator-ground-truth-daily",
         "check-ground-truth-health-daily",
         "capture-featured-markets-daily",

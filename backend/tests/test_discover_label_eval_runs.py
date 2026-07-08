@@ -2,10 +2,29 @@ from types import SimpleNamespace
 
 from app.utils.discover_label_eval_runs import (
     build_category_breakdowns,
+    build_stratum_coverage,
     detect_regressions,
     judgment_to_eval_row,
     scalar_metric_values,
 )
+
+
+def test_build_stratum_coverage_flags_thin_strata():
+    rows = (
+        [{"category": "politics"}] * 60
+        + [{"category": "weather"}] * 5
+        + [{"category": "tech"}] * 50
+        + [{}] * 3
+    )
+    coverage = build_stratum_coverage(rows)
+    assert coverage["gate"] == 50
+    assert coverage["total_labels"] == 118
+    assert coverage["strata_meeting_gate"] == 2  # politics(60), tech(50)
+    assert coverage["strata"]["tech"]["meets_gate"] is True  # gate is inclusive
+    assert coverage["strata"]["weather"]["meets_gate"] is False
+    assert coverage["strata"]["weather"]["deficit"] == 45
+    # thin strata sorted by ascending label count (unknown=3 before weather=5)
+    assert coverage["thin_strata"] == ["unknown", "weather"]
 
 
 def test_judgment_to_eval_row_flattens_metadata_and_fixable_interest():

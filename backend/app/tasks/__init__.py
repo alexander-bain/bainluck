@@ -865,6 +865,29 @@ def snapshot_discover_label_eval_run(
     return _tracked_run("discover_label_eval_snapshot", _snapshot())
 
 
+@celery_app.task(bind=True, name="app.tasks.snapshot_discover_candidate_pool")
+def snapshot_discover_candidate_pool(
+    self,
+    limit: int = 300,
+    retention_days: int = 30,
+):
+    """Persist the pre-ranking Discover candidate pool for offline replay (#142)."""
+    from app.services.database import async_session_maker
+    from app.utils.discover_candidate_snapshot import (
+        snapshot_discover_candidate_pool as _snapshot_candidate_pool,
+    )
+
+    async def _snapshot():
+        async with async_session_maker() as db:
+            return await _snapshot_candidate_pool(
+                db,
+                limit=limit,
+                retention_days=retention_days,
+            )
+
+    return _tracked_run("discover_candidate_snapshot", _snapshot())
+
+
 @celery_app.task(bind=True, name="app.tasks.import_external_curator_ground_truth")
 def import_external_curator_ground_truth(self):
     """Persist configured reviewed external-curator/social ground truth."""
@@ -1806,6 +1829,21 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.snapshot_discover_ground_truth_diagnostics",
         "schedule": crontab(minute=50, hour=9),
         "kwargs": {"limit": 50},
+        "options": {"queue": "background"},
+    },
+    # #142/RANK-2: human-label gold-set eval, snapshotted daily so tapworthy@20 /
+    # boring@20 / love-recall trend over time and thin strata surface.
+    "snapshot-discover-label-eval-run-daily": {
+        "task": "app.tasks.snapshot_discover_label_eval_run",
+        "schedule": crontab(minute=55, hour=9),
+        "options": {"queue": "background"},
+    },
+    # #142/RANK-2: pre-ranking candidate-pool snapshot for the offline replay
+    # harness (per-candidate features + served rank + score anatomy).
+    "snapshot-discover-candidate-pool-daily": {
+        "task": "app.tasks.snapshot_discover_candidate_pool",
+        "schedule": crontab(minute=5, hour=10),
+        "kwargs": {"limit": 300, "retention_days": 30},
         "options": {"queue": "background"},
     },
     "import-external-curator-ground-truth-daily": {

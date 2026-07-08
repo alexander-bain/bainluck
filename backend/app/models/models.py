@@ -1235,6 +1235,53 @@ class DiscoverGroundTruthDiagnostic(Base):
     )
 
 
+class DiscoverCandidateSnapshot(Base):
+    """Daily snapshot of the pre-ranking Discover candidate pool (#142/RANK-2).
+
+    One row per scored futures candidate per run. Persists the served rank plus
+    the per-candidate interestingness features and RANK-1 score anatomy so the
+    offline replay runner can re-rank a frozen pool under a different config and
+    diff top-K vs (i) the served ordering, (ii) the human-label gold set, and
+    (iii) classifier metrics. Bounded per run and purged after ~30 days.
+    """
+
+    __tablename__ = "discover_candidate_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    market_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    item_type: Mapped[str] = mapped_column(String(20), nullable=False, default="futures")
+    served_rank: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(500))
+    category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    source: Mapped[Optional[str]] = mapped_column(String(50))
+    quality_class: Mapped[Optional[str]] = mapped_column(String(40))
+    family_key: Mapped[Optional[str]] = mapped_column(String(300))
+    story_key: Mapped[Optional[str]] = mapped_column(String(300))
+    # served ordering value (post interestingness blend, uncapped float — #141)
+    rank_score: Mapped[Optional[float]] = mapped_column(Float)
+    # served capped display score
+    display_score: Mapped[Optional[int]] = mapped_column(Integer)
+    # anonymous pre-blend uncapped ranking score (from the tracer) — the base the
+    # replay runner re-blends a different interestingness weight/blend against
+    pre_blend_rank_score: Mapped[Optional[float]] = mapped_column(Float)
+    # category base term, so replay can apply a base-score override cleanly
+    category_base: Mapped[Optional[float]] = mapped_column(Float)
+    interestingness_score: Mapped[Optional[float]] = mapped_column(Float)
+    # MarketInterestingnessInputs source dict (for recomputing under new weights)
+    features: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # full RANK-1 score_anatomy for explainability
+    anatomy: Mapped[Optional[dict]] = mapped_column(JSONB)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index("ix_discover_candidate_snap_run", "run_id", "served_rank"),
+        Index("ix_discover_candidate_snap_captured", "captured_at", "market_id"),
+    )
+
+
 class ExternalCuratorGroundTruthItem(Base):
     """Reviewed external-curator/social ground-truth rows for Discover audits."""
 

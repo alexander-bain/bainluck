@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from pydantic import BaseModel, Field
 
-from sqlalchemy import select, update, and_, text, func
+from sqlalchemy import select, update, and_, case, text, func
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -117,6 +117,113 @@ async def list_discover_label_eval_trends(
                     deltas[key] = round(float(current) - float(old), 6)
         run["deltas"] = deltas
     return {"runs": runs}
+
+
+# Position-normalized engagement (#142/RANK-2). Raw open/dismiss/like counts are
+# confounded by feed position — cards near the top get more of every action. The
+# only honest comparison is rate-per-rank-bucket: action count / impressions at
+# the same rank. rank is stored on every interaction row (feed.py:347).
+_ENGAGEMENT_RANK_BUCKETS = ["01-03", "04-06", "07-10", "11-20", "21-50", "51+"]
+_OPEN_ACTIONS = ("open", "detail_click")
+_LIKE_ACTIONS = ("like",)
+_DISMISS_ACTIONS = ("dismiss",)
+
+
+def _rank_bucket_case():
+    rank = DiscoverInteraction.rank
+    return case(
+        (rank <= 3, "01-03"),
+        (rank <= 6, "04-06"),
+        (rank <= 10, "07-10"),
+        (rank <= 20, "11-20"),
+        (rank <= 50, "21-50"),
+        else_="51+",
+    )
+
+
+async def _rank_bucketed_engagement(
+    db: AsyncSession,
+    *,
+    days: int,
+    surface: Optional[str],
+) -> list[dict[str, Any]]:
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    bucket = _rank_bucket_case().label("bucket")
+    filters = [
+        DiscoverInteraction.created_at >= since,
+        DiscoverInteraction.rank.isnot(None),
+    ]
+    if surface:
+        filters.append(DiscoverInteraction.surface == surface)
+    result = await db.execute(
+        select(
+            bucket,
+            func.count()
+            .filter(DiscoverInteraction.action == "impression")
+            .label("impressions"),
+            func.count()
+            .filter(DiscoverInteraction.action.in_(_OPEN_ACTIONS))
+            .label("opens"),
+            func.count()
+            .filter(DiscoverInteraction.action.in_(_DISMISS_ACTIONS))
+            .label("dismisses"),
+            func.count()
+            .filter(DiscoverInteraction.action.in_(_LIKE_ACTIONS))
+            .label("likes"),
+        )
+        .where(and_(*filters))
+        .group_by(bucket)
+    )
+    by_bucket = {row.bucket: row for row in result.all()}
+    rows = []
+    for label in _ENGAGEMENT_RANK_BUCKETS:
+        row = by_bucket.get(label)
+        impressions = int(row.impressions) if row else 0
+        opens = int(row.opens) if row else 0
+        dismisses = int(row.dismisses) if row else 0
+        likes = int(row.likes) if row else 0
+        rows.append(
+            {
+                "rank_bucket": label,
+                "impressions": impressions,
+                "opens": opens,
+                "dismisses": dismisses,
+                "likes": likes,
+                "open_rate": round(opens / impressions, 4) if impressions else None,
+                "dismiss_rate": round(dismisses / impressions, 4) if impressions else None,
+                "like_rate": round(likes / impressions, 4) if impressions else None,
+            }
+        )
+    return rows
+
+
+@router.get("/discover-engagement/rank-buckets")
+async def discover_engagement_rank_buckets(
+    request: Request, secret: str = Query(None),
+    surface: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Position-normalized open/dismiss/like rates by rank bucket (7d + 30d).
+
+    Rates are action-count / impressions within the same rank bucket, so they can
+    be compared across positions (raw counts cannot — they track position, not
+    quality). No modeling here; just honest rank-bucketed tables (#142/RANK-2).
+    """
+    _check_admin_secret(secret, request=request)
+    windows = {}
+    for label, days in (("7d", 7), ("30d", 30)):
+        windows[label] = await _rank_bucketed_engagement(
+            db, days=days, surface=surface
+        )
+    return {
+        "surface": surface or "all",
+        "rank_buckets": _ENGAGEMENT_RANK_BUCKETS,
+        "note": (
+            "Rates are per-rank-bucket (action/impressions at the same rank). "
+            "Raw counts are position-confounded and not comparable across ranks."
+        ),
+        "windows": windows,
+    }
 
 
 @router.get("/discover-label-eval/runs/{run_id}")
