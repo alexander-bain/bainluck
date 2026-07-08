@@ -53,7 +53,12 @@ export default function EventConceptPage() {
   const { data, error, isLoading } = useSWR(
     decodedKey ? ["event-concept", decodedKey] : null,
     () => fetchEventConcept(decodedKey),
-    { revalidateOnFocus: false },
+    {
+      revalidateOnFocus: false,
+      // L2-66 freshness-as-a-feature: during live play, refetch at in-play cadence
+      // (~45s) so the fused leaderboard + "as of" chip stay honestly fresh.
+      refreshInterval: (latest) => (latest?.event?.status === "live" ? 45000 : 0),
+    },
   );
 
   // Shared history for per-row sparklines — one fetch over the evolution market
@@ -132,6 +137,7 @@ export default function EventConceptPage() {
           historyOutcomes={sparkData?.outcomes}
           showSparkline={SHOW_SPARKLINE}
           live={isLive}
+          asOf={event.as_of}
         />
       )}
 

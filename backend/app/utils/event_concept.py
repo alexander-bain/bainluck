@@ -28,6 +28,7 @@ Envelope shape (domain-agnostic — every adapter returns this):
 
 from __future__ import annotations
 
+import re
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,13 +84,53 @@ def registered_domains() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _golf_status(tournament: dict) -> str:
-    """Normalize golf's schedule_status into upcoming/live/settled."""
-    raw = (tournament.get("schedule_status") or "").lower()
+    """Normalize golf's schedule_status into upcoming/live/settled.
+
+    L2-66: DataGolf's schedule reports "in-progress" (HYPHEN) while this only
+    matched "in_progress" (underscore) — so a live tournament never flipped the
+    event page into LIVE mode. Normalize hyphens→underscores so both forms work.
+    """
+    raw = (tournament.get("schedule_status") or "").lower().replace("-", "_")
     if raw in ("in_progress", "live", "active"):
         return "live"
     if raw in ("completed", "closed", "resolved", "final", "settled"):
         return "settled"
     return "upcoming"
+
+
+def _norm_player_name(s: str | None) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def fuse_golf_live(
+    competitors: list[dict],
+    leaderboard: list[dict] | None,
+    updated_at: str | None,
+) -> str | None:
+    """Fuse the stored DataGolf live leaderboard (position / score-to-par / thru /
+    round) into golf competitors, matched by name (dg_id isn't carried on the
+    winner-field golfers). Mutates `competitors` in place; returns the `as_of`
+    timestamp for the freshness chip. Competitors without a leaderboard match keep
+    their probability-only shape (graceful — never fabricate a position/thru).
+
+    Pure (no DB / no network) so it's unit-tested and safe on the request path;
+    the caller reads the STORED leaderboard, never re-polling DataGolf. L2-66.
+    """
+    by_name = {
+        _norm_player_name(e.get("name")): e
+        for e in (leaderboard or [])
+        if e.get("name")
+    }
+    for c in competitors:
+        entry = by_name.get(_norm_player_name(c.get("name")))
+        if not entry:
+            continue
+        c["position"] = entry.get("position")
+        c["score_to_par"] = entry.get("total_score")
+        c["today_score"] = entry.get("today_score")
+        c["thru"] = entry.get("thru")
+        c["current_round"] = entry.get("current_round")
+    return updated_at
 
 
 def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
@@ -109,6 +150,9 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             "venue": t.get("venue"),
             "location": t.get("location"),
             "is_major": bool(t.get("is_major", False)),
+            # L2-66: freshness stamp for the live leaderboard; set by build_event
+            # when live data is fused (None otherwise).
+            "as_of": None,
         },
         "primary": {
             "kind": "winner_field",  # golf is always a winner-field (leaderboard)
@@ -138,7 +182,41 @@ class GolfEventAdapter:
                 return None
             raise
         key = f"event:golf:{slug}"
-        return golf_detail_to_envelope(key, slug, data)
+        envelope = golf_detail_to_envelope(key, slug, data)
+
+        # L2-66 fused live leaderboard: when the tournament is live, merge the
+        # STORED DataGolf leaderboard (position/score/thru/round) into competitors
+        # and stamp `as_of` for the freshness chip. Read-only DB (PK lookup on the
+        # win market) — NEVER re-poll DataGolf on the /api/event request path.
+        if envelope["event"]["status"] == "live":
+            evo_id = data.get("evolution_market_id")
+            if evo_id:
+                try:
+                    from sqlalchemy import select
+                    from app.models import FuturesMarket
+
+                    meta = (
+                        await db.execute(
+                            select(FuturesMarket.market_metadata).where(
+                                FuturesMarket.id == evo_id
+                            )
+                        )
+                    ).scalar_one_or_none() or {}
+                    leaderboard = meta.get("leaderboard") or []
+                    if leaderboard:
+                        as_of = fuse_golf_live(
+                            envelope["primary"]["competitors"],
+                            leaderboard,
+                            meta.get("leaderboard_updated_at"),
+                        )
+                        envelope["event"]["as_of"] = as_of
+                        envelope["event"]["live_mode"] = "golf_leaderboard"
+                except Exception:
+                    # Live fusion is best-effort — a failure must not 500 the page;
+                    # it just renders probability-only (honest degrade).
+                    pass
+
+        return envelope
 
 
 register_adapter(GolfEventAdapter())

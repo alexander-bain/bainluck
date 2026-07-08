@@ -1716,6 +1716,12 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
+  // L2-66 golf live-mode fields (present only when the tournament is in play):
+  position?: string | null;      // leaderboard position, e.g. "T3"
+  score_to_par?: number | null;  // total score to par (negative = under)
+  today_score?: number | null;
+  thru?: string | null;          // holes played this round, "F" = finished
+  current_round?: number | null;
   [k: string]: unknown;
 }
 
@@ -1748,6 +1754,9 @@ export interface EventConceptResponse {
     venue?: string | null;
     location?: string | null;
     is_major?: boolean;
+    // L2-66: freshness stamp for live-mode (ISO); null unless live data was fused.
+    as_of?: string | null;
+    live_mode?: string | null; // e.g. "golf_leaderboard"
   };
   primary: {
     kind: "winner_field" | "co_equal_list";

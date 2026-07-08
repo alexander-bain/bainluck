@@ -509,6 +509,9 @@ async def _poll_datagolf_live() -> dict:
                         market.market_metadata = {
                             **(market.market_metadata or {}),
                             "leaderboard": leaderboard,
+                            # L2-66: honest freshness stamp for the event-page live
+                            # leaderboard "as of Xs ago" chip / stale detection.
+                            "leaderboard_updated_at": now.isoformat(),
                         }
 
                         # Update outcomes + write snapshots.
@@ -630,6 +633,17 @@ async def _poll_datagolf_live() -> dict:
 
     finally:
         await service.close()
+
+    # L2-66 in-play cadence: when a tournament is live, shorten the 5-min piggyback
+    # gate (set in poll_all_odds) to ~75s so the next realtime tick re-polls
+    # DataGolf — the freshness bar wants sub-minute-feeling during play. Off-play
+    # the default 5-min gate stands. Kept here (not the shared beat in __init__)
+    # deliberately; effective cadence is bounded by the poll_all_odds tick rate.
+    try:
+        if stats.get("live_events", 0) > 0:
+            get_redis_client().set("bainluck:datagolf_live_gate", "1", ex=75)
+    except Exception:
+        pass
 
     logger.info("DataGolf live poll complete: %s", stats)
     return stats

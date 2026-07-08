@@ -5,6 +5,7 @@ from app.utils.event_concept import (
     golf_detail_to_envelope,
     get_adapter,
     registered_domains,
+    fuse_golf_live,
 )
 
 
@@ -78,9 +79,57 @@ class TestGolfEnvelope:
             f = _golf_fixture(); f["tournament"]["schedule_status"] = raw
             return golf_detail_to_envelope("k", "s", f)["event"]["status"]
         assert status("in_progress") == "live"
+        # L2-66: DataGolf reports the HYPHEN form — must also map to live.
+        assert status("in-progress") == "live"
         assert status("upcoming") == "upcoming"
         assert status("") == "upcoming"
         assert status("resolved") == "settled"
+
+    def test_envelope_carries_as_of_slot(self):
+        # L2-66: the freshness slot always exists (None until live fusion sets it).
+        env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
+        assert env["event"]["as_of"] is None
+
+
+class TestFuseGolfLive:
+    """L2-66: fuse stored DataGolf leaderboard into competitors by name."""
+
+    def _leaderboard(self):
+        return [
+            {"name": "Scottie Scheffler", "position": "T1", "total_score": -7,
+             "today_score": -3, "thru": "12", "current_round": 3},
+            {"name": "Rory McIlroy", "position": "T3", "total_score": -5,
+             "today_score": -1, "thru": "F", "current_round": 3},
+        ]
+
+    def test_merges_live_fields_by_name(self):
+        comps = [
+            {"name": "Scottie Scheffler", "probability": 0.30},
+            {"name": "Rory McIlroy", "probability": 0.18},
+        ]
+        as_of = fuse_golf_live(comps, self._leaderboard(), "2026-07-09T15:00:00+00:00")
+        assert as_of == "2026-07-09T15:00:00+00:00"
+        assert comps[0]["position"] == "T1"
+        assert comps[0]["score_to_par"] == -7
+        assert comps[0]["thru"] == "12"
+        assert comps[0]["current_round"] == 3
+        assert comps[1]["thru"] == "F"
+
+    def test_name_match_is_case_and_space_insensitive(self):
+        comps = [{"name": "  scottie   scheffler ", "probability": 0.3}]
+        fuse_golf_live(comps, self._leaderboard(), None)
+        assert comps[0]["position"] == "T1"
+
+    def test_unmatched_competitor_is_left_probability_only(self):
+        comps = [{"name": "Ludvig Aberg", "probability": 0.09}]
+        fuse_golf_live(comps, self._leaderboard(), None)
+        assert "position" not in comps[0]  # never fabricate live state
+        assert comps[0]["probability"] == 0.09
+
+    def test_empty_leaderboard_safe(self):
+        comps = [{"name": "X", "probability": 0.1}]
+        assert fuse_golf_live(comps, [], "t") == "t"
+        assert fuse_golf_live(comps, None, None) is None
 
     def test_key_defaults_when_bare(self):
         env = golf_detail_to_envelope("the-masters", "the-masters", _golf_fixture())
