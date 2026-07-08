@@ -1525,6 +1525,10 @@ export interface CalibrationData {
   mce_closing_line: number | null;
   mce_opening_price: number | null;
   liquidity_filter?: CalibrationLiquidityFilter | null;
+  // #997: minimum resolved-outcome count for a chartable sub-category, set
+  // server-side (Redis-tunable) so web + native gate on the same bar.
+  min_category_outcomes?: number;
+  small_sample_categories?: { category: string; outcomes: number }[];
   generated_at: string;
 }
 

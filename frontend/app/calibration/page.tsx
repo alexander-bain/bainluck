@@ -201,6 +201,11 @@ export default function CalibrationPage() {
     );
   }, [normalized]);
 
+  // #997: minimum-sample bar comes from the API (Redis-tunable) so web + native
+  // gate on the same threshold. Fall back to 1000 if an older cached payload or
+  // the in-request fallback omits it — never regress to the noisy 100 floor.
+  const minCategoryOutcomes = data?.min_category_outcomes ?? 1000;
+
   const categories = useMemo(() => {
     if (!normalized) return [];
     const catMap: Record<string, number> = {};
@@ -208,11 +213,11 @@ export default function CalibrationPage() {
       catMap[b.category] = (catMap[b.category] || 0) + b.n;
     }
     return Object.entries(catMap)
-      .filter(([, n]) => n >= 100)
+      .filter(([, n]) => n >= minCategoryOutcomes)
       .sort(([, a], [, b]) => b - a)
       .map(([cat]) => cat)
       .slice(0, 15);
-  }, [normalized]);
+  }, [normalized, minCategoryOutcomes]);
 
   // Per-source metrics for the comparison section
   const sourceMetrics = useMemo(() => {
@@ -558,7 +563,7 @@ export default function CalibrationPage() {
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown</h2>
         <p className="text-xs text-text-muted mb-4">
-          Calibration metrics by market category. Categories with fewer than 100 resolved outcomes are excluded.
+          Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

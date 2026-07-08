@@ -31,6 +31,31 @@ _HORIZONS = [
 
 _MIN_OUTCOMES_PER_HORIZON = 50
 
+# #997 App Store ship-gate: a per-category / per-sport reliability chart below
+# this many resolved outcomes is statistical noise (a handful of resolutions
+# swings MCE by tens of points), not a calibration signal. The gate is enforced
+# server-side so web AND future native both inherit it — the published
+# by_category / by_sport lists are pre-filtered, and the threshold itself is
+# shipped in the payload so clients don't hardcode their own bar. Tunable at
+# runtime via the Redis key ``calibration:min_category_outcomes`` (no deploy).
+_DEFAULT_MIN_CATEGORY_OUTCOMES = 1000
+
+
+def _get_min_category_outcomes(rc) -> int:
+    """Redis-tunable minimum resolved-outcome count for a chartable sub-category.
+
+    Falls back to _DEFAULT_MIN_CATEGORY_OUTCOMES on any miss/parse error so the
+    gate can never silently disable itself (a malformed key must not open the
+    thin-sample floodgates)."""
+    try:
+        raw = rc.get("calibration:min_category_outcomes") if rc is not None else None
+        if raw is None:
+            return _DEFAULT_MIN_CATEGORY_OUTCOMES
+        val = int(raw)
+        return val if val >= 0 else _DEFAULT_MIN_CATEGORY_OUTCOMES
+    except Exception:
+        return _DEFAULT_MIN_CATEGORY_OUTCOMES
+
 
 # ---------------------------------------------------------------------------
 # #940 phase-1: published-calibration liquidity filter (Kalshi-first).
@@ -619,10 +644,21 @@ async def _precompute_calibration_main():
         cat_agg[cat][idx]["sum_prob"] += b["sum_prob"]
         cat_outcomes[cat] += b["n"]
 
+    # #997: minimum-sample gate — a sub-category chart below this many resolved
+    # outcomes is noise. Enforced here (server-side) so web + native inherit it.
+    _min_cat_outcomes = _get_min_category_outcomes(get_redis_client())
+
     by_category = []
+    small_sample_categories = []
     for cat, buckets_by_idx in sorted(cat_agg.items()):
         total_n = cat_outcomes[cat]
         if total_n == 0:
+            continue
+        if total_n < _min_cat_outcomes:
+            # Below the bar: excluded from the published chart list, but
+            # recorded (with its count) so the exclusion is transparent, never
+            # silent. It still counts toward the overall/per-source curves.
+            small_sample_categories.append({"category": cat, "outcomes": total_n})
             continue
         cat_mce = _compute_horizon_mce([
             {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
@@ -630,6 +666,7 @@ async def _precompute_calibration_main():
         ])
         by_category.append({"category": cat, "mce": cat_mce, "outcomes": total_n})
     by_category.sort(key=lambda x: x["outcomes"], reverse=True)
+    small_sample_categories.sort(key=lambda x: x["outcomes"], reverse=True)
 
     # Per-source MCE breakdown
     src_agg: dict[str, dict[int, dict]] = {}
@@ -687,6 +724,10 @@ async def _precompute_calibration_main():
             sn = sport_outcomes[sport]
             if sn == 0:
                 continue
+            # #997: same minimum-sample gate as by_category — a per-sport
+            # spread/total chart below the bar is thin-sample noise.
+            if sn < _min_cat_outcomes:
+                continue
             sport_mce = _compute_horizon_mce([
                 {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
                 for v in buckets_by_idx.values()
@@ -728,6 +769,13 @@ async def _precompute_calibration_main():
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        # #997 App Store ship-gate: the minimum resolved-outcome count for a
+        # chartable sub-category. Shipped so web + native gate on the SAME bar
+        # instead of hardcoding their own; by_category / by_sport above are
+        # already filtered to it. small_sample_categories lists what was gated
+        # out (with counts) so the exclusion is transparent.
+        "min_category_outcomes": _min_cat_outcomes,
+        "small_sample_categories": small_sample_categories,
         "spreads_summary": spreads_summary,
         "totals_summary": totals_summary,
         "total_markets": total_markets,
