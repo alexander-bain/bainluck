@@ -1845,9 +1845,21 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                     WHERE fm.source = 'kalshi'
                       AND fm.status = 'resolved'
                       AND fm.external_id ~ '^KX'
-                      AND (fo.calibration_probability IS NULL
-                           OR fo.calibration_probability = fo.opening_probability)
-                      AND fo.opening_probability IS NOT NULL
+                      AND (
+                          -- original: has an opening but missing/unmoved cal price
+                          (fo.opening_probability IS NOT NULL
+                           AND (fo.calibration_probability IS NULL
+                                OR fo.calibration_probability = fo.opening_probability))
+                          -- #138/#995 freeze-gap: resolved outcomes with NO snapshot
+                          -- and NO opening (the gap-created markets) — Phase B fills
+                          -- them by ticker regardless of opening, but the old series
+                          -- filter (opening NOT NULL) skipped their series entirely.
+                          OR (fo.calibration_probability IS NULL
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM futures_odds_snapshots fos
+                                  WHERE fos.outcome_id = fo.id
+                              ))
+                      )
                     ORDER BY 1
                 """))
             series_list = [r[0] for r in sr.fetchall()]
@@ -2661,6 +2673,306 @@ async def _backfill_from_settled_events(limit: int = 5000):
         stats["errors"].append(f"task_error: {str(e)[:200]}")
 
     return stats
+
+
+# #138/#995: the creation freeze ran 2026-06-09 → 2026-07-08 (gotcha #38, the
+# 29-day #995 freeze). Markets that opened AND settled inside it were never
+# created by the frozen open-poll, and _backfill_from_settled_events only UPDATES
+# existing markets — so ~10K settled markets (incl. Wimbledon early rounds) are
+# invisible. This targeted pass CREATES them from the settled-events API.
+from datetime import datetime as _dt, timezone as _tz
+
+_GAP_CREATE_START = _dt(2026, 6, 9, tzinfo=_tz.utc)
+
+
+async def _backfill_settled_gap_creation(
+    limit: int = 1500, deadline: float | None = None
+):
+    """Create Kalshi markets that opened+settled during the creation-freeze gap.
+
+    Iterates settled events per series (newest-first, own resumable cursor) and,
+    for any event whose close_time is in/after the freeze window AND whose
+    event_ticker has no FuturesMarket yet, creates the market + outcomes with
+    status='resolved', is_winner from the settlement `result`, last price, and
+    volume. calibration_probability + price snapshots are left for the existing
+    Phase-2 / candlestick / calibration passes, which require the market to EXIST
+    (gotcha #33).
+
+    Isolated from the budget-fragile #969 settled task on purpose. Bounded
+    (per-run creation cap `limit` + time budget), resumable (per-series cursor),
+    idempotent (ON CONFLICT DO NOTHING on the market — never disturbs an existing
+    row). gotchas #33/#34/#35/#36.
+    """
+    import asyncio
+    import time as _time
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.market_label_normalization import compute_market_tier
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {
+        "series_scanned": 0,
+        "events_seen": 0,
+        "markets_created": 0,
+        "outcomes_created": 0,
+        "skipped_pre_gap": 0,
+        "skipped_existing": 0,
+        "api_pages": 0,
+        "errors": [],
+    }
+
+    _start = _time.monotonic()
+    _MAX_SECONDS = 300  # well under any beat soft limit; resumes via cursor
+    _rc = get_redis_client()
+
+    # Discover Kalshi series (same source as the settled task).
+    async with get_task_session() as session:
+        series_rows = await session.execute(text("""
+            SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
+            FROM futures_markets
+            WHERE source = 'kalshi' AND external_id ~ '^KX'
+            ORDER BY 1
+        """))
+        all_series = [r[0] for r in series_rows.all()]
+
+    if not all_series:
+        return stats
+
+    # Rotate through series across runs with a dedicated cursor.
+    _cur_key = "bainluck:gap_create_series_cursor"
+    _pos = int(_rc.get(_cur_key) or 0) % max(len(all_series), 1)
+    rotated = all_series[_pos:] + all_series[:_pos]
+    check_list = rotated[:120]
+    _rc.setex(_cur_key, 86400 * 14, str((_pos + 120) % max(len(all_series), 1)))
+
+    service = KalshiAPIService()
+    try:
+        async with get_task_session() as session:
+            await session.execute(text("SET statement_timeout = '60s'"))
+            await session.execute(text("SET lock_timeout = '15s'"))
+
+            for series in check_list:
+                if (_time.monotonic() - _start) > _MAX_SECONDS:
+                    break
+                if stats["markets_created"] >= limit:
+                    break
+                stats["series_scanned"] += 1
+
+                _series_cur_key = f"bainluck:gap_create_cursor:{series}"
+                cursor = _rc.get(_series_cur_key)
+                if isinstance(cursor, bytes):
+                    cursor = cursor.decode()
+
+                for _page in range(50):
+                    if (_time.monotonic() - _start) > _MAX_SECONDS:
+                        break
+                    if stats["markets_created"] >= limit:
+                        break
+                    _dl = _start + _MAX_SECONDS
+                    _page_cursor = cursor
+                    try:
+                        events, cursor = await service.get_events(
+                            status="settled",
+                            series_ticker=series,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=cursor,
+                            deadline=_dl,
+                        )
+                    except Exception as api_err:
+                        if "429" in str(api_err):
+                            await asyncio.sleep(3)
+                            continue
+                        stats["errors"].append(f"{series}: {str(api_err)[:120]}")
+                        break
+                    stats["api_pages"] += 1
+                    if not events:
+                        break
+
+                    # Which event_tickers on this page already exist?
+                    page_ets = [e.get("event_ticker") for e in events if e.get("event_ticker")]
+                    existing = set()
+                    if page_ets:
+                        ex = await session.execute(text("""
+                            SELECT external_id FROM futures_markets
+                            WHERE source = 'kalshi' AND external_id = ANY(:ets)
+                        """), {"ets": page_ets})
+                        existing = {r[0] for r in ex.all()}
+
+                    _reached_old = False
+                    for event_data in events:
+                        stats["events_seen"] += 1
+                        et = event_data.get("event_ticker")
+                        if not et or et in existing:
+                            stats["skipped_existing"] += 1
+                            continue
+                        try:
+                            created = await _create_settled_market(
+                                session, service, event_data, pg_insert,
+                                FuturesMarket, FuturesOutcome, compute_market_tier,
+                                stats,
+                            )
+                            if created == "pre_gap":
+                                stats["skipped_pre_gap"] += 1
+                        except Exception as ce:
+                            stats["errors"].append(f"{et}: {str(ce)[:120]}")
+                        if stats["markets_created"] >= limit:
+                            break
+
+                    await session.commit()
+                    # Persist cursor after each committed page (resume-safe).
+                    if cursor:
+                        _rc.setex(_series_cur_key, 86400 * 7, cursor)
+                    else:
+                        _rc.delete(_series_cur_key)
+                        break
+
+        if stats["markets_created"]:
+            logger.info(
+                "Gap-creation: created %d markets / %d outcomes across %d series "
+                "(pre_gap skipped %d, existing %d)",
+                stats["markets_created"], stats["outcomes_created"],
+                stats["series_scanned"], stats["skipped_pre_gap"],
+                stats["skipped_existing"],
+            )
+    except Exception as e:
+        logger.error("Gap-creation backfill error: %s", e)
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+    finally:
+        await service.close()
+
+    return stats
+
+
+async def _create_settled_market(
+    session, service, event_data, pg_insert,
+    FuturesMarket, FuturesOutcome, compute_market_tier, stats,
+):
+    """Create one settled Kalshi event as a resolved FuturesMarket + outcomes.
+
+    Returns "created", "pre_gap" (settled before the freeze window — skipped), or
+    "skip". Idempotent: ON CONFLICT DO NOTHING on the market.
+    """
+    from app.utils.odds_math import probability_to_american
+
+    event = service._parse_event(event_data)
+    if not event or not event.markets:
+        return "skip"
+
+    # Only recover markets that settled in/after the freeze window — the gap
+    # cohort. Older settled history is out of scope (and largely already present).
+    close_times = [m.close_time for m in event.markets if m.close_time]
+    max_close = max(close_times) if close_times else None
+    if max_close is None or max_close < _GAP_CREATE_START:
+        return "pre_gap"
+
+    category = _kalshi_category_to_internal(event.category)
+    sport_category = _categorize_kalshi_market(
+        event.title, event.category, event.event_ticker
+    )
+    if sport_category == "crypto" or category == "crypto":
+        return "skip"
+
+    game_sport = _is_kalshi_game_ticker(event.event_ticker)
+    if game_sport and len(event.markets) >= 1:
+        m0 = event.markets[0]
+        market_name = _build_game_market_name(
+            event_title=event.title,
+            event_ticker=event.event_ticker,
+            market_title=m0.title,
+            yes_sub_title=m0.yes_sub_title,
+            no_sub_title=m0.no_sub_title,
+            sport_label=game_sport,
+        )
+    else:
+        market_name = event.title
+
+    commence_time = min(close_times) if close_times else None
+    exp_times = [m.expiration_time for m in event.markets if m.expiration_time]
+    resolution_date = max(exp_times) if exp_times else max_close
+
+    try:
+        market_tier = compute_market_tier(
+            market_name, category, sport_category=sport_category
+        )
+    except Exception:
+        market_tier = None
+
+    total_volume = sum(m.volume or 0 for m in event.markets) or None
+    metadata = {"kalshi_event_ticker": event.event_ticker, "gap_created": True}
+    if event.title:
+        metadata["event_title"] = event.title
+
+    market_stmt = (
+        pg_insert(FuturesMarket)
+        .values(
+            source="kalshi",
+            external_id=event.event_ticker,
+            name=market_name[:300],
+            category=category,
+            llm_sport_category=sport_category,
+            market_tier=market_tier,
+            mutually_exclusive=event.mutually_exclusive,
+            commence_time=commence_time,
+            resolution_date=resolution_date,
+            status="resolved",
+            group_id=f"kalshi:{event.event_ticker}",
+            volume=total_volume,
+            market_metadata=metadata,
+        )
+        .on_conflict_do_nothing(index_elements=["source", "external_id"])
+        .returning(FuturesMarket.id)
+    )
+    res = await session.execute(market_stmt)
+    market_id = res.scalar_one_or_none()
+    if market_id is None:
+        # Lost a race with the poll — the market now exists; leave it alone.
+        return "skip"
+    stats["markets_created"] += 1
+
+    single = len(event.markets) == 1
+    for m in event.markets:
+        if single:
+            outcome_name = "Yes"
+        else:
+            sub = m.yes_sub_title
+            if sub and not _is_generic_outcome_name(sub):
+                outcome_name = sub
+            elif m.subtitle and not _is_generic_outcome_name(m.subtitle):
+                outcome_name = m.subtitle
+            elif m.title and m.title != event.title:
+                outcome_name = m.title
+            else:
+                outcome_name = m.ticker
+        prob = m.last_price if (m.last_price and 0 < m.last_price < 1) else None
+        american = probability_to_american(prob) if prob else None
+        is_winner = m.result == "yes"
+        out_stmt = (
+            pg_insert(FuturesOutcome)
+            .values(
+                market_id=market_id,
+                external_id=m.ticker,
+                name=(outcome_name or m.ticker)[:300],
+                current_probability=prob,
+                current_american_odds=american,
+                is_winner=is_winner,
+                resolution_source="api_settlement" if m.result else None,
+                volume=int(m.volume) if m.volume is not None else None,
+            )
+            .on_conflict_do_update(
+                index_elements=["market_id", "external_id"],
+                set_={
+                    "is_winner": is_winner,
+                    "resolution_source": "api_settlement" if m.result else None,
+                    "last_updated": func.now(),
+                },
+            )
+        )
+        await session.execute(out_stmt)
+        stats["outcomes_created"] += 1
+
+    return "created"
 
 
 async def _backfill_kalshi_price_history(

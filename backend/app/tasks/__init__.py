@@ -387,6 +387,15 @@ def backfill_kalshi_settled(self, limit: int = 5000):
     return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=420, time_limit=480, name="app.tasks.backfill_settled_gap_creation")
+def backfill_settled_gap_creation(self, limit: int = 1500):
+    """#138/#995: create Kalshi markets that opened+settled during the 2026-06-09→
+    07-08 creation freeze (gotcha #38) — invisible to the open-poll and only
+    UPDATEd (never created) by backfill_kalshi_settled. Bounded + resumable."""
+    from app.tasks.kalshi import _backfill_settled_gap_creation
+    return _tracked_run("kalshi_gap_creation", _backfill_settled_gap_creation(limit))
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.recover_datagolf_participation")
 def recover_datagolf_participation(self, limit: int = 150):
     """#994 recover-first: reclassify wrongly-VOIDed DataGolf losers back into the
@@ -1949,6 +1958,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_trades",
         "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, 15min after settled
         "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
+    "backfill-settled-gap-creation": {
+        # #138/#995: create the freeze-gap markets (2026-06-09→07-08). Runs 30min
+        # after the settled-events pass so it creates missing markets that the
+        # settled/candlestick/calibration passes then enrich next cycle.
+        "task": "app.tasks.backfill_settled_gap_creation",
+        "schedule": crontab(minute=30, hour="5,11,17,23"),
+        "kwargs": {"limit": 1500},
         "options": {"queue": "background"},
     },
     "recover-datagolf-participation": {
