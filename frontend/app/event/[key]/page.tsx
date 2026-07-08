@@ -5,7 +5,7 @@
 // (winner field + sections + matchups). Probability-only (no odds), light-mode
 // tokens, blend-only (no source names on plain rows).
 
-import { use } from "react";
+import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEventConcept, formatProbability } from "@/lib/api";
@@ -18,13 +18,12 @@ import {
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 
-export default function EventConceptPage({
-  params,
-}: {
-  params: Promise<{ key: string }>;
-}) {
-  const { key } = use(params);
-  const decodedKey = decodeURIComponent(key);
+export default function EventConceptPage() {
+  // Next.js 14: dynamic params for a CLIENT component come from useParams()
+  // (already URL-decoded). `use(params)` on a plain object throws at render —
+  // that P1'd the whole page in prod (L2-60). #999
+  const params = useParams();
+  const decodedKey = (params?.key as string) || "";
 
   // GA4 hooks — before any conditional return (MANDATORY).
   usePageTracking({ pageType: "event_concept", pageTitle: `Event ${decodedKey}` });
