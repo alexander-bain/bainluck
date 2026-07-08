@@ -260,7 +260,6 @@ class TestBeatScheduleCompleteness:
         "data-quality-watchdog",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
-        "recover-datagolf-participation",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",
