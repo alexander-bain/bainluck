@@ -2409,8 +2409,26 @@ async def _backfill_from_settled_events(limit: int = 5000):
                             )
                             needs_snap = {r.external_id: r for r in matched.fetchall()}
 
+                            # #969: BATCH the per-page snapshot writes. The old
+                            # code issued one single-row INSERT + one single-row
+                            # UPDATE per market — hundreds/thousands of sequential
+                            # round-trips per page. statement_timeout=90s never
+                            # tripped (each was fast) but the LOOP ran ~847s on a
+                            # deep series (KXMLBHRR:p0), busting the 900s wall →
+                            # consec=5 CRITICAL. Collect the rows, then issue
+                            # chunked multi-row INSERT + one unnest UPDATE so a
+                            # page costs a handful of round-trips, not thousands.
+                            from dateutil.parser import parse as dt_parse
+
+                            _remaining = limit - total_snapshots
+                            snap_rows = []
+                            opening_rows = []  # (id, price, ts)
                             for event_data in events:
+                                if len(snap_rows) >= _remaining:
+                                    break
                                 for mkt in event_data.get("markets") or []:
+                                    if len(snap_rows) >= _remaining:
+                                        break
                                     ticker = mkt.get("ticker", "")
                                     if ticker not in needs_snap:
                                         continue
@@ -2434,8 +2452,6 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                         continue
 
                                     try:
-                                        from dateutil.parser import parse as dt_parse
-
                                         captured = (
                                             dt_parse(close_time_str)
                                             if close_time_str
@@ -2444,38 +2460,55 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     except Exception:
                                         captured = datetime.now(timezone.utc)
 
-                                    stmt = (
-                                        pg_insert(FuturesOddsSnapshot)
-                                        .values(
-                                            outcome_id=row.id,
-                                            bookmaker="kalshi",
-                                            probability=round(price, 6),
-                                            last_price=round(price, 4),
-                                            captured_at=captured,
-                                        )
-                                        .on_conflict_do_nothing()
+                                    snap_rows.append(
+                                        {
+                                            "outcome_id": row.id,
+                                            "bookmaker": "kalshi",
+                                            "probability": round(price, 6),
+                                            "last_price": round(price, 4),
+                                            "captured_at": captured,
+                                        }
                                     )
-                                    await session.execute(stmt)
-                                    stats["snapshots_created"] += 1
-                                    series_snapshots += 1
-                                    total_snapshots += 1
-
                                     if row.opening_probability is None:
-                                        await session.execute(
-                                            text("""
-                                                UPDATE futures_outcomes
-                                                SET opening_probability = :price,
-                                                    opening_captured_at = :ts
-                                                WHERE id = :id
-                                                  AND opening_probability IS NULL
-                                            """),
-                                            {
-                                                "price": price,
-                                                "ts": captured,
-                                                "id": row.id,
-                                            },
-                                        )
-                                        stats["opening_set"] += 1
+                                        opening_rows.append((row.id, price, captured))
+
+                            # Chunked multi-row insert (~500 rows/stmt keeps well
+                            # under the ~65k bind-param ceiling: 5 cols × 500).
+                            for _ci in range(0, len(snap_rows), 500):
+                                _chunk = snap_rows[_ci:_ci + 500]
+                                await session.execute(
+                                    pg_insert(FuturesOddsSnapshot)
+                                    .values(_chunk)
+                                    .on_conflict_do_nothing()
+                                )
+                            _n_snaps = len(snap_rows)
+                            stats["snapshots_created"] += _n_snaps
+                            series_snapshots += _n_snaps
+                            total_snapshots += _n_snaps
+
+                            # One unnest UPDATE for opening_probability (only rows
+                            # still NULL) instead of a single-row UPDATE each.
+                            if opening_rows:
+                                await session.execute(
+                                    text("""
+                                        UPDATE futures_outcomes fo
+                                        SET opening_probability = v.price,
+                                            opening_captured_at = v.ts
+                                        FROM unnest(
+                                            CAST(:ids AS bigint[]),
+                                            CAST(:prices AS double precision[]),
+                                            CAST(:ts AS timestamptz[])
+                                        ) AS v(id, price, ts)
+                                        WHERE fo.id = v.id
+                                          AND fo.opening_probability IS NULL
+                                    """),
+                                    {
+                                        "ids": [r[0] for r in opening_rows],
+                                        "prices": [r[1] for r in opening_rows],
+                                        "ts": [r[2] for r in opening_rows],
+                                    },
+                                )
+                                stats["opening_set"] += len(opening_rows)
 
                         # --- Phase 2.5: previous_price snapshot backfill ---
                         # Settled markets have previous_price_dollars — the last
@@ -2502,6 +2535,12 @@ async def _backfill_from_settled_events(limit: int = 5000):
                         if prev_inserts:
                             from dateutil.parser import parse as _dt_parse
 
+                            # #969: batch the prev-price inserts into ONE
+                            # unnest-joined INSERT...SELECT instead of one INSERT
+                            # per ticker (the second sequential loop that, with
+                            # Phase 2 above, ran the page to ~847s). Parse
+                            # timestamps first; skip rows with no usable open_time.
+                            _pv_tickers, _pv_probs, _pv_prices, _pv_ts = [], [], [], []
                             for ticker, prev_p, ot_str in prev_inserts:
                                 try:
                                     snap_t = _dt_parse(ot_str) if ot_str else None
@@ -2509,21 +2548,32 @@ async def _backfill_from_settled_events(limit: int = 5000):
                                     snap_t = None
                                 if not snap_t:
                                     continue
+                                _pv_tickers.append(ticker)
+                                _pv_probs.append(round(prev_p, 6))
+                                _pv_prices.append(round(prev_p, 4))
+                                _pv_ts.append(snap_t)
+                            if _pv_tickers:
                                 await session.execute(
                                     text("""
                                         INSERT INTO futures_odds_snapshots
                                             (outcome_id, bookmaker, probability,
                                              last_price, captured_at)
-                                        SELECT fo.id, 'kalshi', :prob, :price, :ts
-                                        FROM futures_outcomes fo
-                                        WHERE fo.external_id = :ticker
+                                        SELECT fo.id, 'kalshi', v.prob, v.price, v.ts
+                                        FROM unnest(
+                                            CAST(:tickers AS text[]),
+                                            CAST(:probs AS double precision[]),
+                                            CAST(:prices AS double precision[]),
+                                            CAST(:ts AS timestamptz[])
+                                        ) AS v(tk, prob, price, ts)
+                                        JOIN futures_outcomes fo
+                                          ON fo.external_id = v.tk
                                         ON CONFLICT DO NOTHING
                                     """),
                                     {
-                                        "prob": round(prev_p, 6),
-                                        "price": round(prev_p, 4),
-                                        "ts": snap_t,
-                                        "ticker": ticker,
+                                        "tickers": _pv_tickers,
+                                        "probs": _pv_probs,
+                                        "prices": _pv_prices,
+                                        "ts": _pv_ts,
                                     },
                                 )
                             stats["prev_price_snaps"] = stats.get(

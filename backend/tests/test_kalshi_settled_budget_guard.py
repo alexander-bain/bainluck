@@ -135,3 +135,43 @@ def test_session_has_statement_and_lock_timeouts():
     assert "SET lock_timeout" in src, (
         "no lock_timeout — a commit blocked on a poller lock can hang the task"
     )
+
+
+# ---- #969 (Queue #134): the real fix — batch the per-page insert LOOPS ----
+# The localized culprit (`sql:KXMLBHRR:p0`) was Phase 2 + Phase 2.5 doing
+# hundreds/thousands of SEQUENTIAL single-row inserts/updates per page. Each was
+# fast (statement_timeout=90s never tripped) but the LOOP ran ~847s and busted
+# the 900s wall (consec=5 CRITICAL). The pages must be cheap: multi-row inserts.
+
+
+def test_phase2_snapshot_insert_is_batched():
+    """Phase 2 must build a row list and issue chunked MULTI-row inserts, not one
+    INSERT per market."""
+    src = inspect.getsource(_backfill_from_settled_events)
+    assert "snap_rows.append(" in src, "Phase 2 must collect rows for a batch insert"
+    assert "pg_insert(FuturesOddsSnapshot)\n" in src or "pg_insert(FuturesOddsSnapshot)" in src
+    assert ".values(_chunk)" in src, "Phase 2 must insert a chunk (multi-row), not one row"
+    # opening_probability must be a single unnest UPDATE, not per-row
+    assert "opening_rows.append(" in src
+    assert "UPDATE futures_outcomes fo" in src and "unnest(" in src
+
+
+def test_phase25_prev_price_insert_is_batched():
+    """Phase 2.5 must do ONE unnest-joined INSERT...SELECT, not one INSERT per
+    ticker."""
+    src = inspect.getsource(_backfill_from_settled_events)
+    # the per-ticker single-row INSERT...SELECT loop must be gone
+    assert "WHERE fo.external_id = :ticker" not in src, (
+        "Phase 2.5 still does a per-ticker INSERT — that loop blew the page budget"
+    )
+    assert "JOIN futures_outcomes fo\n                                          ON fo.external_id = v.tk" in src \
+        or "JOIN futures_outcomes fo" in src
+    assert "_pv_tickers" in src and "unnest(" in src
+
+
+def test_no_per_market_single_row_snapshot_insert_remains():
+    """Regression: neither phase should await a single-row snapshot INSERT inside
+    the per-market/per-ticker loop (that shape is what busted the wall)."""
+    src = inspect.getsource(_backfill_from_settled_events)
+    # the old Phase 2 single-row values(outcome_id=..., ...) call is gone
+    assert "outcome_id=row.id," not in src
