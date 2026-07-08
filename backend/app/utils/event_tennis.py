@@ -139,11 +139,21 @@ class TennisEventAdapter:
         normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
-        # Children: other open tennis markets sharing the tournament token.
+        # Children (L2-62): associate MATCH markets by ENTRANT-SET overlap — both
+        # competitors must be in this event's draw (the winner field). This is the
+        # concurrent-tournament guard: a Challenger match in the same date-window
+        # whose players aren't in the slam draw is excluded. Non-match markets
+        # (props) still associate by the tournament-name token (fallback).
+        from app.utils.event_matcher import entrant_key_set, market_in_event
+        entrant_keys = entrant_key_set([c["name"] for c in competitors])
         tokens = tournament_tokens(winner.name)
         matchup_ids, prop_ids, children = [], [], []
         for m in markets:
-            if m.id == winner.id or not shares_tournament(m.name, tokens):
+            if m.id == winner.id:
+                continue
+            is_match = market_in_event(m.name, entrant_keys)
+            is_prop = (not is_match) and shares_tournament(m.name, tokens)
+            if not (is_match or is_prop):
                 continue
             outs = sorted(
                 (m.outcomes or []),
@@ -154,6 +164,7 @@ class TennisEventAdapter:
             child = {
                 "market_id": m.id,
                 "market_name": m.name,
+                "source": m.source,  # data-only (audit per-source); NOT rendered (D1)
                 "probability": (
                     round(float(lead.current_probability), 4)
                     if lead and lead.current_probability is not None else None
@@ -166,7 +177,7 @@ class TennisEventAdapter:
                 ],
             }
             children.append(child)
-            (matchup_ids if is_matchup_market(m.name) else prop_ids).append(m.id)
+            (matchup_ids if is_match else prop_ids).append(m.id)
 
         sections = [{"type": "winner", "label": "Winner", "market_ids": [winner.id]}]
         if matchup_ids:
