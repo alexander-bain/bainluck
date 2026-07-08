@@ -760,11 +760,29 @@ class KalshiAPIService(BaseAPIClient):
                 break
             _progress(f"fetch:unfiltered:p{page_count}:recv{len(events)}")
 
-            # #995 attempt-9: parse OFF the event loop. _parse_event on a large
-            # nested-markets page is pure-but-heavy CPU; run synchronously it
-            # blocks the loop (a residual sync-block candidate alongside the
-            # marker setex). to_thread keeps wait_for/deadline timers live.
-            parsed_events = await self._parse_events_offloaded(events)
+            # #995 attempt-9b (live-proof pinpoint): the marker froze EXACTLY at
+            # `fetch:unfiltered:pN:recv200` — get_events returned (decode fine,
+            # attempt-8 holds) but the PARSE never finished. The per-page
+            # wait_for(45s) bounds the fetch/decode but NOT this parse, so a
+            # monster nested-markets page (200 events × thousands of markets,
+            # minutes of pure-Python object construction) had no time bound and
+            # ran the task into the 300s Celery SIGKILL before the create step —
+            # the actual cause of the month-long creation freeze. Bound the parse
+            # too (off-loop + wait_for); on timeout skip THIS page's events but
+            # keep paginating so creation is never starved by one fat page.
+            try:
+                parsed_events = await asyncio.wait_for(
+                    self._parse_events_offloaded(events), timeout=60.0
+                )
+            except Exception as e:
+                _progress(f"fetch:unfiltered:p{page_count}:parse_timeout")
+                logger.error(
+                    "Kalshi main-scan page %d parse exceeded 60s (%s) — likely a "
+                    "monster nested-markets page; skipping its events and "
+                    "continuing so the poll still reaches create.",
+                    page_count, type(e).__name__,
+                )
+                parsed_events = []
             for parsed_event in parsed_events:
                 if parsed_event:
                     all_events[parsed_event.event_ticker] = parsed_event
@@ -863,8 +881,14 @@ class KalshiAPIService(BaseAPIClient):
                         ),
                         timeout=45.0,
                     )
-                    # #995 attempt-9: parse off-loop here too (see main scan).
-                    parsed_page = await self._parse_events_offloaded(events_page)
+                    # #995 attempt-9b: bound the parse here too (see main scan).
+                    try:
+                        parsed_page = await asyncio.wait_for(
+                            self._parse_events_offloaded(events_page), timeout=60.0
+                        )
+                    except Exception:
+                        _progress(f"fetch:supp:{st}:p{_sp}:parse_timeout")
+                        parsed_page = []
                     for parsed_event in parsed_page:
                         if parsed_event and parsed_event.event_ticker not in all_events:
                             all_events[parsed_event.event_ticker] = parsed_event

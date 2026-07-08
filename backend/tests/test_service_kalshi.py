@@ -780,3 +780,54 @@ class TestFetchAttempt9ResidualSyncBlock:
         # both scans parse off the event loop and thread progress into get_events
         assert "_parse_events_offloaded" in fetch
         assert "progress_cb=_progress" in fetch
+
+    def test_page_parse_is_time_bounded(self):
+        # attempt-9b: the live-proof pinned the freeze at `...pN:recv200` — the
+        # parse AFTER get_events returned. It must be wrapped in wait_for so a
+        # monster page can't run the task into the SIGKILL before create.
+        import inspect
+        import textwrap
+        from app.services.kalshi_api import KalshiAPIService
+        fetch = textwrap.dedent(inspect.getsource(
+            KalshiAPIService._fetch_all_events_unfiltered))
+        # the parse is wrapped in wait_for and emits a parse_timeout marker on the
+        # skip path (the pinpointed stall op must stay bounded)
+        assert "wait_for(" in fetch
+        assert "_parse_events_offloaded" in fetch
+        assert "parse_timeout" in fetch
+
+    async def test_slow_page_parse_is_skipped_and_scan_continues(self, client, monkeypatch):
+        # A page whose parse times out must NOT freeze the scan: skip its events
+        # but keep paginating so the poll still reaches the create step. Simulate
+        # the wait_for timeout by having the offloaded parse raise TimeoutError
+        # for the fat page (what wait_for(60s) would produce in production).
+        import asyncio
+        seen = []
+        calls = {"n": 0}
+
+        async def fake_get_events(**kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ([{"event_ticker": "KXHANG", "markets": []}], "cur1")  # p0
+            return ([{"event_ticker": "KXOK", "markets": []}], None)          # p1
+
+        real_offload = client._parse_events_offloaded
+
+        async def flaky_offload(events):
+            if events and events[0].get("event_ticker") == "KXHANG":
+                raise asyncio.TimeoutError()   # monster page → parse bound fires
+            return await real_offload(events)
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(client, "_parse_events_offloaded", flaky_offload)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        res = await client._fetch_all_events_unfiltered(
+            deadline=None, progress_cb=lambda s: seen.append(s)
+        )
+        tickers = {e.event_ticker for e in res}
+        assert "KXOK" in tickers          # later page survived
+        assert "KXHANG" not in tickers    # hung page's events skipped
+        assert any(":parse_timeout" in s for s in seen)
