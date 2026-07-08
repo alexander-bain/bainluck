@@ -60,8 +60,34 @@ export function FuturesHero({
         {name}
       </h1>
 
-      {/* Probability hero */}
-      {pct != null && (
+      {/* Resolved hero (#883 L2-53, Alex ruling): the winner name + "Won" chip is
+          the story — NO big percentage on a settled market (the last-traded price
+          read as a bug). The price journey stays in the trend chart below. */}
+      {resolved && (
+        <div className="mb-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {outcomeName && (
+              <span className="text-2xl font-semibold text-text-primary tracking-tight">{outcomeName}</span>
+            )}
+            <span
+              className={`text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                resolvedWon
+                  ? "bg-accent-live/15 text-accent-live"
+                  : "bg-text-muted/15 text-text-secondary"
+              }`}
+            >
+              {resolvedWon ? "Won" : "Resolved"}
+            </span>
+          </div>
+          {/* Upset note (pure copy, no new data): a low last price before winning. */}
+          {resolvedWon && pct != null && pct < 25 && (
+            <p className="text-[13px] text-text-secondary mt-1.5">Markets gave this just {pct}%.</p>
+          )}
+        </div>
+      )}
+
+      {/* Live probability hero (big blended number) — unresolved markets only. */}
+      {!resolved && pct != null && (
         <div className="flex items-end justify-between mb-3">
           <div>
             <div className="flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.04em] text-text-primary leading-none">
@@ -71,17 +97,6 @@ export function FuturesHero({
             <div className="flex items-center gap-2 mt-2">
               {outcomeName && (
                 <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
-              )}
-              {resolved && (
-                <span
-                  className={`text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                    resolvedWon
-                      ? "bg-accent-live/15 text-accent-live"
-                      : "bg-text-muted/15 text-text-secondary"
-                  }`}
-                >
-                  {resolvedWon ? "Won" : "Resolved"}
-                </span>
               )}
               {movementStr && (
                 <span
@@ -125,8 +140,8 @@ export function FuturesHero({
         </div>
       )}
 
-      {/* Yes/No probability bar */}
-      {pct != null && !isMultiOutcome && (
+      {/* Yes/No probability bar — live only (a settled market shows no live bar) */}
+      {!resolved && pct != null && !isMultiOutcome && (
         <div className="flex h-[9px] gap-0.5 mb-2">
           <div
             className="rounded-full bg-accent-brand shadow-inner"
