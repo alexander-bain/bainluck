@@ -66,6 +66,15 @@ class TestRecoveryStructure:
         src = self._src()
         assert "datagolf_recovery_residual" in src
 
+    def test_recovery_isolates_bad_markets_and_advances_cursor(self):
+        # A single bad market (e.g. tour='alt' → DataGolf 400) must be SKIPPED,
+        # not abort the batch, and the cursor must advance past it so it can never
+        # wedge on the first bad row forever (the live-proof failure).
+        src = self._src()
+        assert "_last_processed = ext_id" in src  # cursor advances per market
+        # per-market try/except continues on error
+        assert "skipping %s" in src or "stats[\"errors\"].append(f\"{ext_id}" in src
+
     def test_recovery_is_a_dedicated_beat_task(self):
         # #994: the recovery runs as its OWN beat task, NOT a backfill_winners
         # phase (that pipeline is budget-starved before Phase 0g, so a phase call

@@ -3112,6 +3112,7 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
             return stats
 
         service = DataGolfAPIService()
+        _last_processed = cursor  # advance the cursor even past error markets
         try:
             for row in rows:
                 if deadline is not None:
@@ -3122,62 +3123,75 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         break
                 stats["markets_checked"] += 1
                 ext_id = row.external_id  # datagolf:pga:123:win
-                parts = ext_id.split(":")
-                if len(parts) < 4:
-                    continue
-                tour, event_id = parts[1], parts[2]
+                # #994: isolate each market — a single bad row (e.g. tour='alt'
+                # → DataGolf 400, which get_historical_results re-raises per
+                # gotcha #36) must NOT abort the batch or wedge the cursor on the
+                # first bad market forever. Skip + advance.
+                try:
+                    parts = ext_id.split(":")
+                    if len(parts) < 4:
+                        continue
+                    tour, event_id = parts[1], parts[2]
 
-                historical = await service.get_historical_results(
-                    tour=tour, event_id=event_id, year=row.yr,
-                )
-                await asyncio.sleep(0.5)  # quota-polite ($30/mo plan)
-
-                if not historical:
-                    # Event genuinely not found → residual; symmetric-exclude.
-                    stats["api_miss"] += 1
-                    async with get_task_session() as session:
-                        _meta = await session.execute(
-                            text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
-                            {"mid": row.id},
-                        )
-                        _m = dict(_meta.scalar() or {})
-                        if not _m.get("datagolf_recovery_residual"):
-                            _m["datagolf_recovery_residual"] = True
-                            await session.execute(
-                                text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
-                                {"meta": _json.dumps(_m), "mid": row.id},
-                            )
-                            await session.commit()
-                            stats["residual_markets"] += 1
-                    continue
-
-                played_dg_ids = [
-                    str(p["dg_id"]) for p in historical if p.get("dg_id") is not None
-                ]
-                if not played_dg_ids:
-                    continue
-
-                async with get_task_session() as session:
-                    # Played-and-lost: dg_id (external_id[4:]) in the real field.
-                    r_played = await session.execute(
-                        text("""
-                            UPDATE futures_outcomes fo
-                            SET resolution_source = :src
-                            FROM futures_markets fm
-                            WHERE fo.market_id = fm.id AND fm.id = :mid
-                              AND fo.resolution_source = 'did_not_play'
-                              AND fo.is_winner = false
-                              AND SUBSTRING(fo.external_id FROM 4) = ANY(:ids)
-                        """),
-                        {"src": DATAGOLF_PLAYED_LOST_SOURCE, "mid": row.id, "ids": played_dg_ids},
+                    historical = await service.get_historical_results(
+                        tour=tour, event_id=event_id, year=row.yr,
                     )
-                    await session.commit()
-                    stats["played_lost_recovered"] += r_played.rowcount
+                    await asyncio.sleep(0.5)  # quota-polite ($30/mo plan)
+
+                    if not historical:
+                        # Event genuinely not found → residual; symmetric-exclude.
+                        stats["api_miss"] += 1
+                        async with get_task_session() as session:
+                            _meta = await session.execute(
+                                text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+                                {"mid": row.id},
+                            )
+                            _m = dict(_meta.scalar() or {})
+                            if not _m.get("datagolf_recovery_residual"):
+                                _m["datagolf_recovery_residual"] = True
+                                await session.execute(
+                                    text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
+                                    {"meta": _json.dumps(_m), "mid": row.id},
+                                )
+                                await session.commit()
+                                stats["residual_markets"] += 1
+                        continue
+
+                    played_dg_ids = [
+                        str(p["dg_id"]) for p in historical if p.get("dg_id") is not None
+                    ]
+                    if not played_dg_ids:
+                        continue
+
+                    async with get_task_session() as session:
+                        # Played-and-lost: dg_id (external_id[4:]) in the field.
+                        r_played = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET resolution_source = :src
+                                FROM futures_markets fm
+                                WHERE fo.market_id = fm.id AND fm.id = :mid
+                                  AND fo.resolution_source = 'did_not_play'
+                                  AND fo.is_winner = false
+                                  AND SUBSTRING(fo.external_id FROM 4) = ANY(:ids)
+                            """),
+                            {"src": DATAGOLF_PLAYED_LOST_SOURCE, "mid": row.id, "ids": played_dg_ids},
+                        )
+                        await session.commit()
+                        stats["played_lost_recovered"] += r_played.rowcount
+                except Exception as _me:
+                    stats["errors"].append(f"{ext_id}: {type(_me).__name__}")
+                    logger.warning("DataGolf recovery: skipping %s (%s)", ext_id, _me)
+                    await asyncio.sleep(0.2)
+                finally:
+                    # Advance the resume point past THIS market regardless of
+                    # outcome, so a bad row can never wedge the cursor.
+                    _last_processed = ext_id
         finally:
             await service.close()
-
-        # Persist resume point (last external_id processed).
-        _rc.setex(_cursor_key, 86400 * 14, rows[len(rows) - 1].external_id)
+            # Persist resume point (last market attempted, success or skip).
+            if _last_processed:
+                _rc.setex(_cursor_key, 86400 * 14, _last_processed)
 
     except Exception as e:
         stats["errors"].append(str(e))
