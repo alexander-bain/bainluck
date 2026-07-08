@@ -30,8 +30,11 @@ class TestRegistry:
         adapter = get_adapter("golf")
         assert adapter is not None and adapter.domain == "golf"
 
+    def test_tennis_adapter_registered(self):
+        assert "tennis" in registered_domains()  # slice 2
+
     def test_unknown_domain_returns_none(self):
-        assert get_adapter("tennis") is None  # future slice
+        assert get_adapter("ufc") is None  # future slice (F1/UFC/awards)
 
 
 def _golf_fixture():

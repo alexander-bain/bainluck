@@ -64,3 +64,50 @@ class TestEventConceptRoute:
     async def test_rejects_post(self, client):
         resp = await client.post("/api/event/event:golf:x")
         assert resp.status_code == 405
+
+
+def _tennis_outcome(name, prob):
+    from types import SimpleNamespace
+    return SimpleNamespace(name=name, current_probability=prob)
+
+
+def _tennis_winner_market():
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    return SimpleNamespace(
+        id=114157,
+        name="2026 Wimbledon Winner",
+        status="open",
+        llm_sport_category="tennis",
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=4),
+        outcomes=[
+            _tennis_outcome("Coco Gauff", 0.30),
+            _tennis_outcome("Aryna Sabalenka", 0.25),
+            _tennis_outcome("Other", 0.40),  # field remainder — must be dropped
+        ],
+    )
+
+
+class TestTennisEventAdapter:
+    """#999 slice 2: tennis winner-field renders through the same envelope."""
+
+    async def test_tennis_winner_field(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result  # mock result
+        mock_db.execute.return_value = _query_result([_tennis_winner_market()])
+
+        resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "tennis"
+        assert body["event"]["name"] == "2026 Wimbledon Winner"
+        assert body["event"]["status"] == "live"  # resolves in 4 days
+        assert body["primary"]["kind"] == "winner_field"
+        names = [c["name"] for c in body["primary"]["competitors"]]
+        assert names == ["Coco Gauff", "Aryna Sabalenka"]  # sorted, "Other" dropped
+        assert body["sections"][0]["type"] == "winner"
+
+    async def test_tennis_no_markets_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([])
+        resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
+        assert resp.status_code == 404

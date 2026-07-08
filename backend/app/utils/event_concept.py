@@ -142,3 +142,9 @@ class GolfEventAdapter:
 
 
 register_adapter(GolfEventAdapter())
+
+# Tennis adapter (slice 2, #999) — separate module; registered here so the
+# registry stays the single hub. Its DB work is lazy-imported inside build_event.
+from app.utils.event_tennis import TennisEventAdapter  # noqa: E402
+
+register_adapter(TennisEventAdapter())
