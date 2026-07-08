@@ -63,8 +63,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Deploy to Heroku
+      - name: Deploy to Heroku (newest-wins guarded)
         run: |
+          # Newest-wins guard (L2-57): the deploy-job concurrency group only
+          # CANCELS an in-progress deploy. An OLDER commit's RE-RUN whose deploy
+          # starts AFTER a newer commit already deployed is not in-progress-cancelled,
+          # so it would clobber prod with older code (bitten twice: v3320=older
+          # landed after v3319=newer). Guard: if this run's SHA is not the current
+          # origin/master tip, skip the deploy (job stays green). Gotcha #9: the
+          # check lives inside the run block, not a step-level `if` with secrets.
+          ORIGIN_TIP="$(git ls-remote origin refs/heads/master | cut -f1)"
+          if [ -n "$ORIGIN_TIP" ] && [ "$ORIGIN_TIP" != "$GITHUB_SHA" ]; then
+            echo "Skipping deploy: this run's commit ($GITHUB_SHA) is not the current"
+            echo "origin/master tip ($ORIGIN_TIP) — a newer commit supersedes it."
+            echo "An older re-run can no longer clobber a newer deploy."
+            exit 0
+          fi
           if [ -z "$HEROKU_API_KEY" ]; then
             echo "HEROKU_API_KEY not set — skipping deploy"
             exit 0
