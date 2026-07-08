@@ -63,6 +63,22 @@ def shares_tournament(name: str | None, tokens: set[str]) -> bool:
     return bool(tournament_tokens(name) & tokens)
 
 
+def tennis_gender(text: str | None) -> str:
+    """men / women / "" inferred from a market name or slug.
+
+    Women is checked first so the "men" substring inside "women" never misfires.
+    Used by canonical resolution (L2-65 Item 2) so a gendered slug
+    ("…-men-s-…") can never resolve to the opposite-gender field even though the
+    gender tokens are stripped from `tournament_tokens`.
+    """
+    t = (text or "").lower()
+    if "women" in t or "wta" in t or "ladies" in t or "female" in t:
+        return "women"
+    if "men" in t or "atp" in t or "male" in t:
+        return "men"
+    return ""
+
+
 def tennis_status(status: str | None, resolution_date, now) -> str:
     """upcoming / live / settled from status + resolution proximity."""
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
@@ -105,21 +121,51 @@ class TennisEventAdapter:
         if not markets:
             return None
 
-        # Find the tournament-winner market matching the slug.
-        winner = None
+        # Canonical resolution (L2-65 Item 2): collect ALL winner markets whose
+        # slug matches (exact clean_slug OR token-subset), then pick the RICHEST
+        # field. A bare/ambiguous slug ("wimbledon") — or a specific one whose name
+        # differs across sources — thus lands on the fullest market (e.g. the
+        # Polymarket 51-player field) instead of the first, sparse Kalshi one, so
+        # shared links converge. A gendered slug never crosses genders (the gender
+        # tokens are stopwords, so guard explicitly). The non-winner siblings fold
+        # in as children below via the existing entrant/token association.
+        slug_gender = tennis_gender(slug)
+        slug_tokens = {t for t in slug.split("-") if len(t) >= 4 and t not in _TENNIS_STOPWORDS}
+
+        def _real_outcome_count(m) -> int:
+            return sum(
+                1 for o in (m.outcomes or [])
+                if o.name and not is_field_outcome(o.name)
+                and not is_placeholder_outcome_name(o.name)
+            )
+
+        candidates = []
         for m in markets:
-            if is_winner_market(m.name) and clean_slug(m.name or "") == slug:
-                winner = m
-                break
-        if winner is None:
-            # token-subset fallback: slug tokens ⊆ market's tournament tokens
-            slug_tokens = {t for t in slug.split("-") if len(t) >= 4 and t not in _TENNIS_STOPWORDS}
-            for m in markets:
-                if is_winner_market(m.name) and slug_tokens and slug_tokens <= tournament_tokens(m.name):
-                    winner = m
-                    break
+            if not is_winner_market(m.name):
+                continue
+            exact = clean_slug(m.name or "") == slug
+            subset = bool(slug_tokens) and slug_tokens <= tournament_tokens(m.name)
+            if not (exact or subset):
+                continue
+            if slug_gender:
+                mg = tennis_gender(m.name)
+                if mg and mg != slug_gender:
+                    continue
+            candidates.append(m)
+
+        # Richest wins: most real competitors, then higher 24h volume, then an
+        # exact-slug match, then lowest id (stable / deterministic).
+        def _rank(m):
+            vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
+            return (_real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
+
+        winner = max(candidates, key=_rank) if candidates else None
         if winner is None:
             return None
+
+        # Canonical key from the WINNER's name so every alias slug (bare or
+        # differently-named-per-source) reports the same event key.
+        canonical_slug = clean_slug(winner.name or "") or slug
 
         # Competitors = real players (drop the field-remainder "Other" + placeholders).
         competitors = []
@@ -213,7 +259,7 @@ class TennisEventAdapter:
 
         return {
             "event": {
-                "key": f"event:tennis:{slug}",
+                "key": f"event:tennis:{canonical_slug}",
                 "domain": "tennis",
                 "name": winner.name,
                 "status": tennis_status(winner.status, winner.resolution_date, now),

@@ -373,7 +373,8 @@ export interface OnboardingSkipParams {
 export interface SearchResultClickParams {
   query: string;
   // #993 L2-42: family_headline/family_member for composed family rows
-  result_type: 'event' | 'futures' | 'team' | 'family_headline' | 'family_member';
+  // #999 L2-65: event_concept for tournament concept pages
+  result_type: 'event' | 'futures' | 'team' | 'family_headline' | 'family_member' | 'event_concept';
   result_id: number | string;
   position: number;
 }

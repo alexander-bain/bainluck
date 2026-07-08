@@ -13,6 +13,7 @@ import {
   formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
+import { marketEventKey, eventPath } from "@/lib/eventKey";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -384,6 +385,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const resolvedWinner = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
   const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
 
+  // L2-65 Item 1b: when this market is the winner-field of an event concept, offer
+  // a breadcrumb into the richer /event/[key] surface. The label strips the
+  // "Winner/Champion" suffix so it reads as the event ("… Wimbledon →").
+  const conceptKey = marketEventKey(market);
+  const conceptLabel = market.name.replace(/\s*(winner|champion|champ|to win)\s*$/i, "").trim() || market.name;
+
   return (
     <div className="space-y-6">
       {/* Navigation */}
@@ -433,6 +440,18 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         resolved={isResolved}
         resolvedWon={resolvedWinner?.is_winner === true}
       />
+
+      {/* L2-65: breadcrumb into the event concept surface (richer than this single
+          market — leaderboard, race chart, matchups). */}
+      {conceptKey && (
+        <Link
+          href={eventPath(conceptKey)}
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
+        >
+          Part of: {conceptLabel}
+          <span aria-hidden="true">→</span>
+        </Link>
+      )}
 
       {/* Context line (auto-upgrades when #870 ships) */}
       {market.hook_description && (

@@ -6,6 +6,7 @@ import { fetchTypeahead, fetchTrendingSearches } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
+import { eventPath } from "@/lib/eventKey";
 
 const RECENT_SEARCHES_KEY = "bainluck_recent_searches";
 const MAX_RECENT = 5;
@@ -168,6 +169,7 @@ export default function SearchBar({
       click_type: 'search_typeahead' as const,
       from_page: 'search',
       to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
+        : suggestion.type === 'event_concept' ? (suggestion.event_key ? eventPath(suggestion.event_key) : `/search?q=${suggestion.text}`)
         : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`
         : teamUrl || `/search?q=${suggestion.text}`,
     });
@@ -183,6 +185,12 @@ export default function SearchBar({
       case "event":
         if (suggestion.event_id) {
           router.push(`/events/${suggestion.event_id}`);
+        }
+        break;
+      case "event_concept":
+        // L2-65: tournament concept page (/event/[key]).
+        if (suggestion.event_key) {
+          router.push(eventPath(suggestion.event_key));
         }
         break;
       case "futures":
@@ -409,6 +417,7 @@ export default function SearchBar({
                   )
                 )}
                 {suggestion.type === "futures" && <span>{"\u{1F4C8}"}</span>}
+                {suggestion.type === "event_concept" && <span>{"\u{1F3C6}"}</span>}
               </span>
 
               <div className="flex-1 min-w-0">
@@ -422,6 +431,11 @@ export default function SearchBar({
                     {suggestion.status === "live"
                       ? "Live now"
                       : formatEventTime(suggestion.commence_time)}
+                  </div>
+                )}
+                {suggestion.type === "event_concept" && (
+                  <div className="text-xs text-slate">
+                    Event{suggestion.sport_key ? ` · ${suggestion.sport_key}` : ""}
                   </div>
                 )}
                 {suggestion.type === "futures" && (() => {

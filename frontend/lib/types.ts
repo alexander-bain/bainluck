@@ -742,10 +742,19 @@ export interface FuturesFamily {
   member_count: number;
 }
 
+// #999 L2-65: an event concept (tournament page) surfaced in search.
+export interface SearchEventConcept {
+  key: string;
+  name: string;
+  domain: string;
+  market_id: number;
+}
+
 export interface SearchResponse {
   results: Event[];
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
+  event_concepts?: SearchEventConcept[]; // #999 L2-65: tournament pages, first-class
   teams: SearchTeam[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];

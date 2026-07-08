@@ -8,6 +8,7 @@ from app.utils.event_tennis import (
     tournament_tokens,
     shares_tournament,
     tennis_status,
+    tennis_gender,
 )
 
 NOW = datetime(2026, 7, 8, tzinfo=timezone.utc)
@@ -36,6 +37,26 @@ class TestClassifiers:
         assert shares_tournament("Gauff vs Muchova — Wimbledon R2", toks) is True
         assert shares_tournament("2026 US Open Winner", toks) is False
         assert shares_tournament("anything", set()) is False
+
+
+class TestGender:
+    """L2-65 Item 2: gender inference guards canonical resolution."""
+
+    def test_women_beats_men_substring(self):
+        # "women" contains "men" — women must be detected first.
+        assert tennis_gender("2026 Women's Wimbledon Winner") == "women"
+        assert tennis_gender("wimbledon-women-s-singles-winner") == "women"
+        assert tennis_gender("WTA Wimbledon Winner") == "women"
+
+    def test_men(self):
+        assert tennis_gender("2026 Men's Wimbledon Winner") == "men"
+        assert tennis_gender("wimbledon-men-s-singles-winner") == "men"
+        assert tennis_gender("ATP Wimbledon Winner") == "men"
+
+    def test_neutral(self):
+        assert tennis_gender("Wimbledon Winner") == ""
+        assert tennis_gender("wimbledon") == ""
+        assert tennis_gender(None) == ""
 
 
 class TestStatus:

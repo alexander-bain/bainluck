@@ -35,6 +35,7 @@ class TestSearchEndpoint:
         assert set(body.keys()) == {
             "query",
             "teams",
+            "event_concepts",
             "results",
             "futures",
             "futures_families",
@@ -47,6 +48,12 @@ class TestSearchEndpoint:
         resp = await client.get("/api/events/search?q=test")
         body = resp.json()
         assert isinstance(body["futures_families"], list)
+
+    async def test_event_concepts_is_list(self, client):
+        # L2-65: tournament concept pages surfaced as first-class results.
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        assert isinstance(body["event_concepts"], list)
 
     async def test_response_has_query_field(self, client):
         resp = await client.get("/api/events/search?q=test")
@@ -321,7 +328,7 @@ class TestTypeaheadEndpoint:
             assert "text" in item
             assert isinstance(item["type"], str)
             assert isinstance(item["text"], str)
-            assert item["type"] in {"team", "event", "futures"}
+            assert item["type"] in {"team", "event", "futures", "event_concept"}
 
 
 # ============================================================================

@@ -1494,6 +1494,43 @@ async def search_events(
         deduped_futures, expanded, lambda m: _formatted_by_id[m.id]
     )
 
+    # L2-65 Item 1c: surface EVENT CONCEPTS (tournament pages) as first-class
+    # results, above individual markets. Derived from the winner-field markets we
+    # already matched, via the SAME adapter logic the frontend helper uses
+    # (is_winner_market + clean_slug). Scoped to tennis, where the market-name →
+    # event-key derivation is exact (the tennis adapter matches clean_slug(name)),
+    # so no dead links; golf discovery is served by the golf page's tournament
+    # cards. One concept per event key, richest-first (deduped_futures is
+    # volume-reranked).
+    from app.utils.event_tennis import is_winner_market as _is_winner_field
+    from app.utils.name_normalization import clean_slug as _event_clean_slug
+    _EVENT_CONCEPT_DOMAINS = {"tennis"}
+    event_concepts = []
+    _seen_concept_keys: set[str] = set()
+    for _m in deduped_futures:
+        _cat = (_m.llm_sport_category or "").lower()
+        if _cat not in _EVENT_CONCEPT_DOMAINS or not _is_winner_field(_m.name):
+            continue
+        _slug = _event_clean_slug(_m.name or "")
+        if not _slug:
+            continue
+        _key = f"event:{_cat}:{_slug}"
+        if _key in _seen_concept_keys:
+            continue
+        _seen_concept_keys.add(_key)
+        _label = re.sub(
+            r"\s*(winner|champion|champ|to win)\s*$", "", _m.name or "",
+            flags=re.IGNORECASE,
+        ).strip() or _m.name
+        event_concepts.append({
+            "key": _key,
+            "name": _label,
+            "domain": _cat,
+            "market_id": _m.id,
+        })
+        if len(event_concepts) >= 5:
+            break
+
     # Search teams (ILIKE with expansion — table is small, no FTS needed)
     team_ilike_parts = []
     for term, exp in expanded:
@@ -1542,6 +1579,7 @@ async def search_events(
     return {
         "query": q,
         "teams": matched_teams,
+        "event_concepts": event_concepts,
         "results": formatted_results,
         "futures": formatted_futures,
         "futures_families": futures_families,
@@ -1786,6 +1824,38 @@ async def typeahead_search(
             "top_outcomes": _build_search_top_outcomes(market, limit=3, lean=True),
         })
 
+    # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
+    # ranked futures — tennis winner fields resolve to /event/[key] via the
+    # adapter (exact clean_slug), so no dead links. First-class, above markets.
+    from app.utils.event_tennis import is_winner_market as _ta_is_winner_field
+    from app.utils.name_normalization import clean_slug as _ta_clean_slug
+    event_concept_pool = []
+    _ta_seen_concept_keys: set[str] = set()
+    for market in ta_futures_ranked:
+        if len(event_concept_pool) >= 3:
+            break
+        if (market.llm_sport_category or "").lower() != "tennis":
+            continue
+        if not _ta_is_winner_field(market.name):
+            continue
+        _ta_slug = _ta_clean_slug(market.name or "")
+        if not _ta_slug:
+            continue
+        _ta_key = f"event:tennis:{_ta_slug}"
+        if _ta_key in _ta_seen_concept_keys:
+            continue
+        _ta_seen_concept_keys.add(_ta_key)
+        _ta_label = re.sub(
+            r"\s*(winner|champion|champ|to win)\s*$", "", market.name or "",
+            flags=re.IGNORECASE,
+        ).strip() or market.name
+        event_concept_pool.append({
+            "type": "event_concept",
+            "text": _ta_label,
+            "event_key": _ta_key,
+            "sport_key": "tennis",
+        })
+
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
     did_you_mean: str | None = None
     if not team_pool and not event_pool and len(futures_pool) < 2:
@@ -1866,12 +1936,14 @@ async def typeahead_search(
     suggestions = []
     suggestions.extend(team_pool[:1])
     suggestions.extend(event_pool[:2])
+    # L2-65: event concepts (tournament pages) rank above individual markets.
+    suggestions.extend(event_concept_pool[:1])
     suggestions.extend(futures_pool[:2])
 
     remaining = 7 - len(suggestions)
     if remaining > 0:
         # Prioritize more events over more futures
-        extras = event_pool[2:4] + futures_pool[2:3] + team_pool[1:2]
+        extras = event_pool[2:4] + event_concept_pool[1:2] + futures_pool[2:3] + team_pool[1:2]
         suggestions.extend(extras[:remaining])
 
     result: dict = {"suggestions": suggestions, "query": q}

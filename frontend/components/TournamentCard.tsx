@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // ============================================================================
@@ -21,11 +22,14 @@ interface TournamentCardProps {
 
 export default function TournamentCard({ tournament, leaderboard, href: hrefOverride }: TournamentCardProps) {
   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
-  // Golf tournament rows must land on the golf tournament detail surface
-  // (/categories/golf/tournaments/[slug]), NOT the generic /sport market page —
-  // the latter is a generic event/market template that doesn't render the golf
-  // tournament view (leaderboard, outrights, props). (#926, SEQUENCE 000b)
-  const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
+  // L2-65: golf tournament rows land on the event concept surface (/event/[key]),
+  // the L2-64 flagship (winner-field leaderboard + race-to-the-title chart +
+  // matchups) rendered via the golf adapter. This supersedes the earlier #926
+  // routing to /categories/golf/tournaments/[slug] — critically it is NOT the
+  // generic /sport template #926 warned against (that one can't render golf);
+  // /event/[key] renders golf through get_golf_tournament. hrefOverride still wins.
+  const eventKey = tournamentEventKey(tournament);
+  const href = hrefOverride || (eventKey ? eventPath(eventKey) : `/categories/golf/tournaments/${slug}`);
 
   // Cup events (Ryder Cup, Presidents Cup, etc.) with exactly 2 teams
   // get a head-to-head layout instead of leader + chasers

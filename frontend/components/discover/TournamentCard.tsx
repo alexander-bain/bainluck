@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge } from "./shared";
 
@@ -20,6 +21,10 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
+  // L2-65: route into the event concept page (/event/[key]) — the richer surface
+  // (race chart + leaderboard + matchups) — falling back to the sport page.
+  const eventKey = tournamentEventKey(data);
+  const href = eventKey ? eventPath(eventKey) : "/sport/golf";
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
@@ -34,14 +39,14 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
         )}
       </div>
       <div className="p-4">
-        <Link href="/sport/golf" onClick={onDetailClick} className="block group">
+        <Link href={href} onClick={onDetailClick} className="block group">
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
         <ActionBar
           liked={liked}
           setLiked={setLiked}
-          shareUrl={buildDiscoverShareUrl("/sport/golf", "grid", data.name)}
+          shareUrl={buildDiscoverShareUrl(href, "grid", data.name)}
           shareTitle={data.name}
           shareText={shareText}
           contentType="grid"

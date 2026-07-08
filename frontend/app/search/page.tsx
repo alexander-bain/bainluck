@@ -14,6 +14,7 @@ import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
+import { eventPath } from "@/lib/eventKey";
 import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
 
 function SearchLoading() {
@@ -217,6 +218,9 @@ function SearchContent() {
   const hasTeams = results?.teams && results.teams.length > 0;
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
+  // #999 L2-65: event concepts (tournament pages) as first-class results.
+  const eventConcepts = results?.event_concepts ?? [];
+  const hasEventConcepts = eventConcepts.length > 0;
 
   // #993 L2-42: composed families render first; the market_ids shown inside a
   // family (headline + its shown members) are filtered from the flat list so
@@ -227,7 +231,7 @@ function SearchContent() {
   const hasFamilies = families.length > 0;
   const hasFlatFutures = flatFutures.length > 0;
 
-  if (!results || (!hasEvents && !hasFutures && !hasTeams)) {
+  if (!results || (!hasEvents && !hasFutures && !hasTeams && !hasEventConcepts)) {
     return (
       <div>
         <div className="text-center py-12">
@@ -311,6 +315,31 @@ function SearchContent() {
             </button>
           ))}
         </div>
+      )}
+
+      {/* Events section — tournament concept pages, first-class above markets (L2-65) */}
+      {hasEventConcepts && (
+        <section className="mb-8">
+          <SectionHeader title="Events" count={eventConcepts.length} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {eventConcepts.map((ec, index) => (
+              <Link
+                key={ec.key}
+                href={eventPath(ec.key)}
+                onClick={() => track("search_result_click", { query, result_type: "event_concept", result_id: ec.key, position: index })}
+                className="flex items-center justify-between gap-2 rounded-card border border-surface-border bg-surface-card px-4 py-3 shadow-card hover:border-text-muted transition-colors group"
+              >
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-text-muted">{ec.domain}</div>
+                  <div className="text-sm font-semibold text-text-primary truncate group-hover:text-accent-brand transition-colors">
+                    {ec.name}
+                  </div>
+                </div>
+                <span className="text-text-muted group-hover:text-accent-brand transition-colors" aria-hidden="true">→</span>
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Teams section */}

@@ -119,3 +119,67 @@ class TestTennisEventAdapter:
         mock_db.execute.return_value = _query_result([])
         resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
         assert resp.status_code == 404
+
+
+def _tennis_winner(id_, name, players, source="polymarket", group_id=None):
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    return SimpleNamespace(
+        id=id_,
+        name=name,
+        status="open",
+        llm_sport_category="tennis",
+        source=source,
+        group_id=group_id or f"{source}:{id_}",
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=4),
+        outcomes=[_tennis_outcome(n, p) for n, p in players],
+    )
+
+
+class TestTennisCanonicalResolution:
+    """L2-65 Item 2: a slug resolves to the RICHEST winner field for the event,
+    and a gendered slug never crosses to the opposite gender."""
+
+    async def test_richest_market_wins(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        sparse = _tennis_winner(
+            1, "Wimbledon Women's Singles Winner",
+            [("Aryna Sabalenka", 0.6)], source="kalshi",
+        )
+        rich = _tennis_winner(
+            2, "2026 Women's Wimbledon Winner",
+            [("Aryna Sabalenka", 0.30), ("Coco Gauff", 0.28),
+             ("Iga Swiatek", 0.22), ("Elena Rybakina", 0.20)],
+            source="polymarket",
+        )
+        mock_db.execute.return_value = _query_result([sparse, rich])
+
+        # Bare slug -> the richer (Polymarket, 4-player) field, not the sparse one.
+        resp = await client.get("/api/event/event:tennis:wimbledon")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["name"] == "2026 Women's Wimbledon Winner"
+        assert len(body["primary"]["competitors"]) == 4
+        # Canonical key reported from the winning market's name (links converge).
+        assert body["event"]["key"] == "event:tennis:2026-women-s-wimbledon-winner"
+
+    async def test_gendered_slug_does_not_cross(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        womens = _tennis_winner(
+            1, "2026 Women's Wimbledon Winner",
+            [("Aryna Sabalenka", 0.3), ("Coco Gauff", 0.3), ("Iga Swiatek", 0.3)],
+        )
+        mens = _tennis_winner(
+            2, "2026 Men's Wimbledon Winner",
+            [("Carlos Alcaraz", 0.5), ("Jannik Sinner", 0.4)],
+        )
+        mock_db.execute.return_value = _query_result([womens, mens])
+
+        # A men's slug must land on the men's field even though it is sparser.
+        resp = await client.get("/api/event/event:tennis:wimbledon-men-s-singles-winner")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["name"] == "2026 Men's Wimbledon Winner"
+        names = [c["name"] for c in body["primary"]["competitors"]]
+        assert "Carlos Alcaraz" in names
+        assert "Coco Gauff" not in names

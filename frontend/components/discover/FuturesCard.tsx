@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { marketEventKey, eventPath } from "@/lib/eventKey";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -31,7 +32,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
-  const shareUrl = buildDiscoverShareUrl(`/futures/${data.id}`, "futures", data.id);
+  // L2-65: a winner-field market that IS an event concept (e.g. a tennis
+  // tournament winner) links into the richer /event/[key] surface; everything
+  // else stays on the futures market page.
+  const conceptKey = marketEventKey(data);
+  const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const shareUrl = buildDiscoverShareUrl(detailHref, "futures", data.id);
   const leaderProbability = prob != null ? formatShareProbability(prob) : null;
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
@@ -58,7 +64,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
           </div>
-          <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
+          <Link href={detailHref} onClick={onDetailClick} className="block group">
             <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-4">{data.name}</h3>
           </Link>
 
@@ -281,7 +287,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
+          <Link href={detailHref} onClick={onDetailClick} className="block group">
             <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
           </Link>
 
@@ -339,7 +345,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
       </div>
 
       <div className="px-3.5 py-3">
-        <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
+        <Link href={detailHref} onClick={onDetailClick} className="block group">
           <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
         </Link>
 
@@ -445,8 +451,10 @@ function compactOutcomeName(name: string): string {
 export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
   const leader = data.top_outcomes?.[0];
   const context = feedContextSnippet(item);
+  const conceptKey = marketEventKey(data);
+  const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
   return (
-    <Link href={`/futures/${data.id}`} className="flex items-center gap-3 group">
+    <Link href={detailHref} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
         {context && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{context}</div>}

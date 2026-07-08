@@ -265,7 +265,7 @@ export async function fetchSearchSuggestions(): Promise<SearchSuggestionsRespons
  * Typeahead search — lightweight suggestions for the search bar
  */
 export interface TypeaheadSuggestion {
-  type: "team" | "event" | "futures";
+  type: "team" | "event" | "futures" | "event_concept";
   text: string;
   // Team fields
   abbreviation?: string;
@@ -278,6 +278,8 @@ export interface TypeaheadSuggestion {
   status?: string;
   sport?: string;
   commence_time?: string;
+  // Event concept fields (#999 L2-65: tournament pages)
+  event_key?: string;
   // Futures fields
   market_id?: number;
   market_tier?: number;
