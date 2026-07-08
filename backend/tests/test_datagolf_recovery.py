@@ -45,10 +45,12 @@ class TestRecoveryStructure:
 
     def test_recovery_function_exists_and_is_bounded_resumable(self):
         src = self._src()
-        # resumable cursor + quota-polite sleep + deadline bound
+        # resumable cursor + quota-polite sleep (45 req/min cap → 1.5s) + deadline
         assert "bainluck:datagolf_recovery_cursor" in src
-        assert "asyncio.sleep(0.5)" in src
+        assert "asyncio.sleep(1.5)" in src
         assert "deadline" in src
+        # 429 rate-limit → stop-and-resume (do NOT advance cursor past it)
+        assert "429" in src and "_rate_limited" in src
 
     def test_recovery_matches_by_dg_id_and_sets_played_lost(self):
         src = self._src()

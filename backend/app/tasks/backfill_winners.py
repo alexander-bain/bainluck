@@ -3113,6 +3113,7 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
 
         service = DataGolfAPIService()
         _last_processed = cursor  # advance the cursor even past error markets
+        _rate_limited = False
         try:
             for row in rows:
                 if deadline is not None:
@@ -3123,6 +3124,10 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         break
                 stats["markets_checked"] += 1
                 ext_id = row.external_id  # datagolf:pga:123:win
+                # Advance the cursor for every outcome EXCEPT a 429 (transient) —
+                # success, residual, no-match, and deterministic 400s are all
+                # "handled". 429 sets this False and stops the run to resume here.
+                _advance = True
                 # #994: isolate each market — a single bad row (e.g. tour='alt'
                 # → DataGolf 400, which get_historical_results re-raises per
                 # gotcha #36) must NOT abort the batch or wedge the cursor on the
@@ -3136,7 +3141,10 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                     historical = await service.get_historical_results(
                         tour=tour, event_id=event_id, year=row.yr,
                     )
-                    await asyncio.sleep(0.5)  # quota-polite ($30/mo plan)
+                    # #994: DataGolf caps at 45 requests/minute (a 0.5s sleep =
+                    # 120/min tripped 429s that looked like 400s). 1.5s = 40/min,
+                    # under the cap with headroom.
+                    await asyncio.sleep(1.5)
 
                     if not historical:
                         # Event genuinely not found → residual; symmetric-exclude.
@@ -3179,25 +3187,57 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                         )
                         await session.commit()
                         stats["played_lost_recovered"] += r_played.rowcount
+                    _advance = True  # processed cleanly → move cursor past it
                 except Exception as _me:
-                    # #994 diag: capture the HTTP status + response body so the
-                    # 400 blocker is diagnosable from the task result (no heroku
-                    # log access). e.response.text names WHAT the historical
-                    # endpoint rejected.
-                    _detail = type(_me).__name__
                     _resp = getattr(_me, "response", None)
+                    _status = getattr(_resp, "status_code", None)
+                    if _status == 429:
+                        # Rate limited — STOP the run and do NOT advance past this
+                        # market, so the next run resumes here (transient; the
+                        # 1.5s pacing should keep us under the cap normally).
+                        stats["errors"].append(f"{ext_id}: rate_limited_429_stopping")
+                        logger.warning(
+                            "DataGolf recovery: 429 at %s — stopping run, will "
+                            "resume here next run", ext_id,
+                        )
+                        _rate_limited = True
+                        _advance = False  # resume at THIS market next run
+                        break
+                    # Deterministic error (e.g. 400 'invalid tour' for tour=alt):
+                    # the market can never be verified via this endpoint → mark it
+                    # a residual so precompute symmetrically excludes it, and
+                    # advance the cursor.
+                    _detail = type(_me).__name__
                     if _resp is not None:
                         try:
-                            _detail += f" {_resp.status_code}: {_resp.text[:200]}"
+                            _detail += f" {_status}: {_resp.text[:150]}"
                         except Exception:
                             pass
                     stats["errors"].append(f"{ext_id}: {_detail}")
                     logger.warning("DataGolf recovery: skipping %s (%s)", ext_id, _me)
-                    await asyncio.sleep(0.2)
+                    try:
+                        async with get_task_session() as session:
+                            _meta = await session.execute(
+                                text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+                                {"mid": row.id},
+                            )
+                            _m = dict(_meta.scalar() or {})
+                            if not _m.get("datagolf_recovery_residual"):
+                                _m["datagolf_recovery_residual"] = True
+                                await session.execute(
+                                    text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
+                                    {"meta": _json.dumps(_m), "mid": row.id},
+                                )
+                                await session.commit()
+                                stats["residual_markets"] += 1
+                    except Exception:
+                        pass
+                    _advance = True
                 finally:
-                    # Advance the resume point past THIS market regardless of
-                    # outcome, so a bad row can never wedge the cursor.
-                    _last_processed = ext_id
+                    # Advance the resume point only when we handled this market
+                    # (success or deterministic skip) — NOT on a 429 stop.
+                    if _advance:
+                        _last_processed = ext_id
         finally:
             await service.close()
             # Persist resume point (last market attempted, success or skip).
