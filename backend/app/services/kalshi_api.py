@@ -153,7 +153,13 @@ class KalshiAPIService(BaseAPIClient):
                 await _asyncio.sleep(_backoff)
                 continue
             response.raise_for_status()
-            data = response.json()
+            # #995 attempt-8: decode OFF the event loop. The nested-markets
+            # payloads for game-level series are huge; a synchronous
+            # response.json() blocked the event loop for minutes, which is why NO
+            # async bound (deadline #125, httpx timeout #128, wait_for #130) could
+            # cancel it — the loop couldn't run their timers. to_thread keeps the
+            # loop responsive so the caller's wait_for/deadline actually fire.
+            data = await _asyncio.to_thread(response.json)
 
             events = data.get("events") or []
             next_cursor = data.get("cursor")
@@ -780,7 +786,15 @@ class KalshiAPIService(BaseAPIClient):
         ]
         supplemented = 0
         _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
+        # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
+        # WINNER/SERIES) explode into monster nested-markets payloads — the exact
+        # blobs whose sync parse froze the loop (KXMLBGAME, KXNBA1HSPREAD). Fetch
+        # them WITHOUT nested markets (tiny response); the empty-events backfill
+        # below fetches their markets per-event, lazily + bounded. Small
+        # championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
+        _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
         for st in _SPORTS_SERIES_TICKERS:
+            _supp_nested = not any(tok in st.upper() for tok in _HEAVY_TOKENS)
             _progress(f"fetch:supp:{st}")
             if _past_deadline():
                 logger.warning(
@@ -817,7 +831,7 @@ class KalshiAPIService(BaseAPIClient):
                         self.get_events(
                             status=None,
                             series_ticker=st,
-                            with_nested_markets=True,
+                            with_nested_markets=_supp_nested,
                             limit=200,
                             cursor=series_cursor,
                             deadline=deadline,

@@ -655,3 +655,40 @@ class TestFetchAttempt6PageBound:
             KalshiAPIService._fetch_all_events_unfiltered))
         assert "asyncio.wait_for(" in src
         assert "fetch:unfiltered:done" in src
+
+
+class TestFetchAttempt8SyncUnblock:
+    """#995 attempt-8: the freeze was a SYNC parse block. get_events decodes off
+    the event loop (to_thread) and game-level supplementary series drop nested
+    markets (the monster payloads)."""
+
+    def test_get_events_decodes_off_event_loop(self):
+        import inspect, textwrap
+        from app.services.kalshi_api import KalshiAPIService
+        src = textwrap.dedent(inspect.getsource(KalshiAPIService.get_events))
+        assert "to_thread(response.json)" in src, (
+            "get_events must decode via asyncio.to_thread so a huge nested "
+            "payload can't block the event loop (attempt-8 proven mechanism)"
+        )
+
+    async def test_game_level_series_drop_nested(self, client, monkeypatch):
+        import asyncio
+        nested_by_series = {}
+
+        async def fake_get_events(status=None, series_ticker=None,
+                                  with_nested_markets=True, **kw):
+            if series_ticker:
+                nested_by_series[series_ticker] = with_nested_markets
+            return ([], None)
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(deadline=None)
+        # game-level heavy series → nested dropped
+        assert nested_by_series.get("KXNBAGAME") is False
+        assert nested_by_series.get("KXMLBSPREAD") is False
+        # small championship series → nested kept
+        assert nested_by_series.get("KXNBA") is True
