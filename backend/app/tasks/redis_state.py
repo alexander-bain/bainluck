@@ -25,17 +25,28 @@ from app.tasks.config import (
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
-def get_redis_client(socket_timeout=None, socket_connect_timeout=None):
+# #969 NEVER-AGAIN: BOUNDED BY DEFAULT. A sync Redis client with no socket
+# timeout blocks the CALLING thread forever if Redis hangs — and when that caller
+# is invoked from inside an asyncio loop (e.g. a phase-marker setex in a
+# progress_cb, or ANY of the 69 bare get_redis_client() calls in tasks/), the
+# frozen thread IS the event loop, so no wait_for/deadline timer can fire. That
+# was the residual sync block behind the #995 saga. The default is now a finite
+# timeout so a bare call can never freeze the loop; pass socket_timeout=None to
+# explicitly opt out (only if you know the caller does a legitimate long blocking
+# op — none exist in this codebase today: no blpop/brpop, pubsub is WS not Redis).
+_DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
+
+
+def get_redis_client(
+    socket_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
+    socket_connect_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
+):
     """Get sync Redis client with proper SSL handling for Heroku.
 
-    #995 attempt-9: ``socket_timeout``/``socket_connect_timeout`` (seconds) bound
-    every blocking Redis op on the returned client. A sync client with NO timeout
-    (the default) will block the CALLING thread forever if Redis hangs — and when
-    that caller is a phase-marker ``setex`` invoked from inside an asyncio loop
-    (poll_kalshi's ``progress_cb``), the frozen thread IS the event loop, so no
-    ``wait_for``/deadline timer can ever fire. That is the residual sync block
-    that survived attempts 5-8. Bounded callers fail fast (raise, get swallowed)
-    instead of freezing the loop.
+    ``socket_timeout``/``socket_connect_timeout`` (seconds) bound every blocking
+    Redis op on the returned client. Both default to
+    ``_DEFAULT_REDIS_SOCKET_TIMEOUT`` (5s) — bounded by default (#969). Pass
+    ``None`` to opt out of a bound (rare; only for a deliberate long blocking op).
     """
     import ssl
 

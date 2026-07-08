@@ -106,6 +106,7 @@ async def celery_dashboard(
     # stage that was live when the worker was killed. Surface it here.
     poll_kalshi_phase = None
     kalshi_settled_phase = None
+    creation_watchdog = None
     try:
         _r2 = get_redis_client()
         _pk = _r2.get("bainluck:poll_kalshi:phase")
@@ -115,6 +116,16 @@ async def celery_dashboard(
         _ks = _r2.get("bainluck:kalshi_settled:phase")
         if _ks:
             kalshi_settled_phase = _ks.decode() if isinstance(_ks, bytes) else _ks
+        # #969 NEVER-AGAIN: surface the creates-freshness watchdog summary
+        # (per-source last_created ages + any stuck poll phase). This is the
+        # creates-specific signal the 28-day freeze needed — coarse "updated in
+        # 24h" health stayed green throughout it.
+        import json as _json
+        _wd = _r2.get("bainluck:watchdog:summary")
+        if _wd:
+            creation_watchdog = _json.loads(
+                _wd.decode() if isinstance(_wd, bytes) else _wd
+            )
     except Exception:
         poll_kalshi_phase = None
 
@@ -145,6 +156,7 @@ async def celery_dashboard(
         "backfill_phase_timing": backfill_phase_timing,
         "poll_kalshi_phase": poll_kalshi_phase,
         "kalshi_settled_phase": kalshi_settled_phase,
+        "creation_watchdog": creation_watchdog,
     }
 
 

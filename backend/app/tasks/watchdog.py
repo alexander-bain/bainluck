@@ -36,6 +36,9 @@ CREATION_STALENESS_HOURS = {"kalshi": 6, "polymarket": 6}
 
 # Admin-visible flag (surfaced on the ops dashboard); mirrors the alert payload.
 CREATION_STALE_FLAG_KEY = "bainluck:watchdog:creation_stale"
+# Latest full watchdog result (per-source ages + phase heartbeat) for the admin
+# dashboard / /health surface — read-only, refreshed every run.
+WATCHDOG_SUMMARY_KEY = "bainluck:watchdog:summary"
 
 # Poll phase markers to heartbeat. Value format written by the poll tasks is
 # ``"<phase>@<elapsed>s"``; a frozen loop stops calling _mark_phase entirely, so
@@ -101,6 +104,22 @@ async def _run_creation_freshness_watchdog():
 
     alerts = evaluate_creation_alerts(max_created_by_source, now)
 
+    # Per-source ages for the admin/health surface (always populated, fresh or
+    # stale) so the dashboard can show every watched source, not just the ones
+    # currently alerting.
+    by_source = {}
+    for source, mc in max_created_by_source.items():
+        if mc is None:
+            by_source[source] = {"last_created": None, "age_hours": None}
+            continue
+        if mc.tzinfo is None:
+            mc = mc.replace(tzinfo=timezone.utc)
+        by_source[source] = {
+            "last_created": mc.isoformat(),
+            "age_hours": round((now - mc).total_seconds() / 3600.0, 1),
+            "threshold_hours": CREATION_STALENESS_HOURS[source],
+        }
+
     rc = _bounded_rc()
     if alerts:
         for a in alerts:
@@ -123,7 +142,11 @@ async def _run_creation_freshness_watchdog():
         except Exception:
             pass
 
-    return {"stale_sources": [a["source"] for a in alerts], "alerts": alerts}
+    return {
+        "stale_sources": [a["source"] for a in alerts],
+        "alerts": alerts,
+        "by_source": by_source,
+    }
 
 
 def _run_phase_heartbeat_watchdog():
@@ -208,4 +231,15 @@ async def _run_freshness_watchdog():
     """Combined entry: creation-freshness (async DB) + phase-heartbeat (Redis)."""
     creation = await _run_creation_freshness_watchdog()
     phase = _run_phase_heartbeat_watchdog()
-    return {"creation": creation, "phase_heartbeat": phase}
+    summary = {
+        "creation": creation,
+        "phase_heartbeat": phase,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Persist the latest result so the admin dashboard / health surface can show
+    # per-source creates-freshness + any stuck phase without its own DB query.
+    try:
+        _bounded_rc().setex(WATCHDOG_SUMMARY_KEY, 3600, json.dumps(summary))
+    except Exception:
+        pass
+    return summary

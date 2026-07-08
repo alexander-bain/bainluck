@@ -215,10 +215,21 @@ class TestGetRedisClientSocketTimeout:
         assert kwargs.get("socket_timeout") == 2.0
         assert kwargs.get("socket_connect_timeout") == 2.0
 
-    def test_defaults_remain_unbounded_backward_compatible(self):
-        # Existing callers that don't pass timeouts keep the prior behavior
-        # (no socket_timeout key forced on).
+    def test_default_is_bounded(self):
+        # #969 NEVER-AGAIN: a bare get_redis_client() must be BOUNDED by default
+        # so no caller (69 bare calls in tasks/) can freeze the event loop on a
+        # hung Redis. Both timeouts default to a finite value.
         client = redis_state.get_redis_client()
+        kwargs = client.connection_pool.connection_kwargs
+        assert kwargs.get("socket_timeout") == redis_state._DEFAULT_REDIS_SOCKET_TIMEOUT
+        assert kwargs.get("socket_connect_timeout") == redis_state._DEFAULT_REDIS_SOCKET_TIMEOUT
+        assert kwargs.get("socket_timeout") is not None
+
+    def test_explicit_none_opts_out(self):
+        # Deliberate opt-out for a legitimate long blocking op.
+        client = redis_state.get_redis_client(
+            socket_timeout=None, socket_connect_timeout=None
+        )
         kwargs = client.connection_pool.connection_kwargs
         assert kwargs.get("socket_timeout") is None
 
@@ -226,6 +237,35 @@ class TestGetRedisClientSocketTimeout:
         sig = inspect.signature(redis_state.get_redis_client)
         assert "socket_timeout" in sig.parameters
         assert "socket_connect_timeout" in sig.parameters
+
+
+class TestNoUnboundedRawRedisInTasks:
+    """#969 NEVER-AGAIN CI guard: tasks/ must NOT construct a raw sync Redis
+    client (redis.from_url / redis.Redis) directly — every sync client must come
+    from get_redis_client(), which is bounded by default. A raw unbounded client
+    in an async task can freeze the event loop (the #995 class)."""
+
+    def test_no_raw_sync_redis_construction_in_tasks(self):
+        import pathlib
+        import re
+
+        tasks_dir = pathlib.Path(redis_state.__file__).parent
+        # redis_state.py is the ONE sanctioned place that calls redis.from_url.
+        offenders = []
+        pat = re.compile(r"\bredis\.(from_url|Redis)\s*\(")
+        for py in tasks_dir.glob("*.py"):
+            if py.name == "redis_state.py":
+                continue
+            text = py.read_text()
+            for i, line in enumerate(text.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if pat.search(line):
+                    offenders.append(f"{py.name}:{i}: {line.strip()}")
+        assert not offenders, (
+            "raw sync Redis client(s) in tasks/ (use get_redis_client(), bounded "
+            "by default):\n" + "\n".join(offenders)
+        )
 
 
 class _FakeQuotaRedis:
