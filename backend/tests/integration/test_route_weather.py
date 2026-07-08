@@ -219,6 +219,40 @@ class TestWeatherFeatured:
         body = resp.json()
         assert len(body) <= 5
 
+    async def test_excludes_past_month_market_despite_future_resolution_date(self, client, mock_db):
+        """#883 L2-56: a title-dated PAST month ('... Jan 2020?') must NOT be
+        featured even though its resolution_date is in the future (Kalshi's
+        settlement-date lag). Uses a fixed long-past month so the test is
+        date-independent."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=777,
+                name="Rain in Los Angeles in Jan 2020?",
+                source="kalshi",
+                resolution_date=now + timedelta(days=14),  # future settlement date
+            )
+        ])
+        resp = await client.get("/api/weather/featured")
+        assert resp.status_code == 200
+        assert resp.json() == []  # excluded — title period long past
+
+    async def test_includes_future_month_market(self, client, mock_db):
+        """The counterpart: a clearly-future month IS featured."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=778,
+                name="Rain in Los Angeles in Dec 2099?",
+                source="kalshi",
+                resolution_date=now + timedelta(days=14),
+            )
+        ])
+        resp = await client.get("/api/weather/featured")
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["market_id"] == 778
+
     async def test_rejects_post(self, client):
         resp = await client.post("/api/weather/featured")
         assert resp.status_code == 405

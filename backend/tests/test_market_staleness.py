@@ -82,6 +82,32 @@ class TestTitleImpliedStale:
             is not None
         )
 
+    def test_month_year_past_is_stale(self):
+        # #883 L2-56: "... in May 2026?" on Jun 11 — the month has ended even
+        # though Kalshi's resolution_date is mid-June (settlement lag). This is
+        # the class that kept featuring "Rain in LA in Jun 2026?" in July.
+        assert is_title_implied_stale(
+            "Rain in Los Angeles in May 2026?", "weather", NOW
+        ) == "stale_explicit_title_month"
+
+    def test_month_year_current_month_not_stale(self):
+        # Jun 2026 on Jun 11 — still current (ends Jun 30).
+        assert is_title_implied_stale(
+            "Rain in Los Angeles in Jun 2026?", "weather", NOW
+        ) is None
+
+    def test_month_year_future_not_stale(self):
+        assert is_title_implied_stale(
+            "Rain in Los Angeles in Aug 2026?", "weather", NOW
+        ) is None
+        assert is_title_implied_stale(
+            "Rain in Los Angeles in Jun 2027?", "weather", NOW
+        ) is None
+
+    def test_year_only_not_stale(self):
+        # A season future ("... 2026") must NOT be flagged by the month-year rule.
+        assert is_title_implied_stale("NBA Champion 2026", "basketball", NOW) is None
+
     def test_no_date_no_event_is_not_stale(self):
         assert is_title_implied_stale("Who wins Best Picture?", "entertainment", NOW) is None
 

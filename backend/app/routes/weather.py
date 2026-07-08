@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
-from app.utils.market_staleness import should_exclude_from_featured
+from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +463,12 @@ async def get_featured(db: AsyncSession):
     scored: list[tuple[float, FuturesMarket]] = []
     for m in markets:
         if not m.outcomes:
+            continue
+        # #883 L2-56: never FEATURE a market whose title period is already past
+        # (e.g. "Rain in LA in Jun 2026?" in July). Kalshi's resolution_date is
+        # the settlement date ~2 weeks into the next month, so the resolution_date
+        # DB filter alone keeps these; the title-staleness helper catches them.
+        if is_title_implied_stale(m.name, m.llm_sport_category, now):
             continue
         if m.resolution_date:
             days = (m.resolution_date - now).total_seconds() / 86400

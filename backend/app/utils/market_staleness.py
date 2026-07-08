@@ -25,6 +25,21 @@ _EXPLICIT_MONTH_DAY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Month + year with NO day ("Rain in LA in Jun 2026", "June 2026"). Kalshi's
+# resolution_date for these is the settlement date ~2 weeks INTO the next month,
+# so a `resolution_date > now` filter keeps featuring them after the event month
+# has already ended. The real-world period ends at the last day of the named
+# month. The explicit month+DAY regex above is checked first and returns, so this
+# only fires for day-less month/year periods. #883 L2-56.
+_MONTH_YEAR_RE = re.compile(
+    r"\b("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+    r")\.?\s+(20\d{2})\b",
+    re.IGNORECASE,
+)
+
 _RECURRING_MARKET_EVENT_END_RULES: tuple[
     tuple[re.Pattern, tuple[int, int], int], ...
 ] = (
@@ -66,6 +81,22 @@ def infer_market_real_world_end(
             return None
         grace_days = 7 if re.search(r"\bweek of\b", name, re.IGNORECASE) else 1
         return implied_end, "explicit_title_date", grace_days
+
+    # Month + year with no day ("... in Jun 2026") — period ends the last day of
+    # that month. #883 L2-56.
+    month_year_matches = list(_MONTH_YEAR_RE.finditer(name))
+    if month_year_matches:
+        match = month_year_matches[-1]
+        month = _MONTH_NAME_TO_NUMBER[match.group(1).lower().rstrip(".")]
+        year = int(match.group(2))
+        try:
+            if month == 12:
+                implied_end = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+            else:
+                implied_end = datetime(year, month + 1, 1, tzinfo=timezone.utc) - timedelta(seconds=1)
+        except ValueError:
+            return None
+        return implied_end, "explicit_title_month", 1
 
     event_year = _implied_year_from_market_name(name, now)
     if event_year > now.year:
