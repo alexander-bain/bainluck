@@ -387,6 +387,16 @@ def backfill_kalshi_settled(self, limit: int = 5000):
     return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.recover_datagolf_participation")
+def recover_datagolf_participation(self, limit: int = 150):
+    """#994 recover-first: reclassify wrongly-VOIDed DataGolf losers back into the
+    calibration curve. Dedicated task (NOT a backfill_winners phase) because that
+    pipeline is budget-starved before Phase 0g; this drains the ~17K DNP cohort
+    reliably (bounded + resumable, quota-polite)."""
+    from app.tasks.backfill_winners import _recover_datagolf_participation
+    return _tracked_run("datagolf_recovery", _recover_datagolf_participation(limit=limit))
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
 def backfill_kalshi_candlestick(self, limit: int = 500):
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
@@ -1939,6 +1949,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_trades",
         "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, 15min after settled
         "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
+    "recover-datagolf-participation": {
+        # #994: dedicated recovery (decoupled from budget-starved backfill_winners)
+        # drains the ~17K DNP cohort — reclassifies played-and-lost DataGolf losers
+        # back into the calibration curve. Every 6h, quota-polite (150 markets/run).
+        "task": "app.tasks.recover_datagolf_participation",
+        "schedule": crontab(minute=30, hour="4,10,16,22"),
+        "kwargs": {"limit": 150},
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

@@ -66,10 +66,13 @@ class TestRecoveryStructure:
         src = self._src()
         assert "datagolf_recovery_residual" in src
 
-    def test_recovery_wired_into_pipeline(self):
-        # must be CALLED in the main backfill pipeline so it drains each cycle
-        main = inspect.getsource(backfill_winners._backfill_all_winners)
-        assert "_recover_datagolf_participation(" in main
+    def test_recovery_is_a_dedicated_beat_task(self):
+        # #994: the recovery runs as its OWN beat task, NOT a backfill_winners
+        # phase (that pipeline is budget-starved before Phase 0g, so a phase call
+        # would rarely execute). It must be registered + scheduled.
+        from app.tasks import celery_app
+        assert "app.tasks.recover_datagolf_participation" in celery_app.tasks
+        assert "recover-datagolf-participation" in celery_app.conf.beat_schedule
 
 
 class TestRetagLeavesRecoveredAlone:

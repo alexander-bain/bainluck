@@ -2777,6 +2777,21 @@ async def trigger_backfill_kalshi_settled(
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
+@router.post("/recover-datagolf-participation")
+async def trigger_recover_datagolf_participation(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(150, description="Max DataGolf markets to process"),
+):
+    """#994: reclassify wrongly-VOIDed DataGolf losers (played-and-lost) back into
+    the calibration curve using the historical full field."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.recover_datagolf_participation", args=[limit]
+    )
+    return {"status": "queued", "task_id": str(result.id), "limit": limit}
+
+
 @router.post("/fix-commence-times")
 async def fix_commence_times(request: Request, secret: str = Query(None)):
     """Run golf + hockey commence_time fixes synchronously (no Celery)."""

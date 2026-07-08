@@ -5274,20 +5274,16 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         logger.warning("DataGolf retag2 failed: %s", e)
 
-    # Phase 0g-recover (#994): the retags above VOID every loser absent from the
-    # STORED (often partial) leaderboard — which deletes players who PLAYED and
-    # lost, causing datagolf survivorship (curve floats above the diagonal).
-    # Reclassify those, using the FULL field from the historical API, back into
-    # the curve as real losses ('datagolf_played_lost', re-entering) while keeping
-    # true non-participants voided. Runs AFTER the retags so it corrects them;
-    # bounded + resumable so it drains the ~17K DNP cohort across runs.
-    try:
-        dg_recover_stats = await _recover_datagolf_participation(
-            deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
-        )
-    except Exception as e:
-        dg_recover_stats = {"errors": [str(e)]}
-        logger.warning("DataGolf recovery failed: %s", e)
+    # #994 recover-first: the retags above VOID every loser absent from the STORED
+    # (often partial) leaderboard, deleting players who PLAYED and lost →
+    # datagolf survivorship. The recovery that reclassifies them back into the
+    # curve ('datagolf_played_lost') runs as its OWN beat task
+    # (recover_datagolf_participation), NOT here: this backfill pipeline is
+    # budget-starved (the kalshi_api phase routinely eats the ~773s soft limit
+    # before Phase 0g is even reached), so a phase call would rarely execute. The
+    # dedicated task is decoupled + reliably drains the ~17K DNP cohort. retag1
+    # above already skips 'datagolf_played_lost' so it can't re-clobber recovered
+    # rows on the next cycle.
 
     # Phase 0-no-pregame: Tag outcomes where we have trade snapshots but ALL
     # are post-game → proven zero pre-game trading. These outcomes have extreme
