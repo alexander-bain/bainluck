@@ -314,6 +314,16 @@ def poll_kalshi_markets(self):
     return _tracked_run("poll_kalshi", _poll_kalshi_markets())
 
 
+@celery_app.task(name="app.tasks.run_freshness_watchdog")
+def run_freshness_watchdog():
+    """#995 NEVER-AGAIN: alert the moment market CREATION stalls per source, or a
+    poll's phase marker stops advancing (suspected event-loop block). This is the
+    creates-specific + heartbeat signal the 28-day freeze needed — the coarse
+    "updated in 24h" check below stayed green throughout it."""
+    from app.tasks.watchdog import _run_freshness_watchdog
+    return _tracked_run("freshness_watchdog", _run_freshness_watchdog())
+
+
 @celery_app.task(name="app.tasks.check_kalshi_freshness")
 def check_kalshi_freshness():
     """Daily check: alert if no Kalshi markets were updated in the last 24 hours."""
@@ -1604,6 +1614,14 @@ celery_app.conf.beat_schedule = {
     "check-kalshi-freshness-daily": {
         "task": "app.tasks.check_kalshi_freshness",
         "schedule": crontab(minute=0, hour=9),  # Daily at 9:00 AM UTC — alert if no updates in 24h
+        "options": {"queue": "background"},
+    },
+    "run-freshness-watchdog": {
+        # #995 NEVER-AGAIN: creates-specific freshness + poll phase-heartbeat.
+        # Every 10 min so a 10-min event-loop-block heartbeat has resolution;
+        # both checks are cheap (2 indexed MAX queries + a few Redis reads).
+        "task": "app.tasks.run_freshness_watchdog",
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     "poll-polymarket-hourly": {

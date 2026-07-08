@@ -185,6 +185,7 @@ class TestBeatScheduleCompleteness:
         "poll-futures-every-4h",
         "poll-kalshi",
         "check-kalshi-freshness-daily",
+        "run-freshness-watchdog",
         "poll-polymarket-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
