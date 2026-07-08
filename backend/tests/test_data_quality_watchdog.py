@@ -73,6 +73,27 @@ class TestCheckDefinitions:
         missing = expected - names
         assert not missing, f"Expected checks missing: {missing}"
 
+    def test_no_check_queries_the_phantom_events_updated_at(self):
+        """#1001 regression: the events table has NO updated_at column. Any check
+        that pairs `events` with `updated_at` raises UndefinedColumn, aborts the
+        transaction, and cascades — the bug that produced ~2,585 Sentry events."""
+        for check in CHECKS:
+            q = check["query"].lower()
+            if " events" in q or "from events" in q:
+                assert "updated_at" not in q, (
+                    f"Check '{check['name']}' references events.updated_at, which "
+                    "does not exist (schema drift). Use a snapshot table's "
+                    "captured_at instead."
+                )
+
+    def test_repointed_freshness_checks_use_valid_tables(self):
+        """#1001: the three previously-broken freshness checks now read real
+        snapshot tables instead of the phantom events.updated_at."""
+        by_name = {c["name"]: c["query"].lower() for c in CHECKS}
+        assert "odds_snapshots" in by_name["odds_api_freshness"]
+        assert "win_prob_snapshots" in by_name["espn_freshness"]
+        assert "score_snapshots" in by_name["statpal_freshness"]
+
 
 class TestPassesThreshold:
     """Threshold comparison logic."""

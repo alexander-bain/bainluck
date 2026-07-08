@@ -619,13 +619,28 @@ async def _upsert_taxonomy_cache(
     else:
         expires_at = None  # completed never expires
 
-    # Check for existing
+    # Check for existing. #1002: there is no unique constraint on
+    # (event_id, analysis_type), and concurrent discover_events runs race this
+    # read-then-insert, so duplicate rows accumulate. scalar_one_or_none() then
+    # raised MultipleResultsFound (1,242 events). Order deterministically, keep
+    # the first, and self-heal by deleting the redundant rows (this is a
+    # rebuildable cache table).
     stmt = select(LineMovementAnalysis).where(
         LineMovementAnalysis.event_id == entity_id,
         LineMovementAnalysis.analysis_type == analysis_type,
-    )
+    ).order_by(LineMovementAnalysis.id)
     result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
+    existing_rows = result.scalars().all()
+    existing = existing_rows[0] if existing_rows else None
+    if len(existing_rows) > 1:
+        logger.warning(
+            "taxonomy cache: %d duplicate rows for event_id=%s analysis_type=%s "
+            "— keeping id=%s, deleting %d dupes",
+            len(existing_rows), entity_id, analysis_type,
+            existing.id, len(existing_rows) - 1,
+        )
+        for dupe in existing_rows[1:]:
+            await session.delete(dupe)
 
     movement_data = {"stage": stage, "llm_tags": llm_tags}
 

@@ -72,14 +72,17 @@ CHECKS: list[dict[str, Any]] = [
     },
     {
         "name": "odds_api_freshness",
+        # #1000/#1001: the events table has NO updated_at column (schema drift —
+        # see events-has-no-sport_key class). The real Odds API freshness signal
+        # is fresh odds_snapshots, which is what ingestion actually writes.
         "query": (
-            "SELECT COUNT(*) FROM events "
-            "WHERE updated_at > NOW() - INTERVAL '6 hours'"
+            "SELECT COUNT(*) FROM odds_snapshots "
+            "WHERE captured_at > NOW() - INTERVAL '6 hours'"
         ),
         "threshold": 1,
         "comparison": "gte",
         "severity": "P0",
-        "message": "No events updated in 6 hours — Odds API ingestion may be broken",
+        "message": "No odds snapshots in 6 hours — Odds API ingestion may be broken",
     },
     # --- Winner coverage (P1) ---
     {
@@ -111,28 +114,35 @@ CHECKS: list[dict[str, Any]] = [
     # --- ESPN freshness (P0) ---
     {
         "name": "espn_freshness",
+        # #1000/#1001: events has no updated_at. ESPN freshness is measured by
+        # its win-probability snapshots (source='espn'). 12h window absorbs
+        # overnight/off-hours gaps between live games (dedup caps any alert to 1/24h).
         "query": (
-            "SELECT COUNT(*) FROM events "
-            "WHERE espn_id IS NOT NULL "
-            "AND updated_at > NOW() - INTERVAL '6 hours'"
+            "SELECT COUNT(*) FROM win_prob_snapshots "
+            "WHERE source = 'espn' AND captured_at > NOW() - INTERVAL '12 hours'"
         ),
         "threshold": 1,
         "comparison": "gte",
         "severity": "P0",
-        "message": "No ESPN-linked events updated in 6 hours — live scores, win probability, and Score Differential chart not updating",
+        "message": "No ESPN win-probability snapshots in 12 hours — live scores, win probability, and Score Differential chart not updating",
     },
     # --- StatPal freshness (P1) ---
     {
         "name": "statpal_freshness",
+        # #1000/#1001: events has no updated_at. StatPal drives live scores for
+        # its linked fixtures, so its freshness is measured by recent
+        # score_snapshots on StatPal-linked events. 24h window (soccer is near-
+        # daily); P1 so a rare quiet window doesn't page.
         "query": (
-            "SELECT COUNT(*) FROM events "
-            "WHERE statpal_fixture_id IS NOT NULL "
-            "AND updated_at > NOW() - INTERVAL '6 hours'"
+            "SELECT COUNT(*) FROM score_snapshots ss "
+            "JOIN events e ON e.id = ss.event_id "
+            "WHERE e.statpal_fixture_id IS NOT NULL "
+            "AND ss.captured_at > NOW() - INTERVAL '24 hours'"
         ),
         "threshold": 1,
         "comparison": "gte",
         "severity": "P1",
-        "message": "No StatPal-linked events updated in 6 hours — livescores and play-by-play may be stalled",
+        "message": "No score snapshots for StatPal-linked events in 24 hours — livescores and play-by-play may be stalled",
     },
     # --- ScoreSnapshot freshness (P1) — core product chart data ---
     {
@@ -563,7 +573,43 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
             except Exception as exc:
                 logger.error("Watchdog check '%s' errored: %s", check_name, exc)
                 stats["errors"].append({"check": check_name, "error": str(exc)[:200]})
-                # Continue to next check — don't let one failure block others
+                # #1001: a failed statement aborts the asyncpg transaction, so
+                # EVERY subsequent check (and the post-loop link-rate/coverage
+                # queries) then fail with InFailedSQLTransactionError — the
+                # cascade that produced ~2,585 Sentry events from a single bad
+                # check. Roll back so the next check runs in a clean transaction.
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
+
+    # #1001: the watchdog must not fail SILENTLY. If any check raised an
+    # exception (not merely failed a threshold), the monitor's "all clear" is
+    # unreliable — surface it as a deduped P1 alert so a broken monitor is
+    # visible instead of only landing in Sentry.
+    if stats["errors"] and not _check_redis_dedup("watchdog_self_error"):
+        err_names = ", ".join(e["check"] for e in stats["errors"])
+        self_check = {
+            "name": "watchdog_self_error",
+            "severity": "P1",
+            "threshold": 0,
+            "comparison": "eq",
+            "message": (
+                f"Data-quality watchdog checks ERRORED: {err_names}. The "
+                "monitor's pass/fail signal is unreliable until these are fixed."
+            ),
+        }
+        try:
+            issue_number = create_alert_issue(
+                self_check,
+                len(stats["errors"]),
+                "One or more watchdog check queries raised an exception "
+                "(see the task result's errors list / Sentry).",
+            )
+            _set_redis_dedup("watchdog_self_error", issue_number)
+            stats["alerts_fired"] += 1
+        except Exception as exc:
+            logger.error("Watchdog self-alert failed: %s", exc)
 
     # --- Link rate change detection ---
     # Snapshot per-sport/league link rates and alert on significant changes.

@@ -1181,6 +1181,32 @@ async def _backfill_espn_ids(limit: int = 1000):
     return stats
 
 
+def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> dict:
+    """Stamp the resolved final win probability onto the prediction-market
+    sources of a win_probability_sources map.
+
+    #1000: each source entry is EITHER a dict {"value": ...} OR a bare float —
+    aggregation.py accepts both. The old inline code did
+    ``wp_sources[src]["value"] = ...`` unconditionally, which raised
+    "TypeError: 'float' object does not support item assignment" on the bare-float
+    entries (2,245 events, stalling live→closed transitions). This preserves each
+    entry's existing shape.
+    """
+    wp_sources = dict(wp_sources or {})
+    wp_sources["final_result"] = resolved_home
+    for src_key in ("kalshi", "polymarket"):
+        if src_key not in wp_sources:
+            continue
+        entry = wp_sources[src_key]
+        if isinstance(entry, dict):
+            entry = dict(entry)
+            entry["value"] = resolved_home
+            wp_sources[src_key] = entry
+        else:
+            wp_sources[src_key] = resolved_home
+    return wp_sources
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -1269,11 +1295,9 @@ async def _transition_event_statuses_impl() -> dict:
                         resolved_home = 0.0
                     else:
                         resolved_home = 0.5
-                    wp_sources = event.win_probability_sources or {}
-                    wp_sources["final_result"] = resolved_home
-                    for src_key in ("kalshi", "polymarket"):
-                        if src_key in wp_sources:
-                            wp_sources[src_key]["value"] = resolved_home
+                    wp_sources = _apply_final_pm_win_prob(
+                        event.win_probability_sources, resolved_home
+                    )
                     await session.execute(
                         _sql_update(Event)
                         .where(Event.id == event.id)

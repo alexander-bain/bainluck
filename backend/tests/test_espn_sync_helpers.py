@@ -11,7 +11,42 @@ from app.tasks.espn_sync import (
     get_event_name_variations,
     get_espn_name_variants,
     espn_team_matches,
+    _apply_final_pm_win_prob,
 )
+
+
+class TestApplyFinalPmWinProb:
+    """#1000: bare-float win_probability_sources entries must not crash the
+    live→closed transition (TypeError: 'float' object item assignment)."""
+
+    def test_bare_float_entry_does_not_crash(self):
+        wps = {"kalshi": 0.62, "polymarket": 0.58}
+        out = _apply_final_pm_win_prob(wps, 1.0)
+        assert out["kalshi"] == 1.0
+        assert out["polymarket"] == 1.0
+        assert out["final_result"] == 1.0
+
+    def test_dict_entry_sets_value_key(self):
+        wps = {"kalshi": {"value": 0.62, "weight": 0.8}}
+        out = _apply_final_pm_win_prob(wps, 0.0)
+        assert out["kalshi"]["value"] == 0.0
+        assert out["kalshi"]["weight"] == 0.8  # preserved
+
+    def test_mixed_shapes(self):
+        wps = {"kalshi": {"value": 0.7}, "polymarket": 0.4, "espn": {"value": 0.5}}
+        out = _apply_final_pm_win_prob(wps, 1.0)
+        assert out["kalshi"]["value"] == 1.0
+        assert out["polymarket"] == 1.0
+        assert out["espn"] == {"value": 0.5}  # untouched (not a PM source)
+
+    def test_missing_sources_and_none_input(self):
+        assert _apply_final_pm_win_prob(None, 1.0) == {"final_result": 1.0}
+        assert _apply_final_pm_win_prob({}, 0.5) == {"final_result": 0.5}
+
+    def test_does_not_mutate_input(self):
+        wps = {"kalshi": {"value": 0.62}}
+        _apply_final_pm_win_prob(wps, 1.0)
+        assert wps["kalshi"]["value"] == 0.62  # original untouched
 
 
 class TestEspnNamesMatchAny:

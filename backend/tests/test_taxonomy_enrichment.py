@@ -15,6 +15,53 @@ import pytest
 from app.utils.event_taxonomy import ALLOWED_TAGS, LLM_ENRICHMENT_NAMESPACES
 
 
+class TestUpsertTaxonomyCacheDedup:
+    """#1002: _upsert_taxonomy_cache must not blow up with MultipleResultsFound
+    when duplicate (event_id, analysis_type) rows exist — it should update the
+    first and self-heal by deleting the rest."""
+
+    def _session(self, rows):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = rows
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=result)
+        session.delete = AsyncMock()
+        session.add = MagicMock()
+        return session
+
+    @pytest.mark.asyncio
+    async def test_duplicate_rows_dedup_and_no_crash(self):
+        from app.tasks.taxonomy import _upsert_taxonomy_cache
+        now = datetime.now(timezone.utc)
+        row1 = MagicMock(id=1)
+        row2 = MagicMock(id=2)
+        session = self._session([row1, row2])
+        await _upsert_taxonomy_cache(session, 42, "event_taxonomy", "live", ["x"], now)
+        # kept the first, updated it, deleted the dupe
+        assert row1.movement_data == {"stage": "live", "llm_tags": ["x"]}
+        session.delete.assert_awaited_once_with(row2)
+        session.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_single_row_updates_no_delete(self):
+        from app.tasks.taxonomy import _upsert_taxonomy_cache
+        now = datetime.now(timezone.utc)
+        row1 = MagicMock(id=1)
+        session = self._session([row1])
+        await _upsert_taxonomy_cache(session, 42, "event_taxonomy", "scheduled", ["y"], now)
+        assert row1.movement_data == {"stage": "scheduled", "llm_tags": ["y"]}
+        session.delete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_row_inserts(self):
+        from app.tasks.taxonomy import _upsert_taxonomy_cache
+        now = datetime.now(timezone.utc)
+        session = self._session([])
+        await _upsert_taxonomy_cache(session, 42, "event_taxonomy", "completed", ["z"], now)
+        session.add.assert_called_once()
+        session.delete.assert_not_awaited()
+
+
 # ══════════════════════════════════════════════════════════════════════
 # enrich_event_taxonomy
 # ══════════════════════════════════════════════════════════════════════
