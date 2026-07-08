@@ -1951,14 +1951,19 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 500},
         "options": {"queue": "background"},
     },
-    # #994 recover-datagolf-participation: intentionally NOT scheduled yet. The
-    # live trigger proved the DataGolf historical-raw-data/rounds endpoint returns
-    # 400 for ALL 189 DNP-bearing markets' (tour, event_id, year) triples — an
-    # event_id-namespace blocker between outright markets and the rounds endpoint
-    # (needs focused DataGolf API investigation). Until that's resolved a 6h beat
-    # would burn $30-plan quota on 189 failing calls for 0 recovery. The task
-    # (app.tasks.recover_datagolf_participation) + trigger endpoint stay live for
-    # re-testing; add the beat entry back here once the API path works.
+    "recover-datagolf-participation": {
+        # #994: re-enabled after diagnosis (#136). The "400s" that blocked the
+        # first attempt were mostly 429 rate-limits — DataGolf caps at 45 req/min
+        # and the old 0.5s pacing = 120/min. The recovery now paces BEFORE every
+        # request (1.5s = 40/min) and stops-and-resumes on any residual 429, so it
+        # drains autonomously (the ~189-market cohort in 1-2 beats) with no manual
+        # trigger. Genuinely-invalid tours (e.g. 'alt') → residual/symmetric-
+        # exclude. Offset from the other datagolf tasks to avoid sharing the cap.
+        "task": "app.tasks.recover_datagolf_participation",
+        "schedule": crontab(minute=30, hour="4,10,16,22"),
+        "kwargs": {"limit": 200},
+        "options": {"queue": "background"},
+    },
     "sync-polymarket-resolved-status": {
         "task": "app.tasks.sync_polymarket_resolved",
         "schedule": crontab(minute=30, hour="5,11,17,23"),  # Every 6h, 30min after Kalshi settled

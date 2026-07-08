@@ -77,14 +77,14 @@ class TestRecoveryStructure:
         # per-market try/except continues on error
         assert "skipping %s" in src or "stats[\"errors\"].append(f\"{ext_id}" in src
 
-    def test_recovery_is_a_registered_task_and_not_a_backfill_phase(self):
-        # #994: the recovery is its OWN task (NOT a backfill_winners phase — that
-        # pipeline is budget-starved before Phase 0g so a phase call rarely runs).
-        # The beat entry is intentionally withheld until the DataGolf historical
-        # endpoint 400 blocker is resolved (it recovers 0 today), but the task +
-        # trigger endpoint stay registered for re-testing.
+    def test_recovery_is_a_dedicated_scheduled_task_not_a_backfill_phase(self):
+        # #994: the recovery is its OWN beat task (NOT a backfill_winners phase —
+        # that pipeline is budget-starved before Phase 0g so a phase call rarely
+        # runs). Re-enabled in #136 after the 429-pacing diagnosis so it drains
+        # autonomously.
         from app.tasks import celery_app
         assert "app.tasks.recover_datagolf_participation" in celery_app.tasks
+        assert "recover-datagolf-participation" in celery_app.conf.beat_schedule
         # must NOT be wired inside the budget-starved backfill pipeline
         main = inspect.getsource(backfill_winners._backfill_all_winners)
         assert "_recover_datagolf_participation(" not in main
