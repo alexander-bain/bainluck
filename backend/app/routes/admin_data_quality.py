@@ -1874,6 +1874,7 @@ async def trigger_score_resolution(
         _resolve_kalshi_spread_total_from_scores,
         _resolve_kalshi_player_props_from_boxscore,
         _resolve_kalshi_period_props,
+        _resolve_polymarket_total_from_scores,
     )
     from app.tasks.base import get_task_session
 
@@ -1897,6 +1898,8 @@ async def trigger_score_resolution(
 
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # #140: grade ungraded Polymarket full-game Over/Under from linked scores.
+    poly_total_stats = await _resolve_polymarket_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
 
@@ -1924,6 +1927,7 @@ async def trigger_score_resolution(
         "guess_upgrade": upgrade_stats,
         "score_resolution": score_stats,
         "spread_total_resolution": spread_total_stats,
+        "polymarket_total_resolution": poly_total_stats,
         "player_props": player_prop_stats,
         "period_props": period_prop_stats,
     }
