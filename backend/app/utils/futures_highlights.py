@@ -379,6 +379,12 @@ class FuturesFlags:
 class FuturesHighlightResult:
     """Complete highlight analysis for a futures market."""
     score: int = 0
+    # Uncapped float total (before the display cap at 98) used by the feed's
+    # de-saturated ORDERING score. `score` stays an int capped at 98 for display
+    # and all existing filters; `raw_score` preserves the true additive signal so
+    # distinct high-signal cards do not collapse onto the ceiling and fall back to
+    # a recency tiebreak. Includes curation_score_adj (applied before the cap).
+    raw_score: float = 0.0
     reasons: list[str] = field(default_factory=list)
     flags: FuturesFlags = field(default_factory=FuturesFlags)
     primary_reason: Optional[str] = None
@@ -451,13 +457,10 @@ def compute_futures_highlight(
     if base > 0:
         result.reasons.append(f"category_base_{_sport_lower}")
 
-    # === Stale market penalty (resolution date in the past) ===
-    if resolution_date is not None:
-        if resolution_date.tzinfo is None:
-            resolution_date = resolution_date.replace(tzinfo=timezone.utc)
-        if resolution_date < now:
-            result.score -= 30
-            result.reasons.append("stale_past_resolution")
+    # NOTE: the former "stale_past_resolution" penalty (resolution_date < now)
+    # was dead in the feed path — markets with a past resolution date are excluded
+    # by the SQL base filters and the runtime eligibility gate before scoring, so
+    # the branch never fired. Removed (RANK-1 dead-code cleanup, #141/Item 3).
 
     # === Boring market penalty (overrides compelling) ===
     if _market_name and _BORING_PATTERNS.search(_market_name):
@@ -474,8 +477,16 @@ def compute_futures_highlight(
         result.score += MINOR_SPORT_EVENT_PENALTY
         result.reasons.append("minor_sport_event")
 
+    # === Foreign/local + non-major election penalty (single application) ===
+    # These two rules overlap heavily (both fire on non-major politics election
+    # markets), and previously BOTH could add FOREIGN_LOCAL_ELECTION_PENALTY to
+    # the same market for a -60 double penalty. The guards below ensure the -30
+    # is applied at most once: the non-major branch is skipped when the
+    # foreign/local branch (or the obscure-election penalty) already fired.
+    # ("elections" was dropped from the category set — it is never a valid
+    # llm_sport_category, so that arm was unreachable dead code. #141/Item 2+3.)
     if (
-        _sport_lower in {"politics", "elections"}
+        _sport_lower == "politics"
         and _market_name
         and _ELECTION_MARKET_RE.search(_market_name)
         and not _MAJOR_ELECTION_RE.search(_market_name)
@@ -490,6 +501,7 @@ def compute_futures_highlight(
         and re.search(r"\b(election|winner|nominee|primary|caucus)\b", _market_name, re.IGNORECASE)
         and not _MAJOR_ELECTION_RE.search(_market_name)
         and "obscure_election" not in result.reasons
+        and "foreign_local_election" not in result.reasons
     ):
         result.score += FOREIGN_LOCAL_ELECTION_PENALTY
         result.reasons.append("non_major_election")
@@ -586,26 +598,25 @@ def compute_futures_highlight(
                 if rank_change and rank_change != 0:
                     leader_was_different = True
 
-        # Major movement scoring
+        # Major movement scoring — SINGLE HOME: the interestingness blend.
+        # 24h movement magnitude is scored once, via market_interestingness's
+        # `movement` signal (blended into the feed's ordering score). The reason
+        # tags + flags + top-mover are retained here for display, reason-gen, and
+        # tags only — no additive score, to remove the double-count. #141/Item 2.
         if biggest_change >= MAJOR_MOVEMENT_THRESHOLD:
             flags.has_major_movement = True
-            result.score += FUTURES_WEIGHTS["major_movement_24h"]
             result.reasons.append("major_movement_24h")
             result.top_mover_name = biggest_mover_name
             result.top_mover_change = biggest_change
         elif biggest_change >= MODERATE_MOVEMENT_THRESHOLD:
             flags.has_moderate_movement = True
-            result.score += FUTURES_WEIGHTS["moderate_movement_24h"]
             result.reasons.append("moderate_movement_24h")
             result.top_mover_name = biggest_mover_name
             result.top_mover_change = biggest_change
 
-        # No movement = stale market, less interesting
-        # Only penalize when we HAVE movement data (probability_change_24h is not None)
-        has_movement_data = any(o.get("probability_change_24h") is not None for o in outcomes)
-        if has_movement_data and biggest_change < 0.005:
-            result.score -= 15
-            result.reasons.append("no_movement")
+        # (The former "no_movement" -15 penalty was the negative tail of the same
+        # 24h-movement signal now owned by the blend, so it is removed here to
+        # avoid double-counting: low movement yields a low blend contribution.)
 
         # Leader change scoring
         if leader_was_different:
@@ -626,37 +637,41 @@ def compute_futures_highlight(
         days_until = (resolution_date - now).days
         if days_until <= 1:
             # Micro-bets (resolves today/tomorrow) — daily temperature, oil price,
-            # stock close. High volume but not Discover-worthy content.
+            # stock close. High volume but not Discover-worthy content. This is a
+            # low-quality DAILY-MARKET SUPPRESSION, distinct from the blend's
+            # monotonic "resolving soon = timely" signal, so it stays here.
             result.score -= 20
             result.reasons.append("micro_bet")
-        elif 0 < days_until <= 7:
-            flags.is_resolving_soon = True
-            result.score += FUTURES_WEIGHTS["resolving_soon_7d"]
-            result.reasons.append("resolving_soon_7d")
         elif 0 < days_until <= 30:
+            # SINGLE HOME: the interestingness blend owns "resolving soon = timely"
+            # (resolution_proximity signal). The flag is kept for display/tags; the
+            # additive +8/+4 is removed to drop the double-count. #141/Item 2.
             flags.is_resolving_soon = True
-            result.score += FUTURES_WEIGHTS["resolving_soon_30d"]
-            result.reasons.append("resolving_soon_30d")
 
     # === Cross-source scoring ===
     if source_count >= 2:
+        # SINGLE HOME: the blend's `multi_source` signal scores source count.
+        # Flag + reason retained for display; additive score removed. #141/Item 2.
         flags.has_multi_source = True
-        result.score += FUTURES_WEIGHTS["multi_source"]
         result.reasons.append("multi_source")
 
+    # Source divergence (disagreement MAGNITUDE) is a distinct signal not carried
+    # by the blend, so it remains an additive term.
     if max_source_divergence is not None and max_source_divergence >= SOURCE_DIVERGENCE_THRESHOLD:
         flags.has_source_divergence = True
         result.score += FUTURES_WEIGHTS["source_divergence"]
         result.reasons.append("source_divergence")
 
     # === Volume scoring ===
+    # SINGLE HOME: the blend's `volume` signal scores 24h volume MAGNITUDE. Flags +
+    # reasons retained for display/tags; additive high/moderate terms removed to
+    # drop the double-count. Volume VELOCITY (spike/uptick) below is a distinct
+    # acceleration signal not carried by the blend, so it stays additive. #141/Item 2.
     if volume_24h is not None and volume_24h > 0:
         if volume_24h >= HIGH_VOLUME_THRESHOLD:
             flags.has_high_volume = True
-            result.score += FUTURES_WEIGHTS["high_volume"]
             result.reasons.append("high_volume")
         elif volume_24h >= MODERATE_VOLUME_THRESHOLD:
-            result.score += FUTURES_WEIGHTS["moderate_volume"]
             result.reasons.append("moderate_volume")
 
     # === Volume velocity (current vs 7-day average) ===
@@ -688,7 +703,18 @@ def compute_futures_highlight(
             result.score += 5
             result.reasons.append("moderate_surprise")
 
-    # === Cap score at 100 ===
+    # === Curation adjustment (applied BEFORE the cap) ===
+    # curation_score_adj is a deliberate human/LLM steer, so it must participate
+    # in the score rather than escape the cap post-hoc. Applying it here means it
+    # counts toward both the uncapped ranking score and the capped display score.
+    # #141/Item 1.
+    if curation_score_adj:
+        result.score += curation_score_adj
+        result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
+
+    # Preserve the uncapped total for the feed's de-saturated ORDERING score,
+    # THEN cap the display score at 98. #141/Item 1.
+    result.raw_score = float(result.score)
     result.score = min(98, result.score)
 
     # === Determine primary reason for display ===
@@ -711,22 +737,9 @@ def compute_futures_highlight(
             result.primary_reason = display_text
             break
 
-    if curation_score_adj:
-        result.score += curation_score_adj
-        result.reasons.append(f"curation_adj:{curation_score_adj:+d}")
-
     return result
 
 
-def should_highlight_futures(result: FuturesHighlightResult, min_score: int = 25) -> bool:
-    """Determine if a futures market should appear in the feed."""
-    # Always highlight leader changes and source divergence
-    if result.flags.leader_changed:
-        return True
-    if result.flags.has_source_divergence:
-        return True
-    # Always highlight major movements in high-tier markets
-    if result.flags.has_major_movement and result.flags.is_high_tier:
-        return True
-    # Otherwise, use score threshold
-    return result.score >= min_score
+# NOTE: `should_highlight_futures` was removed (#141/Item 3). It was imported by
+# routes/feed.py but never called — the feed uses explicit personalized-score
+# floors (`personalized_score < 15`) instead. Dead code.

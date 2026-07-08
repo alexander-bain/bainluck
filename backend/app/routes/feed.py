@@ -61,12 +61,16 @@ from app.utils import (
 from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import (
     compute_futures_highlight,
-    should_highlight_futures,
+    CATEGORY_BASE_SCORES,
+    SPORTS_CATEGORY_BASE,
 )
 from app.utils.feed_market_quality import (
     _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
+    explanation_score_rank,
+    quality_score_adjustment,
+    quality_score_rank,
     backfill_discover_editorial_tail,
     balance_discover_event_category_mix,
     cap_low_quality_families,
@@ -693,12 +697,30 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     return False
 
 
+def _rank_key(item: dict) -> tuple:
+    """Sort key for feed ordering (#141/Item 1).
+
+    Uses the de-saturated float `_rank_score` when present, falling back to the
+    capped display `score` for item types that do not compute one. Recency
+    (`_sort_time`) remains the tiebreaker, but now only breaks GENUINE ties
+    rather than deciding the whole top page of 95-98-saturated cards.
+    """
+    return (
+        item.get("_rank_score", item.get("score", 0)),
+        item.get("_sort_time", 0),
+    )
+
+
 def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
     for item in feed_items:
         if item.get("type") != "event":
             continue
         if not _is_discover_event_demotion_exception(item):
             item["score"] = min(item["score"], 35)
+            # Keep the ordering score in lockstep so demoted events actually fall
+            # below high-scoring futures under the de-saturated sort. #141/Item 1.
+            if "_rank_score" in item:
+                item["_rank_score"] = min(item["_rank_score"], 35.0)
 
 
 def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
@@ -767,7 +789,7 @@ def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
     """
     sorted_items = sorted(
         futures_items,
-        key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
+        key=_rank_key,
         reverse=True,
     )
     survivor_by_group: dict[str, dict] = {}
@@ -801,7 +823,7 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
             continue
         if key not in seen_canonical:
             seen_canonical[key] = fitem
-        elif fitem["score"] > seen_canonical[key]["score"]:
+        elif _rank_key(fitem) > _rank_key(seen_canonical[key]):
             if _outcomes_overlap(seen_canonical[key], fitem):
                 seen_canonical[key] = fitem
             else:
@@ -1274,7 +1296,7 @@ async def get_feed(
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker
-    feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+    feed_items.sort(key=_rank_key, reverse=True)
 
     # === DIVERSITY GUARANTEE ===
     # Ensure the feed has a mix of events and futures.
@@ -1292,7 +1314,7 @@ async def get_feed(
         feed_items = _filter_discover_event_noise(feed_items)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         feed_items.sort(
-            key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True
+            key=_rank_key, reverse=True
         )
         feed_items = balance_discover_event_category_mix(feed_items)
 
@@ -1482,6 +1504,7 @@ async def get_feed(
     # Remove internal sort/debug keys
     for item in paginated:
         item.pop("_sort_time", None)
+        item.pop("_rank_score", None)
         item.pop("_quality_class", None)
         item.pop("_quality_family_key", None)
         item.pop("_quality_story_key", None)
@@ -1605,12 +1628,19 @@ def _apply_manual_review_decision_map(
         if decision == "accepted_promote":
             if scope == "exact":
                 item["score"] = min(98, float(item.get("score") or 0) + 8)
+                # Mirror the manual steer onto the ordering score. #141/Item 1.
+                if "_rank_score" in item:
+                    item["_rank_score"] = float(item.get("_rank_score") or 0) + 8
                 item["_review_decision"] = decision
                 item["_review_decision_scope"] = scope
                 item["_review_decision_scope_key"] = scope_key
         elif decision == "accepted_downrank":
             penalty = 18 if scope == "exact" else 12
             item["score"] = max(0, float(item.get("score") or 0) - penalty)
+            if "_rank_score" in item:
+                item["_rank_score"] = max(
+                    0.0, float(item.get("_rank_score") or 0) - penalty
+                )
             item["_review_decision"] = decision
             item["_review_decision_scope"] = scope
             item["_review_decision_scope_key"] = scope_key
@@ -2510,6 +2540,7 @@ def _score_market_trace(
         persisted_story_key=market.__dict__.get("story_key"),
         status=market.__dict__.get("status"),  # R6: resolved sports never surface
     )
+    # === DISPLAY score chain (capped) ===
     quality_score = apply_quality_score(highlight_result.score, quality)
     explanation_score = apply_explanation_quality_score(
         quality_score,
@@ -2517,6 +2548,7 @@ def _score_market_trace(
         headline=headline,
         quality=quality,
     )
+    curator_bonus = _EXTERNAL_CURATOR_RECALL_SCORE_BONUS if is_external_curator_recall else 0
     explanation_score = _apply_external_curator_recall_score(
         explanation_score,
         highlight_result.reasons,
@@ -2532,6 +2564,63 @@ def _score_market_trace(
     )
     final_score = min(98, int(explanation_score * p_result.multiplier))
 
+    # === UNCAPPED ORDERING score chain (de-saturated; #141/Item 1 & Item 4) ===
+    # Mirror the feed's _rank_score so the trace explains the value that actually
+    # decides ordering. Personalization here uses an anonymous context (baseline).
+    curation_adj = market.__dict__.get("curation_score_adj", 0) or 0
+    rank_after_quality = quality_score_rank(highlight_result.raw_score, quality)
+    rank_after_explanation = explanation_score_rank(
+        rank_after_quality,
+        hook_description=market.hook_description,
+        headline=headline,
+        quality=quality,
+    )
+    rank_after_curator = rank_after_explanation + curator_bonus
+    rank_final = max(0.0, rank_after_curator * p_result.multiplier)
+
+    # === Machine-readable per-card score anatomy ===
+    # Every additive term, cap, multiplier, and blend contribution with values.
+    # This is the explainability substrate all later RANK eval work reads.
+    # NOTE: the interestingness blend is applied at serve time with a
+    # Redis-controlled weight (default 0.2, kill switch 0); the cached signal is
+    # surfaced here but the served blend delta depends on the live weight.
+    cached_interest = _get_cached_interestingness(market.id)
+    score_anatomy = {
+        "category_base": CATEGORY_BASE_SCORES.get(
+            (market.llm_sport_category or "").lower(),
+            SPORTS_CATEGORY_BASE if market.llm_sport_category else 0,
+        ),
+        "highlight_reasons": list(highlight_result.reasons),
+        "curation_adj": curation_adj,
+        "highlight_raw_uncapped": highlight_result.raw_score,
+        "highlight_display_capped": highlight_result.score,
+        "highlight_cap_delta": highlight_result.score - highlight_result.raw_score,
+        "quality_class": quality.quality_class,
+        "quality_adjustment": quality_score_adjustment(quality),
+        "display": {
+            "after_quality": quality_score,
+            "after_explanation": explanation_score,
+            "external_curator_recall_bonus": curator_bonus,
+            "personalization_multiplier": p_result.multiplier,
+            "final_capped": final_score,
+        },
+        "ranking": {
+            "after_quality_uncapped": rank_after_quality,
+            "after_explanation_uncapped": rank_after_explanation,
+            "external_curator_recall_bonus": curator_bonus,
+            "personalization_multiplier": p_result.multiplier,
+            "final_uncapped": rank_final,
+        },
+        "personalization_reasons": list(p_result.reasons),
+        "interestingness_cached": (
+            cached_interest.get("score") if cached_interest else None
+        ),
+        "interestingness_blend_note": (
+            "blended at serve time on the UNCAPPED ranking score with the "
+            "Redis-controlled weight (default 0.2, kill switch 0); +15 uplift cap"
+        ),
+    }
+
     blockers = list(runtime_filters["blockers"])
     if quality.quality_class == "suppress":
         blockers.append("quality_suppressed")
@@ -2544,11 +2633,14 @@ def _score_market_trace(
         "runtime_filters": runtime_filters,
         "scores": {
             "highlight": highlight_result.score,
+            "highlight_raw": highlight_result.raw_score,
             "after_quality": quality_score,
             "after_explanation": explanation_score,
             "personalization_multiplier": p_result.multiplier,
             "final": final_score,
+            "rank_final": rank_final,
         },
+        "score_anatomy": score_anatomy,
         "highlight": {
             "headline": headline,
             "context_summary": context_summary,
@@ -2686,14 +2778,14 @@ async def _discover_rank_phase_trace(
                 }
 
     feed_items = event_items + tournament_items + deduped_futures
-    feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+    feed_items.sort(key=_rank_key, reverse=True)
     post_initial_sort_rank = _rank_futures_market(feed_items, market_id)
 
     post_event_demote_rank = post_initial_sort_rank
     if event_pct is not None and event_pct < 0.3:
         _demote_non_exceptional_discover_events(feed_items)
         feed_items.sort(
-            key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True
+            key=_rank_key, reverse=True
         )
         post_event_demote_rank = _rank_futures_market(feed_items, market_id)
 
@@ -3917,6 +4009,14 @@ async def _score_events(
         item = {
             "type": "event",
             "score": personalized_score,
+            # De-saturated ORDERING score (#141/Item 1): use the uncapped
+            # base*multiplier so events share one sort scale with de-saturated
+            # futures, but never below the display floor (respects the "Nah"
+            # championship override at 35). compute_base_score does not clamp at
+            # 98, so this genuinely de-saturates line-move / high-EI events too.
+            "_rank_score": max(
+                float(personalized_score), base_score * p_result.multiplier
+            ),
             "reason": reason,
             "headline": get_highlight_label(highlight_result),
             "data": event_data,
@@ -4344,6 +4444,16 @@ async def _score_sports_mode_futures(
             headline=headline,
             quality=quality,
         )
+        # Uncapped ORDERING score (de-saturated), same scale as the Discover
+        # path so the merged sort is consistent. This path has no blend/curator/
+        # llm stages. #141/Item 1.
+        rank_score = quality_score_rank(highlight_result.raw_score, quality)
+        rank_score = explanation_score_rank(
+            rank_score,
+            hook_description=effective_hook,
+            headline=headline,
+            quality=quality,
+        )
 
         # Apply personalization
         outcome_team_ids_for_p = [
@@ -4359,6 +4469,7 @@ async def _score_sports_mode_futures(
             outcome_names=outcome_names,
         )
         personalized_score = min(98, int(base_score * p_result.multiplier))
+        rank_score = max(0.0, rank_score * p_result.multiplier)
         if not my_teams_only and personalized_score < 15:
             continue
 
@@ -4484,6 +4595,7 @@ async def _score_sports_mode_futures(
         item: dict = {
             "type": "futures",
             "score": personalized_score,
+            "_rank_score": rank_score,
             "reason": reason,
             "headline": headline,
             "context_summary": context_summary,
@@ -5139,6 +5251,25 @@ async def _score_futures(
                 f"discover_llm_score:{llm_score_adjustment:+d}"
             )
 
+        # === UNCAPPED ORDERING SCORE (de-saturated) === #141/Item 1
+        # Mirror the display pipeline WITHOUT the flat-98 clamps so distinct
+        # high-signal cards keep a strict order instead of tying at 98 and
+        # falling back to a recency tiebreak. The display `score` and every
+        # `personalized_score`-based filter stay capped; only the final feed
+        # sort consumes `_rank_score`. Curation is already folded into
+        # highlight_result.raw_score (applied before the highlight cap).
+        rank_score = quality_score_rank(highlight_result.raw_score, quality)
+        rank_score = explanation_score_rank(
+            rank_score,
+            hook_description=effective_hook,
+            headline=headline,
+            quality=quality,
+        )
+        if market.id in external_curator_recall_ids:
+            rank_score += _EXTERNAL_CURATOR_RECALL_SCORE_BONUS
+        if llm_score_adjustment:
+            rank_score = max(0.0, rank_score + llm_score_adjustment)
+
         # === INTERESTINGNESS BLEND ===
         # Read precomputed interestingness from Redis and blend with base_score.
         # Weight is controllable via Redis key (default 0.2, kill switch at 0).
@@ -5154,6 +5285,15 @@ async def _score_futures(
                 # Cap: interestingness can add at most 15 points over base
                 base_score = min(blended, pre_blend + 15)
                 base_score = max(0, min(98, base_score))
+                # Blend the ORDERING score on the UNCAPPED value so the blend is
+                # no longer mathematically dead for saturated cards. Keep the +15
+                # uplift cap; omit the 98 clamp. #141/Item 1.
+                rank_pre = rank_score
+                rank_blended = (
+                    rank_score * (1 - _interestingness_blend_weight)
+                    + (i_score * 100) * _interestingness_blend_weight
+                )
+                rank_score = max(0.0, min(rank_blended, rank_pre + 15))
                 i_reasons = cached_entry.get("reasons") or []
                 if abs(base_score - pre_blend) >= 0.5:
                     delta = base_score - pre_blend
@@ -5276,11 +5416,14 @@ async def _score_futures(
             + _discover_llm_feature_tokens(discover_llm_metadata),
         )
         personalized_score = min(98, int(base_score * p_result.multiplier))
+        # Personalization multiplies the ORDERING score last (uncapped). #141/Item 1.
+        rank_score = max(0.0, rank_score * p_result.multiplier)
 
         # Recycled (previously-seen) cards rank below fresh ones, so they only
         # surface when the fresh pool can't fill the page (implicit serving floor).
         if is_recycled:
             personalized_score = max(1, int(personalized_score - FEED_RECYCLE_PENALTY))
+            rank_score = max(1.0, rank_score - FEED_RECYCLE_PENALTY)
 
         # --- "Nah" category hard filter for futures ---
         is_nah = any("sport_nah" in r for r in p_result.reasons)
@@ -5463,6 +5606,7 @@ async def _score_futures(
         item = {
             "type": "futures",
             "score": personalized_score,
+            "_rank_score": rank_score,
             "reason": reason,
             "headline": headline,
             "context_summary": context_summary,
@@ -5660,7 +5804,7 @@ def _ensure_feed_diversity(
     # Merge futures + other (tournaments, etc.) into one pool sorted by score.
     non_events = sorted(
         futures + other,
-        key=lambda x: (x["score"], x.get("_sort_time", 0)),
+        key=_rank_key,
         reverse=True,
     )
     result = []

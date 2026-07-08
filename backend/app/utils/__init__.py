@@ -38,7 +38,6 @@ from app.utils.futures_categorization import (
 )
 from app.utils.futures_highlights import (
     compute_futures_highlight,
-    should_highlight_futures,
     FuturesFlags,
     FuturesHighlightResult,
 )
@@ -76,7 +75,6 @@ __all__ = [
     "categorize_market",
     "categorize_by_rules",
     "compute_futures_highlight",
-    "should_highlight_futures",
     "FuturesFlags",
     "FuturesHighlightResult",
     "generate_event_reason",

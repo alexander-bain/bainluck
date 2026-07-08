@@ -1843,6 +1843,51 @@ def apply_explanation_quality_score(
     return min(60, raw_score)
 
 
+def quality_score_rank(raw_score: float, quality: MarketQuality) -> float:
+    """Uncapped ORDERING counterpart to `apply_quality_score` (#141/Item 1).
+
+    Applies the same additive quality adjustment used for display, but omits the
+    per-class display ceilings (95/88/82/65). Those ceilings intentionally shape
+    the 0-98 DISPLAY number, but for ORDERING they collapse distinct high-signal
+    cards onto the same value, so the feed sort falls back to a recency tiebreak.
+    Tier separation still holds via the additive adjustment (compelling +12,
+    low_quality -35, suppress -100). Suppressed markets floor at 0 (they are
+    filtered before this runs; the invariant is kept for safety).
+    """
+    if quality.quality_class == "suppress":
+        return 0.0
+    return max(0.0, raw_score + quality_score_adjustment(quality))
+
+
+def explanation_score_rank(
+    raw_score: float,
+    *,
+    hook_description: str | None,
+    headline: str | None,
+    quality: MarketQuality,
+) -> float:
+    """Uncapped ORDERING counterpart to `apply_explanation_quality_score`.
+
+    Strong hooks add +3; specific explanations are neutral. Weakly explained
+    cards keep the per-class demotion ceilings (93/80/60) because that is a
+    genuine quality penalty (weak cards must not outrank contextualized ones),
+    not display saturation. #141/Item 1.
+    """
+    if has_strong_hook(hook_description):
+        return raw_score + 3
+    if has_specific_explanation(
+        hook_description=hook_description,
+        headline=headline,
+        quality=quality,
+    ):
+        return raw_score
+    if quality.quality_class == "compelling":
+        return min(93, raw_score)
+    if quality.quality_class == "normal":
+        return min(80, raw_score)
+    return min(60, raw_score)
+
+
 def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
     """Cap low-quality ladder/bucket/story families after scoring.
 
@@ -1851,7 +1896,12 @@ def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
     """
     sorted_items = sorted(
         items,
-        key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
+        # Keep the strongest representative per family under the de-saturated
+        # ordering score, falling back to display score. #141/Item 1.
+        key=lambda x: (
+            x.get("_rank_score", x.get("score", 0)),
+            x.get("_sort_time", 0),
+        ),
         reverse=True,
     )
     counts: dict[str, int] = {}
@@ -1882,7 +1932,12 @@ def diversify_quality_families(
     """
     sorted_items = sorted(
         items,
-        key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
+        # Keep the strongest representative per family under the de-saturated
+        # ordering score, falling back to display score. #141/Item 1.
+        key=lambda x: (
+            x.get("_rank_score", x.get("score", 0)),
+            x.get("_sort_time", 0),
+        ),
         reverse=True,
     )
     exact_counts: dict[str, int] = {}

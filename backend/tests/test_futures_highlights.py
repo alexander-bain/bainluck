@@ -4,7 +4,6 @@ from datetime import datetime, timezone, timedelta
 import pytest
 from app.utils.futures_highlights import (
     compute_futures_highlight,
-    should_highlight_futures,
     is_minor_league_market,
     is_top_tier_soccer_market,
     MAJOR_MOVEMENT_THRESHOLD,
@@ -152,31 +151,47 @@ class TestComputeFuturesHighlight:
         assert result.flags.has_rank_shakeup is True
 
     def test_resolving_soon_7d(self):
-        """Markets resolving within 7 days get a bonus."""
+        """Markets resolving within 7 days set the flag (scored via the blend)."""
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
         resolution = now + timedelta(days=5)
         result = compute_futures_highlight(resolution_date=resolution, now=now)
         assert result.flags.is_resolving_soon is True
-        assert "resolving_soon_7d" in result.reasons
+        # #141/Item 2: resolution-proximity's SINGLE HOME is the interestingness
+        # blend now, so the additive "resolving_soon_*" reason/score are gone.
+        assert "resolving_soon_7d" not in result.reasons
+        assert "resolving_soon_30d" not in result.reasons
 
     def test_resolving_soon_30d(self):
-        """Markets resolving within 30 days get a smaller bonus."""
+        """Markets resolving within 30 days set the flag (scored via the blend)."""
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
         resolution = now + timedelta(days=20)
         result = compute_futures_highlight(resolution_date=resolution, now=now)
         assert result.flags.is_resolving_soon is True
-        assert "resolving_soon_30d" in result.reasons
+        assert "resolving_soon_30d" not in result.reasons
 
-    def test_multi_source_bonus(self):
-        """Markets tracked by 2+ sources get a bonus."""
+    def test_micro_bet_penalty_retained(self):
+        """Daily-resolving micro-bets keep the distinct suppression penalty."""
+        now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
+        result = compute_futures_highlight(
+            resolution_date=now + timedelta(hours=12), now=now
+        )
+        assert "micro_bet" in result.reasons
+
+    def test_multi_source_flag_no_additive_double_count(self):
+        """2+ sources set the flag; the additive bonus is removed (#141/Item 2).
+
+        Source COUNT is scored once, in the interestingness blend. The additive
+        term is gone, so the raw highlight score no longer differs by count.
+        """
         single = compute_futures_highlight(source_count=1)
         multi = compute_futures_highlight(source_count=3)
-        assert multi.score > single.score
         assert multi.flags.has_multi_source is True
         assert single.flags.has_multi_source is False
+        assert "multi_source" in multi.reasons
+        assert multi.score == single.score  # no additive difference
 
     def test_source_divergence(self):
-        """Sources disagreeing by >5% is flagged."""
+        """Sources disagreeing by >5% is flagged (distinct signal, kept additive)."""
         result = compute_futures_highlight(
             source_count=2,
             max_source_divergence=0.08,
@@ -184,18 +199,22 @@ class TestComputeFuturesHighlight:
         assert result.flags.has_source_divergence is True
         assert "source_divergence" in result.reasons
 
-    def test_high_volume_bonus(self):
-        """Markets with high 24h trading volume get a bonus."""
+    def test_high_volume_flag_no_additive_double_count(self):
+        """Volume MAGNITUDE sets flags/reasons but no additive score (#141/Item 2).
+
+        24h volume magnitude is scored once, in the interestingness blend.
+        """
         no_vol = compute_futures_highlight(market_tier=1)
         high_vol = compute_futures_highlight(market_tier=1, volume_24h=100_000)
         mod_vol = compute_futures_highlight(market_tier=1, volume_24h=10_000)
         low_vol = compute_futures_highlight(market_tier=1, volume_24h=100)
-        assert high_vol.score > mod_vol.score > low_vol.score
-        assert high_vol.score > no_vol.score
+        # Flags + reasons preserved for display/tags
         assert high_vol.flags.has_high_volume is True
         assert low_vol.flags.has_high_volume is False
         assert "high_volume" in high_vol.reasons
         assert "moderate_volume" in mod_vol.reasons
+        # But no additive score difference (magnitude lives in the blend)
+        assert high_vol.score == mod_vol.score == low_vol.score == no_vol.score
 
     def test_score_capped_at_100(self):
         """Score should never exceed 100."""
@@ -236,39 +255,48 @@ class TestComputeFuturesHighlight:
             source_count=2,
             now=now,
         )
-        # Should score reasonably well: tier 1 + major league + major movement + multi-source
-        assert result.score >= 50
+        # tier 1 + major league base (movement & multi-source now score via the
+        # blend, not additively — #141/Item 2). Flags/reasons still fire.
+        assert result.score >= 40
         assert result.flags.has_major_movement is True
         assert result.flags.has_multi_source is True
 
 
-class TestShouldHighlightFutures:
-    """Tests for should_highlight_futures()."""
+class TestScoreAnatomy:
+    """Uncapped raw_score exposure, curation-before-cap, single election penalty."""
 
-    def test_leader_change_always_highlighted(self):
-        """Leader changes are always highlighted regardless of score."""
-        result = compute_futures_highlight(
-            outcomes=[
-                {"name": "A", "probability": 0.30, "probability_change_24h": 0.01,
-                 "rank": 1, "rank_change_24h": 1, "opening_probability": 0.29},
-            ]
+    def test_raw_score_exposed_and_capped_display(self):
+        """raw_score keeps the uncapped total; score is capped at 98."""
+        result = compute_futures_highlight(market_tier=1)
+        assert result.raw_score == result.score  # small score: equal
+        # A high-signal card whose raw exceeds 98 keeps the uncapped raw.
+        big = compute_futures_highlight(
+            market_tier=1,
+            sport_category="politics",
+            market_name="US presidential election winner",
+            curation_score_adj=80,
         )
-        result.flags.leader_changed = True
-        assert should_highlight_futures(result) is True
+        assert big.score == 98
+        assert big.raw_score > 98
 
-    def test_source_divergence_always_highlighted(self):
-        """Source divergence is always highlighted."""
-        result = compute_futures_highlight(
-            source_count=2,
-            max_source_divergence=0.08,
+    def test_curation_applied_before_cap(self):
+        """curation_score_adj participates in raw_score (not escaping the cap)."""
+        base = compute_futures_highlight(market_tier=3, sport_category="tech")
+        curated = compute_futures_highlight(
+            market_tier=3, sport_category="tech", curation_score_adj=5
         )
-        assert should_highlight_futures(result) is True
+        assert curated.raw_score == base.raw_score + 5
+        assert "curation_adj:+5" in curated.reasons
 
-    def test_low_score_not_highlighted(self):
-        """Low-scoring markets are not highlighted."""
-        result = compute_futures_highlight()
-        result.score = 10
-        assert should_highlight_futures(result) is False
+    def test_election_penalty_applied_once(self):
+        """foreign_local + non_major must not stack into a -60 double penalty."""
+        result = compute_futures_highlight(
+            sport_category="politics",
+            market_name="Who will win the Andalusia regional election?",
+        )
+        # foreign_local fires; non_major is guarded off so only ONE -30 applies.
+        assert "foreign_local_election" in result.reasons
+        assert "non_major_election" not in result.reasons
 
 
 class TestDeterministicFuturesHeadlines:
@@ -449,10 +477,13 @@ class TestDeterministicFuturesHeadlines:
             "Will OpenAI release GPT-5 before July?"
         )
 
-    def test_stale_market_suppresses_deterministic_copy(self):
-        """Resolved stale markets should not get explanatory card text."""
-        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+    def test_past_resolution_penalty_removed(self):
+        """#141/Item 3: the dead 'stale_past_resolution' penalty is gone.
 
+        Past-resolution markets are excluded by the feed's SQL/eligibility gates
+        before scoring, so the branch never fired. It is removed — a past
+        resolution date no longer emits the reason or the -30 penalty.
+        """
         now = datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc)
         result = compute_futures_highlight(
             market_tier=5,
@@ -461,12 +492,7 @@ class TestDeterministicFuturesHeadlines:
             resolution_date=now - timedelta(days=1),
             now=now,
         )
-
-        assert "stale_past_resolution" in result.reasons
-        assert result.score < 25
-        assert should_highlight_futures(result) is False
-        assert generate_futures_headline(result.reasons, leader_name="Yes", leader_probability=0.9) == ""
-        assert generate_futures_reason("Temperature in NYC on May 16", result.reasons) == ""
+        assert "stale_past_resolution" not in result.reasons
 
     def test_boring_pattern_does_not_get_compelling_or_primary_reason(self):
         """Boring social-count buckets should be flagged without a headline hook."""
