@@ -805,13 +805,24 @@ class KalshiAPIService(BaseAPIClient):
                     if _past_deadline():
                         break
                     await asyncio.sleep(0.3)
-                    events_page, series_cursor = await self.get_events(
-                        status=None,
-                        series_ticker=st,
-                        with_nested_markets=True,
-                        limit=200,
-                        cursor=series_cursor,
-                        deadline=deadline,
+                    _progress(f"fetch:supp:{st}:p{_sp}")
+                    # #995 attempt-7: same per-page hard bound as the main scan.
+                    # attempt-6 got the poll PAST the unfiltered scan, and the
+                    # marker then fingered the supplementary loop (fetch:supp:
+                    # KXMLBGAME) as the next stall — a hung get_events here isn't
+                    # caught by the series try/except (that only catches raises,
+                    # not hangs). wait_for turns a hang into a TimeoutError the
+                    # except below swallows → skip to the next series.
+                    events_page, series_cursor = await asyncio.wait_for(
+                        self.get_events(
+                            status=None,
+                            series_ticker=st,
+                            with_nested_markets=True,
+                            limit=200,
+                            cursor=series_cursor,
+                            deadline=deadline,
+                        ),
+                        timeout=45.0,
                     )
                     for event_data in events_page:
                         parsed_event = self._parse_event(event_data)
@@ -849,10 +860,14 @@ class KalshiAPIService(BaseAPIClient):
                     break
                 try:
                     await asyncio.sleep(0.3)
-                    raw_markets, _ = await self.get_markets(
-                        status=None,
-                        event_ticker=event.event_ticker,
-                        limit=200,
+                    # #995 attempt-7: bound this fetch too (same hang class).
+                    raw_markets, _ = await asyncio.wait_for(
+                        self.get_markets(
+                            status=None,
+                            event_ticker=event.event_ticker,
+                            limit=200,
+                        ),
+                        timeout=45.0,
                     )
                     if raw_markets:
                         parsed = [self._parse_market(m) for m in raw_markets]
