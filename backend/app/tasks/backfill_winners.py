@@ -3029,6 +3029,168 @@ async def _backfill_datagolf_leaderboards():
     return stats
 
 
+# #994 recover-first source: DNP outcomes whose player IS in the authoritative
+# full field are real losses that re-enter the calibration curve (NOT in
+# VOID_RESOLUTION_SOURCES). Kept distinct so the recovery is fully reversible and
+# retag1 can be taught to leave it alone. is_winner is NEVER touched (gotcha #21).
+DATAGOLF_PLAYED_LOST_SOURCE = "datagolf_played_lost"
+
+
+async def _recover_datagolf_participation(limit: int = 150, deadline: float | None = None):
+    """#994 recover-first: reclassify wrongly-VOIDed DataGolf losers.
+
+    Phase 0g's retags mark every loser absent from the STORED (often partial)
+    leaderboard as ``did_not_play``, which precompute VOID-excludes — but a
+    partial leaderboard deletes players who PLAYED and finished low (certain
+    losses), so only losers ever leave the denominator → the datagolf curve
+    floats above the diagonal (survivorship; ops round-85 Q1-Q4 confirmed:
+    DNP-excluded 55/66/73 vs DNP-restored 28/37/42, yet blanket-restore
+    undershoots because some DNPs — e.g. Hatton at Houston — genuinely sat out).
+
+    The authoritative fix: for each resolved DataGolf market with DNP outcomes,
+    fetch the FULL field via the historical API and split the DNP cohort:
+      * player's dg_id IS in the field  → played-and-lost → resolution_source =
+        'datagolf_played_lost' (re-enters the curve as a real loss).
+      * player's dg_id NOT in the field → true DNP/WD → stays voided.
+      * API returns nothing (event not found) → mark the whole market a recovery
+        residual so precompute can symmetrically exclude it (winners AND losers),
+        never a one-sided restore.
+    Bounded + resumable (Redis cursor by external_id) + quota-polite. Idempotent:
+    retag1 is taught to skip 'datagolf_played_lost', so a re-run re-checks only
+    the still-DNP tail. NEVER mutates is_winner (gotcha #21).
+    """
+    import asyncio
+    import json as _json
+    from app.services.datagolf_api import DataGolfAPIService
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {
+        "markets_checked": 0,
+        "played_lost_recovered": 0,
+        "true_dnp_kept": 0,
+        "residual_markets": 0,
+        "api_miss": 0,
+        "errors": [],
+    }
+
+    _rc = get_redis_client()
+    _cursor_key = "bainluck:datagolf_recovery_cursor"
+    _raw = _rc.get(_cursor_key)
+    cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
+
+    try:
+        async with get_task_session() as session:
+            # Resolved DataGolf markets that still carry did_not_play outcomes and
+            # have a parseable datagolf:<tour>:<event>:<type> external_id.
+            rows = (await session.execute(
+                text("""
+                    SELECT fm.id, fm.external_id,
+                           EXTRACT(YEAR FROM COALESCE(fm.commence_time,
+                                                      fm.resolution_date))::int AS yr
+                    FROM futures_markets fm
+                    WHERE fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fm.external_id LIKE 'datagolf:%:%:%'
+                      AND fm.external_id > :cursor
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.resolution_source = 'did_not_play'
+                            AND fo.is_winner = false
+                      )
+                    ORDER BY fm.external_id
+                    LIMIT :limit
+                """),
+                {"cursor": cursor, "limit": limit},
+            )).all()
+
+        if not rows:
+            # Wrapped the whole cohort — restart from the head next run.
+            if cursor:
+                _rc.delete(_cursor_key)
+                logger.info("DataGolf recovery: cursor wrapped, restarts next run")
+            return stats
+
+        service = DataGolfAPIService()
+        try:
+            for row in rows:
+                if deadline is not None:
+                    import time as _t
+                    if _t.monotonic() >= deadline:
+                        logger.info("DataGolf recovery: deadline hit after %d markets",
+                                    stats["markets_checked"])
+                        break
+                stats["markets_checked"] += 1
+                ext_id = row.external_id  # datagolf:pga:123:win
+                parts = ext_id.split(":")
+                if len(parts) < 4:
+                    continue
+                tour, event_id = parts[1], parts[2]
+
+                historical = await service.get_historical_results(
+                    tour=tour, event_id=event_id, year=row.yr,
+                )
+                await asyncio.sleep(0.5)  # quota-polite ($30/mo plan)
+
+                if not historical:
+                    # Event genuinely not found → residual; symmetric-exclude.
+                    stats["api_miss"] += 1
+                    async with get_task_session() as session:
+                        _meta = await session.execute(
+                            text("SELECT market_metadata FROM futures_markets WHERE id = :mid"),
+                            {"mid": row.id},
+                        )
+                        _m = dict(_meta.scalar() or {})
+                        if not _m.get("datagolf_recovery_residual"):
+                            _m["datagolf_recovery_residual"] = True
+                            await session.execute(
+                                text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
+                                {"meta": _json.dumps(_m), "mid": row.id},
+                            )
+                            await session.commit()
+                            stats["residual_markets"] += 1
+                    continue
+
+                played_dg_ids = [
+                    str(p["dg_id"]) for p in historical if p.get("dg_id") is not None
+                ]
+                if not played_dg_ids:
+                    continue
+
+                async with get_task_session() as session:
+                    # Played-and-lost: dg_id (external_id[4:]) in the real field.
+                    r_played = await session.execute(
+                        text("""
+                            UPDATE futures_outcomes fo
+                            SET resolution_source = :src
+                            FROM futures_markets fm
+                            WHERE fo.market_id = fm.id AND fm.id = :mid
+                              AND fo.resolution_source = 'did_not_play'
+                              AND fo.is_winner = false
+                              AND SUBSTRING(fo.external_id FROM 4) = ANY(:ids)
+                        """),
+                        {"src": DATAGOLF_PLAYED_LOST_SOURCE, "mid": row.id, "ids": played_dg_ids},
+                    )
+                    await session.commit()
+                    stats["played_lost_recovered"] += r_played.rowcount
+        finally:
+            await service.close()
+
+        # Persist resume point (last external_id processed).
+        _rc.setex(_cursor_key, 86400 * 14, rows[len(rows) - 1].external_id)
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("DataGolf recovery error: %s", e)
+
+    logger.info(
+        "DataGolf recovery: %d markets, %d played_lost recovered, %d residual, %d api_miss",
+        stats["markets_checked"], stats["played_lost_recovered"],
+        stats["residual_markets"], stats["api_miss"],
+    )
+    return stats
+
+
 async def _backfill_datagolf_winners():
     """Resolve DataGolf placement markets from actual leaderboard results.
 
@@ -5068,7 +5230,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                       AND fm.source = 'datagolf'
                       AND fm.status = 'resolved'
                       AND fo.is_winner = false
-                      AND COALESCE(fo.resolution_source, '') NOT IN ('did_not_play', 'withdrew')
+                      AND COALESCE(fo.resolution_source, '') NOT IN
+                          ('did_not_play', 'withdrew', 'datagolf_played_lost')
                       AND fm.market_metadata IS NOT NULL
                       AND fm.market_metadata->'leaderboard' IS NOT NULL
                       AND jsonb_typeof(fm.market_metadata->'leaderboard') = 'array'
@@ -5110,6 +5273,21 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 )
     except Exception as e:
         logger.warning("DataGolf retag2 failed: %s", e)
+
+    # Phase 0g-recover (#994): the retags above VOID every loser absent from the
+    # STORED (often partial) leaderboard — which deletes players who PLAYED and
+    # lost, causing datagolf survivorship (curve floats above the diagonal).
+    # Reclassify those, using the FULL field from the historical API, back into
+    # the curve as real losses ('datagolf_played_lost', re-entering) while keeping
+    # true non-participants voided. Runs AFTER the retags so it corrects them;
+    # bounded + resumable so it drains the ~17K DNP cohort across runs.
+    try:
+        dg_recover_stats = await _recover_datagolf_participation(
+            deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+        )
+    except Exception as e:
+        dg_recover_stats = {"errors": [str(e)]}
+        logger.warning("DataGolf recovery failed: %s", e)
 
     # Phase 0-no-pregame: Tag outcomes where we have trade snapshots but ALL
     # are post-game → proven zero pre-game trading. These outcomes have extreme

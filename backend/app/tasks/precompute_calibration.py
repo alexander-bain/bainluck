@@ -211,6 +211,14 @@ async def _precompute_calibration_main():
                     fm.mutually_exclusive
                 FROM futures_markets fm
                 WHERE fm.status = 'resolved'
+                  -- #994 symmetric exclusion: DataGolf markets whose full field
+                  -- the historical API genuinely can't return (event not found)
+                  -- are dropped ENTIRELY — winners AND losers — so participation
+                  -- can never be one-sidedly assumed. Recovery flags these; the
+                  -- residual is expected to be ~0 (golf history never ages out).
+                  AND NOT COALESCE(
+                      (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
+                      false)
             ),
             group_sizes AS (
                 SELECT group_id, source, COUNT(*) AS group_size
