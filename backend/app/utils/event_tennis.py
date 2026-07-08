@@ -89,6 +89,7 @@ class TennisEventAdapter:
         from app.utils.outcome_display import (
             is_field_outcome,
             is_placeholder_outcome_name,
+            normalize_display_probs,
         )
 
         now = datetime.now(timezone.utc)
@@ -132,6 +133,10 @@ class TennisEventAdapter:
                     if o.current_probability is not None else None
                 ),
             })
+        # #23: independent candidate binaries can sum >100% (the raw Wimbledon
+        # field did: 28.6+26.8+24.6+21.1…). Normalize the displayed field like
+        # search/detail do, so the winner-field reads as a coherent distribution.
+        normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
         # Children: other open tennis markets sharing the tournament token.

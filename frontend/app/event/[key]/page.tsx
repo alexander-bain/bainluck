@@ -19,11 +19,21 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 
 export default function EventConceptPage() {
-  // Next.js 14: dynamic params for a CLIENT component come from useParams()
-  // (already URL-decoded). `use(params)` on a plain object throws at render —
-  // that P1'd the whole page in prod (L2-60). #999
+  // Next.js 14: dynamic params for a CLIENT component come from useParams().
+  // `use(params)` on a plain object throws at render (L2-60 P1). useParams()
+  // returns the segment STILL percent-encoded, so decode ONCE here before
+  // fetchEventConcept re-encodes it for the URL — otherwise the key double-encodes
+  // (event%253A…) and the fetch 404s (L2-61). decodeURIComponent is safe/idempotent
+  // for our keys (colons aren't %-escapes). #999
   const params = useParams();
-  const decodedKey = (params?.key as string) || "";
+  const rawKey = (params?.key as string) || "";
+  const decodedKey = (() => {
+    try {
+      return decodeURIComponent(rawKey);
+    } catch {
+      return rawKey;
+    }
+  })();
 
   // GA4 hooks — before any conditional return (MANDATORY).
   usePageTracking({ pageType: "event_concept", pageTitle: `Event ${decodedKey}` });

@@ -7,10 +7,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 
-// Next 14 client-component params come from useParams() (a plain object).
+// Next 14 client-component params come from useParams() — which returns the
+// segment STILL percent-encoded. The page must decode ONCE before fetch, else it
+// double-encodes (event%253A…) and 404s (L2-61).
 jest.mock("next/navigation", () => ({
-  useParams: () => ({ key: "event:golf:the-open-championship" }),
+  useParams: () => ({ key: "event%3Agolf%3Athe-open-championship" }),
 }));
+
+// Capture the key the page hands to fetchEventConcept so we can assert it's
+// singly-DECODED (literal colons) — never the raw %3A form.
+const fetchCalls: string[] = [];
 
 // SWR resolved to a golf envelope so the content branch renders (not loading).
 const ENVELOPE = {
@@ -48,9 +54,14 @@ const ENVELOPE = {
   movers: [],
 };
 
+// Call the fetcher (unlike a plain data-return mock) so we observe the key the
+// page passes to fetchEventConcept — that's where the double-encoding bug lived.
 jest.mock("swr", () => ({
   __esModule: true,
-  default: () => ({ data: ENVELOPE, error: null, isLoading: false }),
+  default: (_key: unknown, fetcher?: () => unknown) => {
+    if (fetcher) { try { fetcher(); } catch { /* ignore */ } }
+    return { data: ENVELOPE, error: null, isLoading: false };
+  },
 }));
 
 jest.mock("@/hooks", () => ({
@@ -60,7 +71,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/lib/api", () => ({
-  fetchEventConcept: jest.fn(),
+  fetchEventConcept: (k: string) => { fetchCalls.push(k); return Promise.resolve(null); },
   formatProbability: (p: number | null) =>
     p == null ? "—" : `${Math.round(p * 100)}%`,
 }));
@@ -82,5 +93,15 @@ describe("EventConceptPage SSR render (L2-60 guard)", () => {
     expect(html).toContain("H2H: Scheffler vs McIlroy");
     // probability-only: no American-odds moneyline strings
     expect(html).not.toMatch(/[+-]\d{3,}/);
+  });
+
+  test("passes the DECODED key to fetchEventConcept (no double-encoding, L2-61)", () => {
+    fetchCalls.length = 0;
+    renderToStaticMarkup(<EventConceptPage />);
+    // useParams gave the percent-encoded segment; the page must decode ONCE so
+    // fetchEventConcept's own encodeURIComponent yields %3A (single), not %253A.
+    expect(fetchCalls[0]).toBe("event:golf:the-open-championship");
+    expect(fetchCalls[0]).not.toContain("%3A");
+    expect(fetchCalls[0]).not.toContain("%253A");
   });
 });

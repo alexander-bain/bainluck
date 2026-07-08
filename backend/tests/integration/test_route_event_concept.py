@@ -81,9 +81,12 @@ def _tennis_winner_market():
         llm_sport_category="tennis",
         resolution_date=datetime.now(timezone.utc) + timedelta(days=4),
         outcomes=[
-            _tennis_outcome("Coco Gauff", 0.30),
-            _tennis_outcome("Aryna Sabalenka", 0.25),
-            _tennis_outcome("Other", 0.40),  # field remainder — must be dropped
+            # independent binaries that sum >100% (the real Wimbledon case) —
+            # must be #23-normalized after the "Other" field remainder is dropped.
+            _tennis_outcome("Coco Gauff", 0.45),
+            _tennis_outcome("Aryna Sabalenka", 0.40),
+            _tennis_outcome("Karolína Muchová", 0.35),
+            _tennis_outcome("Other", 0.10),  # field remainder — must be dropped
         ],
     )
 
@@ -102,8 +105,11 @@ class TestTennisEventAdapter:
         assert body["event"]["name"] == "2026 Wimbledon Winner"
         assert body["event"]["status"] == "live"  # resolves in 4 days
         assert body["primary"]["kind"] == "winner_field"
-        names = [c["name"] for c in body["primary"]["competitors"]]
-        assert names == ["Coco Gauff", "Aryna Sabalenka"]  # sorted, "Other" dropped
+        comps = body["primary"]["competitors"]
+        names = [c["name"] for c in comps]
+        assert names == ["Coco Gauff", "Aryna Sabalenka", "Karolína Muchová"]  # sorted, "Other" dropped
+        # #23 normalization: the >100% field is scaled to sum ~1.0 (L2-61).
+        assert abs(sum(c["probability"] for c in comps) - 1.0) < 0.02
         assert body["sections"][0]["type"] == "winner"
 
     async def test_tennis_no_markets_404(self, client, mock_db):
