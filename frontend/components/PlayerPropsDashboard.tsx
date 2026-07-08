@@ -540,9 +540,7 @@ export default function PlayerPropsDashboard({
 
   const filtered = teamFilter === "all" ? players : players.filter((p) => p.team === teamFilter || p.team === "unknown");
   const totalProps = players.reduce((a, p) => a + p.stats.length, 0);
-  const allSources = new Set<string>();
-  data.player_props?.forEach((p) => allSources.add(p.source));
-  const sourceLabel = [...allSources].map((s) => s === "kalshi" ? "Kalshi" : s === "polymarket" ? "Polymarket" : s).join(" + ");
+  // L2-52: source-name attribution removed (blend-only).
 
   const homeShortCode = homeTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "HOME";
   const awayShortCode = awayTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "AWAY";
@@ -560,9 +558,7 @@ export default function PlayerPropsDashboard({
           >
             {showAllStats ? "Points only" : "All stats"}
           </button>
-          <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded bg-blue-500/10 text-blue-600">
-            {sourceLabel}
-          </span>
+          {/* L2-52: source-name pill removed (blend-only). */}
           <div className="flex bg-surface-card rounded-lg border border-surface-border p-0.5">
             {(["all", "home", "away"] as const).map((f) => (
               <button

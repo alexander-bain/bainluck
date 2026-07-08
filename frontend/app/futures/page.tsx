@@ -389,15 +389,14 @@ function GroupCard({ group }: { group: FuturesGroupSummary }) {
           {group.representative_name}
         </div>
         <div className="flex items-center justify-between">
+          {/* L2-52: per-source name badges removed (blend-only). Keep a
+              source-agnostic blend count for multi-source groups. */}
           <div className="flex items-center gap-1.5">
-            {group.sources.map((src) => (
-              <span
-                key={src}
-                className={`text-[10px] px-1.5 py-0.5 rounded ${sourceStyle(src)}`}
-              >
-                {formatSourceLabel(src)}
+            {group.sources.length > 1 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-futures/10 text-accent-futures font-medium">
+                {group.sources.length} sources
               </span>
-            ))}
+            )}
           </div>
           <span className="text-caption text-text-muted">
             {group.market_count} market{group.market_count !== 1 ? "s" : ""}
@@ -408,27 +407,8 @@ function GroupCard({ group }: { group: FuturesGroupSummary }) {
   );
 }
 
-function sourceStyle(source: string): string {
-  switch (source) {
-    case "polymarket":
-      return "bg-blue-500/15 text-blue-400";
-    case "kalshi":
-      return "bg-green-500/15 text-green-400";
-    case "odds_api":
-      return "bg-slate-500/15 text-slate-300";
-    default:
-      return "bg-text-secondary/15 text-text-muted";
-  }
-}
-
-function formatSourceLabel(source: string): string {
-  const names: Record<string, string> = {
-    odds_api: "Sportsbooks",
-    kalshi: "Kalshi",
-    polymarket: "Polymarket",
-  };
-  return names[source] || source;
-}
+// L2-52: sourceStyle + formatSourceLabel removed — blend-only, no source-name
+// badges on the futures browse cards.
 
 /**
  * Chevron icons

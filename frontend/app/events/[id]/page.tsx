@@ -958,9 +958,7 @@ export default function EventPage({ params }: EventPageProps) {
                   <div key={idx} className="px-4 sm:px-5 py-3">
                     <div className="flex items-center justify-between mb-2.5">
                       <span className="text-xs font-medium text-text-secondary">{matchup.market_name}</span>
-                      <span className="text-[10px] font-medium text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
-                        {matchup.source === "kalshi" ? "Kalshi" : matchup.source === "polymarket" ? "Polymarket" : matchup.source}
-                      </span>
+                      {/* L2-52: source-name badge removed (blend-only). */}
                     </div>
                     <div className="space-y-2">
                       {matchup.outcomes.map((outcome, oidx) => {

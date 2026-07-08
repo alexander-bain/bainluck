@@ -218,29 +218,8 @@ function MovementPill({ change }: { change: number | null | undefined }) {
   );
 }
 
-/** Source badge */
-function SourceBadge({ source }: { source: string | null | undefined }) {
-  if (!source) return null;
-  const label: Record<string, string> = {
-    polymarket: "Polymarket",
-    kalshi: "Kalshi",
-    odds_api: "Sportsbooks",
-  };
-  const colors: Record<string, string> = {
-    polymarket: "bg-blue-500/15 text-blue-400",
-    kalshi: "bg-emerald-500/15 text-emerald-400",
-    odds_api: "bg-amber-500/15 text-amber-400",
-  };
-  return (
-    <span
-      className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
-        colors[source] || "bg-surface-elevated text-text-muted"
-      }`}
-    >
-      {label[source] || source}
-    </span>
-  );
-}
+// L2-52: SourceBadge (single-source provider name) removed — blend-only, no
+// source-name attribution on plain market rows.
 
 /** Multi-source badge — shows when multiple sources agree on a market */
 function MultiSourceBadge({ sources }: { sources: string[] }) {
@@ -346,10 +325,10 @@ function HeroFutureCard({
             {future.clean_label || cleanMarketName(future.market_name)}
           </div>
         </div>
-        {future.all_sources && future.all_sources.length > 1 ? (
+        {/* L2-52: single-source provider name removed (blend-only); the
+            source-agnostic "N sources" count stays for multi-source markets. */}
+        {future.all_sources && future.all_sources.length > 1 && (
           <MultiSourceBadge sources={future.all_sources} />
-        ) : (
-          <SourceBadge source={future.source} />
         )}
       </div>
 
@@ -1873,9 +1852,7 @@ function MatchupGrid({
           }
         }
 
-        const sources = [...new Set(sorted.map(s => s.source).filter(Boolean))];
-        const sourceLabel = sources.map(s => s === "kalshi" ? "Kalshi" : s === "polymarket" ? "Polymarket" : s).join(" · ");
-
+        // L2-52: source-name attribution removed from the group header (blend-only).
         return (
           <div key={groupKey} className="rounded-xl border border-surface-border bg-surface-card overflow-hidden mb-2">
             <div className="flex items-center justify-between px-4 py-2 border-b border-surface-border/30">
@@ -1883,7 +1860,7 @@ function MatchupGrid({
                 {label}
               </span>
               <span className="text-[10px] text-text-muted">
-                {sorted.length} matchups · {sourceLabel}
+                {sorted.length} matchups
               </span>
             </div>
             <div className="px-3 py-1.5">
@@ -2138,11 +2115,7 @@ function NoveltyScroll({ futures }: { futures: RelatedFuture[] }) {
                 <div className="text-[15px] font-black font-mono text-white">
                   {pct}%
                 </div>
-                {f.source && (
-                  <span className="text-[7px] font-semibold px-1.5 py-0.5 rounded bg-white/20 text-white">
-                    {f.source === "kalshi" ? "Kalshi" : f.source === "polymarket" ? "Polymarket" : f.source}
-                  </span>
-                )}
+                {/* L2-52: source-name badge removed (blend-only). */}
               </div>
             </div>
           </Link>

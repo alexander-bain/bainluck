@@ -34,36 +34,14 @@ interface ProgressionTableProps {
   markets: ProgressionMarket[];
   /** Group title */
   title?: string;
-  /** Whether to show source badges */
-  showSource?: boolean;
 }
 
-function formatSource(source: string): string {
-  const names: Record<string, string> = {
-    odds_api: "Sportsbooks",
-    kalshi: "Kalshi",
-    polymarket: "Polymarket",
-  };
-  return names[source] || source;
-}
-
-function sourceBadgeColor(source: string): string {
-  switch (source) {
-    case "polymarket":
-      return "bg-blue-500/15 text-blue-400";
-    case "kalshi":
-      return "bg-green-500/15 text-green-400";
-    case "odds_api":
-      return "bg-slate-500/15 text-slate-300";
-    default:
-      return "bg-text-secondary/15 text-text-muted";
-  }
-}
+// L2-52: source-name formatter + badge color removed — blend-only, no source
+// attribution on progression rows.
 
 export default function ProgressionTable({
   markets,
   title,
-  showSource = true,
 }: ProgressionTableProps) {
   if (!markets || markets.length === 0) return null;
 
@@ -85,7 +63,7 @@ export default function ProgressionTable({
         <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-4 py-2 text-xs text-[var(--text-muted)] border-b border-[var(--surface-border)]">
           <div>Market</div>
           <div className="text-right">Top Outcome</div>
-          {showSource && <div className="text-right w-20">Source</div>}
+          {/* L2-52: Source column removed (blend-only). */}
         </div>
 
         {/* Rows */}
@@ -132,16 +110,7 @@ export default function ProgressionTable({
                 )}
               </div>
 
-              {/* Source badge */}
-              {showSource && (
-                <div className="text-right w-20 flex items-center justify-end">
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full ${sourceBadgeColor(market.source)}`}
-                  >
-                    {formatSource(market.source)}
-                  </span>
-                </div>
-              )}
+              {/* L2-52: source badge removed (blend-only). */}
             </div>
           );
         })}

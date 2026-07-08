@@ -116,9 +116,7 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
 
   if (props.length === 0) return null;
 
-  const sources = [...new Set(props.map((p) => p.source))];
-  const sourceLabel = sources.map((s) => s === "kalshi" ? "Kalshi" : s === "polymarket" ? "Polymarket" : s).join(" · ");
-
+  // L2-52: source-name attribution removed (blend-only).
   return (
     <div className="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-surface-border">
@@ -126,7 +124,7 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
           Player Props
         </span>
         <span className="text-micro text-text-muted">
-          {props.length} props · {sourceLabel}
+          {props.length} props
         </span>
       </div>
 

@@ -31,6 +31,28 @@ describe("no American-moneyline leak (L2-48)", () => {
     expect(src).not.toContain('"Kalshi"');
   });
 
+  // L2-52: the full blend-only sweep — plain market-rendering components must not
+  // render a source-provider name. (Comment-stripped, so removal notes are fine.)
+  // EXCLUDED by design (flagged, not stripped): charts with per-source legends
+  // (OddsChart/TournamentChart/DisagreementChart), cross-source comparison
+  // (SourceAggregationBlock/CombinedMarketCard), category modules, admin, and
+  // explicit "Sources:" affordances (playoffs grid) — see REPORT-2.
+  const SWEPT = [
+    "components/RelatedFutures.tsx",
+    "components/PlayerPropsGrid.tsx",
+    "components/PlayerPropsDashboard.tsx",
+    "components/ProgressionTable.tsx",
+    "components/ThresholdGrid.tsx",
+  ];
+  for (const rel of SWEPT) {
+    test(`${rel} renders no source-provider name`, () => {
+      const src = read(rel);
+      for (const name of ['"Polymarket"', '"Kalshi"', '"Sportsbooks"']) {
+        expect(src).not.toContain(name);
+      }
+    });
+  }
+
   for (const rel of SURFACES) {
     test(`${rel} calls no odds formatter`, () => {
       const src = read(rel);
