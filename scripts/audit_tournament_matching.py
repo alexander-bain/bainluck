@@ -105,9 +105,16 @@ def audit() -> dict:
                    "entrants": 0, "children": 0, "by_source": {}, "candidate": None}
         else:
             children = env.get("children") or []
-            by_source = Counter()
+            by_source, by_method = Counter(), Counter()
             for c in children:
                 by_source[c.get("source") or c.get("src") or "?"] += 1
+                by_method[c.get("method") or "?"] += 1
+            candidate = _candidate_count(api, token, ev["candidate_sql"])
+            # Unassociated candidate pool = the ceiling minus what we grouped (the
+            # number we hill-climb DOWN). Never below 0.
+            unassociated = (
+                max(candidate - len(children), 0) if candidate is not None else None
+            )
             row = {
                 "label": ev["label"],
                 "key": ev["key"],
@@ -116,7 +123,9 @@ def audit() -> dict:
                 "entrants": len((env.get("primary") or {}).get("competitors") or []),
                 "children": len(children),
                 "by_source": dict(by_source),
-                "candidate": _candidate_count(api, token, ev["candidate_sql"]),
+                "by_method": dict(by_method),
+                "candidate": candidate,
+                "unassociated": unassociated,
             }
         result["events"].append(row)
     return result
@@ -124,8 +133,8 @@ def audit() -> dict:
 
 def print_table(data: dict, baseline: dict | None = None):
     base_by_key = {e["key"]: e for e in (baseline or {}).get("events", [])}
-    print(f"{'Event':<22} {'Status':<9} {'Entrants':>8} {'Children':>9} {'Cand.':>7}  By-source")
-    print("-" * 78)
+    print(f"{'Event':<22} {'Status':<9} {'Entr':>5} {'Child':>6} {'Unassoc':>8}  By-method / by-source")
+    print("-" * 92)
     for e in data["events"]:
         if not e["found"]:
             print(f"{e['label']:<22} {'NOT FOUND':<9}")
@@ -135,9 +144,11 @@ def print_table(data: dict, baseline: dict | None = None):
             d = e["children"] - base_by_key[e["key"]].get("children", 0)
             if d:
                 delta = f"  ({'+' if d > 0 else ''}{d} vs baseline)"
+        bymeth = ", ".join(f"{k}:{v}" for k, v in sorted(e.get("by_method", {}).items()))
         bysrc = ", ".join(f"{k}:{v}" for k, v in sorted(e["by_source"].items()))
-        cand = e["candidate"] if e["candidate"] is not None else "—"
-        print(f"{e['label']:<22} {e.get('status',''):<9} {e['entrants']:>8} {e['children']:>9} {str(cand):>7}  {bysrc}{delta}")
+        unassoc = e.get("unassociated")
+        unassoc_s = str(unassoc) if unassoc is not None else "—"
+        print(f"{e['label']:<22} {e.get('status',''):<9} {e['entrants']:>5} {e['children']:>6} {unassoc_s:>8}  [{bymeth}] ({bysrc}){delta}")
 
 
 def main():

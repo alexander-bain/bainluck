@@ -5,6 +5,7 @@ import {
   fieldOrder,
   childLeader,
   eventDateRange,
+  splitChildren,
 } from "../../lib/eventConceptDisplay";
 
 describe("statusLabel", () => {
@@ -51,6 +52,23 @@ describe("childLeader", () => {
   });
   test("null when nothing to show", () => {
     expect(childLeader({ market_id: 3 })).toBeNull();
+  });
+});
+
+describe("splitChildren (L2-63: settled vs live)", () => {
+  test("settled flag + extreme leader go to settled; live stays live", () => {
+    const { live, settled } = splitChildren([
+      { market_id: 1, market_name: "Sabalenka vs Osaka", probability: 0.62 },      // live
+      { market_id: 2, market_name: "Eala vs Swiatek: Set 1", probability: 0.99 },  // decided (extreme)
+      { market_id: 3, market_name: "Gauff vs X", probability: 0.55, settled: true },// flagged
+      { market_id: 4, market_name: "Kostyuk vs Y", probability: 0.02 },            // decided (low)
+    ]);
+    expect(live.map((c) => c.market_id)).toEqual([1]);
+    expect(settled.map((c) => c.market_id).sort()).toEqual([2, 3, 4]);
+  });
+
+  test("empty is safe", () => {
+    expect(splitChildren([])).toEqual({ live: [], settled: [] });
   });
 });
 

@@ -14,6 +14,7 @@ import {
   fieldOrder,
   childLeader,
   eventDateRange,
+  splitChildren,
 } from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -140,35 +141,52 @@ export default function EventConceptPage() {
         </section>
       )}
 
-      {/* Children — matchups / props */}
-      {children.length > 0 && (
-        <section className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary mb-4">Matchups &amp; props</h2>
-          <div className="space-y-2">
-            {children.map((child) => {
-              const lead = childLeader(child);
-              return (
-                <div
-                  key={child.market_id}
-                  className="flex items-center justify-between py-1.5 border-b border-surface-border/40 last:border-0"
-                >
-                  <span className="text-sm text-text-secondary truncate mr-3">
-                    {child.market_name || child.name || "Market"}
-                  </span>
-                  {lead && (
-                    <span className="text-sm text-text-primary whitespace-nowrap">
-                      {lead.name}{" "}
-                      <span className="font-mono font-semibold tabular-nums">
-                        {formatProbability(lead.probability)}
-                      </span>
-                    </span>
+      {/* Children — matchups / props. Live prominent; completed (decided)
+          matches grouped + de-emphasized so a settled 99% never reads as live
+          (L2-63 Item 2). */}
+      {children.length > 0 && (() => {
+        const { live, settled } = splitChildren(children);
+        const Row = ({ child, dim }: { child: (typeof children)[number]; dim?: boolean }) => {
+          const lead = childLeader(child);
+          return (
+            <div className="flex items-center justify-between py-1.5 border-b border-surface-border/40 last:border-0">
+              <span className={`text-sm truncate mr-3 ${dim ? "text-text-muted" : "text-text-secondary"}`}>
+                {child.market_name || child.name || "Market"}
+              </span>
+              {lead && (
+                <span className={`text-sm whitespace-nowrap ${dim ? "text-text-muted" : "text-text-primary"}`}>
+                  {lead.name}{" "}
+                  {dim ? (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-text-muted/15 text-text-secondary">Final</span>
+                  ) : (
+                    <span className="font-mono font-semibold tabular-nums">{formatProbability(lead.probability)}</span>
                   )}
+                </span>
+              )}
+            </div>
+          );
+        };
+        return (
+          <section className="bg-surface-card rounded-card shadow-card p-6">
+            <h2 className="text-title-3 font-semibold text-text-primary mb-4">Matchups &amp; props</h2>
+            {live.length > 0 && (
+              <div className="space-y-2">
+                {live.map((child) => <Row key={child.market_id} child={child} />)}
+              </div>
+            )}
+            {settled.length > 0 && (
+              <details className="mt-4">
+                <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+                  Completed ({settled.length})
+                </summary>
+                <div className="space-y-2 mt-2 opacity-70">
+                  {settled.map((child) => <Row key={child.market_id} child={child} dim />)}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+              </details>
+            )}
+          </section>
+        );
+      })()}
     </div>
   );
 }

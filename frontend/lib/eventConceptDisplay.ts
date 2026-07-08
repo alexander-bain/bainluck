@@ -44,6 +44,23 @@ export function childLeader(
   return null;
 }
 
+/** Split children into live vs settled (decided) so the page keeps live matchups
+ *  prominent and groups/de-emphasizes completed ones (L2-63 Item 2 — a decided
+ *  match must not masquerade as live at 99%). Settled = the envelope flag, or a
+ *  dead-extreme leader as a fallback. */
+export function splitChildren(
+  children: EventConceptChild[],
+): { live: EventConceptChild[]; settled: EventConceptChild[] } {
+  const live: EventConceptChild[] = [];
+  const settled: EventConceptChild[] = [];
+  for (const c of children || []) {
+    const p = c.probability;
+    const decided = c.settled === true || (p != null && (p >= 0.97 || p <= 0.03));
+    (decided ? settled : live).push(c);
+  }
+  return { live, settled };
+}
+
 /** A readable event date range (either bound optional). */
 export function eventDateRange(
   start?: string | null,

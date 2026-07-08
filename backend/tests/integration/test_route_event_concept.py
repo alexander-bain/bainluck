@@ -79,6 +79,8 @@ def _tennis_winner_market():
         name="2026 Wimbledon Winner",
         status="open",
         llm_sport_category="tennis",
+        source="polymarket",
+        group_id="polymarket:139182",
         resolution_date=datetime.now(timezone.utc) + timedelta(days=4),
         outcomes=[
             # independent binaries that sum >100% (the real Wimbledon case) —

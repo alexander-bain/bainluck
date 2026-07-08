@@ -147,13 +147,31 @@ class TennisEventAdapter:
         from app.utils.event_matcher import entrant_key_set, market_in_event
         entrant_keys = entrant_key_set([c["name"] for c in competitors])
         tokens = tournament_tokens(winner.name)
+
+        # L2-63 association hierarchy (no auto-associate on weak signals — L2-61
+        # precedent: mislabeling > missing):
+        #   entrant  — both competitors in the draw (confident matchups)
+        #   container— shares a source-native container (group_id) with a CONFIDENT
+        #             sibling (winner or entrant matchup) → inherits (catches no-
+        #             entrant tournament props when a source groups them)
+        #   token    — name shares the tournament token (props naming the event)
+        # Collect confident containers first (winner + entrant matchups).
+        matched_containers = {winner.group_id} if winner.group_id else set()
+        for m in markets:
+            if m.id != winner.id and m.group_id and market_in_event(m.name, entrant_keys):
+                matched_containers.add(m.group_id)
+
         matchup_ids, prop_ids, children = [], [], []
         for m in markets:
             if m.id == winner.id:
                 continue
-            is_match = market_in_event(m.name, entrant_keys)
-            is_prop = (not is_match) and shares_tournament(m.name, tokens)
-            if not (is_match or is_prop):
+            if market_in_event(m.name, entrant_keys):
+                method = "entrant"
+            elif m.group_id and m.group_id in matched_containers:
+                method = "container"
+            elif shares_tournament(m.name, tokens):
+                method = "token"
+            else:
                 continue
             outs = sorted(
                 (m.outcomes or []),
@@ -161,14 +179,22 @@ class TennisEventAdapter:
                 reverse=True,
             )
             lead = outs[0] if outs else None
+            lead_prob = (
+                float(lead.current_probability)
+                if lead and lead.current_probability is not None else None
+            )
+            # L2-63 Item 2: a match whose leader is at a dead extreme is DECIDED —
+            # mark it settled so the page groups/de-emphasizes it instead of showing
+            # a stale 99% as if live (mirrors the L2-53 settled ruling). Kalshi
+            # settled markets stay status='open' (gotcha #33), so use the price.
+            settled = lead_prob is not None and (lead_prob >= 0.97 or lead_prob <= 0.03)
             child = {
                 "market_id": m.id,
                 "market_name": m.name,
                 "source": m.source,  # data-only (audit per-source); NOT rendered (D1)
-                "probability": (
-                    round(float(lead.current_probability), 4)
-                    if lead and lead.current_probability is not None else None
-                ),
+                "method": method,    # data-only (audit per-method)
+                "settled": settled,
+                "probability": round(lead_prob, 4) if lead_prob is not None else None,
                 "outcomes": [
                     {"name": o.name, "probability": (
                         round(float(o.current_probability), 4)
@@ -177,7 +203,7 @@ class TennisEventAdapter:
                 ],
             }
             children.append(child)
-            (matchup_ids if is_match else prop_ids).append(m.id)
+            (matchup_ids if method == "entrant" else prop_ids).append(m.id)
 
         sections = [{"type": "winner", "label": "Winner", "market_ids": [winner.id]}]
         if matchup_ids:

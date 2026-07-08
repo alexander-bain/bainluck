@@ -1723,6 +1723,7 @@ export interface EventConceptChild {
   market_name?: string;
   name?: string;
   probability?: number | null;
+  settled?: boolean;
   outcomes?: { name: string; probability: number | null }[];
   [k: string]: unknown;
 }
