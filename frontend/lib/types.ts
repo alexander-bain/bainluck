@@ -1702,3 +1702,50 @@ export interface SportHierarchy {
 export interface SportHierarchyListResponse {
   sports: SportHierarchy[];
 }
+
+// #999 Event Concept Pages (slice 1) — generic envelope for /api/event/{key}.
+export interface EventConceptCompetitor {
+  name: string;
+  probability: number | null;
+  [k: string]: unknown;
+}
+
+export interface EventConceptSection {
+  type: string;
+  label: string;
+  market_ids?: number[];
+  market_names?: string[];
+  [k: string]: unknown;
+}
+
+export interface EventConceptChild {
+  market_id: number;
+  market_name?: string;
+  name?: string;
+  probability?: number | null;
+  outcomes?: { name: string; probability: number | null }[];
+  [k: string]: unknown;
+}
+
+export interface EventConceptResponse {
+  event: {
+    key: string;
+    domain: string;
+    name: string | null;
+    status: "upcoming" | "live" | "settled";
+    start_date?: string | null;
+    end_date?: string | null;
+    venue?: string | null;
+    location?: string | null;
+    is_major?: boolean;
+  };
+  primary: {
+    kind: "winner_field" | "co_equal_list";
+    label: string;
+    competitors: EventConceptCompetitor[];
+    evolution_market_id?: number | null;
+  };
+  sections: EventConceptSection[];
+  children: EventConceptChild[];
+  movers: { name?: string; change?: number | null; [k: string]: unknown }[];
+}

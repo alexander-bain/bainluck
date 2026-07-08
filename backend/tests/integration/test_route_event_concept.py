@@ -1,0 +1,66 @@
+"""#999 slice 1: GET /api/event/{key} — generic event-concept endpoint.
+
+Golf delegates to the existing get_golf_tournament aggregation (parity bar). We
+patch that function so the test proves the ENDPOINT WIRING + generic envelope
+shape without the heavy golf DB path (which is covered by the golf route's own
+tests)."""
+
+import pytest
+
+
+def _golf_detail():
+    return {
+        "tournament": {
+            "name": "The Open Championship",
+            "key": "open_championship",
+            "is_major": True,
+            "start_date": "2026-07-16",
+            "end_date": "2026-07-19",
+            "venue": "Royal Birkdale",
+            "location": "England",
+            "schedule_status": "in_progress",
+        },
+        "golfers": [{"name": "Scottie Scheffler", "probability": 0.20}],
+        "markets": [{"type": "winner", "label": "Winner", "market_ids": [1]}],
+        "related_futures": [{"market_id": 9, "market_name": "H2H: X vs Y"}],
+        "evolution_market_id": 1,
+        "biggest_movers": [],
+    }
+
+
+class TestEventConceptRoute:
+    async def test_golf_event_parity_envelope(self, client, monkeypatch):
+        async def _fake_get_golf_tournament(slug, db):
+            assert slug == "open-championship"
+            return _golf_detail()
+
+        monkeypatch.setattr("app.routes.golf.get_golf_tournament", _fake_get_golf_tournament)
+
+        resp = await client.get("/api/event/event:golf:open-championship")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "golf"
+        assert body["event"]["name"] == "The Open Championship"
+        assert body["event"]["status"] == "live"          # in_progress -> live
+        assert body["primary"]["kind"] == "winner_field"
+        assert body["primary"]["competitors"][0]["name"] == "Scottie Scheffler"
+        assert body["sections"][0]["type"] == "winner"
+        assert body["children"][0]["market_name"] == "H2H: X vs Y"
+
+    async def test_unknown_event_404(self, client, monkeypatch):
+        async def _none(slug, db):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="not found")
+
+        monkeypatch.setattr("app.routes.golf.get_golf_tournament", _none)
+        resp = await client.get("/api/event/event:golf:does-not-exist")
+        assert resp.status_code == 404
+
+    async def test_unknown_domain_404(self, client):
+        # no tennis adapter yet (future slice) -> 404, not a crash
+        resp = await client.get("/api/event/event:tennis:wimbledon-2026")
+        assert resp.status_code == 404
+
+    async def test_rejects_post(self, client):
+        resp = await client.post("/api/event/event:golf:x")
+        assert resp.status_code == 405

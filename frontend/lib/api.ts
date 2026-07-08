@@ -39,6 +39,7 @@ import type {
   TeamProgressionResponse,
   SportHierarchyListResponse,
   SportHierarchy,
+  EventConceptResponse,
   Event,
   GolfLeaderboardResponse,
 } from "./types";
@@ -382,6 +383,10 @@ export const fetchPulseRankings = fetchEIRankings;
 /**
  * Format probability as percentage string
  */
+export async function fetchEventConcept(key: string): Promise<EventConceptResponse> {
+  return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`);
+}
+
 export function formatProbability(prob: number | null | undefined): string {
   if (prob === null || prob === undefined) return "-";
   return `${Math.round(prob * 100)}%`;

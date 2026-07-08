@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
+from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -179,6 +179,7 @@ app.include_router(market_moves.router, prefix="/api/market-moves", tags=["Marke
 app.include_router(oscars.router, prefix="/api/oscars", tags=["Oscars"])
 app.include_router(oscars_pool.router, prefix="/api/oscars", tags=["Oscars Pool"])
 app.include_router(golf.router, prefix="/api/golf", tags=["Golf"])
+app.include_router(event.router, prefix="/api/event", tags=["Event Concept"])
 app.include_router(march_madness.router, prefix="/api/march-madness", tags=["March Madness"])
 app.include_router(playoffs.router, prefix="/api/playoffs", tags=["Playoffs"])
 app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
