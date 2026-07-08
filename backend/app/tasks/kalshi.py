@@ -392,12 +392,42 @@ async def _poll_kalshi_markets():
         # sub-phase progress marker names the exact page/endpoint in flight.
         _FETCH_WALL_S = 300.0  # > _FETCH_DEADLINE_S so a healthy fetch returns
                                # partial before the cancel fires.
+
+        # #995 attempt-10: resumable main-scan cursor. With smaller pages the
+        # deadline truncates the scan mid-listing; a resumable cursor makes
+        # successive beats page THROUGH the full listing (drains the tail) and a
+        # SIGKILL/wall loses nothing. Bounded client (socket_timeout) so the
+        # save, which runs inside the async fetch, can never freeze the loop.
+        _MAIN_CURSOR_KEY = "bainluck:kalshi:main_scan_cursor"
+        _start_cursor = None
+        if _phase_rc is not None:
+            try:
+                _c = _phase_rc.get(_MAIN_CURSOR_KEY)
+                if _c:
+                    _start_cursor = _c.decode() if isinstance(_c, bytes) else _c
+            except Exception:
+                _start_cursor = None
+
+        def _save_main_cursor(cursor):
+            if _phase_rc is None:
+                return
+            try:
+                if cursor:
+                    _phase_rc.setex(_MAIN_CURSOR_KEY, 86400, str(cursor))
+                else:
+                    # listing exhausted → clear so the next run wraps to the head
+                    _phase_rc.delete(_MAIN_CURSOR_KEY)
+            except Exception:
+                pass
+
         try:
             events = await asyncio.wait_for(
                 service.get_all_events(
                     categories=None,
                     deadline=_task_started + _FETCH_DEADLINE_S,
                     progress_cb=_mark_phase,
+                    start_cursor=_start_cursor,
+                    save_cursor=_save_main_cursor,
                 ),
                 timeout=_FETCH_WALL_S,
             )

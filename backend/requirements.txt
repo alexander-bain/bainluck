@@ -18,6 +18,13 @@ alembic>=1.13.1
 # HTTP Client (for odds API)
 httpx>=0.26.0
 
+# Fast JSON decode (#995 attempt-10): stdlib json.loads holds the GIL for the
+# whole parse of a giant Kalshi nested-markets page (~67s observed), freezing the
+# asyncio loop so no wait_for/deadline could fire → poll SIGKILL before create.
+# orjson parses ~5-10x faster (much shorter GIL hold). Used behind an
+# ImportError fallback so a missing wheel degrades to json, never crashes.
+orjson>=3.10.0
+
 # Kalshi WebSocket (real-time prices + settlement push)
 websockets>=13.0
 cryptography>=42.0.0

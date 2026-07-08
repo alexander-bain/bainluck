@@ -666,9 +666,11 @@ class TestFetchAttempt8SyncUnblock:
         import inspect, textwrap
         from app.services.kalshi_api import KalshiAPIService
         src = textwrap.dedent(inspect.getsource(KalshiAPIService.get_events))
-        assert "to_thread(response.json)" in src, (
-            "get_events must decode via asyncio.to_thread so a huge nested "
-            "payload can't block the event loop (attempt-8 proven mechanism)"
+        # attempt-10: decode via _decode_json (orjson w/ json fallback) off-loop.
+        # Guards that the decode stays off the event loop AND uses the fast path.
+        assert "to_thread(_decode_json" in src, (
+            "get_events must decode via asyncio.to_thread(_decode_json, ...) so a "
+            "huge nested payload can't block the event loop and uses orjson"
         )
 
     async def test_game_level_series_drop_nested(self, client, monkeypatch):
@@ -696,8 +698,11 @@ class TestFetchAttempt8SyncUnblock:
 
 class _FakeResp:
     def __init__(self, status_code=200, payload=None):
+        import json as _json
         self.status_code = status_code
         self._payload = payload or {"events": [], "cursor": None}
+        # #995 attempt-10: get_events now decodes response.content via orjson/json
+        self.content = _json.dumps(self._payload).encode()
 
     def json(self):
         return self._payload
@@ -831,3 +836,112 @@ class TestFetchAttempt9ResidualSyncBlock:
         assert "KXOK" in tickers          # later page survived
         assert "KXHANG" not in tickers    # hung page's events skipped
         assert any(":parse_timeout" in s for s in seen)
+
+
+class TestFetchAttempt10Structural:
+    """#995 attempt-10: the confirmed killer was the GIL-held C json.loads (67s
+    on a 200-event nested page) freezing the loop so wait_for/deadline couldn't
+    fire → SIGKILL before create. Fix: orjson decode + smaller pages + a
+    resumable main-scan cursor so successive beats drain the listing."""
+
+    def test_decode_json_roundtrips_bytes(self):
+        from app.services.kalshi_api import _decode_json
+        raw = b'{"events": [{"event_ticker": "KX1"}], "cursor": "abc"}'
+        out = _decode_json(raw)
+        assert out["cursor"] == "abc"
+        assert out["events"][0]["event_ticker"] == "KX1"
+
+    def test_get_events_decode_uses_orjson_helper(self):
+        # decode must route through _decode_json (orjson w/ json ImportError
+        # fallback) — the whole point of attempt-10 is a shorter GIL hold.
+        import inspect, textwrap
+        from app.services.kalshi_api import KalshiAPIService
+        src = textwrap.dedent(inspect.getsource(KalshiAPIService.get_events))
+        assert "_decode_json" in src
+        assert "response.content" in src
+
+    def test_orjson_in_requirements(self):
+        import pathlib
+        req = (pathlib.Path(__file__).parent.parent / "requirements.txt").read_text()
+        assert "orjson" in req, "orjson must be pinned so Heroku installs the fast decoder"
+
+    def test_main_scan_uses_smaller_page_limit(self):
+        # 200-event nested pages caused the 67s decode; the main scan must fetch
+        # a much smaller page so each decode is sub-second.
+        from app.services.kalshi_api import KalshiAPIService
+        assert KalshiAPIService._MAIN_SCAN_PAGE_LIMIT <= 50
+        import inspect, textwrap
+        fetch = textwrap.dedent(inspect.getsource(
+            KalshiAPIService._fetch_all_events_unfiltered))
+        assert "limit=self._MAIN_SCAN_PAGE_LIMIT" in fetch
+
+    async def test_resumable_cursor_saves_resume_point_when_truncated(self, client, monkeypatch):
+        # When the scan stops with a cursor still set (deadline / max_pages),
+        # save_cursor must receive that cursor so the next beat resumes the tail.
+        import asyncio
+        saved = []
+        pages = {"n": 0}
+
+        async def fake_get_events(cursor=None, **kw):
+            pages["n"] += 1
+            # always return a non-None cursor → scan only stops at max_pages
+            return ([{"event_ticker": f"KX{pages['n']}", "markets": []}], f"cur{pages['n']}")
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(
+            deadline=None, start_cursor="cur0",
+            save_cursor=lambda c: saved.append(c),
+        )
+        assert saved, "save_cursor must be called"
+        assert saved[-1] is not None and saved[-1].startswith("cur")  # resume point
+
+    async def test_resumable_cursor_clears_when_listing_exhausted(self, client, monkeypatch):
+        # When the listing ends (get_events returns cursor=None), save_cursor must
+        # be called with None so the next run wraps to the head.
+        import asyncio
+        saved = []
+
+        async def fake_get_events(cursor=None, **kw):
+            return ([{"event_ticker": "KXONLY", "markets": []}], None)  # no next cursor
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(
+            deadline=None, start_cursor="cur0",
+            save_cursor=lambda c: saved.append(c),
+        )
+        assert saved and saved[-1] is None
+
+    async def test_start_cursor_is_used_for_first_page(self, client, monkeypatch):
+        # The saved cursor must actually seed the first fetch (resume, not restart).
+        import asyncio
+        first_cursor = {"val": "UNSET"}
+
+        async def fake_get_events(cursor=None, **kw):
+            if first_cursor["val"] == "UNSET":
+                first_cursor["val"] = cursor
+            return ([{"event_ticker": "KX1", "markets": []}], None)
+
+        async def _no_sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(
+            deadline=None, start_cursor="RESUME_HERE"
+        )
+        assert first_cursor["val"] == "RESUME_HERE"
+
+    def test_poll_task_wires_resumable_cursor(self):
+        import inspect, textwrap
+        from app.tasks.kalshi import _poll_kalshi_markets
+        src = textwrap.dedent(inspect.getsource(_poll_kalshi_markets))
+        assert "main_scan_cursor" in src
+        assert "start_cursor=" in src and "save_cursor=" in src

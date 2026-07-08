@@ -17,6 +17,28 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# #995 attempt-10: decode Kalshi responses with orjson when available. stdlib
+# json.loads holds the GIL for the ENTIRE parse of a giant nested-markets page
+# (~67s observed on a 200-event page), which freezes the asyncio event loop so
+# no wait_for/deadline timer can fire — the confirmed mechanism behind the
+# month-long creation freeze. orjson parses ~5-10x faster, so the GIL is held a
+# fraction of the time. Import behind a guard: a missing wheel degrades to json
+# (still correct, just slower), never crashes.
+try:
+    import orjson as _orjson
+
+    def _decode_json(raw: bytes):
+        return _orjson.loads(raw)
+
+    _HAS_ORJSON = True
+except ImportError:  # pragma: no cover - exercised only where orjson is absent
+    import json as _json
+
+    def _decode_json(raw: bytes):
+        return _json.loads(raw)
+
+    _HAS_ORJSON = False
+
 
 class KalshiMarket(BaseModel):
     """Represents a single Kalshi market (binary outcome)."""
@@ -170,14 +192,17 @@ class KalshiAPIService(BaseAPIClient):
                 await _asyncio.sleep(_backoff)
                 continue
             response.raise_for_status()
-            # #995 attempt-8: decode OFF the event loop. The nested-markets
-            # payloads for game-level series are huge; a synchronous
-            # response.json() blocked the event loop for minutes, which is why NO
-            # async bound (deadline #125, httpx timeout #128, wait_for #130) could
-            # cancel it — the loop couldn't run their timers. to_thread keeps the
-            # loop responsive so the caller's wait_for/deadline actually fire.
+            # #995 attempt-8→10: decode the nested-markets payload with orjson.
+            # attempt-8 moved response.json() to a thread believing that freed the
+            # loop, but the C json parser NEVER releases the GIL — so a 200-event
+            # nested page held the GIL ~67s inside the thread, freezing the loop
+            # anyway (marker pinned at `get_events:decode:done@67s`, past the
+            # wait_for(45s) bound it could never fire). orjson decodes the same
+            # payload ~5-10x faster (sub-second GIL hold at limit=50), so wait_for/
+            # deadline timers actually run between pages. to_thread still wraps it
+            # as belt-and-suspenders for the rare huge page.
             _tick("get_events:decode:start")
-            data = await _asyncio.to_thread(response.json)
+            data = await _asyncio.to_thread(_decode_json, response.content)
             _tick("get_events:decode:done")
 
             events = data.get("events") or []
@@ -601,6 +626,8 @@ class KalshiAPIService(BaseAPIClient):
         categories: Optional[list[str]] = None,
         deadline: Optional[float] = None,
         progress_cb: Optional[Callable[[str], None]] = None,
+        start_cursor: Optional[str] = None,
+        save_cursor: Optional[Callable[[Optional[str]], None]] = None,
     ) -> list[KalshiEvent]:
         """
         Fetch all open events across specified categories.
@@ -625,7 +652,8 @@ class KalshiAPIService(BaseAPIClient):
         # If no categories specified, fetch all events without filtering
         if not categories:
             return await self._fetch_all_events_unfiltered(
-                deadline=deadline, progress_cb=progress_cb
+                deadline=deadline, progress_cb=progress_cb,
+                start_cursor=start_cursor, save_cursor=save_cursor,
             )
 
         # Step 1: Discover series tickers for these categories + tags
@@ -679,10 +707,17 @@ class KalshiAPIService(BaseAPIClient):
         )
         return list(all_events.values())
 
+    # #995 attempt-10: smaller nested pages. A 200-event nested-markets page
+    # decoded in ~67s (GIL-held) and froze the loop. 50 events/page keeps each
+    # decode sub-second (with orjson) so wait_for/deadline timers stay live.
+    _MAIN_SCAN_PAGE_LIMIT = 50
+
     async def _fetch_all_events_unfiltered(
         self,
         deadline: Optional[float] = None,
         progress_cb: Optional[Callable[[str], None]] = None,
+        start_cursor: Optional[str] = None,
+        save_cursor: Optional[Callable[[Optional[str]], None]] = None,
     ) -> list[KalshiEvent]:
         """Fetch all events from Kalshi without category filtering (paginated).
 
@@ -691,12 +726,22 @@ class KalshiAPIService(BaseAPIClient):
         filter ensures we discover them.
 
         ``deadline`` (time.monotonic()) bounds total fetch time (#995): this
-        method is otherwise uncapped (50-page main scan + a supplementary series
+        method is otherwise uncapped (main scan + a supplementary series
         loop) and blew poll_kalshi's 660s hard limit → SIGKILL mid-fetch → a
         month of zero market creation. The deadline is checked BEFORE every page
         (a page is the longest single uninterrupted op — budget-guard-inner-op),
         so we always return what we have with time left for the caller to
         process+commit.
+
+        ``start_cursor`` / ``save_cursor`` (#995 attempt-10): a RESUMABLE main-scan
+        cursor. With smaller pages the deadline truncates the scan mid-listing;
+        without resume the next run would re-scan the same head pages forever and
+        never reach the long tail. The caller persists ``save_cursor(cursor)`` in
+        Redis and feeds it back as ``start_cursor`` next run, so successive beats
+        page THROUGH the full listing (draining the backlog) and a SIGKILL/wall
+        loses nothing — the next beat continues where this one stopped. When the
+        listing is exhausted the saved cursor is None, so the scan wraps to the
+        head next run.
         """
         import asyncio
         import time as _time
@@ -715,9 +760,9 @@ class KalshiAPIService(BaseAPIClient):
                     pass
 
         all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
-        cursor = None
+        cursor = start_cursor or None
         page_count = 0
-        max_pages = 50
+        max_pages = 100
         categories_seen: dict[str, int] = {}
 
         while page_count < max_pages:
@@ -744,6 +789,7 @@ class KalshiAPIService(BaseAPIClient):
                     self.get_events(
                         status=None,
                         with_nested_markets=True,
+                        limit=self._MAIN_SCAN_PAGE_LIMIT,
                         cursor=cursor,
                         deadline=deadline,
                         progress_cb=_progress,
@@ -793,10 +839,23 @@ class KalshiAPIService(BaseAPIClient):
             if not cursor:
                 break
 
+        # #995 attempt-10: persist the resume point. If the loop ended because the
+        # listing was exhausted (`not cursor`), save None so the next run wraps to
+        # the head. Otherwise (deadline / max_pages / a page error left `cursor`
+        # set) save it so the next beat continues the tail — draining the full
+        # listing across runs instead of re-scanning the same head every time.
+        if save_cursor is not None:
+            try:
+                save_cursor(cursor or None)
+            except Exception:
+                pass
+
         _progress(f"fetch:unfiltered:done:{page_count}pages")
         logger.info(
-            "Fetched %d unique events across %d pages. Categories: %s",
-            len(all_events), page_count, dict(sorted(categories_seen.items())),
+            "Fetched %d unique events across %d pages (start_cursor=%s → next=%s). "
+            "Categories: %s",
+            len(all_events), page_count, bool(start_cursor), bool(cursor),
+            dict(sorted(categories_seen.items())),
         )
 
         # Supplementary fetch: Kalshi neg-risk sports events can have
