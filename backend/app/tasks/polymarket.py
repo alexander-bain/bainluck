@@ -199,6 +199,19 @@ _SPORT_CATEGORIES = {
 }
 
 
+def _is_tradeable_opening(prob: Optional[float], has_trading: bool) -> bool:
+    """Whether `prob` is a valid opening probability worth stamping.
+
+    #137: an opening only makes sense at a real, tradeable, non-degenerate price.
+    A price of exactly 0.0 or 1.0 is a settled/placeholder value, not an opening —
+    stamping it on both sides of a decomposed Over/Under market produced the
+    impossible both-sides=1.0 binaries that poisoned the calibration curve and the
+    price_moved dimension. Requiring 0 < prob < 1 guarantees a binary's two sides
+    can never both open at 1.0.
+    """
+    return bool(has_trading) and prob is not None and 0.0 < prob < 1.0
+
+
 def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
     """
     Map Polymarket tags to (internal_category, llm_sport_category).
@@ -790,9 +803,14 @@ async def _process_event_batch(
                         ) or (
                             market.last_trade_price is not None and market.last_trade_price > 0
                         )
-                        sub_opening = prob if sub_has_trading else None
-                        sub_opening_am = over_american if sub_has_trading else None
-                        sub_opening_at = now if sub_has_trading else None
+                        # An opening only makes sense at a real, non-degenerate price.
+                        # A price of exactly 0.0/1.0 is a settled/placeholder value, not a
+                        # tradeable opening — stamping it produced the impossible
+                        # both-sides=1.0 binaries (#137 opening artifact).
+                        sub_has_open = _is_tradeable_opening(prob, sub_has_trading)
+                        sub_opening = prob if sub_has_open else None
+                        sub_opening_am = over_american if sub_has_open else None
+                        sub_opening_at = now if sub_has_open else None
 
                         # Forward-capture per-outcome volume so the traded/untraded
                         # calibration tag stays populated without a re-backfill.
@@ -814,7 +832,7 @@ async def _process_event_batch(
                             "volume": sub_vol,
                             "last_updated": func.now(),
                         }
-                        if sub_has_trading:
+                        if sub_has_open:
                             over_update["opening_probability"] = func.coalesce(
                                 FuturesOutcome.opening_probability, prob
                             )
@@ -858,6 +876,17 @@ async def _process_event_batch(
                             under_name = "Under" if "o/u" in sub_name.lower() else "No"
                             under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
 
+                            # The Under/No side must open at ITS OWN price, not the
+                            # Over/Yes price. Using `sub_opening` (the over prob) here
+                            # made every Under outcome store the over-side probability,
+                            # so calibration_probability (which falls back to
+                            # opening_probability when no snapshot exists) inherited the
+                            # wrong side — the #137 poly-Under sign-flip class.
+                            sub_under_has_open = _is_tradeable_opening(
+                                under_prob, sub_has_trading
+                            )
+                            sub_under_opening = under_prob if sub_under_has_open else None
+
                             under_update: dict = {
                                 "current_probability": under_prob,
                                 "current_american_odds": under_american,
@@ -865,7 +894,7 @@ async def _process_event_batch(
                                 "volume": sub_vol,
                                 "last_updated": func.now(),
                             }
-                            if sub_has_trading:
+                            if sub_under_has_open:
                                 under_update["opening_probability"] = func.coalesce(
                                     FuturesOutcome.opening_probability, under_prob
                                 )
@@ -876,7 +905,7 @@ async def _process_event_batch(
                                 name=under_name,
                                 current_probability=under_prob,
                                 current_american_odds=under_american,
-                                opening_probability=sub_opening if sub_has_trading else None,
+                                opening_probability=sub_under_opening,
                                 opening_american_odds=under_american if sub_has_trading else None,
                                 opening_captured_at=sub_opening_at,
                                 rank=2,
@@ -884,8 +913,22 @@ async def _process_event_batch(
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_=under_update,
+                            ).returning(FuturesOutcome.id)
+                            under_result = await session.execute(under_stmt)
+                            under_outcome_id = under_result.scalar_one()
+
+                            # Write a snapshot for the Under side too (the Over side
+                            # gets one above). Without this the Under outcome has no
+                            # price history and calibration_probability falls back to
+                            # opening_probability — the root of the sign-flip class.
+                            under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=under_outcome_id,
+                                bookmaker="polymarket",
+                                probability=under_prob,
+                                american_odds=under_american,
+                                captured_at=now,
                             )
-                            await session.execute(under_stmt)
+                            await session.execute(under_snap_stmt)
 
                         stats["markets_processed"] += 1
                         stats["outcomes_updated"] += 2

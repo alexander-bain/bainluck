@@ -2037,6 +2037,202 @@ async def _regrade_kalshi_total_inversions():
     return stats
 
 
+async def _regrade_polymarket_under_signflip():
+    """#137 Item 1: fix the Polymarket "Under"/"No" sign-flip class.
+
+    The decomposed-game-market writer (polymarket.py) stamped the OVER/YES side's
+    probability as the Under/No outcome's opening_probability, and wrote no
+    snapshot for the Under side, so calibration_probability (which falls back to
+    opening_probability) inherited the wrong side. Signature: the Under/No
+    outcome's cp equals its Over/Yes sibling's cp (both hold the over prob)
+    instead of summing to ~1.
+
+    Verified in prod (2026-07-08): 26,756 such poly outcomes, cp==over sibling,
+    winning only ~25% (graded subset ~54% ≈ balanced — the low aggregate is a
+    separate under-grading gap, NOT touched here per gotcha #21). The Under's
+    current_probability already holds the correct value (1 - over), confirming
+    the flip is right.
+
+    Fix: flip BOTH calibration_probability and opening_probability to 1 - value
+    (flipping only cp would spuriously flip price_moved to TRUE, since it compares
+    cp vs opening). The Over/Yes sibling is already correct, so flipping only the
+    Under/No side restores sum≈1.
+
+    Safe + idempotent: only touches rows whose cp still equals the over sibling's
+    (the bug state); after the flip cp no longer matches, so a re-run is a no-op.
+    Excludes the both-sides=1.0 class (handled by the opening-artifact repair) and
+    the tiny 0.49–0.51 band (near-50/50, ~0 impact, the only oscillation risk).
+    """
+    stats = {"cp_flipped": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(text("""
+                UPDATE futures_outcomes u
+                SET calibration_probability = 1.0 - u.calibration_probability,
+                    opening_probability = CASE
+                        WHEN u.opening_probability IS NOT NULL
+                             AND u.opening_probability > 0.001
+                             AND u.opening_probability < 0.999
+                        THEN 1.0 - u.opening_probability
+                        ELSE u.opening_probability
+                    END,
+                    last_updated = NOW()
+                FROM futures_markets m
+                WHERE u.market_id = m.id
+                  AND m.source = 'polymarket'
+                  AND (u.name ILIKE 'under%' OR u.name = 'No')
+                  AND u.calibration_probability IS NOT NULL
+                  AND u.calibration_probability > 0.001
+                  AND u.calibration_probability < 0.999
+                  AND (u.calibration_probability < 0.49
+                       OR u.calibration_probability > 0.51)
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes o
+                      WHERE o.market_id = u.market_id
+                        AND o.id <> u.id
+                        AND (o.name ILIKE 'over%' OR o.name = 'Yes')
+                        AND o.calibration_probability IS NOT NULL
+                        AND ABS(u.calibration_probability
+                                - o.calibration_probability) < 0.02
+                  )
+            """))
+            await session.commit()
+            stats["cp_flipped"] = result.rowcount
+        if stats["cp_flipped"]:
+            logger.info(
+                "Polymarket Under sign-flip re-grade (#137): flipped %d outcomes",
+                stats["cp_flipped"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Polymarket Under sign-flip re-grade error: %s", e)
+    return stats
+
+
+async def _unresolve_datagolf_premature():
+    """#137 Item 2a: un-resolve DataGolf markets resolved before their event.
+
+    A live-completion heuristic / schedule glitch flipped some DataGolf markets to
+    status='resolved' and copied opening_probability into calibration_probability
+    (cp=1.0) while the tournament's resolution_date is still in the FUTURE and no
+    authoritative resolution_source was ever attached. Verified in prod
+    (2026-07-08): 230 outcomes across 10 markets, all is_winner=false.
+
+    These were never validly resolved, so reverting is correct (NOT a bulk reset
+    of real winners — gotcha #21). Revert the market to 'open' and null the bogus
+    calibration_probability so it leaves the calibration curve until the event
+    actually resolves. is_winner is left as-is (already false; we never guess).
+    """
+    stats = {"markets_reopened": 0, "cp_nulled": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            null_res = await session.execute(text("""
+                UPDATE futures_outcomes fo
+                SET calibration_probability = NULL, last_updated = NOW()
+                FROM futures_markets fm
+                WHERE fo.market_id = fm.id
+                  AND fm.source = 'datagolf'
+                  AND fm.status = 'resolved'
+                  AND fm.resolution_date > NOW()
+                  AND fo.resolution_source IS NULL
+                  AND fo.calibration_probability IS NOT NULL
+            """))
+            mkt_res = await session.execute(text("""
+                UPDATE futures_markets fm
+                SET status = 'open'
+                WHERE fm.source = 'datagolf'
+                  AND fm.status = 'resolved'
+                  AND fm.resolution_date > NOW()
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND fo.resolution_source IS NULL
+                  )
+            """))
+            await session.commit()
+            stats["cp_nulled"] = null_res.rowcount
+            stats["markets_reopened"] = mkt_res.rowcount
+        if stats["cp_nulled"] or stats["markets_reopened"]:
+            logger.info(
+                "DataGolf premature un-resolve (#137): reopened %d markets, "
+                "nulled %d cp",
+                stats["markets_reopened"],
+                stats["cp_nulled"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("DataGolf premature un-resolve error: %s", e)
+    return stats
+
+
+async def _null_impossible_both_sides_openings():
+    """#137 Item 2b: null impossible both-sides=1.0 binary openings.
+
+    A binary market cannot have BOTH outcomes open at probability 1.0 — that is a
+    corrupt/settled-placeholder capture (the same poly writer bug, now fixed at
+    source with a 0<prob<1 opening guard). Verified in prod (2026-07-08): 19,653
+    such binaries = 39,306 outcomes. Leaving them poisons both the calibration
+    curve (adj_opening = COALESCE(cp, opening) = 1.0) and the price_moved
+    dimension.
+
+    Null opening_probability (+ its odds/source) on every outcome of a both-1.0
+    binary. Also null calibration_probability where it is likewise an impossible
+    1.0 — otherwise nulling only the opening would flip price_moved to TRUE
+    (cp NOT NULL vs opening NULL) and keep an impossible certain price in the
+    curve. Real sub-1.0 closing lines (a tiny tail) are kept.
+    """
+    stats = {"openings_nulled": 0, "cp_nulled": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            # Null impossible-certain cp FIRST, while openings still = 1.0 so the
+            # both-1.0 binaries are still identifiable. Any cp>=0.999 in such a
+            # binary is impossible and would trip price_moved once its opening is
+            # nulled below.
+            cp_res = await session.execute(text("""
+                UPDATE futures_outcomes fo
+                SET calibration_probability = NULL, last_updated = NOW()
+                WHERE fo.calibration_probability >= 0.999
+                  AND fo.market_id IN (
+                      SELECT market_id FROM futures_outcomes
+                      GROUP BY market_id
+                      HAVING COUNT(*) = 2
+                         AND SUM(CASE WHEN opening_probability >= 0.999
+                                      THEN 1 ELSE 0 END) = 2
+                  )
+            """))
+            # Then null the impossible both-1.0 openings themselves.
+            open_res = await session.execute(text("""
+                UPDATE futures_outcomes fo
+                SET opening_probability = NULL,
+                    opening_american_odds = NULL,
+                    opening_captured_at = NULL,
+                    opening_source = NULL,
+                    last_updated = NOW()
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.market_id IN (
+                      SELECT market_id FROM futures_outcomes
+                      GROUP BY market_id
+                      HAVING COUNT(*) = 2
+                         AND SUM(CASE WHEN opening_probability >= 0.999
+                                      THEN 1 ELSE 0 END) = 2
+                  )
+            """))
+            await session.commit()
+            stats["cp_nulled"] = cp_res.rowcount
+            stats["openings_nulled"] = open_res.rowcount
+        if stats["openings_nulled"] or stats["cp_nulled"]:
+            logger.info(
+                "Impossible both-1.0 opening repair (#137): nulled %d openings, "
+                "%d cp",
+                stats["openings_nulled"],
+                stats["cp_nulled"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Impossible both-1.0 opening repair error: %s", e)
+    return stats
+
+
 async def _get_halftime_score(session, event_id: int):
     """Reconstruct halftime score from scoring_plays or box_score_data period scores."""
     result = await session.execute(
@@ -5032,6 +5228,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _mark("calibration_prices")
     cal_price_stats = await _compute_calibration_prices()
 
+    # #137 calibration-integrity repairs — run AFTER cal-price sets cp so we
+    # correct the freshly-computed values. All three are cheap set-based UPDATEs
+    # and idempotent (forward-fix each cycle):
+    #   Item 1  poly Under sign-flip (cp/opening flipped to the correct side)
+    #   Item 2a datagolf premature resolution (un-resolve, null bogus cp)
+    #   Item 2b impossible both-sides=1.0 openings (null opening + impossible cp)
+    _mark("calibration_integrity_137")
+    poly_under_stats = await _regrade_polymarket_under_signflip()
+    datagolf_premature_stats = await _unresolve_datagolf_premature()
+    both_ones_stats = await _null_impossible_both_sides_openings()
+
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("candlestick_trades")
     _mark("candlestick_trades")
@@ -5545,6 +5752,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "opening_repair": repair_stats,
         "closing_lines": closing_stats,
         "calibration_prices": cal_price_stats,
+        "poly_under_signflip": poly_under_stats,
+        "datagolf_premature_unresolve": datagolf_premature_stats,
+        "impossible_both_ones": both_ones_stats,
         "polymarket_api_group_id": api_group_stats,
         "datagolf_settlement": dg_settlement_stats,
         "datagolf_leaderboard_backfill": dg_leaderboard_stats,
@@ -5798,6 +6008,11 @@ async def _compute_calibration_prices():
 
             # Part A1-dg: DataGolf outcomes — opening_probability IS the calibration
             # price (model prediction, not a market price). No snapshot lookup needed.
+            # #137 guard: never stamp a calibration price on a market whose
+            # resolution_date is still in the future — that's a premature/glitch
+            # resolution (gotcha #21, never guess). Requires the event to have
+            # actually resolved (resolution_date <= now, falling back to
+            # commence_time when resolution_date is missing).
             dg_result = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = fo.opening_probability
@@ -5807,6 +6022,7 @@ async def _compute_calibration_prices():
                       AND fm.status = 'resolved'
                       AND fo.calibration_probability IS NULL
                       AND fo.opening_probability IS NOT NULL
+                      AND COALESCE(fm.resolution_date, fm.commence_time) <= NOW()
                 """))
             await session.commit()
             stats["datagolf_direct"] = dg_result.rowcount

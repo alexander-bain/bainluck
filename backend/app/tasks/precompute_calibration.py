@@ -158,32 +158,47 @@ def _bootstrap_mce_ci(
     mce_samples: list[float] = []
     for _ in range(n_boot):
         sample = rng.choices(bucket_list, k=k)
+        # n-weighted to match the #137 weighted point estimate.
         total_abs_err = 0.0
+        total_w = 0.0
         for b in sample:
             actual = b["winners"] / b["n"] if b["n"] else 0.0
-            total_abs_err += abs(actual - b["avg_prob"])
-        mce_samples.append(total_abs_err / k)
+            w = b["n"]
+            total_abs_err += abs(actual - b["avg_prob"]) * w
+            total_w += w
+        mce_samples.append(total_abs_err / total_w if total_w else 0.0)
     mce_samples.sort()
     lo = mce_samples[int(n_boot * 0.025)]
     hi = mce_samples[int(n_boot * 0.975)]
     return (lo, hi)
 
 
-def _compute_horizon_mce(buckets: list[dict]) -> float | None:
+def _compute_horizon_mce(buckets: list[dict], weighted: bool = True) -> float | None:
+    """Mean per-bucket calibration error, in percentage points.
+
+    #137 Item 3: `weighted=True` (the default) weights each probability bucket's
+    |actual - predicted| by the bucket's sample size (n). The old equal-weighted
+    mean (weighted=False) let a tail bucket of n=2-13 dominate a category whose
+    bulk (n=1000s) was well-calibrated — the r108 "mlb spreads 16.4pp" artifact
+    class. n-weighting makes the number reflect the outcomes users actually see.
+    Pass weighted=False to reproduce the legacy number (kept as `mce_unweighted`
+    during the transition for comparison).
+    """
     if not buckets:
         return None
     total_abs_err = 0.0
-    count = 0
+    total_w = 0.0
     for b in buckets:
         if b["n"] == 0:
             continue
         avg_prob = b["sum_prob"] / b["n"]
         actual = b["winners"] / b["n"]
-        total_abs_err += abs(actual - avg_prob)
-        count += 1
-    if count == 0:
+        w = b["n"] if weighted else 1
+        total_abs_err += abs(actual - avg_prob) * w
+        total_w += w
+    if total_w == 0:
         return None
-    return round(total_abs_err / count * 100, 2)
+    return round(total_abs_err / total_w * 100, 2)
 
 
 async def _precompute_calibration_main():
@@ -668,11 +683,18 @@ async def _precompute_calibration_main():
             # silent. It still counts toward the overall/per-source curves.
             small_sample_categories.append({"category": cat, "outcomes": total_n})
             continue
-        cat_mce = _compute_horizon_mce([
+        _cat_buckets = [
             {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
             for v in buckets_by_idx.values()
-        ])
-        by_category.append({"category": cat, "mce": cat_mce, "outcomes": total_n})
+        ]
+        cat_mce = _compute_horizon_mce(_cat_buckets)
+        cat_mce_unweighted = _compute_horizon_mce(_cat_buckets, weighted=False)
+        by_category.append({
+            "category": cat,
+            "mce": cat_mce,
+            "mce_unweighted": cat_mce_unweighted,
+            "outcomes": total_n,
+        })
     by_category.sort(key=lambda x: x["outcomes"], reverse=True)
     small_sample_categories.sort(key=lambda x: x["outcomes"], reverse=True)
 
@@ -697,11 +719,18 @@ async def _precompute_calibration_main():
         total_n = src_outcomes[src]
         if total_n == 0:
             continue
-        src_mce = _compute_horizon_mce([
+        _src_buckets = [
             {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
             for v in buckets_by_idx.values()
-        ])
-        by_source.append({"source": src, "mce": src_mce, "outcomes": total_n})
+        ]
+        src_mce = _compute_horizon_mce(_src_buckets)
+        src_mce_unweighted = _compute_horizon_mce(_src_buckets, weighted=False)
+        by_source.append({
+            "source": src,
+            "mce": src_mce,
+            "mce_unweighted": src_mce_unweighted,
+            "outcomes": total_n,
+        })
     by_source.sort(key=lambda x: x["outcomes"], reverse=True)
 
     # Spread / Total summaries
