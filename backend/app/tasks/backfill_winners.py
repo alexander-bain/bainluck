@@ -1531,6 +1531,123 @@ def _total_outcome_is_winner(outcome_name, home_score, away_score):
     return total > line if direction == "over" else total < line
 
 
+# #140: Polymarket decomposes game totals into markets named "{A} vs. {B}: O/U N"
+# whose two outcomes are literally "Over"/"Under" — the LINE lives in the MARKET
+# name, not the outcome name (unlike Kalshi, so _TOTAL_RE above can't reach it).
+# The strict "...: O/U N$" suffix isolates FULL-GAME team totals (total = home +
+# away). Anything with a qualifier between the colon and "O/U" is deliberately
+# NOT matched: "1H O/U" (halftime, needs reconstructed score), player props
+# ("Points/Rebounds O/U"), tennis "Match/Set Games O/U" (games/sets, not our
+# home+away score). The colon-immediately-before-O/U anchor is the discriminator
+# (gotcha #21: never guess an ambiguous line/scope).
+_POLY_TOTAL_MARKET_RE = re.compile(r":\s*o/u\s*(\d+\.?\d*)\s*$", re.IGNORECASE)
+
+
+def _poly_total_line(market_name):
+    """#140: parse the O/U line from a Polymarket full-game total market name.
+
+    Returns the line as a float for the strict "{A} vs. {B}: O/U N" full-game
+    pattern, or None to skip (unparseable, or a scoped/prop/period total whose
+    line or scope we must not guess).
+    """
+    m = _POLY_TOTAL_MARKET_RE.search(market_name or "")
+    return float(m.group(1)) if m else None
+
+
+async def _resolve_polymarket_total_from_scores(limit: int = 20000):
+    """#140: grade ungraded Polymarket full-game Over/Under totals from scores.
+
+    The ungraded cohort (ops OPS-475 census on #997: 18,985 resolved Polymarket
+    markets with an Over/Under pair where NO side is is_winner=True) is #137's
+    residual "resolution completeness" hypothesis — not model bias. 90% are
+    game-linked with final scores already in our DB, so this resolution is
+    deterministic and needs NO Gamma API: it is immune to the #985 rate-limit
+    AND to Gamma's retention window (even aged>60d markets are saved because the
+    score is local, not perishable).
+
+    Grades ONLY the strict "{A} vs. {B}: O/U N" full-game pattern against the
+    linked completed/closed event's total (home + away): "Over" wins iff
+    total > line, "Under" iff total < line. total == line (a push, only possible
+    on an integer line) and unparseable/scoped names are SKIPPED (gotcha #21).
+    Writes is_winner + resolution_source='poly_total_score' via Core UPDATE,
+    per-batch commits (#13) so partial progress survives a timeout (gotcha #6).
+    Idempotent: once a side is set True the market's BOOL_OR excludes it next run.
+    """
+    stats = {"graded": 0, "push_skip": 0, "no_parse": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT m.id AS market_id, m.name AS market_name,
+                           e.home_score, e.away_score
+                    FROM futures_markets m
+                    JOIN events e ON e.id = m.event_id
+                    JOIN futures_outcomes u ON u.market_id = m.id
+                    WHERE m.source = 'polymarket'
+                      AND m.status = 'resolved'
+                      AND e.status IN ('completed', 'closed')
+                      AND e.home_score IS NOT NULL
+                      AND e.away_score IS NOT NULL
+                    GROUP BY m.id, m.name, e.home_score, e.away_score
+                    HAVING BOOL_OR(u.is_winner) IS NOT TRUE
+                       AND COUNT(*) FILTER (
+                           WHERE u.name ILIKE 'over%' OR u.name ILIKE 'under%') > 0
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            )
+            markets = result.all()
+
+            for i, row in enumerate(markets):
+                if i and i % 500 == 0:
+                    await session.commit()
+                line = _poly_total_line(row.market_name)
+                if line is None:
+                    stats["no_parse"] += 1
+                    continue
+                total = row.home_score + row.away_score
+                if total == line:
+                    # push — only possible on an integer line; never guess
+                    stats["push_skip"] += 1
+                    continue
+                out = await session.execute(
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid"),
+                    {"mid": row.market_id},
+                )
+                graded_any = False
+                for oc in out.all():
+                    nm = (oc.name or "").strip().lower()
+                    if nm.startswith("over"):
+                        won = total > line
+                    elif nm.startswith("under"):
+                        won = total < line
+                    else:
+                        continue
+                    await session.execute(
+                        text(
+                            "UPDATE futures_outcomes SET is_winner = :won, "
+                            "resolution_source = 'poly_total_score', "
+                            "last_updated = NOW() WHERE id = :oid"
+                        ),
+                        {"won": won, "oid": oc.id},
+                    )
+                    graded_any = True
+                if graded_any:
+                    stats["graded"] += 1
+            await session.commit()
+        logger.info(
+            "Polymarket total score resolution (#140): graded %d markets, "
+            "%d push-skip, %d no-parse",
+            stats["graded"],
+            stats["push_skip"],
+            stats["no_parse"],
+        )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Polymarket total score resolution error: %s", e)
+    return stats
+
+
 async def _resolve_kalshi_spread_total_from_scores():
     """Resolve Kalshi spread and total markets from actual game scores.
 
@@ -4749,6 +4866,15 @@ async def _resolve_winners_only(limit: int = 2000):
     # Score-based resolution
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # #140: grade the ungraded Polymarket full-game Over/Under cohort from the
+    # linked event's final score (deterministic, no Gamma API — #137 residual
+    # resolution-completeness gap, not model bias).
+    poly_total_stats = await _resolve_polymarket_total_from_scores()
+    stats["poly_total_score"] = {
+        "graded": poly_total_stats.get("graded", 0),
+        "push_skip": poly_total_stats.get("push_skip", 0),
+        "no_parse": poly_total_stats.get("no_parse", 0),
+    }
     # #939: correct NHL spread outcomes pinned True/False by the old
     # complementary resolver (the fixed resolver above can't reach them — the
     # HAVING clause skips markets that still hold a game_score is_winner=True).
@@ -5088,6 +5214,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _start_phase("score_resolution")
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # #140: grade ungraded Polymarket full-game Over/Under from linked scores.
+    poly_total_stats = await _resolve_polymarket_total_from_scores()
     player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
     total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
     period_prop_stats = await _resolve_kalshi_period_props()
@@ -5764,6 +5892,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "golf_settlement_sync": golf_sync_stats,
         "kalshi_score_resolution": score_stats,
         "kalshi_spread_total_resolution": spread_total_stats,
+        "polymarket_total_score_resolution": poly_total_stats,
         "kalshi_player_props": player_prop_stats,
         "kalshi_period_props": period_prop_stats,
         "from_probability": prob_stats,

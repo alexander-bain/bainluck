@@ -2052,3 +2052,106 @@ def test_backfill_all_winners_guards_heavy_phases_991():
     assert "_BUDGET_MARGIN_S = 300" in src
     assert 'return _partial_result("kalshi_markets_api")' in src
     assert 'return _partial_result("polymarket_api")' in src
+
+
+class TestPolymarketTotalLineParsing:
+    """#140: parse the O/U line from a Polymarket full-game total market NAME.
+
+    Polymarket outcomes are literally "Over"/"Under"; the line lives in the
+    market name ("{A} vs. {B}: O/U N"), so the grader parses it from there. Only
+    the strict "...: O/U N$" full-game suffix qualifies — scoped/prop/period
+    totals must return None so the grader skips them (gotcha #21).
+    """
+
+    def _line(self, name):
+        from app.tasks.backfill_winners import _poly_total_line
+        return _poly_total_line(name)
+
+    def test_full_game_soccer_total(self):
+        assert self._line("Scotland vs. Brazil: O/U 2.5") == 2.5
+        assert self._line("CF Universidad de Chile vs. O'Higgins FC: O/U 3.5") == 3.5
+
+    def test_integer_line_parses(self):
+        assert self._line("Team A vs. Team B: O/U 3") == 3.0
+
+    def test_case_and_spacing_tolerant(self):
+        assert self._line("A vs. B: o/u 4.5") == 4.5
+        assert self._line("A vs. B:O/U 1.5") == 1.5
+
+    def test_first_half_total_is_skipped(self):
+        # halftime scope — final score would mis-grade it
+        assert self._line("76ers vs. Celtics: 1H O/U 105.5") is None
+
+    def test_player_prop_is_skipped(self):
+        assert self._line("Aaron Gordon: Points O/U 14.5") is None
+        assert self._line("Aaron Nesmith: Rebounds O/U 3.5") is None
+
+    def test_tennis_games_sets_skipped(self):
+        assert self._line("Abe vs. Yamazaki: Match O/U 22.5") is None
+        assert self._line("Abe vs. Yamazaki: Set 1 Games O/U 10.5") is None
+        assert self._line("Aaron Gabet vs. Seydina Andre: Total Sets O/U 2.5") is None
+
+    def test_non_total_and_empty_return_none(self):
+        assert self._line("Will there be a red card?") is None
+        assert self._line("") is None
+        assert self._line(None) is None
+
+
+class TestPolymarketTotalGradingDirection:
+    """#140: the over/under grading decision the resolver applies per outcome.
+
+    Mirrors the resolver body: total = home + away, "Over" wins iff total > line,
+    "Under" iff total < line, total == line is a push (skip). Kept as a pure
+    helper so the direction/push logic is unit-covered without a DB.
+    """
+
+    def _grade(self, direction, line, home, away):
+        total = home + away
+        if total == line:
+            return None  # push — skipped by the resolver
+        if direction == "over":
+            return total > line
+        return total < line
+
+    def test_over_wins_and_loses(self):
+        assert self._grade("over", 2.5, 2, 0) is False   # total 2 < 2.5
+        assert self._grade("over", 2.5, 2, 1) is True    # total 3 > 2.5
+
+    def test_under_wins_and_loses(self):
+        assert self._grade("under", 2.5, 2, 0) is True   # total 2 < 2.5
+        assert self._grade("under", 2.5, 2, 1) is False  # total 3 > 2.5
+
+    def test_push_on_integer_line_is_skipped(self):
+        # total == line only possible on an integer line; never guess a winner
+        assert self._grade("over", 3, 2, 1) is None
+        assert self._grade("under", 3, 2, 1) is None
+
+    def test_zero_zero_draw_under_wins(self):
+        assert self._grade("under", 0.5, 0, 0) is True
+        assert self._grade("over", 0.5, 0, 0) is False
+
+
+class TestPolymarketTotalScoreResolverWiring:
+    """#140: the poly total score resolver is wired into both pipelines and
+    writes with the safe, idempotent conventions."""
+
+    def test_resolver_uses_poly_total_score_tag_and_skips_push(self):
+        import inspect
+        from app.tasks.backfill_winners import _resolve_polymarket_total_from_scores
+        src = inspect.getsource(_resolve_polymarket_total_from_scores)
+        assert "poly_total_score" in src
+        assert "source = 'polymarket'" in src
+        assert "BOOL_OR(u.is_winner) IS NOT TRUE" in src   # only ungraded
+        assert "e.status IN ('completed', 'closed')" in src  # final scores only
+        assert "push_skip" in src                          # push guarded
+        assert "i % 500 == 0" in src                       # per-batch commit (#13)
+
+    def test_wired_into_both_pipelines(self):
+        import inspect
+        from app.tasks.backfill_winners import (
+            _resolve_winners_only, _backfill_all_winners,
+        )
+        assert "_resolve_polymarket_total_from_scores(" in inspect.getsource(
+            _resolve_winners_only)
+        assert "_resolve_polymarket_total_from_scores(" in inspect.getsource(
+            _backfill_all_winners)
