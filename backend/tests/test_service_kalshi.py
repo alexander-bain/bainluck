@@ -692,3 +692,91 @@ class TestFetchAttempt8SyncUnblock:
         assert nested_by_series.get("KXMLBSPREAD") is False
         # small championship series → nested kept
         assert nested_by_series.get("KXNBA") is True
+
+
+class _FakeResp:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {"events": [], "cursor": None}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+class TestFetchAttempt9ResidualSyncBlock:
+    """#995 attempt-9: attempt-8 moved decode off-loop but the poll STILL froze
+    on a small nested=False page — proving a residual SYNC op owns the event
+    loop. Two candidates are neutralized here: (1) the phase-marker setex now
+    runs on a socket-timeout-bounded Redis client so it can't block the loop;
+    (2) get_events emits fine-grained INNER markers and the page parse is
+    offloaded to a thread so a large page can't starve wait_for/deadline."""
+
+    async def test_get_events_emits_fine_grained_markers(self, client, monkeypatch):
+        seen = []
+
+        class _FakeHttp:
+            async def get(self, *_a, **_k):
+                return _FakeResp(200, {"events": [{"event_ticker": "KXA"}],
+                                       "cursor": None})
+
+        monkeypatch.setattr(client, "client", _FakeHttp())
+        events, cursor = await client.get_events(
+            status=None, progress_cb=lambda s: seen.append(s)
+        )
+        assert events and cursor is None
+        # the inner markers name the exact op for attempt-10 if it still freezes
+        assert any(s.startswith("get_events:req") for s in seen)
+        assert any(s.startswith("get_events:resp:200") for s in seen)
+        assert "get_events:decode:start" in seen
+        assert "get_events:decode:done" in seen
+
+    async def test_get_events_marker_none_is_safe(self, client, monkeypatch):
+        class _FakeHttp:
+            async def get(self, *_a, **_k):
+                return _FakeResp(200, {"events": [], "cursor": None})
+
+        monkeypatch.setattr(client, "client", _FakeHttp())
+        events, cursor = await client.get_events(status=None)  # no progress_cb
+        assert events == [] and cursor is None
+
+    async def test_parse_offloaded_small_page_inline(self, client):
+        page = [{"event_ticker": f"KX{i}", "title": "t", "markets": []}
+                for i in range(3)]
+        parsed = await client._parse_events_offloaded(page)
+        assert [p.event_ticker for p in parsed] == ["KX0", "KX1", "KX2"]
+
+    async def test_parse_offloaded_large_page_threaded(self, client):
+        # >=10 events triggers the to_thread path; result must match inline parse
+        page = [{"event_ticker": f"KX{i}", "title": "t", "markets": []}
+                for i in range(25)]
+        parsed = await client._parse_events_offloaded(page)
+        assert len(parsed) == 25
+        assert all(p is not None for p in parsed)
+        assert parsed[24].event_ticker == "KX24"
+
+    async def test_parse_offloaded_empty(self, client):
+        assert await client._parse_events_offloaded([]) == []
+
+    def test_mark_phase_uses_socket_timeout_bounded_client(self):
+        import inspect
+        import textwrap
+        from app.tasks.kalshi import _poll_kalshi_markets
+        src = textwrap.dedent(inspect.getsource(_poll_kalshi_markets))
+        # the marker client MUST be bounded — an unbounded sync setex in the
+        # asyncio loop is the residual freeze (attempts 5-8 all left it in place)
+        assert "socket_timeout=" in src and "socket_connect_timeout=" in src
+
+    def test_get_events_source_has_inner_markers_and_offloads_parse(self):
+        import inspect
+        import textwrap
+        from app.services.kalshi_api import KalshiAPIService
+        ge = textwrap.dedent(inspect.getsource(KalshiAPIService.get_events))
+        assert "get_events:req" in ge and "get_events:decode" in ge
+        fetch = textwrap.dedent(inspect.getsource(
+            KalshiAPIService._fetch_all_events_unfiltered))
+        # both scans parse off the event loop and thread progress into get_events
+        assert "_parse_events_offloaded" in fetch
+        assert "progress_cb=_progress" in fetch

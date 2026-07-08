@@ -97,6 +97,7 @@ class KalshiAPIService(BaseAPIClient):
         limit: int = 200,
         cursor: Optional[str] = None,
         deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get events from Kalshi.
@@ -134,14 +135,30 @@ class KalshiAPIService(BaseAPIClient):
 
         import asyncio as _asyncio
         import time as _time
+
+        def _tick(sub: str) -> None:
+            # #995 attempt-9: fine-grained markers INSIDE get_events. attempt-8's
+            # trigger-proof showed the loop freezes on a small nested=False page
+            # even after decode moved off-thread — so the residual block is one of
+            # these exact ops. If the poll still freezes, the marker names WHICH
+            # (client.get vs decode) for attempt-10. Safe now that the marker
+            # client is socket-timeout-bounded (can't itself freeze the loop).
+            if progress_cb is not None:
+                try:
+                    progress_cb(sub)
+                except Exception:
+                    pass
+
         for _attempt in range(4):
             # #969: never start another attempt past the deadline.
             if deadline is not None and _time.monotonic() >= deadline:
                 return [], cursor
+            _tick(f"get_events:req:a{_attempt}")
             response = await self.client.get(
                 f"{self.BASE_URL}/events",
                 params=params,
             )
+            _tick(f"get_events:resp:{response.status_code}")
             if response.status_code == 429:
                 # #969: cap the backoff (was 5/10/15/20 = up to 50s) and never
                 # sleep past the deadline.
@@ -159,7 +176,9 @@ class KalshiAPIService(BaseAPIClient):
             # async bound (deadline #125, httpx timeout #128, wait_for #130) could
             # cancel it — the loop couldn't run their timers. to_thread keeps the
             # loop responsive so the caller's wait_for/deadline actually fire.
+            _tick("get_events:decode:start")
             data = await _asyncio.to_thread(response.json)
+            _tick("get_events:decode:done")
 
             events = data.get("events") or []
             next_cursor = data.get("cursor")
@@ -727,6 +746,7 @@ class KalshiAPIService(BaseAPIClient):
                         with_nested_markets=True,
                         cursor=cursor,
                         deadline=deadline,
+                        progress_cb=_progress,
                     ),
                     timeout=45.0,
                 )
@@ -740,8 +760,12 @@ class KalshiAPIService(BaseAPIClient):
                 break
             _progress(f"fetch:unfiltered:p{page_count}:recv{len(events)}")
 
-            for event_data in events:
-                parsed_event = self._parse_event(event_data)
+            # #995 attempt-9: parse OFF the event loop. _parse_event on a large
+            # nested-markets page is pure-but-heavy CPU; run synchronously it
+            # blocks the loop (a residual sync-block candidate alongside the
+            # marker setex). to_thread keeps wait_for/deadline timers live.
+            parsed_events = await self._parse_events_offloaded(events)
+            for parsed_event in parsed_events:
                 if parsed_event:
                     all_events[parsed_event.event_ticker] = parsed_event
                     cat = parsed_event.category or "unknown"
@@ -835,11 +859,13 @@ class KalshiAPIService(BaseAPIClient):
                             limit=200,
                             cursor=series_cursor,
                             deadline=deadline,
+                            progress_cb=_progress,
                         ),
                         timeout=45.0,
                     )
-                    for event_data in events_page:
-                        parsed_event = self._parse_event(event_data)
+                    # #995 attempt-9: parse off-loop here too (see main scan).
+                    parsed_page = await self._parse_events_offloaded(events_page)
+                    for parsed_event in parsed_page:
                         if parsed_event and parsed_event.event_ticker not in all_events:
                             all_events[parsed_event.event_ticker] = parsed_event
                             supplemented += 1
@@ -896,6 +922,29 @@ class KalshiAPIService(BaseAPIClient):
             logger.info("Backfilled markets for %d events", backfilled)
 
         return list(all_events.values())
+
+    async def _parse_events_offloaded(
+        self, events: list[dict]
+    ) -> list[Optional["KalshiEvent"]]:
+        """Parse a page of raw event dicts into KalshiEvent objects.
+
+        #995 attempt-9: ``_parse_event`` (and its nested ``_parse_market`` loop)
+        is pure CPU but can be heavy for large nested-markets pages. Run inline it
+        blocks the event loop, so a page that arrives fine still starves the
+        wait_for/deadline timers during parse. For a large page we offload the
+        whole page to a worker thread (the functions touch no shared mutable
+        state, so this is safe); tiny pages parse inline to avoid thread-pool
+        overhead.
+        """
+        import asyncio as _asyncio
+
+        if not events:
+            return []
+        if len(events) < 10:
+            return [self._parse_event(ed) for ed in events]
+        return await _asyncio.to_thread(
+            lambda evs=events: [self._parse_event(ed) for ed in evs]
+        )
 
     def _parse_event(self, event_data: dict) -> Optional[KalshiEvent]:
         """Parse raw event data into KalshiEvent object."""

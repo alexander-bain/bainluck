@@ -25,16 +25,33 @@ from app.tasks.config import (
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
-def get_redis_client():
-    """Get sync Redis client with proper SSL handling for Heroku."""
+def get_redis_client(socket_timeout=None, socket_connect_timeout=None):
+    """Get sync Redis client with proper SSL handling for Heroku.
+
+    #995 attempt-9: ``socket_timeout``/``socket_connect_timeout`` (seconds) bound
+    every blocking Redis op on the returned client. A sync client with NO timeout
+    (the default) will block the CALLING thread forever if Redis hangs — and when
+    that caller is a phase-marker ``setex`` invoked from inside an asyncio loop
+    (poll_kalshi's ``progress_cb``), the frozen thread IS the event loop, so no
+    ``wait_for``/deadline timer can ever fire. That is the residual sync block
+    that survived attempts 5-8. Bounded callers fail fast (raise, get swallowed)
+    instead of freezing the loop.
+    """
     import ssl
+
+    kwargs = {}
+    if socket_timeout is not None:
+        kwargs["socket_timeout"] = socket_timeout
+    if socket_connect_timeout is not None:
+        kwargs["socket_connect_timeout"] = socket_connect_timeout
 
     if REDIS_URL.startswith("rediss://"):
         return redis.from_url(
             REDIS_URL,
-            ssl_cert_reqs=ssl.CERT_NONE
+            ssl_cert_reqs=ssl.CERT_NONE,
+            **kwargs,
         )
-    return redis.from_url(REDIS_URL)
+    return redis.from_url(REDIS_URL, **kwargs)
 
 
 def get_async_redis_client():

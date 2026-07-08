@@ -201,6 +201,33 @@ class TestRetiredTaskHealth:
                    for t in tasks)
 
 
+class TestGetRedisClientSocketTimeout:
+    """#995 attempt-9: get_redis_client must accept socket timeouts so a
+    hot-loop marker client can't freeze the asyncio event loop on a hung Redis.
+    Without a bound, the sync setex in poll_kalshi's progress_cb owns the loop
+    forever and no wait_for/deadline timer can fire — the residual sync block."""
+
+    def test_socket_timeouts_applied_to_connection_pool(self):
+        client = redis_state.get_redis_client(
+            socket_timeout=2.0, socket_connect_timeout=2.0
+        )
+        kwargs = client.connection_pool.connection_kwargs
+        assert kwargs.get("socket_timeout") == 2.0
+        assert kwargs.get("socket_connect_timeout") == 2.0
+
+    def test_defaults_remain_unbounded_backward_compatible(self):
+        # Existing callers that don't pass timeouts keep the prior behavior
+        # (no socket_timeout key forced on).
+        client = redis_state.get_redis_client()
+        kwargs = client.connection_pool.connection_kwargs
+        assert kwargs.get("socket_timeout") is None
+
+    def test_signature_exposes_both_timeout_params(self):
+        sig = inspect.signature(redis_state.get_redis_client)
+        assert "socket_timeout" in sig.parameters
+        assert "socket_connect_timeout" in sig.parameters
+
+
 class _FakeQuotaRedis:
     def __init__(self, data):
         self.data = data

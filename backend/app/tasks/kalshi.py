@@ -357,7 +357,14 @@ async def _poll_kalshi_markets():
     _PHASE_KEY = "bainluck:poll_kalshi:phase"
     try:
         from app.tasks.redis_state import get_redis_client as _get_rc
-        _phase_rc = _get_rc()
+        # #995 attempt-9: BOUND the phase-marker client. This setex runs INSIDE
+        # the asyncio fetch loop (via progress_cb) — an unbounded sync client on
+        # a hanging Redis freezes the event loop, so no wait_for/deadline could
+        # ever fire (the residual sync block that survived attempts 5-8). Short
+        # socket timeouts make a hung setex fail fast (swallowed below) instead of
+        # owning the loop forever. A dropped marker is acceptable; a frozen poll
+        # is not.
+        _phase_rc = _get_rc(socket_timeout=2.0, socket_connect_timeout=2.0)
     except Exception:
         _phase_rc = None
 
