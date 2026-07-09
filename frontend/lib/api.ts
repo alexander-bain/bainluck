@@ -1536,7 +1536,39 @@ export interface CalibrationData {
   // server-side (Redis-tunable) so web + native gate on the same bar.
   min_category_outcomes?: number;
   small_sample_categories?: { category: string; outcomes: number }[];
+  // L2-73 payload v2 (#999 §F): display semantics server-side so web + native
+  // render the same story. All optional (older cached payloads omit them).
+  date_range?: { start: string; end: string } | null;
+  by_source?: CalibrationSourceMetric[];
+  by_category?: CalibrationCategoryMetric[];
+  corrections?: CalibrationCorrection[];
   generated_at: string;
+}
+
+/** L2-73: per-source calibration metrics computed server-side (ece = n-weighted,
+ *  the headline; mce = equal-weighted worst-bucket sensitivity). */
+export interface CalibrationSourceMetric {
+  source: string;
+  ece: number | null;   // n-weighted (headline)
+  mce?: number | null;  // equal-weighted worst-bucket sensitivity (secondary)
+  n: number;
+  gated?: boolean;
+}
+
+export interface CalibrationCategoryMetric {
+  category: string;
+  ece: number | null;
+  mce?: number | null;
+  n: number;
+  gated?: boolean;
+}
+
+/** L2-73 §E: the corrections log — "what we found and fixed" (trust panel). */
+export interface CalibrationCorrection {
+  date: string;
+  title: string;
+  rows: number | null;
+  description: string;
 }
 
 export interface CalibrationLiquidityFilter {

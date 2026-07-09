@@ -136,6 +136,13 @@ function ece(cal: AggBucket[]): number {
   return cal.reduce((s, b) => s + (b.n / totalN) * Math.abs(b.error), 0);
 }
 
+function monthYear(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
 function brierScore(buckets: CalibrationBucket[], filter?: (b: CalibrationBucket) => boolean): number {
   let n = 0, sq = 0;
   for (const b of buckets) {
@@ -240,8 +247,9 @@ export default function CalibrationPage() {
       const catBuckets = aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
       const catN = normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0);
       const catMCE = mce(catBuckets);
+      const catECE = ece(catBuckets);
       const catBrier = brierScore(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
-      return { category: cat, n: catN, mce: catMCE, brier: catBrier };
+      return { category: cat, n: catN, mce: catMCE, ece: catECE, brier: catBrier };
     });
   }, [normalized, categories, cohortFilter]);
 
@@ -289,7 +297,13 @@ export default function CalibrationPage() {
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
         <p className="text-xs text-text-muted">
-          Data from March&ndash;May 2026 &middot; Updated hourly
+          {data.date_range?.start && data.date_range?.end
+            ? `Data ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}`
+            : `${data.total_outcomes.toLocaleString()} resolved outcomes`}
+          {" · Updated "}
+          {data.generated_at
+            ? new Date(data.generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+            : "hourly"}
         </p>
       </div>
 
@@ -298,14 +312,10 @@ export default function CalibrationPage() {
         <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
           detail={priceCohort === "all" ? `${data.total_markets.toLocaleString()} markets` :
             priceCohort === "closing" ? "Closing line prices" : "Opening prices only"} />
-        <StatCard label="Calibration Error (MCE)"
-          value={`${cohortMCE.toFixed(1)}pp`}
-          detail={priceCohort === "all"
-            ? `95% CI: ${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp`
-            : priceCohort === "closing"
-              ? "Last traded price before resolution"
-              : "Price never moved from listing"}
-          valueClass={cohortMCE < 4 ? "text-green-600" : cohortMCE < 8 ? "text-blue-600" : "text-orange-600"} />
+        <StatCard label="Calibration Error (ECE)"
+          value={`${cohortECE.toFixed(1)}pp`}
+          detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
+          valueClass={cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"} />
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
           detail="0 = oracle, lower = better" />
         <StatCard label="Sources" value={String(sources.length)}
@@ -318,7 +328,11 @@ export default function CalibrationPage() {
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">Source Comparison</h2>
         <p className="text-xs text-text-muted mb-4">
-          How each data source performs independently. Lower MCE and Brier score indicate better calibration.
+          How each data source performs independently, sorted by ECE.{" "}
+          <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
+          metric &mdash; it reflects the outcomes users actually see. MCE (equal-weighted) is a
+          secondary &ldquo;worst-bucket sensitivity&rdquo; stat where a tiny bucket counts as much
+          as a huge one. Lower is better.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -326,26 +340,26 @@ export default function CalibrationPage() {
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
                 <th className="pb-2 pr-4">Source</th>
                 <th className="pb-2 pr-4 text-right">Outcomes</th>
-                <th className="pb-2 pr-4 text-right">MCE</th>
                 <th className="pb-2 pr-4 text-right">ECE</th>
+                <th className="pb-2 pr-4 text-right" title="Max/worst-bucket sensitivity (equal-weighted): a small bucket counts as much as a large one, so it over-reacts to thin samples.">
+                  MCE&nbsp;<span className="text-text-muted/60">&#9432;</span>
+                </th>
                 <th className="pb-2 pr-4 text-right">Brier</th>
                 <th className="pb-2 text-right">Buckets within 5pp</th>
               </tr>
             </thead>
             <tbody>
-              {sourceMetrics.map(sm => (
+              {[...sourceMetrics].sort((a, b) => a.ece - b.ece).map(sm => (
                 <tr key={sm.source} className="border-t border-surface-border">
                   <td className="py-2.5 pr-4 font-medium text-text-primary">{sourceLabel(sm.source)}</td>
                   <td className="py-2.5 pr-4 text-right tabular-nums">{sm.n.toLocaleString()}</td>
                   <td className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
-                    sm.mce < 4 ? "text-green-600" : sm.mce < 6 ? "text-blue-600" : "text-orange-600"
-                  }`}>
-                    {sm.mce.toFixed(1)}pp
-                  </td>
-                  <td className={`py-2.5 pr-4 text-right tabular-nums ${
                     sm.ece < 3 ? "text-green-600" : sm.ece < 5 ? "text-blue-600" : "text-orange-600"
                   }`}>
                     {sm.ece.toFixed(1)}pp
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
+                    {sm.mce.toFixed(1)}pp
                   </td>
                   <td className="py-2.5 pr-4 text-right tabular-nums">{sm.brier.toFixed(4)}</td>
                   <td className="py-2.5 text-right tabular-nums">
@@ -357,14 +371,12 @@ export default function CalibrationPage() {
                 <td className="py-2.5 pr-4 text-text-primary">Combined</td>
                 <td className="py-2.5 pr-4 text-right tabular-nums">{cohortN.toLocaleString()}</td>
                 <td className={`py-2.5 pr-4 text-right tabular-nums ${
-                  cohortMCE < 4 ? "text-green-600" : cohortMCE < 6 ? "text-blue-600" : "text-orange-600"
-                }`}>
-                  {cohortMCE.toFixed(1)}pp
-                </td>
-                <td className={`py-2.5 pr-4 text-right tabular-nums ${
                   cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"
                 }`}>
                   {cohortECE.toFixed(1)}pp
+                </td>
+                <td className="py-2.5 pr-4 text-right tabular-nums text-text-muted">
+                  {cohortMCE.toFixed(1)}pp
                 </td>
                 <td className="py-2.5 pr-4 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
                 <td className="py-2.5 text-right tabular-nums">
@@ -571,20 +583,24 @@ export default function CalibrationPage() {
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
                 <th className="pb-2 pr-4">Category</th>
                 <th className="pb-2 pr-4 text-right">Outcomes</th>
-                <th className="pb-2 pr-4 text-right">MCE</th>
+                <th className="pb-2 pr-4 text-right">ECE</th>
+                <th className="pb-2 pr-4 text-right" title="Worst-bucket sensitivity (equal-weighted).">MCE&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
             </thead>
             <tbody>
-              {categoryMetrics.map(cm => (
+              {[...categoryMetrics].sort((a, b) => a.ece - b.ece).map(cm => (
                 <tr key={cm.category} className="border-t border-surface-border">
                   <td className="py-2 pr-4 font-medium text-text-primary">
                     {DISPLAY_NAMES[cm.category] || cm.category}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
                   <td className={`py-2 pr-4 text-right tabular-nums font-semibold ${
-                    cm.mce < 4 ? "text-green-600" : cm.mce < 6 ? "text-blue-600" : "text-orange-600"
+                    cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"
                   }`}>
+                    {cm.ece.toFixed(1)}pp
+                  </td>
+                  <td className="py-2 pr-4 text-right tabular-nums text-text-muted">
                     {cm.mce.toFixed(1)}pp
                   </td>
                   <td className="py-2 text-right tabular-nums">{cm.brier.toFixed(4)}</td>

@@ -1221,6 +1221,10 @@ async def public_calibration(
             "category": cat,
             "mce": cat_mce,
             "outcomes": total_n,
+            # L2-73 payload v2 (#999 §F): ece (n-weighted headline) + n for parity.
+            "ece": cat_mce,
+            "n": total_n,
+            "gated": False,
         })
     by_category.sort(key=lambda x: x["outcomes"], reverse=True)
 
@@ -1255,6 +1259,9 @@ async def public_calibration(
             "source": src,
             "mce": src_mce,
             "outcomes": total_n,
+            "ece": src_mce,  # L2-73: n-weighted headline
+            "n": total_n,
+            "gated": False,
         })
     by_source.sort(key=lambda x: x["outcomes"], reverse=True)
 
@@ -1322,6 +1329,13 @@ async def public_calibration(
     spreads_summary = _source_summary("odds_api_spreads")
     totals_summary = _source_summary("odds_api_totals")
 
+    # L2-73 §E: corrections log — single source of truth lives in the precompute
+    # task; lazy-imported here for the cold-cache fallback (empty on any hiccup).
+    try:
+        from app.tasks.precompute_calibration import CALIBRATION_CORRECTIONS as _CALIBRATION_CORRECTIONS
+    except Exception:
+        _CALIBRATION_CORRECTIONS = []
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
@@ -1331,6 +1345,8 @@ async def public_calibration(
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        # L2-73 §E: corrections log (single source of truth in the precompute task).
+        "corrections": _CALIBRATION_CORRECTIONS,
         "spreads_summary": spreads_summary,
         "totals_summary": totals_summary,
         "total_markets": total_markets,

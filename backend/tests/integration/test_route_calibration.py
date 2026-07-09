@@ -201,8 +201,17 @@ class TestCalibrationPublicEndpoint:
             "mce_opening_price",
             "liquidity_filter",
             "void_filter",
+            "corrections",  # L2-73 §E
             "generated_at",
         }
+
+    async def test_corrections_log_present(self, client, mock_db):
+        # L2-73 §E: the corrections log ships in the payload for the trust panel.
+        resp = await client.get("/api/calibration")
+        body = resp.json()
+        assert isinstance(body["corrections"], list)
+        for c in body["corrections"]:
+            assert {"date", "title", "rows", "description"} <= set(c)
 
     async def test_invalid_bust_parameter_returns_422(self, client, mock_db):
         resp = await client.get("/api/calibration?bust=abc")

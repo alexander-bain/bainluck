@@ -21,6 +21,42 @@ _CACHE_TTL = 86400
 # Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
 _MAIN_CACHE_TTL = 7200
 
+# L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
+# payload so web + native render the same trust panel. Static seed from the #997
+# record; each entry is a real, dated data-quality fix. When a new class is fixed,
+# add a row here (single source of truth for the panel).
+CALIBRATION_CORRECTIONS = [
+    {
+        "date": "2026-07-09",
+        "title": "Polymarket hockey sign-flip",
+        "rows": 36207,
+        "description": "Player-threshold props stored the OVER probability against "
+                       "the Under/No side (gotcha #17). Re-graded the Polymarket half "
+                       "(poly MCE 4.68 → 4.01).",
+    },
+    {
+        "date": "2026-07-08",
+        "title": "Premature golf resolutions",
+        "rows": 230,
+        "description": "Golf markets resolved at cp=1.0 with future dates were "
+                       "un-resolved so they grade against the real result.",
+    },
+    {
+        "date": "2026-07-09",
+        "title": "DataGolf survivorship exclusion",
+        "rows": None,
+        "description": "Symmetric exclusion of did-not-play / withdrew outcomes so the "
+                       "golf curve isn't inflated by non-participants.",
+    },
+    {
+        "date": "2026-07-09",
+        "title": "Placeholder-price capture (in progress)",
+        "rows": 49910,
+        "description": "Illiquid props stamped a no-signal ~0.50 midpoint (gotcha #19). "
+                       "Capture gate + curve exclusion shipping (#148).",
+    },
+]
+
 # Horizons: (label, days_before_resolution)
 _HORIZONS = [
     ("T-30", 30),
@@ -694,6 +730,13 @@ async def _precompute_calibration_main():
             "mce": cat_mce,
             "mce_unweighted": cat_mce_unweighted,
             "outcomes": total_n,
+            # L2-73 payload v2 (#999 §F): explicit display semantics so web +
+            # native render the same story. ece = n-weighted (headline);
+            # mce (worst-bucket) = the equal-weighted number, for the secondary col.
+            "ece": cat_mce,
+            "mce_worst": cat_mce_unweighted,
+            "n": total_n,
+            "gated": False,  # published entries are already above the sample floor
         })
     by_category.sort(key=lambda x: x["outcomes"], reverse=True)
     small_sample_categories.sort(key=lambda x: x["outcomes"], reverse=True)
@@ -730,6 +773,12 @@ async def _precompute_calibration_main():
             "mce": src_mce,
             "mce_unweighted": src_mce_unweighted,
             "outcomes": total_n,
+            # L2-73 payload v2 (#999 §F): explicit ECE (n-weighted headline) +
+            # worst-bucket MCE + n for native/web parity.
+            "ece": src_mce,
+            "mce_worst": src_mce_unweighted,
+            "n": total_n,
+            "gated": False,
         })
     by_source.sort(key=lambda x: x["outcomes"], reverse=True)
 
@@ -806,6 +855,7 @@ async def _precompute_calibration_main():
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        "corrections": CALIBRATION_CORRECTIONS,  # L2-73 §E trust panel
         # #997 App Store ship-gate: the minimum resolved-outcome count for a
         # chartable sub-category. Shipped so web + native gate on the SAME bar
         # instead of hardcoding their own; by_category / by_sport above are
