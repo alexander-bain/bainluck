@@ -58,6 +58,27 @@ CALIBRATION_CORRECTIONS = [
                        "vs 0.43–0.55 for has-bid coin-flips. Now excluded from the "
                        "curve by bid presence — read-side only, no regrade.",
     },
+    {
+        "date": "2026-07-09",
+        "title": "Malformed-binary exclusion",
+        "rows": None,  # live count in payload.malformed_binary_filter
+        "description": "Resolved 2-outcome mutually-exclusive markets must have "
+                       "exactly one winner. Zero-winner (void) and two-winner "
+                       "(impossible) markets are data artifacts, not scoreable "
+                       "outcomes — now excluded from the curve. Census: ~43K "
+                       "both-false + ~1.5K both-winner across all categories. "
+                       "Read-side only, no regrade.",
+    },
+    {
+        "date": "2026-07-09",
+        "title": "Golf FIELD one-sided-ask placeholder exclusion",
+        "rows": None,  # live count in payload.golf_placeholder_filter.excluded
+        "description": "Golf winner/round-leader outcomes priced >=0.80 in a "
+                       "mutually-exclusive market with >=2 such outcomes are "
+                       "Kalshi one-sided-ask placeholders (mex probs can't have "
+                       "two 80%+ outcomes; 98.6% lose). Excluded; genuine single "
+                       "leaders (82% win) stay in. Read-side only, no regrade.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -155,6 +176,47 @@ POLY_PLACEHOLDER_RULE_TEXT = (
     "has-bid at 0.43–0.55). Read-side only; never mutates resolutions."
 )
 
+# L2-79 Item 1 (#997/#1010): curve-side exclusion of MALFORMED BINARIES. A
+# resolved, mutually-exclusive 2-outcome market must have exactly ONE winner.
+# Zero winners (both-false = a void/malformed resolution) or two winners
+# (both-winner = impossible / double-graded) is a data artifact, not a real
+# outcome to score — leaving it in either drags the curve down (both-false
+# losers) or fakes a perfect winner (both-winner). The census (2026-07-09) found
+# ~43K both-false + ~1.5K both-winner such markets across every category
+# (tennis 17.4K, soccer 8.2K, esports 8.1K the largest). Standalone both-false
+# markets are already dropped by the clean_vms has_winner>=1 gate; this catches
+# the GROUPED both-false losers that leak in via a group/event virtual-market
+# AND every both-winner market (which clean_vms keeps, has_winner>=1). Read-side
+# only (gotcha #21) — never mutates is_winner / calibration_probability.
+MALFORMED_BINARY_RULE_TEXT = (
+    "Excludes resolved 2-outcome mutually-exclusive markets whose winner count is "
+    "not exactly 1 — zero winners (void/malformed resolution) or two winners "
+    "(impossible / double-graded). These are data artifacts, not scoreable "
+    "outcomes. Read-side only; never mutates resolutions."
+)
+
+# L2-79 Item 2 (#940/#762): curve-side exclusion of golf FIELD/winner ONE-SIDED-
+# ASK PLACEHOLDERS. In a mutually-exclusive golf winner/round-leader market, at
+# most ONE outcome can legitimately price >=0.80 (mex probabilities must sum to
+# ~1). Kalshi stamps illiquid player-winner outcomes at the high ASK (~0.88–0.99)
+# with no real two-sided book, so many outcomes in the same market cluster at
+# >=0.80 and ~98.6% resolve as losers. The census (2026-07-09) confirmed the
+# discriminator: markets with >=2 outcomes in the >=0.80 band produce 954 losers
+# vs 14 winners (98.6% loss @ cp 0.93 — placeholder), while markets with exactly
+# ONE outcome >=0.80 (a genuine leader/heavy favorite) produce 304 winners vs 65
+# losers (82% win @ cp 0.88 — well-calibrated, MUST stay in). So exclude the
+# high band ONLY in over-subscribed markets; the low-priced field and genuine
+# single leaders are untouched. Read-side only (gotcha #21).
+GOLF_PLACEHOLDER_HIGH_BAND = 0.80
+
+GOLF_PLACEHOLDER_RULE_TEXT = (
+    "Excludes golf winner/round-leader outcomes priced >=0.80 in mutually-exclusive "
+    "markets that have >=2 outcomes in that band — one-sided-ask placeholder prices "
+    "(mex probabilities can't have two 80%+ outcomes; ~98.6% resolve as losers). "
+    "Genuine single-leader markets (one outcome >=0.80, 82% win) stay in. "
+    "Read-side only; never mutates resolutions."
+)
+
 # #762: void-resolution filter (mostly DataGolf "Make the Cut" markets).
 #
 # A resolved outcome whose resolution_source is did_not_play / withdrew is a
@@ -200,6 +262,30 @@ def outcome_is_calibration_liquid(
     bid / max last_price observed across an outcome's snapshots (NULL if none).
     """
     return (ever_yes_bid or 0) > 0 or (ever_last_price or 0) > 0
+
+
+def binary_is_malformed(n_outcomes: int, n_winners: int) -> bool:
+    """True if a 2-outcome mutually-exclusive market is malformed (L2-79 Item 1).
+
+    Canonical, unit-tested definition mirroring the ``malformed_binaries`` CTE: a
+    resolved binary must have exactly one winner. Zero winners (void/malformed) or
+    two winners (impossible / double-graded) is a data artifact excluded from the
+    published curve. Only applies to 2-outcome markets; anything else is not a
+    binary and returns False. Read-side only (gotcha #21).
+    """
+    return n_outcomes == 2 and n_winners != 1
+
+
+def outcome_in_golf_high_band(cp: float | None) -> bool:
+    """True if a golf outcome's price sits in the placeholder high band (L2-79 Item 2).
+
+    The band-membership half of the ``golf_placeholder_markets`` rule: an outcome
+    priced at/above GOLF_PLACEHOLDER_HIGH_BAND is a candidate one-sided-ask
+    placeholder. The full exclusion additionally requires the market to be
+    over-subscribed (>=2 outcomes in this band) — that market-level check lives in
+    the SQL CTE. Read-side only (gotcha #21).
+    """
+    return cp is not None and cp >= GOLF_PLACEHOLDER_HIGH_BAND
 
 
 def _wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, float]:
@@ -301,6 +387,43 @@ async def _precompute_calibration_main():
                       (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
                       false)
             ),
+            -- L2-79 Item 1: malformed 2-outcome mex binaries (winner count != 1).
+            -- Counts ALL outcomes of the market to determine the binary shape and
+            -- true winner count (not the eligibility-filtered subset).
+            malformed_binaries AS (
+                SELECT fo.market_id,
+                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                WHERE mi.mutually_exclusive = true
+                GROUP BY fo.market_id
+                HAVING COUNT(*) = 2
+                   AND COUNT(*) FILTER (WHERE fo.is_winner = true) <> 1
+            ),
+            -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
+            -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
+            -- (structurally impossible for genuine mex probabilities). Same
+            -- eligibility predicate as the main outcome scan so the band count
+            -- reflects the published population.
+            golf_placeholder_markets AS (
+                SELECT fo.market_id
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                WHERE mi.category = 'golf'
+                  AND mi.mutually_exclusive = true
+                  AND mi.event_id IS NULL
+                  AND COALESCE(fo.calibration_probability, fo.opening_probability) >= {GOLF_PLACEHOLDER_HIGH_BAND}
+                  AND fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND (fo.resolution_source IS NOT NULL
+                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
+                                                    'did_not_play', 'withdrew',
+                                                    'no_pregame_trading'))
+                  AND COALESCE(fo.volume, -1) != 0
+                GROUP BY fo.market_id
+                HAVING COUNT(*) >= 2
+            ),
             group_sizes AS (
                 SELECT group_id, source, COUNT(*) AS group_size
                 FROM market_info
@@ -364,6 +487,15 @@ async def _precompute_calibration_main():
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
+                    -- L2-79 Item 1: malformed 2-outcome mex binary (winner count
+                    -- 0 = void, or 2 = impossible). mb.win_count carries which.
+                    (mb.market_id IS NOT NULL) AS is_malformed_binary,
+                    mb.win_count AS malformed_win_count,
+                    -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
+                    -- sits in the >=0.80 band of an over-subscribed golf mex market.
+                    (gpm.market_id IS NOT NULL
+                     AND COALESCE(fo.calibration_probability, fo.opening_probability)
+                         >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
                         ORDER BY ABS(fo.opening_probability - 0.5)
@@ -371,6 +503,8 @@ async def _precompute_calibration_main():
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+                LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
+                LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   AND (fo.resolution_source IS NOT NULL
@@ -391,7 +525,9 @@ async def _precompute_calibration_main():
                 SELECT ro.* FROM ranked_outcomes ro
                 LEFT JOIN mode_prices mp
                   ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
-                WHERE ro.is_liquid AND NOT ro.is_poly_placeholder AND
+                WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                    AND NOT ro.is_malformed_binary
+                    AND NOT ro.is_golf_placeholder AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -407,7 +543,13 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
+                    -- L2-79 Item 1: malformed-binary exclusion counts (eligible
+                    -- outcomes flagged in ranked_outcomes, split by winner count).
+                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 0) AS both_false_excluded,
+                    COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 2) AS both_winner_excluded,
+                    -- L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
+                    COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -423,7 +565,10 @@ async def _precompute_calibration_main():
                 MAX(ls.kalshi_included) AS kalshi_included,
                 MAX(ls.kalshi_excluded) AS kalshi_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
-                MAX(ls.poly_included) AS poly_included
+                MAX(ls.poly_included) AS poly_included,
+                MAX(ls.both_false_excluded) AS both_false_excluded,
+                MAX(ls.both_winner_excluded) AS both_winner_excluded,
+                MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -453,6 +598,23 @@ async def _precompute_calibration_main():
         poly_included = (
             int(rows[0].poly_included)
             if rows and rows[0].poly_included is not None
+            else 0
+        )
+        # L2-79 Item 1: malformed-binary exclusion transparency counts.
+        both_false_excluded = (
+            int(rows[0].both_false_excluded)
+            if rows and rows[0].both_false_excluded is not None
+            else 0
+        )
+        both_winner_excluded = (
+            int(rows[0].both_winner_excluded)
+            if rows and rows[0].both_winner_excluded is not None
+            else 0
+        )
+        # L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
+        golf_placeholder_excluded = (
+            int(rows[0].golf_placeholder_excluded)
+            if rows and rows[0].golf_placeholder_excluded is not None
             else 0
         )
 
@@ -957,6 +1119,18 @@ async def _precompute_calibration_main():
             "rule": POLY_PLACEHOLDER_RULE_TEXT,
             "included": poly_included,
             "excluded": poly_placeholder_excluded,
+        },
+        "malformed_binary_filter": {  # L2-79 Item 1 (#997/#1010)
+            "applies_to": "all",
+            "rule": MALFORMED_BINARY_RULE_TEXT,
+            "both_false_excluded": both_false_excluded,
+            "both_winner_excluded": both_winner_excluded,
+            "excluded": both_false_excluded + both_winner_excluded,
+        },
+        "golf_placeholder_filter": {  # L2-79 Item 2 (#940/#762)
+            "applies_to": "golf",
+            "rule": GOLF_PLACEHOLDER_RULE_TEXT,
+            "excluded": golf_placeholder_excluded,
         },
         "void_filter": {
             "applies_to": "datagolf",

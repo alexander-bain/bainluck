@@ -1902,8 +1902,32 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                 """))
             series_list = [r[0] for r in sr.fetchall()]
             stats["series"] = len(series_list)
+
+            # #156 (gotcha #38/#995 playbook): resumable cross-run series cursor.
+            # The old task recomputed series_list in the same order every run and
+            # broke at the deadline — so the oldest series (the api_empty cohort
+            # PAST the ~2-3mo candlestick cliff, gotcha #35) got re-ground first
+            # every single run and later series STARVED (SoftTimeLimit@600s, 0
+            # net successes). Rotating past a Redis cursor makes each run resume
+            # AFTER the last series it finished, cycling through the whole backlog
+            # so every series is reached and partial progress is banked. Bounded +
+            # None-safe (a Redis miss just starts from the top).
+            _cursor_key = "kalshi:candlestick:series_cursor"
+            try:
+                from app.tasks.redis_state import get_redis_client
+                _rc = get_redis_client()
+                _cur = _rc.get(_cursor_key)
+                if isinstance(_cur, bytes):
+                    _cur = _cur.decode()
+            except Exception:
+                _rc = None
+                _cur = None
+            if _cur and _cur in series_list:
+                _i = series_list.index(_cur)
+                series_list = series_list[_i + 1:] + series_list[: _i + 1]
             logger.info(
-                "Previous-price backfill: %d series to process", len(series_list)
+                "Previous-price backfill: %d series to process (resume after %s)",
+                len(series_list), _cur or "<start>",
             )
 
             from dateutil.parser import parse as _dt_parse
@@ -1925,16 +1949,25 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
 
                 cursor = None
                 for page in range(50):
-                    # #107: finer in-operation check — a single deep series can
-                    # paginate past the wall between series-level checks.
-                    if deadline and _time.monotonic() >= deadline:
+                    # #107 + #156: finer in-operation check against BOTH the
+                    # caller deadline and the local 540s cap — a single deep
+                    # series can paginate past the wall between series checks.
+                    if (deadline and _time.monotonic() >= deadline) or (
+                        _time.monotonic() - _start
+                    ) > 540:
                         break
                     try:
+                        # #156 (gotcha #38): limit 200 -> 50. A 200-event nested-
+                        # markets page holds the GIL ~67s inside orjson/json (the
+                        # C decoder never releases it), freezing the event loop so
+                        # the deadline timer can't fire -> SIGKILL/SoftTimeLimit
+                        # before anything commits. A 50-event page decodes sub-
+                        # second, so the budget checks above actually get to run.
                         events, cursor = await service.get_events(
                             status="settled",
                             series_ticker=series,
                             with_nested_markets=True,
-                            limit=200,
+                            limit=50,
                             cursor=cursor,
                         )
                     except Exception as e:
@@ -2014,6 +2047,20 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                         break
                     await asyncio.sleep(0.5)
 
+                # #156: advance the resumable cursor only when this series drained
+                # within budget. If we ran out of time mid-series, leave the cursor
+                # where it was so the next run resumes HERE rather than skipping the
+                # series' remaining pages until a full rotation later.
+                _within_budget = not (
+                    (deadline and _time.monotonic() >= deadline)
+                    or (_time.monotonic() - _start) > 540
+                )
+                if _rc is not None and _within_budget:
+                    try:
+                        _rc.set(_cursor_key, series, ex=7 * 86400)
+                    except Exception:
+                        pass
+
             # Reset cal_prob for outcomes that got new data
             await session.execute(text("""
                     UPDATE futures_outcomes fo
@@ -2027,6 +2074,14 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                 """))
             await session.commit()
 
+    except SoftTimeLimitExceeded:
+        # #156: per-page commits already banked partial progress and the cursor
+        # was advanced per fully-drained series — so a soft-limit hit is a clean
+        # partial run, not a failure. Return the stats gathered so far.
+        stats["errors"].append("soft_time_limit — partial progress committed")
+        logger.warning(
+            "Previous-price backfill hit soft_time_limit; partial progress committed"
+        )
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Previous-price backfill error: %s", e)
