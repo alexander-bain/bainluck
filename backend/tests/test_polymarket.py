@@ -603,9 +603,44 @@ class TestResolveMarketProbability:
         return PolymarketMarket(**defaults)
 
     def test_normal_outcome_prices(self):
-        """Standard case: outcomePrices has a valid price."""
-        m = self._make_market(outcome_prices=[0.65, 0.35])
+        """Standard case: outcomePrices with a real orderbook uses the price.
+
+        #151: a genuinely traded market has orderbook/trade evidence (here a live
+        bid), so its mid-range outcomePrice is trusted.
+        """
+        m = self._make_market(outcome_prices=[0.65, 0.35], best_bid=0.64,
+                              best_ask=0.66)
         assert _resolve_market_probability(m) == 0.65
+
+    def test_midrange_outcome_price_no_orderbook_skipped(self):
+        """#151 cp-capture guard: a mid-range outcomePrice with NO bid, NO trade,
+        and no real ask is a placeholder/synthetic quote and must be skipped.
+
+        These seeded ~150K resolved poly outcomes near ~0.50 that resolve ~0.19
+        (win-rate census, Queue #151), dragging poly calibration MCE to 4.01.
+        """
+        m = self._make_market(outcome_prices=[0.50, 0.50])
+        assert _resolve_market_probability(m) is None
+        # Also skipped when only a max-spread ask is present (empty book).
+        m2 = self._make_market(outcome_prices=[0.50, 0.50], best_ask=1.0)
+        assert _resolve_market_probability(m2) is None
+
+    def test_midrange_outcome_price_with_trade_kept(self):
+        """A mid-range outcomePrice backed by a last trade IS trusted."""
+        m = self._make_market(outcome_prices=[0.50, 0.50], last_trade_price=0.49)
+        assert _resolve_market_probability(m) == 0.50
+
+    def test_midrange_outcome_price_with_real_ask_kept(self):
+        """A mid-range outcomePrice backed by a real (sub-max) ask IS trusted."""
+        m = self._make_market(outcome_prices=[0.50, 0.50], best_ask=0.52)
+        assert _resolve_market_probability(m) == 0.50
+
+    def test_extreme_outcome_price_no_orderbook_kept(self):
+        """Extreme prices (near-certain) may have a cleared book — stay permissive."""
+        m = self._make_market(outcome_prices=[0.97, 0.03])
+        assert _resolve_market_probability(m) == 0.97
+        m2 = self._make_market(outcome_prices=[0.02, 0.98])
+        assert _resolve_market_probability(m2) == 0.02
 
     def test_zero_outcome_price_falls_through(self):
         """outcomePrices[0] = 0 should fall through to fallbacks."""

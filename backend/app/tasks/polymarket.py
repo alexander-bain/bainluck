@@ -1321,9 +1321,28 @@ def _resolve_market_probability(market) -> float | None:
     if _is_placeholder_outcome(market):
         return None
 
+    # #151 cp-capture guard: real price discovery leaves orderbook/trade evidence.
+    # A live bid, a real (sub-max) ask, or a last trade all count. Gamma's
+    # precomputed ``outcomePrices`` is populated for reserved/untraded slots too,
+    # so trusting it blind seeded ~150K resolved poly outcomes near ~0.50 that
+    # actually resolve ~0.19 (win-rate census, Queue #151) — dragging poly
+    # calibration MCE to 4.01. Require this evidence for MID-RANGE prices only;
+    # extreme prices (<=0.05 / >=0.95) can legitimately have a cleared book
+    # (near-certain outcomes) and are left permissive.
+    has_market = (
+        (market.best_bid is not None and market.best_bid > 0)
+        or (market.last_trade_price is not None and market.last_trade_price > 0)
+        or (market.best_ask is not None and 0 < market.best_ask < 0.99)
+    )
+
     prob = market.outcome_prices[0] if market.outcome_prices else None
 
     if prob is not None and prob > 0:
+        # A mid-range outcomePrice with no orderbook and no trade is a
+        # placeholder/synthetic quote, not price discovery — skip the snapshot
+        # (it is re-captured next cycle once a real bid/trade appears).
+        if 0.05 < prob < 0.95 and not has_market:
+            return None
         return prob
 
     # Midpoint fallback: both bid and ask must be present and positive
