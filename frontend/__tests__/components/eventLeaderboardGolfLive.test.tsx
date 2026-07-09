@@ -75,6 +75,38 @@ describe("EventLeaderboard golf live mode (L2-66)", () => {
     expect(html).toContain("16%");        // 0.159 → 16%
   });
 
+  test("cut/MC/WD players sink into a collapsed 'Missed cut' group, not mid-field (L2-68)", () => {
+    const postCut: EventConceptCompetitor[] = [
+      { name: "Rory McIlroy", probability: 0.3, position: "1", score_to_par: -12, thru: "F" },
+      { name: "Scottie Scheffler", probability: 0.25, position: "2", score_to_par: -10, thru: "F" },
+      // Missed the cut with a "better-looking" stale round-1 score — must NOT sort
+      // above active players; sinks to the collapsed group.
+      { name: "Early Casualty", probability: 0, position: "CUT", score_to_par: -14, thru: "F" },
+      { name: "Withdrew Guy", probability: 0, position: "WD", score_to_par: 3, thru: "F" },
+      { name: "Missed It", probability: 0, position: "MC", score_to_par: 5, thru: "F" },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={postCut} label="Leaderboard" live asOf="x" />,
+    );
+    // Collapsed group present with the right count.
+    expect(html).toContain("Missed cut (3)");
+    // The -14 cut player must NOT sort above the -12 active leader.
+    expect(html.indexOf("Rory McIlroy")).toBeLessThan(html.indexOf("Early Casualty"));
+    // Cut chips rendered (normalized).
+    expect(html).toContain("CUT");
+    expect(html).toContain("WD");
+    expect(html).toContain("MC");
+    // no American odds anywhere
+    expect(html).not.toMatch(/[+-]\d{3,}/);
+  });
+
+  test("no 'Missed cut' group pre-cut (all active)", () => {
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={liveCompetitors} label="Leaderboard" live asOf="x" />,
+    );
+    expect(html).not.toContain("Missed cut");
+  });
+
   test("falls back to the standard winner-field render when not golf-live", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard

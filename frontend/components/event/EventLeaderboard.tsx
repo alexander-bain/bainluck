@@ -45,6 +45,74 @@ function fmtThru(t: string | null | undefined): string {
   return /^\d+$/.test(t) ? `H${t}` : t;
 }
 
+const CUT_STATUSES = new Set(["cut", "mc", "wd", "w/d", "dq", "dnf", "dns", "mdf"]);
+
+/** L2-68: a player who missed the cut / withdrew / was DQ'd — DataGolf reports
+ *  these as a status string in `position`. They must NOT sort mid-field by a stale
+ *  score; they sink into a collapsed "Missed cut" group. Honest — only real status
+ *  strings count, never a fabricated position. */
+function isCutStatus(position: string | null | undefined): boolean {
+  if (!position) return false;
+  return CUT_STATUSES.has(position.trim().toLowerCase().replace(/\s+/g, ""));
+}
+
+/** Chip label for a cut player (normalized). */
+function cutLabel(position: string | null | undefined): string {
+  const p = (position || "CUT").trim().toUpperCase().replace(/\s+/g, "");
+  return p === "W/D" ? "WD" : p;
+}
+
+/** One golf-live leaderboard row (active or cut). Cut rows are dimmed, show a
+ *  status chip instead of a hole, and no win% (they can't win). */
+function GolfRow({
+  c,
+  index,
+  cut = false,
+}: {
+  c: EventConceptCompetitor;
+  index: number;
+  cut?: boolean;
+}) {
+  const mv = cut ? null : formatMovement(competitorMovement(c));
+  const toPar = c.score_to_par;
+  const parClass =
+    toPar == null ? "text-text-muted" : toPar < 0 ? "text-accent-brand" : "text-text-primary";
+  return (
+    <div className={`flex items-center gap-2 py-2 text-sm ${cut ? "opacity-70" : ""}`}>
+      <span className="w-8 shrink-0 font-mono text-xs text-text-secondary tabular-nums">
+        {cut ? (
+          <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-text-muted/15 text-text-secondary">
+            {cutLabel(c.position)}
+          </span>
+        ) : (
+          c.position || index + 1
+        )}
+      </span>
+      <span className="flex-1 min-w-0 truncate text-text-primary">{c.name}</span>
+      <span className={`w-12 text-right shrink-0 font-mono tabular-nums ${parClass}`}>
+        {fmtToPar(toPar)}
+      </span>
+      <span className="w-12 text-right shrink-0 font-mono text-xs text-text-secondary tabular-nums">
+        {cut ? "—" : fmtThru(c.thru)}
+      </span>
+      <span className="w-16 text-right shrink-0 flex items-center justify-end gap-1">
+        {mv && (
+          <span
+            className={`font-mono text-[10px] tabular-nums ${
+              mv.dir === "up" ? "text-accent-brand" : "text-accent-danger"
+            }`}
+          >
+            {mv.dir === "up" ? "▲" : "▼"}
+          </span>
+        )}
+        <span className="font-mono font-semibold text-text-primary tabular-nums">
+          {cut ? "—" : formatProbability(c.probability)}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 export default function EventLeaderboard({
   competitors,
   label,
@@ -60,20 +128,20 @@ export default function EventLeaderboard({
   const golfLive =
     live && competitors.some((c) => c.thru != null || c.position != null);
 
-  const ranked = golfLive
-    ? [...competitors]
-        .sort((a, b) => {
-          const sa = a.score_to_par ?? Number.POSITIVE_INFINITY;
-          const sb = b.score_to_par ?? Number.POSITIVE_INFINITY;
-          if (sa !== sb) return sa - sb;
-          return (b.probability ?? -1) - (a.probability ?? -1);
-        })
-        .slice(0, limit)
-    : fieldOrder(competitors).slice(0, limit);
-
-  if (ranked.length === 0) return null;
-
   if (golfLive) {
+    // Order by score-to-par (real leaderboard), win% as tiebreak. L2-68: cut/MC/WD
+    // players sink into a collapsed "Missed cut" group instead of sorting mid-field
+    // on a stale score.
+    const sorted = [...competitors].sort((a, b) => {
+      const sa = a.score_to_par ?? Number.POSITIVE_INFINITY;
+      const sb = b.score_to_par ?? Number.POSITIVE_INFINITY;
+      if (sa !== sb) return sa - sb;
+      return (b.probability ?? -1) - (a.probability ?? -1);
+    });
+    const active = sorted.filter((c) => !isCutStatus(c.position)).slice(0, limit);
+    const cutPlayers = sorted.filter((c) => isCutStatus(c.position));
+    if (active.length === 0 && cutPlayers.length === 0) return null;
+
     return (
       <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
         <div className="flex items-center justify-between gap-2 mb-4">
@@ -89,47 +157,28 @@ export default function EventLeaderboard({
           <span className="w-16 text-right shrink-0">Win</span>
         </div>
         <div className="divide-y divide-surface-border/40">
-          {ranked.map((c, i) => {
-            const mv = formatMovement(competitorMovement(c));
-            const toPar = c.score_to_par;
-            const parClass =
-              toPar == null ? "text-text-muted" : toPar < 0 ? "text-accent-brand" : "text-text-primary";
-            return (
-              <div
-                key={`${c.name}-${i}`}
-                className="flex items-center gap-2 py-2 text-sm"
-              >
-                <span className="w-8 shrink-0 font-mono text-xs text-text-secondary tabular-nums">
-                  {c.position || i + 1}
-                </span>
-                <span className="flex-1 min-w-0 truncate text-text-primary">{c.name}</span>
-                <span className={`w-12 text-right shrink-0 font-mono tabular-nums ${parClass}`}>
-                  {fmtToPar(toPar)}
-                </span>
-                <span className="w-12 text-right shrink-0 font-mono text-xs text-text-secondary tabular-nums">
-                  {fmtThru(c.thru)}
-                </span>
-                <span className="w-16 text-right shrink-0 flex items-center justify-end gap-1">
-                  {mv && (
-                    <span
-                      className={`font-mono text-[10px] tabular-nums ${
-                        mv.dir === "up" ? "text-accent-brand" : "text-accent-danger"
-                      }`}
-                    >
-                      {mv.dir === "up" ? "▲" : "▼"}
-                    </span>
-                  )}
-                  <span className="font-mono font-semibold text-text-primary tabular-nums">
-                    {formatProbability(c.probability)}
-                  </span>
-                </span>
-              </div>
-            );
-          })}
+          {active.map((c, i) => (
+            <GolfRow key={`${c.name}-${i}`} c={c} index={i} />
+          ))}
         </div>
+        {cutPlayers.length > 0 && (
+          <details className="mt-4">
+            <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+              Missed cut ({cutPlayers.length})
+            </summary>
+            <div className="divide-y divide-surface-border/40 mt-2">
+              {cutPlayers.map((c, i) => (
+                <GolfRow key={`cut-${c.name}-${i}`} c={c} index={i} cut />
+              ))}
+            </div>
+          </details>
+        )}
       </section>
     );
   }
+
+  const ranked = fieldOrder(competitors).slice(0, limit);
+  if (ranked.length === 0) return null;
 
   return (
     <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
