@@ -44,6 +44,37 @@ describe("EventLeaderboard golf live mode (L2-66)", () => {
     expect(html.indexOf("Rory McIlroy")).toBeLessThan(html.indexOf("Scottie Scheffler"));
   });
 
+  test("probability-only: never renders american_odds on the golf-live row (L2-67 Item 2)", () => {
+    // The envelope carries american_odds per competitor (allowed API field); the
+    // row must NEVER surface it — probabilities are the only number.
+    const withOdds: EventConceptCompetitor[] = [
+      { name: "Rory McIlroy", probability: 0.16, american_odds: -450, position: "T1", score_to_par: -5, thru: "18" },
+      { name: "Patrick Cantlay", probability: 0.04, american_odds: 550, position: "T1", score_to_par: -5, thru: "18" },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={withOdds} label="Leaderboard" live asOf="x" />,
+    );
+    expect(html).not.toContain("-450");
+    expect(html).not.toContain("450");
+    expect(html).not.toContain("550");
+    expect(html).not.toMatch(/[+-]\d{3,}/); // no moneyline pattern at all
+    expect(html).toContain("16%"); // probability IS shown
+  });
+
+  test("real round-1 shapes: T1 ties, mid-round thru, not-started shows —", () => {
+    const roundOne: EventConceptCompetitor[] = [
+      { name: "Rory McIlroy", probability: 0.159, position: "T1", score_to_par: -5, thru: "18" },
+      { name: "Tom Kim", probability: 0.041, position: "T1", score_to_par: -5, thru: "12" },
+      { name: "Late Starter", probability: 0.01, position: null, score_to_par: null, thru: "0" },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={roundOne} label="Leaderboard" live asOf="x" />,
+    );
+    expect(html).toContain("H12");        // mid-round hole
+    expect(html).not.toContain("H0");     // not-started must NOT render "H0"
+    expect(html).toContain("16%");        // 0.159 → 16%
+  });
+
   test("falls back to the standard winner-field render when not golf-live", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard

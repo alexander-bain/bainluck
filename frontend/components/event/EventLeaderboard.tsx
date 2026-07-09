@@ -37,9 +37,10 @@ function fmtToPar(n: number | null | undefined): string {
   return n > 0 ? `+${n}` : `${n}`;
 }
 
-/** Thru display: "F" (finished) or "H12" (hole), else raw/dash. */
+/** Thru display: "F" (finished), "H12" (hole), "—" for not-yet-started
+ *  (null/"0" — later tee times in round 1), else the raw string. */
 function fmtThru(t: string | null | undefined): string {
-  if (!t) return "—";
+  if (!t || t === "0") return "—";
   if (t.toUpperCase() === "F") return "F";
   return /^\d+$/.test(t) ? `H${t}` : t;
 }

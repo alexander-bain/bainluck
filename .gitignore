@@ -122,6 +122,7 @@ tv-mode-prototype.jsx
 
 # Generated audit results
 backend/scripts/audit_results/
+scripts/.audit_tournament_matching.json
 
 # Cache / test artifacts
 backend/scripts/.chartjs_cache.js
