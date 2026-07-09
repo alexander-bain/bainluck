@@ -3427,15 +3427,73 @@ async def calibration_mce_summary(
         None,
     )
 
+    # L2-77 (ops r125): the ship-gate ">5pp" list is keyed to ECE (n-weighted, the
+    # honest metric), NOT equal-weighted MCE — a thin bucket must not count like a
+    # 20K-outcome one (the r108 artifact class). `ece` is the by_category field
+    # (falls back to the legacy `mce` field, which already held the weighted value).
+    # Rows carry n + both metrics so the gate is unambiguous and n is never None.
+    def _ece(c):
+        v = c.get("ece")
+        if v is None:
+            v = c.get("mce")  # pre-L2-73 payloads: `mce` held the weighted value
+        return v if isinstance(v, (int, float)) else None
+
+    def _mce_worst(c):
+        v = c.get("mce_worst")
+        if v is None:
+            v = c.get("mce_unweighted")
+        return v if isinstance(v, (int, float)) else None
+
     high = [
-        {"category": c.get("category"), "mce": c.get("mce"), "outcomes": c.get("outcomes")}
+        {
+            "category": c.get("category"),
+            "ece": _ece(c),
+            "mce_worst": _mce_worst(c),
+            "n": c.get("n") if c.get("n") is not None else c.get("outcomes"),
+        }
         for c in by_category
-        if isinstance(c.get("mce"), (int, float)) and c["mce"] > threshold
+        if (_ece(c) or 0) > threshold
     ]
-    high.sort(
-        key=lambda x: x["mce"] if isinstance(x["mce"], (int, float)) else 0,
-        reverse=True,
-    )
+    high.sort(key=lambda x: x["ece"] if isinstance(x["ece"], (int, float)) else 0, reverse=True)
+
+    # Transition/comparison: how many categories the OLD equal-weighted MCE gate
+    # would flag (the artifact set — e.g. baseball_mlb worst-bucket 15pp but ECE
+    # ~2pp). Kept so the shift ECE-vs-MCE is visible, never silent.
+    high_mce_unweighted_count = sum(1 for c in by_category if (_mce_worst(c) or 0) > threshold)
+
+    # L2-77 Item 2: D5-prep chart index — every rendered calibration chart (each
+    # source + each category) with its ECE + n + thin-bucket share, the checklist
+    # the screenshot ceremony walks. thin_share = fraction of a group's probability
+    # buckets below the chart's n-floor (30, matching CalibrationChart).
+    _THIN_FLOOR = 30
+    _buckets = payload.get("buckets") or []
+
+    def _thin_share(match) -> float | None:
+        agg: dict = {}
+        for b in _buckets:
+            if not match(b):
+                continue
+            idx = b.get("bucket_idx")
+            agg[idx] = agg.get(idx, 0) + (b.get("n") or 0)
+        if not agg:
+            return None
+        return round(sum(1 for v in agg.values() if v < _THIN_FLOOR) / len(agg), 3)
+
+    chart_index = []
+    for s in by_source:
+        src = s.get("source")
+        chart_index.append({
+            "chart": "source", "key": src, "ece": _ece(s),
+            "n": s.get("n") if s.get("n") is not None else s.get("outcomes"),
+            "thin_share": _thin_share(lambda b, k=src: b.get("source") == k),
+        })
+    for c in by_category:
+        cat = c.get("category")
+        chart_index.append({
+            "chart": "category", "key": cat, "ece": _ece(c),
+            "n": c.get("n") if c.get("n") is not None else c.get("outcomes"),
+            "thin_share": _thin_share(lambda b, k=cat: b.get("category") == k),
+        })
 
     generated_at = payload.get("generated_at")
     age_seconds = None
@@ -3454,7 +3512,10 @@ async def calibration_mce_summary(
         "by_source": by_source,
         "by_category": by_category,
         "high_mce_categories": high,
-        "high_mce_count": len(high),
+        "high_mce_count": len(high),  # ECE-keyed (the honest ship-gate)
+        "high_mce_unweighted_count": high_mce_unweighted_count,  # equal-weighted (artifact) — transition
+        "gate_metric": "ece",
+        "chart_index": chart_index,  # L2-77 Item 2: D5 screenshot checklist
         "threshold_pp": threshold,
         "total_outcomes": payload.get("total_outcomes"),
         "generated_at": generated_at,
