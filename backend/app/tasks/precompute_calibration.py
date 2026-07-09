@@ -50,10 +50,13 @@ CALIBRATION_CORRECTIONS = [
     },
     {
         "date": "2026-07-09",
-        "title": "Placeholder-price capture (in progress)",
-        "rows": 49910,
-        "description": "Illiquid props stamped a no-signal ~0.50 midpoint (gotcha #19). "
-                       "Capture gate + curve exclusion shipping (#148).",
+        "title": "Polymarket no-bid placeholder exclusion",
+        "rows": None,  # live count in payload.poly_placeholder_filter.excluded
+        "description": "Illiquid poly props stamped a no-signal ~0.50 midpoint "
+                       "(Gamma synthetic prices, gotcha #19). #151's census proved "
+                       "no-bid near-0.50 outcomes resolve at 0.10–0.28 (placeholders) "
+                       "vs 0.43–0.55 for has-bid coin-flips. Now excluded from the "
+                       "curve by bid presence — read-side only, no regrade.",
     },
 ]
 
@@ -123,6 +126,33 @@ KALSHI_LIQUIDITY_RULE_TEXT = (
     "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade "
     "(last_price > 0) in any snapshot — pure one-sided, never-traded placeholder "
     "prices. Applied to Kalshi only; never mutates resolutions."
+)
+
+# L2-76 (#151/#997): curve-side exclusion of the Polymarket no-bid PLACEHOLDER
+# class. Gamma stamps synthetic `outcomePrices` at ~0.50 with no orderbook, so an
+# illiquid poly outcome sits near 0.50 but is not a real 50/50. #151's census
+# proved the discriminator is BID PRESENCE: near-0.50 poly outcomes that NEVER
+# showed a bid/trade resolve at 0.10–0.28 (placeholders), while has-bid ones
+# resolve at 0.43–0.55 (genuine coin-flips — MUST stay in). So exclude poly
+# outcomes in the [0.45, 0.55] band with NO snapshot bid/trade evidence at all.
+# Read-side only (gotcha #21) — never mutates is_winner / calibration_probability.
+# The bid check uses SNAPSHOT provenance (evidence captured over the outcome's
+# life), not the current bid — live bids can clear on resolution.
+POLY_PLACEHOLDER_EXCLUDE = (
+    "(vm.source = 'polymarket'\n"
+    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
+    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) <= 0.55\n"
+    "     AND NOT EXISTS (\n"
+    "        SELECT 1 FROM futures_odds_snapshots fos\n"
+    "        WHERE fos.outcome_id = fo.id\n"
+    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+)
+
+POLY_PLACEHOLDER_RULE_TEXT = (
+    "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed "
+    "a real bid or trade in any snapshot — Gamma synthetic placeholder prices, not "
+    "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
+    "has-bid at 0.43–0.55). Read-side only; never mutates resolutions."
 )
 
 # #762: void-resolution filter (mostly DataGolf "Make the Cut" markets).
@@ -333,6 +363,7 @@ async def _precompute_calibration_main():
                     -- #940 phase-1: never-bid/never-traded Kalshi placeholders are
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
+                    {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
                         ORDER BY ABS(fo.opening_probability - 0.5)
@@ -360,7 +391,7 @@ async def _precompute_calibration_main():
                 SELECT ro.* FROM ranked_outcomes ro
                 LEFT JOIN mode_prices mp
                   ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
-                WHERE ro.is_liquid AND
+                WHERE ro.is_liquid AND NOT ro.is_poly_placeholder AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -374,7 +405,9 @@ async def _precompute_calibration_main():
             liq_summary AS (
                 SELECT
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
-                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -388,7 +421,9 @@ async def _precompute_calibration_main():
                 SUM(adj_opening_probability::float) AS sum_prob,
                 SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
                 MAX(ls.kalshi_included) AS kalshi_included,
-                MAX(ls.kalshi_excluded) AS kalshi_excluded
+                MAX(ls.kalshi_excluded) AS kalshi_excluded,
+                MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
+                MAX(ls.poly_included) AS poly_included
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -407,6 +442,17 @@ async def _precompute_calibration_main():
         kalshi_excluded = (
             int(rows[0].kalshi_excluded)
             if rows and rows[0].kalshi_excluded is not None
+            else 0
+        )
+        # L2-76: Polymarket no-bid placeholder exclusion transparency counts.
+        poly_placeholder_excluded = (
+            int(rows[0].poly_placeholder_excluded)
+            if rows and rows[0].poly_placeholder_excluded is not None
+            else 0
+        )
+        poly_included = (
+            int(rows[0].poly_included)
+            if rows and rows[0].poly_included is not None
             else 0
         )
 
@@ -877,6 +923,12 @@ async def _precompute_calibration_main():
             "rule": KALSHI_LIQUIDITY_RULE_TEXT,
             "kalshi_included": kalshi_included,
             "kalshi_excluded": kalshi_excluded,
+        },
+        "poly_placeholder_filter": {  # L2-76 (#151/#997)
+            "applies_to": "polymarket",
+            "rule": POLY_PLACEHOLDER_RULE_TEXT,
+            "included": poly_included,
+            "excluded": poly_placeholder_excluded,
         },
         "void_filter": {
             "applies_to": "datagolf",
