@@ -654,11 +654,15 @@ export function computeLastChartPoint(
   const hist = historyData.history;
   const lastHist = hist?.length ? hist[hist.length - 1] : null;
 
+  // #1003: `history[].home_probability` is a 0–1 FRACTION (API-verified — same as
+  // win_prob_history, current_odds, bookmaker_odds), NOT 0–100. The old `/ 100`
+  // here made the headline fallback show ~1% while the chart tooltip (OddsChart
+  // multiplies the same field by 100) correctly showed ~81% — the reported
+  // tooltip-vs-headline mismatch. It fired whenever win_prob_history was empty
+  // (any live sport without an ESPN/stat win-prob source, e.g. cricket/soccer).
   const homeProb =
     lastWp?.home_probability ??
-    (lastHist?.home_probability != null
-      ? lastHist.home_probability / 100
-      : null) ??
+    lastHist?.home_probability ??
     0.5;
 
   return {

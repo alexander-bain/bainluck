@@ -2822,6 +2822,30 @@ async def trigger_regrade_polymarket_under_signflip(
     return {"status": "queued", "task_id": str(result.id)}
 
 
+@router.post("/unresolve-datagolf-premature")
+async def trigger_unresolve_datagolf_premature(
+    request: Request, secret: str = Query(None),
+):
+    """#146 Item 2: run the #137 premature-DataGolf-resolution un-resolve on demand
+    (dedicated because backfill_winners budget-guards out before it)."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.unresolve_datagolf_premature")
+    return {"status": "queued", "task_id": str(result.id)}
+
+
+@router.post("/null-impossible-both-sides-openings")
+async def trigger_null_impossible_both_sides_openings(
+    request: Request, secret: str = Query(None),
+):
+    """#146 Item 2: run the #137 both-sides=1.0 opening null on demand (dedicated
+    because backfill_winners budget-guards out before it)."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.null_impossible_both_sides_openings")
+    return {"status": "queued", "task_id": str(result.id)}
+
+
 @router.post("/fix-commence-times")
 async def fix_commence_times(request: Request, secret: str = Query(None)):
     """Run golf + hockey commence_time fixes synchronously (no Celery)."""
@@ -3324,6 +3348,95 @@ async def backfill_winners_status(
                "runs every hour, or use bust=true to trigger an immediate recompute. "
                "Retry in a few minutes.",
     )
+
+
+@router.get("/calibration/mce")
+async def calibration_mce_summary(
+    request: Request,
+    secret: str = Query(None),
+    bust: bool = Query(False, description="Queue an async calibration recompute, then serve the cache"),
+    threshold: float = Query(5.0, description="pp threshold for the by-category high-MCE count"),
+):
+    """Fast poly / by-category calibration MCE read (L2-70, #145 follow-up).
+
+    The sync coverage-audit 503s at the 30s router limit. This serves the MCE
+    breakdown that ``precompute_calibration_main`` already computes and caches in
+    Redis (``bainluck:calibration:main``, hourly) — so poly / by-category MCE is
+    readable in seconds. Pass ``bust=true`` to queue an immediate recompute right
+    after a regrade (instead of waiting for the hourly precompute), then re-GET in
+    a couple of minutes. Read-only: no calibration logic here, just a focused view
+    over the cached buckets.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+    from datetime import datetime, timezone
+    from app.tasks.redis_state import get_redis_client
+
+    if bust:
+        # Queue an immediate recompute on the background worker (same task the
+        # /calibration/recompute trigger and the hourly beat use).
+        from app.tasks import celery_app
+        celery_app.send_task("app.tasks.precompute_calibration_main", queue="background")
+
+    payload = None
+    try:
+        _rc = get_redis_client()
+        cached = _rc.get("bainluck:calibration:main")
+        if cached:
+            payload = _json.loads(cached)
+    except Exception:
+        payload = None
+
+    if not payload:
+        raise HTTPException(
+            status_code=202,
+            detail="No cached calibration yet. precompute_calibration_main runs "
+                   "hourly; use bust=true to queue an immediate recompute and retry "
+                   "in a couple of minutes.",
+        )
+
+    by_source = payload.get("by_source") or []
+    by_category = payload.get("by_category") or []
+    poly = next(
+        (s for s in by_source if (s.get("source") or "").lower() == "polymarket"),
+        None,
+    )
+
+    high = [
+        {"category": c.get("category"), "mce": c.get("mce"), "outcomes": c.get("outcomes")}
+        for c in by_category
+        if isinstance(c.get("mce"), (int, float)) and c["mce"] > threshold
+    ]
+    high.sort(
+        key=lambda x: x["mce"] if isinstance(x["mce"], (int, float)) else 0,
+        reverse=True,
+    )
+
+    generated_at = payload.get("generated_at")
+    age_seconds = None
+    if generated_at:
+        try:
+            ts = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_seconds = round((datetime.now(timezone.utc) - ts).total_seconds())
+        except (ValueError, TypeError, AttributeError):
+            age_seconds = None
+
+    return {
+        "poly_mce": poly.get("mce") if poly else None,
+        "poly_outcomes": poly.get("outcomes") if poly else None,
+        "by_source": by_source,
+        "by_category": by_category,
+        "high_mce_categories": high,
+        "high_mce_count": len(high),
+        "threshold_pp": threshold,
+        "total_outcomes": payload.get("total_outcomes"),
+        "generated_at": generated_at,
+        "cache_age_seconds": age_seconds,
+        "queued_recompute": bool(bust),
+    }
 
 
 async def _diagnose_stuck_winners(db: AsyncSession) -> dict:

@@ -12,10 +12,16 @@ class TestDataQualityAuthGuards:
             "/api/admin/snapshots/stats?secret=bad",
             "/api/admin/futures/groups/status?secret=bad",
             "/api/admin/db/storage-analysis?secret=bad",
+            "/api/admin/calibration/mce?secret=bad",  # L2-70
         ],
     )
     async def test_get_rejects_bad_secret(self, client, path):
         resp = await client.get(path)
+        assert resp.status_code == 403
+
+    async def test_calibration_mce_missing_secret_403(self, client):
+        # L2-70: the fast poly/by-category MCE read is admin-guarded.
+        resp = await client.get("/api/admin/calibration/mce")
         assert resp.status_code == 403
 
     async def test_missing_secret_returns_403(self, client):
