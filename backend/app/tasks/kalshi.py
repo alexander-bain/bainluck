@@ -8,6 +8,7 @@ from typing import Optional
 
 import httpx
 import sentry_sdk
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import func, delete as sa_delete, select, text, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -529,6 +530,25 @@ async def _poll_kalshi_markets():
 
             _mark_phase("upsert_loop")
             for event in events:
+                # #150: PER-EVENT budget check (not only at %_COMMIT_EVERY
+                # boundaries). A slow cycle that processes < _COMMIT_EVERY events
+                # otherwise never re-checks the deadline and runs into the soft
+                # limit (ops r120: SoftTimeLimitExceeded @437.8s = the #38/#995
+                # create-starvation signature). Commit what we have and exit
+                # cleanly so a slow cycle degrades to PARTIAL progress, never to a
+                # silent create-freeze. The resumable main-scan cursor (saved
+                # during fetch) + process-new-first ordering make the re-run
+                # idempotent.
+                if time.monotonic() - _task_started > _LOOP_DEADLINE_S:
+                    await session.commit()
+                    stats["deadline_hit"] = True
+                    logger.warning(
+                        "poll_kalshi: per-event loop deadline after %d/%d events "
+                        "(%.0fs) — committed partial progress, exiting cleanly",
+                        stats["events_processed"], len(events),
+                        time.monotonic() - _task_started,
+                    )
+                    break
                 try:
                     # Each Kalshi event can have multiple markets
                     # For multivariate events, we create one FuturesMarket per event
@@ -943,6 +963,24 @@ async def _poll_kalshi_markets():
                         await session.execute(snapshot_stmt)
                         stats["snapshots_created"] += 1
 
+                except SoftTimeLimitExceeded:
+                    # #150: the soft limit fired DURING this event's processing.
+                    # The per-event `except` tuple below does NOT catch it (it's
+                    # not an HTTP/SQL error), so uncommitted upserts since the last
+                    # commit would roll back — the #38/#995 create-starvation
+                    # mechanism. Commit the partial batch and exit cleanly; the
+                    # hard limit (660s) still has 60s of headroom for this commit.
+                    stats["soft_limit_hit"] = True
+                    try:
+                        await session.commit()
+                    except Exception:
+                        pass
+                    logger.warning(
+                        "poll_kalshi: SoftTimeLimitExceeded mid-loop after %d events "
+                        "— committed partial progress and exiting",
+                        stats["events_processed"],
+                    )
+                    break
                 except (httpx.HTTPError, ValueError, KeyError, SQLAlchemyError) as e:
                     stats["errors"].append(f"{event.event_ticker}: {str(e)}")
                     continue
