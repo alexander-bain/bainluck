@@ -1722,6 +1722,7 @@ export interface EventConceptCompetitor {
   today_score?: number | null;
   thru?: string | null;          // holes played this round, "F" = finished
   current_round?: number | null;
+  prob_delta_live?: number | null; // L2-69: in-play win-prob move in POINTS ("who's charging")
   [k: string]: unknown;
 }
 

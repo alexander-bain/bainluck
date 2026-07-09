@@ -198,6 +198,33 @@ def fuse_golf_live(
     return updated_at
 
 
+def golf_live_deltas(
+    competitors: list[dict],
+    baseline_by_name: dict[str, float],
+) -> None:
+    """Set `prob_delta_live` (win-probability POINTS moved) on each live golf
+    competitor — the "who's charging" number that /api/golf/leaderboard shows
+    (L2-69). `competitor.probability` (0–1) IS the DataGolf live win prob
+    (verified: prob*100 == DataGolf win_prob), so the move vs the day's baseline
+    is source-consistent. Baseline precedence: the day's start-of-day snapshot
+    win% (rounds ≥2, passed in by name); else the pre-tournament
+    `opening_probability` already on the competitor (round 1 ≈ pre-tournament,
+    matching the leaderboard endpoint's round-1 branch). No baseline at all → no
+    field set (never fabricate a delta). Pure; mutates in place.
+    """
+    for c in competitors:
+        cur = c.get("probability")
+        if not isinstance(cur, (int, float)):
+            continue
+        base = baseline_by_name.get(_norm_player_name(c.get("name")))
+        if base is None:
+            op = c.get("opening_probability")
+            base = op * 100 if isinstance(op, (int, float)) else None
+        if base is None:
+            continue
+        c["prob_delta_live"] = round(cur * 100 - base, 1)
+
+
 def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     """Map get_golf_tournament()'s output into the generic event envelope.
 
@@ -265,13 +292,16 @@ class GolfEventAdapter:
                     from sqlalchemy import select
                     from app.models import FuturesMarket
 
-                    meta = (
+                    row = (
                         await db.execute(
-                            select(FuturesMarket.market_metadata).where(
-                                FuturesMarket.id == evo_id
-                            )
+                            select(
+                                FuturesMarket.external_id,
+                                FuturesMarket.market_metadata,
+                            ).where(FuturesMarket.id == evo_id)
                         )
-                    ).scalar_one_or_none() or {}
+                    ).first()
+                    ext_id = row[0] if row else None
+                    meta = (row[1] if row else None) or {}
                     leaderboard = meta.get("leaderboard") or []
                     updated_at = meta.get("leaderboard_updated_at")
                     now = datetime.now(timezone.utc)
@@ -291,6 +321,55 @@ class GolfEventAdapter:
                         )
                         envelope["event"]["as_of"] = as_of
                         envelope["event"]["live_mode"] = "golf_leaderboard"
+
+                        # L2-69: the true in-play win-prob delta ("who's charging").
+                        # Baseline = the day's start-of-day snapshot (rounds ≥2,
+                        # matching /api/golf/leaderboard); round 1 falls back to
+                        # opening_probability inside golf_live_deltas. Best-effort.
+                        baseline_by_name: dict[str, float] = {}
+                        try:
+                            rounds = [
+                                e.get("current_round")
+                                for e in leaderboard
+                                if e.get("current_round")
+                            ]
+                            cur_round = max(rounds) if rounds else None
+                            tour = (
+                                ext_id.split(":")[1]
+                                if isinstance(ext_id, str)
+                                and ext_id.startswith("datagolf:")
+                                and len(ext_id.split(":")) >= 2
+                                else None
+                            )
+                            if cur_round and cur_round >= 2 and tour:
+                                from app.models.models import GolfLeaderboardSnapshot
+                                from zoneinfo import ZoneInfo
+
+                                today_start = now.astimezone(
+                                    ZoneInfo("America/New_York")
+                                ).replace(hour=0, minute=0, second=0, microsecond=0)
+                                snap = (
+                                    await db.execute(
+                                        select(GolfLeaderboardSnapshot).where(
+                                            GolfLeaderboardSnapshot.tour == tour,
+                                            GolfLeaderboardSnapshot.snapshot_date
+                                            == today_start,
+                                            GolfLeaderboardSnapshot.snapshot_type
+                                            == "start_of_day",
+                                        )
+                                    )
+                                ).scalar_one_or_none()
+                                if snap and snap.data:
+                                    for entry in snap.data:
+                                        nm = entry.get("player_name")
+                                        wp = entry.get("win_prob")
+                                        if nm and wp is not None:
+                                            baseline_by_name[_norm_player_name(nm)] = wp
+                            golf_live_deltas(
+                                envelope["primary"]["competitors"], baseline_by_name
+                            )
+                        except Exception:
+                            pass
                 except Exception:
                     # Live fusion is best-effort — a failure must not 500 the page;
                     # it just renders probability-only (honest degrade).

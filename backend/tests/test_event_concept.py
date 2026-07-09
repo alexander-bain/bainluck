@@ -8,10 +8,44 @@ from app.utils.event_concept import (
     get_adapter,
     registered_domains,
     fuse_golf_live,
+    golf_live_deltas,
     _golf_leaderboard_has_live_rows,
     _golf_within_play_window,
     _golf_leaderboard_is_fresh,
 )
+
+
+class TestGolfLiveDeltas:
+    """L2-69: true in-play win-prob delta ('who's charging'). competitor.probability
+    (0-1) == DataGolf win_prob, so delta vs the day's baseline is source-consistent."""
+
+    def test_snapshot_baseline_delta_points(self):
+        comps = [
+            {"name": "Rory McIlroy", "probability": 0.161, "opening_probability": 0.077},
+            {"name": "Tom Kim", "probability": 0.042, "opening_probability": 0.041},
+        ]
+        # Start-of-day snapshot baseline in POINTS (0-100), keyed by lower name.
+        baseline = {"rory mcilroy": 7.3, "tom kim": 4.0}
+        golf_live_deltas(comps, baseline)
+        assert comps[0]["prob_delta_live"] == 8.8   # 16.1 - 7.3
+        assert comps[1]["prob_delta_live"] == 0.2    # 4.2 - 4.0
+
+    def test_round1_falls_back_to_opening_probability(self):
+        # No snapshot baseline → use opening_probability (round-1 ≈ pre-tournament).
+        comps = [{"name": "Rory McIlroy", "probability": 0.161, "opening_probability": 0.077}]
+        golf_live_deltas(comps, {})
+        assert comps[0]["prob_delta_live"] == 8.4   # 16.1 - 7.7
+
+    def test_no_baseline_no_field(self):
+        # No snapshot AND no opening_probability → never fabricate a delta.
+        comps = [{"name": "Ghost", "probability": 0.05}]
+        golf_live_deltas(comps, {})
+        assert "prob_delta_live" not in comps[0]
+
+    def test_null_probability_skipped(self):
+        comps = [{"name": "X", "probability": None, "opening_probability": 0.1}]
+        golf_live_deltas(comps, {})
+        assert "prob_delta_live" not in comps[0]
 
 
 class TestParseEventKey:

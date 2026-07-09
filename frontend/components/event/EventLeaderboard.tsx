@@ -73,7 +73,14 @@ function GolfRow({
   index: number;
   cut?: boolean;
 }) {
-  const mv = cut ? null : formatMovement(competitorMovement(c));
+  // L2-69: prefer the true in-play win-prob delta ("who's charging"); it's in
+  // POINTS, so pass /100 through the shared points formatter. Fall back to the 24h
+  // move (which is null during live play → no chip). Cut rows show no delta.
+  const mv = cut
+    ? null
+    : c.prob_delta_live != null
+      ? formatMovement(c.prob_delta_live / 100)
+      : formatMovement(competitorMovement(c));
   const toPar = c.score_to_par;
   const parClass =
     toPar == null ? "text-text-muted" : toPar < 0 ? "text-accent-brand" : "text-text-primary";
@@ -95,7 +102,7 @@ function GolfRow({
       <span className="w-12 text-right shrink-0 font-mono text-xs text-text-secondary tabular-nums">
         {cut ? "—" : fmtThru(c.thru)}
       </span>
-      <span className="w-16 text-right shrink-0 flex items-center justify-end gap-1">
+      <span className="w-20 text-right shrink-0 flex items-baseline justify-end gap-1">
         {mv && (
           <span
             className={`font-mono text-[10px] tabular-nums ${
@@ -103,6 +110,7 @@ function GolfRow({
             }`}
           >
             {mv.dir === "up" ? "▲" : "▼"}
+            {mv.text.replace(/^[+−]/, "")}
           </span>
         )}
         <span className="font-mono font-semibold text-text-primary tabular-nums">
@@ -154,7 +162,7 @@ export default function EventLeaderboard({
           <span className="flex-1 min-w-0">Player</span>
           <span className="w-12 text-right shrink-0">To&nbsp;par</span>
           <span className="w-12 text-right shrink-0">Thru</span>
-          <span className="w-16 text-right shrink-0">Win</span>
+          <span className="w-20 text-right shrink-0">Win</span>
         </div>
         <div className="divide-y divide-surface-border/40">
           {active.map((c, i) => (

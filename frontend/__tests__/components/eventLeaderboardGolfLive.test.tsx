@@ -107,6 +107,23 @@ describe("EventLeaderboard golf live mode (L2-66)", () => {
     expect(html).not.toContain("Missed cut");
   });
 
+  test("row shows the in-play prob_delta_live ('who's charging') when present (L2-69)", () => {
+    const withDelta: EventConceptCompetitor[] = [
+      // movement_24h is null during live; prob_delta_live carries the chip.
+      { name: "Rory McIlroy", probability: 0.161, position: "T1", score_to_par: -5, thru: "18", prob_delta_live: 8.8 },
+      { name: "Faller", probability: 0.02, position: "T20", score_to_par: 1, thru: "18", prob_delta_live: -3.4 },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={withDelta} label="Leaderboard" live asOf="x" />,
+    );
+    expect(html).toContain("▲"); // charging up
+    expect(html).toContain("8.8");
+    expect(html).toContain("▼"); // falling
+    expect(html).toContain("3.4");
+    expect(html).toContain("16%"); // win% still the headline
+    expect(html).not.toMatch(/[+-]\d{3,}/);
+  });
+
   test("falls back to the standard winner-field render when not golf-live", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard
