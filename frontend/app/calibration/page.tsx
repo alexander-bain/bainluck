@@ -9,6 +9,7 @@ import { fetchCalibration, CalibrationBucket } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
+import { ece, mce, monthYear } from "@/lib/calibrationMath";
 
 const SPORT_KEY_MAP: Record<string, string> = {
   basketball_nba: "basketball", basketball_ncaab: "basketball",
@@ -123,24 +124,6 @@ function aggregateBuckets(
       };
     })
     .sort((a, b) => a.midpoint - b.midpoint);
-}
-
-function mce(cal: AggBucket[]): number {
-  if (!cal.length) return 0;
-  return cal.reduce((s, b) => s + Math.abs(b.error), 0) / cal.length;
-}
-
-function ece(cal: AggBucket[]): number {
-  const totalN = cal.reduce((s, b) => s + b.n, 0);
-  if (!totalN) return 0;
-  return cal.reduce((s, b) => s + (b.n / totalN) * Math.abs(b.error), 0);
-}
-
-function monthYear(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
 function brierScore(buckets: CalibrationBucket[], filter?: (b: CalibrationBucket) => boolean): number {

@@ -62,6 +62,7 @@ export interface PageViewParams {
     | 'entertainment'
     | 'privacy'
     | 'prediction_stats'
+    | 'calibration'
     | 'bug_reports';
   page_path: string;
   page_title: string;
@@ -251,6 +252,7 @@ export interface ScrollDepthParams {
     | 'entertainment'
     | 'privacy'
     | 'prediction_stats'
+    | 'calibration'
     | 'bug_reports';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
@@ -278,6 +280,7 @@ export interface TimeOnPageParams {
     | 'entertainment'
     | 'privacy'
     | 'prediction_stats'
+    | 'calibration'
     | 'bug_reports';
   seconds: number;
   page_path: string;

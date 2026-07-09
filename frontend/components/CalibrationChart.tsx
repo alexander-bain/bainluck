@@ -23,6 +23,9 @@ interface CalibrationChartProps {
   width?: number;
   height?: number;
   showLegend?: boolean;
+  /** L2-75 §B: buckets with n below this render faded + dashed + show their n, so
+   *  thin samples are honest without shouting. */
+  thinFloor?: number;
 }
 
 export default function CalibrationChart({
@@ -30,6 +33,7 @@ export default function CalibrationChart({
   width = 560,
   height = 360,
   showLegend = true,
+  thinFloor = 30,
 }: CalibrationChartProps) {
   const padL = 55, padR = 20, padT = 25, padB = 50;
   const plotW = width - padL - padR;
@@ -108,14 +112,32 @@ export default function CalibrationChart({
             })}
             {s.data.map((d, di) => {
               const r = 4 + 6 * Math.sqrt(d.n / maxN);
+              // L2-75 §B: thin buckets (below the n-floor) are faded + dashed-ring
+              // + show their n, so a small sample is visibly less certain.
+              const thin = d.n < thinFloor;
               const ciStr = d.ciLower != null && d.ciUpper != null
                 ? `, 95% CI: ${d.ciLower.toFixed(1)}%-${d.ciUpper.toFixed(1)}%`
                 : "";
               return (
                 <g key={di}>
-                  <circle cx={px(d.midpoint)} cy={py(d.actual)} r={r} fill={s.color} opacity="0.85" />
+                  <circle
+                    cx={px(d.midpoint)} cy={py(d.actual)} r={r}
+                    fill={s.color}
+                    opacity={thin ? 0.28 : 0.85}
+                    stroke={thin ? s.color : "none"}
+                    strokeWidth={thin ? 1.5 : 0}
+                    strokeDasharray={thin ? "2,2" : undefined}
+                  />
+                  {thin && (
+                    <text
+                      x={px(d.midpoint)} y={py(d.actual) - r - 3}
+                      textAnchor="middle" fill="#a8a29e" fontSize="9"
+                    >
+                      n={d.n}
+                    </text>
+                  )}
                   <title>
-                    {d.bucket}: {d.actual.toFixed(1)}% actual at {d.midpoint}% predicted (n={d.n.toLocaleString()}, error={d.error > 0 ? "+" : ""}{d.error.toFixed(1)}pp{ciStr})
+                    {d.bucket}: {d.actual.toFixed(1)}% actual at {d.midpoint}% predicted (n={d.n.toLocaleString()}{thin ? ", thin sample" : ""}, error={d.error > 0 ? "+" : ""}{d.error.toFixed(1)}pp{ciStr})
                   </title>
                 </g>
               );
@@ -139,6 +161,11 @@ export default function CalibrationChart({
           })}
         </g>
       )}
+
+      {/* Dot-size + thin-bucket key (L2-75 §B) */}
+      <text x={width - padR} y={padT - 10} textAnchor="end" fill="#a8a29e" fontSize="9.5">
+        {`● size = sample count · faded ○ = thin (n<${thinFloor})`}
+      </text>
     </svg>
   );
 }
