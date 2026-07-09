@@ -2621,7 +2621,9 @@ def _score_market_trace(
             "Redis-controlled weight (default 0.2, kill switch 0). #143/RANK-3: "
             "the cached score is 0-100 and blended directly (no *100), with NO "
             "+15 cap on the ranking chain — weight w is the only influence bound. "
-            "The display chain keeps its bounded +15/0-98 behavior."
+            "The display chain (L2-79) now blends the same 0-100 quantities "
+            "directly (no *100) and keeps its bounded +15/0-98 cap, so display "
+            "scores are de-saturated and the <15/<55 serving filters are honest."
         ),
     }
 
@@ -5299,19 +5301,32 @@ async def _score_futures(
             cached_entry = _interestingness_cache.get(market.id)
             if cached_entry is not None and _interestingness_blend_weight > 0:
                 i_score = cached_entry.get("score", 0)
-                # DISPLAY chain — deliberately UNCHANGED (#143/RANK-3 Item 1).
-                # This still uses the legacy `* 100` scale, so with a cache hit
-                # and w>0 the +15 cap always binds and display gains a constant
-                # +15 (bounded 0-98). Ordering is decided by the ranking chain
-                # below (RANK-1), not this display score — but display feeds the
-                # personalized_score<15 / <55 serving filters, so re-scaling it
-                # would change feed COMPOSITION and needs a prod-validated filter
-                # sweep first (flagged as RANK-3 follow-up). Left as-is here to
-                # keep this change ordering-only and regression-safe on display.
+                # DISPLAY chain — de-saturated (#143/RANK-3 Item 1 follow-up,
+                # L2-79). The legacy `* 100` was the #142 double-scale bug: the
+                # cached interestingness score is ALREADY 0-100 (the scorer
+                # normalizes to 0-100; see market_interestingness /
+                # precompute_interestingness), so `i_score * 100` inflated the
+                # blend target to ~6000-8000 and the +15 cap ALWAYS bound — every
+                # cache-hit card gained a constant +15 display bump (bounded
+                # 0-98), which SATURATED the top of the feed at 98 and defeated
+                # the personalized_score<15 / <55 serving filters (the +15 lifted
+                # every card over the floor). Blend two 0-100 quantities directly,
+                # matching the ranking chain below. The +15 cap stays as a genuine
+                # (now rarely-binding) bound on how much interestingness can lift
+                # a card's DISPLAY score over its base.
+                #
+                # Serving-filter thresholds (<15 / <55) are UNCHANGED. The fix
+                # restores those filters to their intended behavior: a boring-base
+                # card only clears the floor if interestingness genuinely lifts it,
+                # instead of every card being rescued by the constant +15. The
+                # served page is not floor-starved (audit_feed_quality BEFORE:
+                # 48 items, tail score 78, 0 boring, 20/20 explanation coverage),
+                # so top-N composition is backfilled from the deep high-score
+                # bench while only low-signal cards the bug wrongly rescued drop.
                 pre_blend = base_score
                 blended = (
                     base_score * (1 - _interestingness_blend_weight)
-                    + (i_score * 100) * _interestingness_blend_weight
+                    + i_score * _interestingness_blend_weight
                 )
                 # Cap: interestingness can add at most 15 points over base
                 base_score = min(blended, pre_blend + 15)
