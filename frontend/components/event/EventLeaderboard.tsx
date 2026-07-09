@@ -11,6 +11,7 @@ import {
   competitorMovement,
   formatMovement,
   seriesForName,
+  seriesFromCompetitor,
 } from "@/lib/eventConceptDisplay";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import Sparkline from "./Sparkline";
@@ -198,7 +199,14 @@ export default function EventLeaderboard({
         {ranked.map((c, i) => {
           const seed = (c as Record<string, unknown>).seed;
           const mv = formatMovement(competitorMovement(c));
-          const series = showSparkline ? seriesForName(historyOutcomes, c.name) : [];
+          // L2-71: prefer the competitor's own envelope history; fall back to the
+          // name-matched shared history (pre-L2-71 payloads).
+          const ownSeries = showSparkline ? seriesFromCompetitor(c) : [];
+          const series = !showSparkline
+            ? []
+            : ownSeries.length >= 2
+              ? ownSeries
+              : seriesForName(historyOutcomes, c.name);
           const pct = c.probability != null ? Math.round(c.probability * 100) : null;
           return (
             <div

@@ -9,10 +9,32 @@ from app.utils.event_concept import (
     registered_domains,
     fuse_golf_live,
     golf_live_deltas,
+    downsample_points,
     _golf_leaderboard_has_live_rows,
     _golf_within_play_window,
     _golf_leaderboard_is_fresh,
 )
+
+
+class TestDownsamplePoints:
+    """L2-71: bound per-competitor history to ~target points, keep first + last."""
+
+    def test_under_target_unchanged(self):
+        pts = [(1, 0.1), (2, 0.2), (3, 0.3)]
+        assert downsample_points(pts, 25) == pts
+
+    def test_downsamples_keeping_first_and_last(self):
+        pts = [(i, i / 100) for i in range(200)]
+        out = downsample_points(pts, 25)
+        assert len(out) <= 25
+        assert out[0] == pts[0]      # first kept
+        assert out[-1] == pts[-1]    # last kept
+        # monotonic (order preserved)
+        assert [p[0] for p in out] == sorted(p[0] for p in out)
+
+    def test_target_below_2_returns_copy(self):
+        pts = [(1, 0.1), (2, 0.2)]
+        assert downsample_points(pts, 1) == pts
 
 
 class TestGolfLiveDeltas:

@@ -225,6 +225,130 @@ def golf_live_deltas(
         c["prob_delta_live"] = round(cur * 100 - base, 1)
 
 
+def downsample_points(points: list, target: int = 25) -> list:
+    """Stride-downsample a time-ordered list to at most `target` items, always
+    keeping the first and last. Pure — unit-tested. Keeps sparklines/charts light
+    (a live-major outcome can have 200–500 raw snapshots). L2-71."""
+    n = len(points)
+    if target < 2 or n <= target:
+        return list(points)
+    step = (n - 1) / (target - 1)
+    idxs = sorted({round(i * step) for i in range(target)})
+    return [points[i] for i in idxs]
+
+
+async def attach_competitor_history(
+    db,
+    evolution_market_id,
+    competitors: list[dict],
+    *,
+    hours: int = 168,
+    top_n: int = 40,
+    target_points: int = 25,
+) -> None:
+    """Attach a compact, downsampled probability series to the TOP-N competitors
+    of a winner-field event (L2-71), so the leaderboard sparklines + the
+    RaceToTitleChart draw from the envelope in one fetch (dropping two separate
+    /api/futures/{id}/history client calls — this is net LESS DB work).
+
+    Bounded on purpose: only the top-N competitors by current probability get a
+    series (that's all the UI renders — leaderboard top ~20 + chart top ~10), and
+    each series is downsampled to ~target_points, so a 156-golfer field never
+    bloats the payload. Read-only, best-effort (never raises); competitors without
+    snapshots are simply left without a series (no sparkline — never fabricated).
+
+    Mutates matched competitors in place: sets `outcome_id` and
+    `history: [{"timestamp", "probability"}]` (probability as a 0–1 float).
+    """
+    if not evolution_market_id or not competitors:
+        return
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from app.models import FuturesOutcome, FuturesOddsSnapshot
+
+    # Top-N outcomes by current probability — the only ones the UI draws.
+    out_rows = (
+        await db.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesOutcome.current_probability,
+            )
+            .where(FuturesOutcome.market_id == evolution_market_id)
+            .order_by(FuturesOutcome.current_probability.desc().nulls_last())
+            .limit(top_n)
+        )
+    ).all()
+    if not out_rows:
+        return
+    id_to_name = {r[0]: r[1] for r in out_rows}
+    outcome_ids = list(id_to_name.keys())
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    snap_rows = (
+        await db.execute(
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.captured_at,
+                FuturesOddsSnapshot.probability,
+            )
+            .where(
+                FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                FuturesOddsSnapshot.captured_at >= cutoff,
+            )
+            .order_by(FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.captured_at)
+        )
+    ).all()
+    if not snap_rows:
+        return
+
+    # Group by outcome → consensus (mean across bookmakers) per captured_at.
+    series_by_outcome: dict[int, list[tuple]] = {}
+    cur_oid = None
+    cur_ts = None
+    cur_vals: list[float] = []
+    ordered: list[tuple] = []
+
+    def _flush():
+        if cur_oid is not None and cur_ts is not None and cur_vals:
+            ordered.append((cur_ts, sum(cur_vals) / len(cur_vals)))
+
+    for oid, ts, prob in snap_rows:
+        if oid != cur_oid:
+            _flush()
+            if cur_oid is not None:
+                series_by_outcome[cur_oid] = ordered
+            cur_oid, ordered, cur_ts, cur_vals = oid, [], None, []
+        if ts != cur_ts:
+            _flush()
+            cur_ts, cur_vals = ts, []
+        if prob is not None:
+            cur_vals.append(float(prob))
+    _flush()
+    if cur_oid is not None:
+        series_by_outcome[cur_oid] = ordered
+
+    # name → (outcome_id, downsampled history) for name-matching to competitors.
+    hist_by_name: dict[str, dict] = {}
+    for oid, pts in series_by_outcome.items():
+        if len(pts) < 2:
+            continue
+        ds = downsample_points(pts, target_points)
+        hist_by_name[_norm_player_name(id_to_name.get(oid))] = {
+            "outcome_id": oid,
+            "history": [
+                {"timestamp": ts.isoformat(), "probability": round(p, 4)}
+                for ts, p in ds
+            ],
+        }
+
+    for c in competitors:
+        entry = hist_by_name.get(_norm_player_name(c.get("name")))
+        if entry:
+            c["outcome_id"] = entry["outcome_id"]
+            c["history"] = entry["history"]
+
+
 def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     """Map get_golf_tournament()'s output into the generic event envelope.
 
@@ -374,6 +498,19 @@ class GolfEventAdapter:
                     # Live fusion is best-effort — a failure must not 500 the page;
                     # it just renders probability-only (honest degrade).
                     pass
+
+        # L2-71: attach compact per-competitor history to the top competitors so
+        # the leaderboard sparklines + RaceToTitleChart read from the envelope in
+        # one fetch (drops two separate /api/futures history client calls — net
+        # less DB work). Best-effort; runs pre-tournament + live.
+        try:
+            await attach_competitor_history(
+                db,
+                data.get("evolution_market_id"),
+                envelope["primary"]["competitors"],
+            )
+        except Exception:
+            pass
 
         return envelope
 

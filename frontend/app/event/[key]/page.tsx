@@ -10,7 +10,7 @@
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchEventConcept, fetchFuturesHistory } from "@/lib/api";
+import { fetchEventConcept } from "@/lib/api";
 import { marketsTracked } from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -61,16 +61,11 @@ export default function EventConceptPage() {
     },
   );
 
-  // Shared history for per-row sparklines — one fetch over the evolution market
-  // covers every competitor. Keyed on the market id so hook order stays stable
-  // even before the envelope resolves. Only fetched for winner-field events.
+  // L2-71: per-competitor history now rides IN the envelope (competitor.history),
+  // so the leaderboard sparklines + race chart read from it directly — no separate
+  // history fetch. evolutionId is still needed for the settled path-to-resolution
+  // chart.
   const evolutionId = data?.primary?.evolution_market_id ?? null;
-  const isWinnerField = data?.primary?.kind === "winner_field";
-  const { data: sparkData } = useSWR(
-    SHOW_SPARKLINE && isWinnerField && evolutionId ? ["event-spark", evolutionId] : null,
-    () => fetchFuturesHistory(evolutionId as number, 168, undefined, 24),
-    { revalidateOnFocus: false },
-  );
 
   if (isLoading) {
     return (
@@ -126,15 +121,13 @@ export default function EventConceptPage() {
         />
       ) : (
         hasWinnerField &&
-        evolutionId &&
-        !isSettled && <RaceToTitleChart marketId={evolutionId} domain={event.domain} />
+        !isSettled && <RaceToTitleChart competitors={competitors} domain={event.domain} />
       )}
 
       {hasWinnerField && (
         <EventLeaderboard
           competitors={competitors}
           label={primary.label}
-          historyOutcomes={sparkData?.outcomes}
           showSparkline={SHOW_SPARKLINE}
           live={isLive}
           asOf={event.as_of}

@@ -257,7 +257,7 @@ class TennisEventAdapter:
         if prop_ids:
             sections.append({"type": "prop", "label": "Props", "market_ids": prop_ids})
 
-        return {
+        envelope = {
             "event": {
                 "key": f"event:tennis:{canonical_slug}",
                 "domain": "tennis",
@@ -282,3 +282,14 @@ class TennisEventAdapter:
             "children": children,
             "movers": [],
         }
+
+        # L2-71: attach compact per-competitor history from the envelope (drops the
+        # separate history fetches). Shared helper; lazy-imported to avoid the
+        # event_concept ↔ event_tennis import cycle. Best-effort.
+        try:
+            from app.utils.event_concept import attach_competitor_history
+            await attach_competitor_history(db, winner.id, competitors)
+        except Exception:
+            pass
+
+        return envelope

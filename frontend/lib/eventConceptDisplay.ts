@@ -122,6 +122,46 @@ export function seriesForName(
     .map((p) => p.probability as number);
 }
 
+/** L2-71: a competitor's own probability series (from the envelope-attached
+ *  history), for the sparkline. Empty when no history — omit, never fabricate. */
+export function seriesFromCompetitor(c: EventConceptCompetitor): number[] {
+  return (c.history || [])
+    .filter((p) => p && p.probability != null)
+    .map((p) => p.probability);
+}
+
+/** L2-71: build FuturesOutcomeHistory[] from the envelope competitors that carry
+ *  history, so the RaceToTitleChart draws from the envelope (no extra fetch).
+ *  Optionally filter each series to the last `hours` (client-side range switch). */
+export function competitorsToOutcomeHistory(
+  competitors: EventConceptCompetitor[],
+  hours?: number,
+): FuturesOutcomeHistory[] {
+  const cutoff =
+    hours && hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
+  const out: FuturesOutcomeHistory[] = [];
+  for (const c of competitors || []) {
+    if (typeof c.outcome_id !== "number" || !c.history || c.history.length === 0) continue;
+    const pts = cutoff
+      ? c.history.filter((p) => {
+          const t = new Date(p.timestamp).getTime();
+          return Number.isNaN(t) || t >= cutoff;
+        })
+      : c.history;
+    out.push({
+      outcome_id: c.outcome_id,
+      name: c.name,
+      history: pts.map((p) => ({
+        timestamp: p.timestamp,
+        probability: p.probability,
+        american_odds: null,
+        bookmaker: "aggregate",
+      })),
+    });
+  }
+  return out;
+}
+
 /** A readable event date range (either bound optional). */
 export function eventDateRange(
   start?: string | null,

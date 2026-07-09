@@ -1723,6 +1723,10 @@ export interface EventConceptCompetitor {
   thru?: string | null;          // holes played this round, "F" = finished
   current_round?: number | null;
   prob_delta_live?: number | null; // L2-69: in-play win-prob move in POINTS ("who's charging")
+  // L2-71: compact downsampled probability series (top competitors only), so the
+  // leaderboard sparkline + race chart read from the envelope in one fetch.
+  outcome_id?: number;
+  history?: { timestamp: string; probability: number }[];
   [k: string]: unknown;
 }
 

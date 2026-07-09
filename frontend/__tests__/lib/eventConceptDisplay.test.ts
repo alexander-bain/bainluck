@@ -10,7 +10,59 @@ import {
   competitorMovement,
   formatMovement,
   seriesForName,
+  seriesFromCompetitor,
+  competitorsToOutcomeHistory,
 } from "../../lib/eventConceptDisplay";
+
+describe("seriesFromCompetitor (L2-71 envelope history)", () => {
+  test("extracts the competitor's own probability series", () => {
+    expect(
+      seriesFromCompetitor({
+        name: "A",
+        probability: 0.3,
+        history: [
+          { timestamp: "2026-07-09T10:00:00Z", probability: 0.2 },
+          { timestamp: "2026-07-09T12:00:00Z", probability: 0.3 },
+        ],
+      }),
+    ).toEqual([0.2, 0.3]);
+  });
+  test("empty when no history", () => {
+    expect(seriesFromCompetitor({ name: "A", probability: 0.3 })).toEqual([]);
+  });
+});
+
+describe("competitorsToOutcomeHistory (L2-71)", () => {
+  const comps = [
+    {
+      name: "Rory",
+      probability: 0.3,
+      outcome_id: 11,
+      history: [
+        { timestamp: "2026-07-01T00:00:00Z", probability: 0.1 },
+        { timestamp: "2026-07-09T00:00:00Z", probability: 0.3 },
+      ],
+    },
+    { name: "No History", probability: 0.05 }, // skipped (no outcome_id/history)
+  ];
+  test("builds FuturesOutcomeHistory only for competitors with history+outcome_id", () => {
+    const out = competitorsToOutcomeHistory(comps);
+    expect(out).toHaveLength(1);
+    expect(out[0].outcome_id).toBe(11);
+    expect(out[0].name).toBe("Rory");
+    expect(out[0].history.map((p) => p.probability)).toEqual([0.1, 0.3]);
+  });
+  test("hours filters points client-side (range switch)", () => {
+    // Only the very recent point survives a 24h window from a far-future 'now'.
+    const recent = [
+      { name: "X", probability: 0.5, outcome_id: 1, history: [
+        { timestamp: "1999-01-01T00:00:00Z", probability: 0.2 },
+      ]},
+    ];
+    const out = competitorsToOutcomeHistory(recent, 24);
+    expect(out[0].history).toHaveLength(0); // ancient point filtered out
+  });
+});
 
 describe("statusLabel", () => {
   test("maps statuses", () => {

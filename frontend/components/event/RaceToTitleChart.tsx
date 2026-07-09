@@ -1,20 +1,21 @@
 "use client";
 
-// #999 L2-64 Event Concept Page — "Race to the title" full-width chart. Plots the
-// top contenders' BLENDED probability lines over time on a FIXED, labeled 0–100
-// axis with STRAIGHT segments (no smoothing) — the D1/#883 binds. A range switcher
-// (24h / 7d / All) and a top-N switcher control the view. History comes from the
-// event's evolution market (one fetch covers every competitor). Honest-empty when
-// no per-competitor history exists yet — never invent a line.
+// #999 L2-64/L2-71 Event Concept Page — "Race to the title" full-width chart.
+// Plots the top contenders' BLENDED probability lines over time on a FIXED,
+// labeled 0–100 axis with STRAIGHT segments (no smoothing) — the D1/#883 binds. A
+// range switcher (24h / 7d / All) and a top-N switcher control the view. L2-71:
+// the series come FROM the envelope (competitor.history) — no separate fetch; the
+// range switcher filters those points client-side. Honest-empty when no
+// per-competitor history exists yet — never invent a line.
 
 import { useMemo, useState } from "react";
-import useSWR from "swr";
-import { fetchFuturesHistory } from "@/lib/api";
-import type { FuturesOutcomeHistory } from "@/lib/types";
+import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
+import { competitorsToOutcomeHistory } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
 
 interface RaceToTitleChartProps {
-  marketId: number;
+  /** Envelope competitors carrying per-competitor `history` (L2-71). */
+  competitors: EventConceptCompetitor[];
   /** Golf tints the leader gold; other domains use the default palette. */
   domain?: string;
 }
@@ -22,7 +23,7 @@ interface RaceToTitleChartProps {
 const RANGES: { label: string; hours: number }[] = [
   { label: "24h", hours: 24 },
   { label: "7d", hours: 168 },
-  { label: "All", hours: 8760 },
+  { label: "All", hours: 0 }, // 0 = no time filter
 ];
 const TOPS = [5, 10];
 
@@ -35,17 +36,16 @@ function lastProb(o: FuturesOutcomeHistory): number {
   return -1;
 }
 
-export default function RaceToTitleChart({ marketId, domain }: RaceToTitleChartProps) {
+export default function RaceToTitleChart({ competitors, domain }: RaceToTitleChartProps) {
   const [hours, setHours] = useState(168);
   const [topN, setTopN] = useState(5);
 
-  const { data, isLoading } = useSWR(
-    ["event-race", marketId, hours],
-    () => fetchFuturesHistory(marketId, hours, undefined, 30),
-    { revalidateOnFocus: false },
+  // Built from the envelope's per-competitor history; the range switch filters
+  // points client-side (no refetch).
+  const outcomes: FuturesOutcomeHistory[] = useMemo(
+    () => competitorsToOutcomeHistory(competitors, hours),
+    [competitors, hours],
   );
-
-  const outcomes: FuturesOutcomeHistory[] = useMemo(() => data?.outcomes ?? [], [data]);
 
   // Pick the current top-N contenders (by latest probability) and hand their ids
   // to FuturesChart as the selected set so it plots exactly those lines.
@@ -57,6 +57,7 @@ export default function RaceToTitleChart({ marketId, domain }: RaceToTitleChartP
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
   );
+  const isLoading = false;
 
   return (
     <section id="race" className="bg-surface-card rounded-card shadow-card p-6">
