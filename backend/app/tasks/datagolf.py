@@ -37,8 +37,32 @@ MARKET_TYPES = [
 # Redis key prefix for live tournament detection
 LIVE_KEY_PREFIX = "bainluck:datagolf:live"
 
+# #144: schedule window flag — set by the hourly markets poll when TODAY falls
+# inside a tournament's [start, end] window. The dedicated in-play beat
+# (poll_datagolf_inplay) gates on this (one Redis GET) so it stays near-zero cost
+# off-tournament and does NOT depend on poll_all_odds ticking (the L2-66
+# piggyback's cadence was bounded by ball-sports poll ticks). TTL 2h so it
+# persists between hourly refreshes and clears ~2h after the tournament ends.
+INPLAY_WINDOW_KEY = "bainluck:datagolf:active_today"
+INPLAY_WINDOW_TTL = 7200
+
 # Tours to poll — all tours that DataGolf covers
 POLL_TOURS = ["pga", "euro", "kft", "opp", "alt"]
+
+
+def _golf_inplay_window_active(r) -> bool:
+    """#144: cheap guard for the dedicated in-play beat — True if a tournament is
+    happening (schedule window flag set by the hourly poll) OR a live event flag
+    is set by a recent live poll. Redis-only (no API/DB), so dormant off-season
+    is one GET + a short key scan."""
+    try:
+        if r.get(INPLAY_WINDOW_KEY):
+            return True
+        return any(r.get(f"{LIVE_KEY_PREFIX}:{tour}") for tour in POLL_TOURS)
+    except Exception:
+        # Never let a Redis hiccup wedge the beat — degrade to "poll" so live
+        # play is never starved (the poll itself is cheap when nothing is live).
+        return True
 
 
 def _external_id(tour: str, event_id: str, market_type: str) -> str:
@@ -100,6 +124,27 @@ async def _poll_datagolf_markets() -> dict:
                         continue
 
                     stats["debug"][f"{tour}_event"] = f"{current_event.event_name} ({current_event.event_id})"
+
+                    # #144: if TODAY is inside this event's [start, end] window,
+                    # raise the in-play window flag so the dedicated 90s beat wakes
+                    # up (schedule DATES are reliable even though the schedule
+                    # STATUS string is not — the reason the event page needs the
+                    # leaderboard-presence fallback). Belt: also set when status is
+                    # a live-ish string, in case dates are missing.
+                    try:
+                        s = current_event.start_date
+                        e = current_event.end_date or s
+                        live_str = (current_event.status or "").lower().replace("-", "_")
+                        if (s and e and s <= now_str <= e) or live_str in (
+                            "in_progress", "live", "active"
+                        ):
+                            from app.tasks.redis_state import get_redis_client
+                            get_redis_client().set(
+                                INPLAY_WINDOW_KEY, "1", ex=INPLAY_WINDOW_TTL
+                            )
+                            stats["debug"]["inplay_window"] = f"{tour}:{current_event.event_name}"
+                    except Exception:
+                        pass
 
                     # 2. Fetch pre-tournament predictions
                     players = await service.get_pre_tournament(tour=tour)
@@ -647,6 +692,32 @@ async def _poll_datagolf_live() -> dict:
 
     logger.info("DataGolf live poll complete: %s", stats)
     return stats
+
+
+async def _poll_datagolf_inplay() -> dict:
+    """#144: dedicated in-play golf poll, driven by its own ~90s beat.
+
+    Runs the full live poll ONLY when a tournament window is active (the schedule
+    window flag set by the hourly poll, or a live flag from a recent poll), so
+    off-tournament it costs a single Redis check. This decouples golf live
+    cadence from poll_all_odds, whose tick rate is bounded by live ball-sports —
+    which throttled the L2-66 piggyback to ~5min in the summer golf-only window
+    and failed the sub-minute freshness bar during play.
+    """
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    if not _golf_inplay_window_active(r):
+        return {"skipped": "no_active_tournament_window"}
+    result = await _poll_datagolf_live()
+    # Suppress the redundant 5-min poll_all_odds piggyback while this dedicated
+    # beat is driving cadence (the piggyback sets this key with nx=True, so it
+    # skips while the key exists). Keeps us from double-polling get_in_play.
+    try:
+        r.set("bainluck:datagolf_live_gate", "1", ex=75)
+    except Exception:
+        pass
+    return result
 
 
 # ---------------------------------------------------------------------------

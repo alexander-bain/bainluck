@@ -1,7 +1,49 @@
 """Tests for is_winner backfill logic."""
 
 import pytest
+import re
+from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
+
+
+class TestDataGolfRecoveryJsonbBind:
+    """#994: the DataGolf recovery drained 0 across 5+ cycles because every DB
+    write crashed. Root cause: `SET market_metadata = :meta::jsonb` — SQLAlchemy's
+    bind regex has a negative lookahead `(?![:\\w])`, so a param immediately
+    followed by `::` is NOT bound; the literal `:meta::jsonb` reached asyncpg →
+    "syntax error at or near ':'". The fix is `CAST(:meta AS jsonb)`, which binds
+    the param. These tests pin the fix and forbid the regression.
+    """
+
+    def test_cast_form_binds_the_meta_param(self):
+        from sqlalchemy import text
+        from sqlalchemy.dialects.postgresql import asyncpg as apg
+
+        compiled = text(
+            "UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) "
+            "WHERE id = :mid"
+        ).compile(dialect=apg.dialect())
+        # Both params must bind — the pre-fix `:meta::jsonb` bound only `mid`.
+        assert set(compiled.params.keys()) == {"meta", "mid"}
+
+    def test_colon_colon_form_drops_the_bind(self):
+        # Documents WHY the bug happened: the `::` form silently loses `:meta`.
+        from sqlalchemy import text
+        from sqlalchemy.dialects.postgresql import asyncpg as apg
+
+        compiled = text(
+            "UPDATE t SET m = :meta::jsonb WHERE id = :mid"
+        ).compile(dialect=apg.dialect())
+        assert "meta" not in compiled.params  # the trap
+
+    def test_no_param_colon_colon_jsonb_in_backfill_source(self):
+        # Regression guard: no `:<param>::jsonb` may reappear in the task source.
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "app" / "tasks" / "backfill_winners.py"
+        ).read_text()
+        offenders = re.findall(r":[a-z_]+::jsonb", src)
+        assert offenders == [], f"risky asyncpg bind::cast pattern: {offenders}"
 
 
 class TestPolymarketPhase3Settlement:

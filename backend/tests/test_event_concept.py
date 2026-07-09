@@ -1,11 +1,16 @@
 """#999 slice 1: generic event-concept core (key parsing + golf envelope)."""
 
+from datetime import datetime, timedelta, timezone
+
 from app.utils.event_concept import (
     parse_event_key,
     golf_detail_to_envelope,
     get_adapter,
     registered_domains,
     fuse_golf_live,
+    _golf_leaderboard_has_live_rows,
+    _golf_within_play_window,
+    _golf_leaderboard_is_fresh,
 )
 
 
@@ -140,3 +145,85 @@ class TestFuseGolfLive:
         assert env["primary"]["competitors"] == []
         assert env["sections"] == []
         assert env["children"] == []
+
+
+class TestGolfLiveFallback:
+    """#144: leaderboard-presence + play-window fallback for LIVE detection.
+
+    DataGolf's get-schedule `status` did not flip to in-progress during Scottish
+    Open round 1, so the schedule-string path alone left the event 'upcoming'
+    while a fresh 156-row in-play leaderboard sat in the win-market metadata.
+    """
+
+    def _live_rows(self):
+        return [
+            {"name": "Rory McIlroy", "position": "T1", "thru": "18",
+             "total_score": -5, "today_score": -5, "current_round": 1},
+        ]
+
+    def test_live_rows_detected(self):
+        assert _golf_leaderboard_has_live_rows(self._live_rows())
+
+    def test_position_only_row_counts(self):
+        assert _golf_leaderboard_has_live_rows([{"name": "X", "position": "T5"}])
+
+    def test_thru_only_row_counts(self):
+        assert _golf_leaderboard_has_live_rows([{"name": "X", "thru": "3"}])
+
+    def test_field_dump_without_inplay_signal_is_not_live(self):
+        # Pre-tournament field: names only, no position/thru/score → not live.
+        assert not _golf_leaderboard_has_live_rows(
+            [{"name": "A"}, {"name": "B", "dg_id": 1}]
+        )
+
+    def test_empty_or_none_not_live(self):
+        assert not _golf_leaderboard_has_live_rows([])
+        assert not _golf_leaderboard_has_live_rows(None)
+
+    def test_within_play_window_inclusive(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        # Scottish Open: 07-09 → 07-12, today 07-09.
+        assert _golf_within_play_window(
+            "2026-07-09T00:00:00+00:00", "2026-07-12T00:00:00+00:00", now
+        )
+
+    def test_play_window_tail_grace(self):
+        now = datetime(2026, 7, 13, 2, 0, tzinfo=timezone.utc)  # end + 1d
+        assert _golf_within_play_window(
+            "2026-07-09T00:00:00+00:00", "2026-07-12T00:00:00+00:00", now
+        )
+
+    def test_before_start_not_in_window(self):
+        now = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
+        assert not _golf_within_play_window(
+            "2026-07-09T00:00:00+00:00", "2026-07-12T00:00:00+00:00", now
+        )
+
+    def test_after_window_not_live(self):
+        now = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+        assert not _golf_within_play_window(
+            "2026-07-09T00:00:00+00:00", "2026-07-12T00:00:00+00:00", now
+        )
+
+    def test_missing_dates_returns_false(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        assert not _golf_within_play_window(None, None, now)
+        assert not _golf_within_play_window("2026-07-09T00:00:00+00:00", None, now)
+
+    def test_leaderboard_fresh_within_window(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        assert _golf_leaderboard_is_fresh("2026-07-09T15:30:00+00:00", now)
+
+    def test_leaderboard_stale_is_not_fresh(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        assert not _golf_leaderboard_is_fresh("2026-07-08T00:00:00+00:00", now)
+
+    def test_fresh_handles_z_suffix_and_naive(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        assert _golf_leaderboard_is_fresh("2026-07-09T15:30:00Z", now)
+        assert _golf_leaderboard_is_fresh("2026-07-09T15:30:00", now)  # naive→utc
+
+    def test_fresh_none_or_garbage_is_false(self):
+        now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
+        assert not _golf_leaderboard_is_fresh(None, now)
+        assert not _golf_leaderboard_is_fresh("not-a-date", now)

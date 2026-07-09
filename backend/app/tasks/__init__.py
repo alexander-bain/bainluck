@@ -127,6 +127,7 @@ celery_app.conf.task_default_queue = "background"
 celery_app.conf.task_routes = {
     # --- Realtime: live game data (30s-120s cycle) ---
     "app.tasks.poll_all_odds": {"queue": "realtime"},
+    "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
     "app.tasks.poll_sport_odds": {"queue": "realtime"},
     "app.tasks.sync_espn_live_events": {"queue": "realtime"},
     "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
@@ -1430,6 +1431,17 @@ def poll_datagolf_live(self):
     return _tracked_run("datagolf_live", _poll_datagolf_live())
 
 
+@celery_app.task(bind=True, name="app.tasks.poll_datagolf_inplay")
+def poll_datagolf_inplay(self):
+    """#144: dedicated ~90s in-play golf poll (schedule-window gated).
+
+    Decoupled from poll_all_odds so live golf keeps a sub-minute-feeling cadence
+    even when no ball sports are live. The window guard inside makes this a single
+    Redis check off-tournament (near-zero cost)."""
+    from app.tasks.datagolf import _poll_datagolf_inplay
+    return _tracked_run("datagolf_inplay", _poll_datagolf_inplay())
+
+
 # --- Golf Leaderboard Snapshot ---
 
 @celery_app.task(bind=True, name="app.tasks.snapshot_golf_leaderboard")
@@ -1620,6 +1632,15 @@ celery_app.conf.beat_schedule = {
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
         "schedule": 30.0,
+    },
+    "poll-datagolf-inplay": {
+        # #144: dedicated ~90s in-play golf poll. Decoupled from poll_all_odds
+        # (whose tick rate — bounded by live ball-sports — throttled the L2-66
+        # piggyback to ~5min in the golf-only summer window). Self-gates on a
+        # Redis schedule-window flag so it's a single Redis check off-tournament
+        # (near-zero cost). Realtime queue for the fast cadence.
+        "task": "app.tasks.poll_datagolf_inplay",
+        "schedule": 90.0,
     },
     "poll-mlb-pregame": {
         # MLB-only pre-game tier (issue #892): fills the T-48h..T-2h dark

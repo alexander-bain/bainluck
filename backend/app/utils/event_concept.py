@@ -29,6 +29,7 @@ Envelope shape (domain-agnostic — every adapter returns this):
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,6 +97,70 @@ def _golf_status(tournament: dict) -> str:
     if raw in ("completed", "closed", "resolved", "final", "settled"):
         return "settled"
     return "upcoming"
+
+
+def _golf_leaderboard_has_live_rows(leaderboard: list[dict] | None) -> bool:
+    """True if the stored leaderboard proves play is underway.
+
+    #144: DataGolf's get-schedule `status` does NOT reliably flip to
+    "in-progress" during play (it stayed absent through Scottish Open round 1),
+    so `_golf_status` alone left live tournaments stuck at "upcoming". A stored
+    leaderboard row carrying an in-play signal (a position, a thru value, or a
+    round/total score) is authoritative proof of play. Requiring an in-play
+    signal (not just a non-empty list) guards against a pre-tournament field
+    dump being read as live.
+    """
+    for e in leaderboard or []:
+        if (
+            e.get("position")
+            or e.get("thru")
+            or e.get("total_score") is not None
+            or e.get("today_score") is not None
+        ):
+            return True
+    return False
+
+
+def _golf_within_play_window(
+    start_date: str | None,
+    end_date: str | None,
+    now: datetime,
+) -> bool:
+    """True if `now` falls within [start, end+1d] (1-day tail grace for tz skew).
+
+    Returns False when either date is missing — the caller falls back to a
+    leaderboard-freshness check so a missing schedule date never blocks live.
+    """
+    try:
+        s = datetime.fromisoformat(start_date).date() if start_date else None
+        e = datetime.fromisoformat(end_date).date() if end_date else None
+    except (ValueError, TypeError):
+        return False
+    if s is None or e is None:
+        return False
+    return s <= now.date() <= (e + timedelta(days=1))
+
+
+def _golf_leaderboard_is_fresh(
+    updated_at: str | None,
+    now: datetime,
+    *,
+    max_age_hours: float = 12.0,
+) -> bool:
+    """True if the leaderboard was updated within `max_age_hours` of `now`.
+
+    Used only as the fallback live gate when schedule dates are missing, so a
+    stale final leaderboard from a finished tournament is not read as live.
+    """
+    if not updated_at:
+        return False
+    try:
+        ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now - ts).total_seconds() <= max_age_hours * 3600
 
 
 def _norm_player_name(s: str | None) -> str:
@@ -183,12 +248,17 @@ class GolfEventAdapter:
             raise
         key = f"event:golf:{slug}"
         envelope = golf_detail_to_envelope(key, slug, data)
+        tournament = data.get("tournament", {}) or {}
 
-        # L2-66 fused live leaderboard: when the tournament is live, merge the
-        # STORED DataGolf leaderboard (position/score/thru/round) into competitors
-        # and stamp `as_of` for the freshness chip. Read-only DB (PK lookup on the
-        # win market) — NEVER re-poll DataGolf on the /api/event request path.
-        if envelope["event"]["status"] == "live":
+        # Belt-and-braces live detection + fused leaderboard (#144, extends L2-66).
+        # The schedule-string path (`_golf_status`) leaves live tournaments stuck
+        # at "upcoming" because DataGolf's get-schedule `status` does not flip to
+        # "in-progress" during play. So: unless the tournament is already SETTLED,
+        # read the STORED leaderboard once and treat live in-play rows within the
+        # play window (or, if schedule dates are missing, a fresh leaderboard) as
+        # authoritative proof of play → flip status to LIVE and fuse. Read-only DB
+        # (PK lookup on the win market) — NEVER re-poll DataGolf on the request path.
+        if envelope["event"]["status"] != "settled":
             evo_id = data.get("evolution_market_id")
             if evo_id:
                 try:
@@ -203,11 +273,21 @@ class GolfEventAdapter:
                         )
                     ).scalar_one_or_none() or {}
                     leaderboard = meta.get("leaderboard") or []
-                    if leaderboard:
+                    updated_at = meta.get("leaderboard_updated_at")
+                    now = datetime.now(timezone.utc)
+                    if _golf_leaderboard_has_live_rows(leaderboard) and (
+                        _golf_within_play_window(
+                            tournament.get("start_date"),
+                            tournament.get("end_date"),
+                            now,
+                        )
+                        or _golf_leaderboard_is_fresh(updated_at, now)
+                    ):
+                        envelope["event"]["status"] = "live"
                         as_of = fuse_golf_live(
                             envelope["primary"]["competitors"],
                             leaderboard,
-                            meta.get("leaderboard_updated_at"),
+                            updated_at,
                         )
                         envelope["event"]["as_of"] = as_of
                         envelope["event"]["live_mode"] = "golf_leaderboard"

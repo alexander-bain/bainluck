@@ -264,6 +264,7 @@ class TestBeatScheduleCompleteness:
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",
         "recover-datagolf-participation",
+        "poll-datagolf-inplay",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",

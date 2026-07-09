@@ -560,3 +560,43 @@ class TestDGTourToKey:
 
     def test_alt_maps_to_dp_world(self):
         assert _DG_TOUR_TO_KEY["alt"] == "dp_world"
+
+
+# ---------------------------------------------------------------------------
+# #144: dedicated in-play beat window guard
+# ---------------------------------------------------------------------------
+class TestInplayWindowGuard:
+    """The dedicated 90s in-play beat must be near-zero cost off-tournament and
+    wake up when either the schedule-window flag or a live flag is set."""
+
+    class _FakeRedis:
+        def __init__(self, keys):
+            self._keys = dict(keys)
+
+        def get(self, k):
+            return self._keys.get(k)
+
+    def test_window_flag_active(self):
+        from app.tasks.datagolf import _golf_inplay_window_active, INPLAY_WINDOW_KEY
+        r = self._FakeRedis({INPLAY_WINDOW_KEY: "1"})
+        assert _golf_inplay_window_active(r) is True
+
+    def test_live_flag_active(self):
+        from app.tasks.datagolf import _golf_inplay_window_active, LIVE_KEY_PREFIX
+        r = self._FakeRedis({f"{LIVE_KEY_PREFIX}:pga": "1"})
+        assert _golf_inplay_window_active(r) is True
+
+    def test_dormant_when_no_flags(self):
+        from app.tasks.datagolf import _golf_inplay_window_active
+        r = self._FakeRedis({})
+        assert _golf_inplay_window_active(r) is False
+
+    def test_redis_error_degrades_to_poll(self):
+        from app.tasks.datagolf import _golf_inplay_window_active
+
+        class _Boom:
+            def get(self, k):
+                raise RuntimeError("redis down")
+
+        # Never starve live play on a Redis hiccup — degrade to poll (True).
+        assert _golf_inplay_window_active(_Boom()) is True

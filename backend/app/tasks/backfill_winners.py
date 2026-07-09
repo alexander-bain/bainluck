@@ -3305,7 +3305,7 @@ async def _backfill_datagolf_leaderboards():
                         await session.execute(
                             text("""
                                 UPDATE futures_markets
-                                SET market_metadata = :meta::jsonb
+                                SET market_metadata = CAST(:meta AS jsonb)
                                 WHERE id = :mid
                             """),
                             {"meta": _json.dumps(sib_meta), "mid": sib.id},
@@ -3474,7 +3474,7 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                             if not _m.get("datagolf_recovery_residual"):
                                 _m["datagolf_recovery_residual"] = True
                                 await session.execute(
-                                    text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
+                                    text("UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) WHERE id = :mid"),
                                     {"meta": _json.dumps(_m), "mid": row.id},
                                 )
                                 await session.commit()
@@ -3543,7 +3543,7 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
                             if not _m.get("datagolf_recovery_residual"):
                                 _m["datagolf_recovery_residual"] = True
                                 await session.execute(
-                                    text("UPDATE futures_markets SET market_metadata = :meta::jsonb WHERE id = :mid"),
+                                    text("UPDATE futures_markets SET market_metadata = CAST(:meta AS jsonb) WHERE id = :mid"),
                                     {"meta": _json.dumps(_m), "mid": row.id},
                                 )
                                 await session.commit()
