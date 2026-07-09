@@ -136,11 +136,18 @@ def default_configs() -> list[ReplayConfig]:
 # Re-ranking (mirrors feed.py exactly)
 # --------------------------------------------------------------------------- #
 def blend_rank(pre_blend: float, i_score: float | None, weight: float) -> float:
-    """Mirror feed.py's UNCAPPED ordering blend (#141): +15 uplift cap, no 98 clamp."""
+    """Mirror feed.py's de-saturated ordering blend (#143/RANK-3).
+
+    Both ``pre_blend`` and ``i_score`` are 0-100 (the scorer normalizes to
+    0-100). The blend is a direct convex combination weighted by ``weight`` —
+    NO ``* 100`` (the #142 double-scale bug) and NO +15 uplift cap on the
+    ranking chain, so ``weight`` is the only bound on interestingness'
+    influence over ordering. ``weight`` 0 / missing score => unchanged
+    (kill switch, mirrors the ``> 0`` guard in feed.py)."""
     if not weight or weight <= 0 or i_score is None:
         return pre_blend
-    blended = pre_blend * (1 - weight) + (i_score * 100) * weight
-    return max(0.0, min(blended, pre_blend + 15))
+    blended = pre_blend * (1 - weight) + i_score * weight
+    return max(0.0, blended)
 
 
 def replayed_rank_score(row: dict[str, Any], config: ReplayConfig) -> float:

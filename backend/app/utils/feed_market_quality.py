@@ -243,6 +243,48 @@ def _is_resolved_sports(status: str | None, category: str) -> bool:
     return cat in _SPORTS_CATEGORIES or bool(_LOW_SIGNAL_SPORT_RE.search(cat))
 
 
+# R3: novel sports framings — nationality / region / aggregate angles are
+# interesting even when they aren't marquee games (Alex 2026-06-15, verbatim
+# examples: "Will a Canadian team win the NHL Stanley Cup?", "Will a golfer from
+# Europe or from Asia finish higher?"). These are NOT vanilla stat-line player
+# props ("X scores 30+"). Gated on a sports category so it never matches non-
+# sports ("a Canadian company"). A BOOST (→ compelling), never a suppression.
+_SPORTS_NATIONALITY = (
+    r"canadian|canada|american|european|europe|asian|asia|african|africa|"
+    r"australian|british|britain|english|scottish|irish|mexican|japanese|"
+    r"korean|chinese|international|foreign|non-?us|non-?american"
+)
+_SPORTS_NOVELTY_RE = re.compile(
+    r"(?:"
+    # "a/any <nationality> team|player|golfer|driver|... (to|will) win|finish|reach"
+    r"\b(?:a|an|any)\s+(?:" + _SPORTS_NATIONALITY + r")\s+"
+    r"(?:\w+\s+){0,2}?(?:team|nation|country|player|golfer|driver|"
+    r"pitcher|rider|club|side|athlete)\b"
+    r"|"
+    # region-vs-region / "from Europe or Asia" aggregate framings
+    r"\b(?:" + _SPORTS_NATIONALITY + r")\s+(?:or|vs\.?|versus)\s+"
+    r"(?:" + _SPORTS_NATIONALITY + r")\b"
+    r"|"
+    r"\bfrom\s+(?:europe|asia|africa|north america|south america|"
+    r"another (?:country|continent))\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_novel_sports_framing(name: str, category: str) -> bool:
+    """R3 — novel sports framing (nationality/region/aggregate angle).
+
+    A boost signal: these read as genuinely interesting even outside marquee
+    games. Gated on a sports category to avoid matching non-sports nationality
+    phrasing.
+    """
+    cat = (category or "").lower()
+    if cat not in _SPORTS_CATEGORIES and not _LOW_SIGNAL_SPORT_RE.search(cat):
+        return False
+    return bool(_SPORTS_NOVELTY_RE.search(name))
+
+
 _OBSCURE_PROCEDURAL_RE = re.compile(
     r"\b("
     r"reauthorize|committee|subcommittee|cloture|filibuster|"
@@ -798,6 +840,7 @@ def classify_market_quality(
     asset_price_level = _is_asset_price_level(name)  # R2
     runner_up_rank = _is_runner_up_rank(name)  # R8
     resolved_sports = _is_resolved_sports(status, category)  # R6
+    novel_sports = _is_novel_sports_framing(name, category)  # R3
     price_bucket = bool(
         _PRICE_BUCKET_RE.search(name)
         or _COMMODITY_DATED_PRICE_RE.search(name)
@@ -891,6 +934,8 @@ def classify_market_quality(
         reasons.append("runner_up_rank")
     if resolved_sports:
         reasons.append("resolved_sports")
+    if novel_sports:
+        reasons.append("novel_sports_framing")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
@@ -946,7 +991,14 @@ def classify_market_quality(
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
-    elif ticker_boost or personnel or outbreak or compelling or absurd_public_interest:
+    elif (
+        ticker_boost
+        or personnel
+        or outbreak
+        or compelling
+        or absurd_public_interest
+        or novel_sports  # R3: novel nationality/region/aggregate sports framing
+    ):
         quality = "compelling"
     else:
         quality = "normal"

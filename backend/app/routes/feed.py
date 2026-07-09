@@ -2617,7 +2617,10 @@ def _score_market_trace(
         ),
         "interestingness_blend_note": (
             "blended at serve time on the UNCAPPED ranking score with the "
-            "Redis-controlled weight (default 0.2, kill switch 0); +15 uplift cap"
+            "Redis-controlled weight (default 0.2, kill switch 0). #143/RANK-3: "
+            "the cached score is 0-100 and blended directly (no *100), with NO "
+            "+15 cap on the ranking chain — weight w is the only influence bound. "
+            "The display chain keeps its bounded +15/0-98 behavior."
         ),
     }
 
@@ -5277,6 +5280,15 @@ async def _score_futures(
             cached_entry = _interestingness_cache.get(market.id)
             if cached_entry is not None and _interestingness_blend_weight > 0:
                 i_score = cached_entry.get("score", 0)
+                # DISPLAY chain — deliberately UNCHANGED (#143/RANK-3 Item 1).
+                # This still uses the legacy `* 100` scale, so with a cache hit
+                # and w>0 the +15 cap always binds and display gains a constant
+                # +15 (bounded 0-98). Ordering is decided by the ranking chain
+                # below (RANK-1), not this display score — but display feeds the
+                # personalized_score<15 / <55 serving filters, so re-scaling it
+                # would change feed COMPOSITION and needs a prod-validated filter
+                # sweep first (flagged as RANK-3 follow-up). Left as-is here to
+                # keep this change ordering-only and regression-safe on display.
                 pre_blend = base_score
                 blended = (
                     base_score * (1 - _interestingness_blend_weight)
@@ -5285,15 +5297,29 @@ async def _score_futures(
                 # Cap: interestingness can add at most 15 points over base
                 base_score = min(blended, pre_blend + 15)
                 base_score = max(0, min(98, base_score))
-                # Blend the ORDERING score on the UNCAPPED value so the blend is
-                # no longer mathematically dead for saturated cards. Keep the +15
-                # uplift cap; omit the 98 clamp. #141/Item 1.
-                rank_pre = rank_score
+                # RANKING chain — de-saturated (#143/RANK-3 Item 1). Two fixes
+                # vs #141:
+                #   1. The cached interestingness score is ALREADY 0-100 (the
+                #      scorer normalizes to 0-100; see market_interestingness and
+                #      precompute_interestingness which caches result.score). The
+                #      prior `* 100` treated it as 0-1, inflating the blend target
+                #      to ~6000-8000 so the +15 cap ALWAYS bound → every card got
+                #      a constant +15 and weight changes could not re-order the
+                #      feed (the RANK-2 saturation finding, #142). Blend two 0-100
+                #      quantities directly.
+                #   2. NO +15 uplift cap on the ranking chain: the blend weight w
+                #      is now the ONLY bound on interestingness' ordering
+                #      influence, so weight changes genuinely re-order the top-K.
+                # Kill switch preserved by the `_interestingness_blend_weight > 0`
+                # guard above (w=0 → this block is skipped → identical ordering).
+                # The DISPLAY chain above intentionally keeps its bounded (+15
+                # cap, 0-98 clamp) behavior so display-score filters are
+                # unperturbed.
                 rank_blended = (
                     rank_score * (1 - _interestingness_blend_weight)
-                    + (i_score * 100) * _interestingness_blend_weight
+                    + i_score * _interestingness_blend_weight
                 )
-                rank_score = max(0.0, min(rank_blended, rank_pre + 15))
+                rank_score = max(0.0, rank_blended)
                 i_reasons = cached_entry.get("reasons") or []
                 if abs(base_score - pre_blend) >= 0.5:
                     delta = base_score - pre_blend

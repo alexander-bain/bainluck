@@ -15,10 +15,13 @@ from scripts.replay_discover_ranking import (
 )
 
 
-def test_blend_rank_mirrors_feed_plus15_cap():
-    # Any realistic interestingness score saturates the +15 uplift cap, matching
-    # feed.py's UNCAPPED ordering blend.
-    assert blend_rank(60.0, 50.0, 0.2) == 75.0  # 60 + 15 cap
+def test_blend_rank_desaturated_direct_convex_blend():
+    # #143/RANK-3: de-saturated ranking blend. Both operands are 0-100 and the
+    # blend is a direct convex combination weighted by w — NO *100 double-scale
+    # and NO +15 uplift cap, so w is the only bound on ordering influence.
+    assert blend_rank(60.0, 50.0, 0.2) == 58.0  # 60*0.8 + 50*0.2
+    assert blend_rank(60.0, 90.0, 0.2) == 66.0  # 60*0.8 + 90*0.2 (uplift > +15 allowed)
+    assert blend_rank(60.0, 100.0, 0.5) == 80.0  # +20 uplift: NOT capped at +15
     # Kill switch / no cache => unchanged.
     assert blend_rank(60.0, 50.0, 0.0) == 60.0
     assert blend_rank(60.0, None, 0.2) == 60.0
@@ -40,14 +43,33 @@ def test_rerank_orders_by_replay_score_desc():
     assert reranked[0]["replay_rank"] == 1
 
 
-def test_interestingness_weights_do_not_change_ordering_due_to_saturation():
-    # The core RANK-2 finding: two very different weight vectors produce the same
-    # ordering because the +15 blend cap saturates. This locks in the diagnosis.
+def test_interestingness_weights_change_ordering_after_desaturation():
+    # #143/RANK-3 Item 1: the fix. Two very different weight vectors now produce
+    # DIFFERENT orderings — the +15 cap + double-scale that pinned ordering (the
+    # RANK-2 finding, #142) are gone, so interestingness weights genuinely move
+    # the top-K. Flipped from pinning-the-bug to pinning-the-fix.
     rows = build_demo_snapshot()
     baseline, movement_heavy, _base = default_configs()
     a = [r["market_id"] for r in rerank(rows, baseline)]
     b = [r["market_id"] for r in rerank(rows, movement_heavy)]
-    assert a == b
+    assert a != b
+    # movement_heavy weights movement 28 (vs 16): the high-movement crypto market
+    # (107, movement 0.30) ranks strictly higher under it than under baseline.
+    assert b.index(107) < a.index(107)
+
+
+def test_blend_weight_zero_is_identical_ordering_kill_switch():
+    # Kill switch: w=0 must reproduce the pre-blend (served) ordering exactly, so
+    # a Redis kill of the blend is a true no-op on ranking.
+    from scripts.replay_discover_ranking import ReplayConfig
+
+    rows = build_demo_snapshot()
+    off = ReplayConfig(name="off", blend_weight=0.0)
+    reranked = rerank(rows, off)
+    # pre_blend descends with served_rank in the demo, so w=0 == served order.
+    assert [r["market_id"] for r in reranked] == [
+        r["market_id"] for r in sorted(rows, key=lambda r: r["served_rank"])
+    ]
 
 
 def test_base_override_does_change_ordering():
