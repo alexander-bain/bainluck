@@ -165,6 +165,9 @@ export default function CalibrationPage() {
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const priceCohort: "all" | "closing" | "opening" = "all";
+  // L2-74 §C (#940): default to the WELL-TRADED view; a visible toggle layers in
+  // thin/untraded markets. The toggle never hides — counts are shown in both states.
+  const [includeThin, setIncludeThin] = useState(false);
 
   const normalized = useMemo(() => {
     if (!data) return null;
@@ -182,14 +185,18 @@ export default function CalibrationPage() {
   const movedECE = useMemo(() => ece(movedBuckets), [movedBuckets]);
   const unchangedECE = useMemo(() => ece(unchangedBuckets), [unchangedBuckets]);
 
-  // Cohort-aware computations for the main chart/table
-  // price_moved=true → closing line, price_moved=false → opening price,
-  // price_moved=null → odds_api sportsbook data (always closing line)
+  // L2-74 §C: the main chart/table default to WELL-TRADED — exclude never-moved
+  // outcomes (price_moved===false); keep real trades (true) + sportsbook consensus
+  // (null, always a live line). The "include thin/untraded" toggle shows all.
   const cohortFilter = useMemo<((b: CalibrationBucket) => boolean) | undefined>(() => {
-    if (priceCohort === "closing") return (b: CalibrationBucket) => b.price_moved === true || b.price_moved == null;
-    if (priceCohort === "opening") return (b: CalibrationBucket) => b.price_moved === false;
-    return undefined;
-  }, [priceCohort]);
+    if (includeThin) return undefined;
+    return (b: CalibrationBucket) => b.price_moved !== false;
+  }, [includeThin]);
+  const fullN = useMemo(() =>
+    normalized ? normalized.reduce((s, b) => s + b.n, 0) : 0, [normalized]);
+  const wellTradedN = useMemo(() =>
+    normalized ? normalized.filter(b => b.price_moved !== false).reduce((s, b) => s + b.n, 0) : 0,
+    [normalized]);
   const cohortBuckets = useMemo(() =>
     normalized ? aggregateBuckets(normalized, cohortFilter) : [], [normalized, cohortFilter]);
   const cohortMCE = useMemo(() => mce(cohortBuckets), [cohortBuckets]);
@@ -324,6 +331,25 @@ export default function CalibrationPage() {
           detail={topCats} />
       </div>
 
+      {/* Well-traded / thin toggle (L2-74 §C, #940) — governs every table + curve below */}
+      <div className="flex flex-wrap items-center gap-3 bg-surface-card rounded-xl px-4 py-3 border border-surface-border">
+        <div className="text-sm text-text-secondary">
+          {includeThin ? (
+            <>Showing <strong className="text-text-primary">all markets</strong> ({fullN.toLocaleString()}), including thin/untraded.</>
+          ) : (
+            <>Showing <strong className="text-text-primary">well-traded markets</strong> ({wellTradedN.toLocaleString()}) &mdash; where real trading moved the price. Thin/untraded markets can be noisy.</>
+          )}
+        </div>
+        <button
+          onClick={() => setIncludeThin(v => !v)}
+          className="ml-auto text-xs font-medium px-3 py-1.5 rounded-full border border-surface-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors whitespace-nowrap"
+        >
+          {includeThin
+            ? "Well-traded only"
+            : `Include thin/untraded (+${(fullN - wellTradedN).toLocaleString()})`}
+        </button>
+      </div>
+
       {/* Source Comparison */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">Source Comparison</h2>
@@ -434,19 +460,20 @@ export default function CalibrationPage() {
       {/* Overall calibration curve */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">
-          {priceCohort === "closing" ? "Closing Line" : priceCohort === "opening" ? "Opening Price" : "Overall"} Calibration Curve
+          {includeThin ? "All-Markets" : "Well-Traded"} Calibration Curve
         </h2>
         <p className="text-xs text-text-muted mb-4">
           Points on the diagonal = perfect calibration. Above = outcomes happened <em>more</em> than predicted. Below = <em>less</em>.
           Shaded band = &plusmn;5pp. Point size reflects sample count.
-          {priceCohort === "closing" && " Showing only outcomes where the price moved from its opening value (real trading activity)."}
-          {priceCohort === "opening" && " Showing only outcomes where the price never changed from its initial listing."}
+          {includeThin
+            ? " Showing all markets, including thin/untraded outcomes (noisier)."
+            : " Showing well-traded markets only — where real trading moved the price."}
         </p>
         <CalibrationChart
           series={[{
             data: cohortBuckets,
-            color: priceCohort === "closing" ? "#16a34a" : priceCohort === "opening" ? "#dc2626" : "#2563eb",
-            label: `${priceCohort === "closing" ? "Closing Line" : priceCohort === "opening" ? "Opening Price" : "All Markets"} (${cohortN.toLocaleString()})`,
+            color: includeThin ? "#2563eb" : "#16a34a",
+            label: `${includeThin ? "All markets" : "Well-traded"} (${cohortN.toLocaleString()})`,
           }]}
           width={700}
           height={400}
@@ -611,6 +638,39 @@ export default function CalibrationPage() {
         </div>
       </section>
 
+      {/* Data corrections log (L2-74 §E — trust panel) */}
+      {data.corrections && data.corrections.length > 0 && (
+        <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+          <h2 className="text-title-3 text-text-primary mb-1">Data Corrections Log</h2>
+          <p className="text-xs text-text-muted mb-4">
+            A calibration page is only trustworthy if it fixes its own mistakes. Every data-quality
+            correction we&rsquo;ve made &mdash; with dates and rows affected &mdash; is on the record here.
+            See <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a> for the full methodology.
+          </p>
+          <ul className="space-y-0">
+            {data.corrections.map((c, i) => (
+              <li
+                key={`${c.date}-${i}`}
+                className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 border-t border-surface-border py-3 first:border-0 first:pt-0"
+              >
+                <span className="text-xs font-mono text-text-muted whitespace-nowrap w-24 shrink-0">{c.date}</span>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text-primary">
+                    {c.title}
+                    {c.rows != null && (
+                      <span className="ml-2 text-xs font-normal text-text-muted tabular-nums">
+                        {c.rows.toLocaleString()} rows
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-text-secondary">{c.description}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Further Reading */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-3">Further Reading</h2>
@@ -627,7 +687,7 @@ export default function CalibrationPage() {
       </section>
 
       {/* Methodology */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+      <section id="methodology" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
         <h2 className="text-title-3 text-text-primary mb-3">How We Measure This</h2>
         <ul className="space-y-3 text-sm text-text-secondary">
           <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
