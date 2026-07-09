@@ -1380,12 +1380,17 @@ class TestScoreResolutionOverwritesGuess:
         import inspect
         src = inspect.getsource(_resolve_kalshi_from_scores)
 
-        assert "pass2_guess" in src, (
-            "_resolve_kalshi_from_scores SQL must reference pass2_guess "
-            "to allow re-resolution"
+        # #845: the guess-family list now routes through the single canonical
+        # constant (which contains pass2_guess/binary_higher_wins/multi_max_prob),
+        # so the phase must reference OVERWRITABLE_WINNER_SOURCES_SQL.
+        assert "OVERWRITABLE_WINNER_SOURCES_SQL" in src, (
+            "_resolve_kalshi_from_scores must route its re-resolution guard "
+            "through resolution_authority.OVERWRITABLE_WINNER_SOURCES_SQL"
         )
-        assert "binary_higher_wins" in src
-        assert "multi_max_prob" in src
+        from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES
+        assert {"pass2_guess", "binary_higher_wins", "multi_max_prob"} <= set(
+            OVERWRITABLE_WINNER_SOURCES
+        )
 
     def test_spread_total_having_guard_updated(self):
         """_resolve_kalshi_spread_total_from_scores must also allow re-resolution."""
@@ -1404,7 +1409,7 @@ class TestScoreResolutionOverwritesGuess:
         from app.tasks.backfill_winners import _resolve_kalshi_player_props_from_boxscore
         src = inspect.getsource(_resolve_kalshi_player_props_from_boxscore)
 
-        assert "pass2_guess" in src
+        assert "OVERWRITABLE_WINNER_SOURCES_SQL" in src  # #845 routes through constant
 
     def test_period_props_having_guard_updated(self):
         """_resolve_kalshi_period_props must also allow re-resolution."""
@@ -1412,7 +1417,7 @@ class TestScoreResolutionOverwritesGuess:
         from app.tasks.backfill_winners import _resolve_kalshi_period_props
         src = inspect.getsource(_resolve_kalshi_period_props)
 
-        assert "pass2_guess" in src
+        assert "OVERWRITABLE_WINNER_SOURCES_SQL" in src  # #845 routes through constant
 
     def test_total_resolution_sets_game_score_source(self):
         """Total resolution must set resolution_source='game_score'."""

@@ -420,6 +420,26 @@ def regrade_polymarket_under_signflip(self):
     return _tracked_run("poly_under_signflip", _regrade_polymarket_under_signflip())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.unresolve_datagolf_premature")
+def unresolve_datagolf_premature(self):
+    """#146 Item 2: starvation sibling of the #145 poly flip. The #137
+    calibration-integrity block runs AFTER calibration_prices, which the
+    backfill_winners budget guard stops before — so this un-resolve of
+    prematurely-resolved DataGolf markets never runs in prod. Dedicated task;
+    cheap idempotent set-based UPDATE."""
+    from app.tasks.backfill_winners import _unresolve_datagolf_premature
+    return _tracked_run("datagolf_premature_unresolve", _unresolve_datagolf_premature())
+
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.null_impossible_both_sides_openings")
+def null_impossible_both_sides_openings(self):
+    """#146 Item 2: starvation sibling of the #145 poly flip (same budget guard).
+    Nulls impossible both-sides=1.0 binary openings/cp that poison the calibration
+    curve. Dedicated task; cheap idempotent set-based UPDATE."""
+    from app.tasks.backfill_winners import _null_impossible_both_sides_openings
+    return _tracked_run("impossible_both_sides_null", _null_impossible_both_sides_openings())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
 def backfill_kalshi_candlestick(self, limit: int = 500):
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
@@ -2061,6 +2081,19 @@ celery_app.conf.beat_schedule = {
         # ~36K-row class and forward-fixes any rows the poller re-introduces.
         "task": "app.tasks.regrade_polymarket_under_signflip",
         "schedule": crontab(minute=45, hour="5,11,17,23"),
+        "options": {"queue": "background"},
+    },
+    "unresolve-datagolf-premature": {
+        # #146 Item 2: starvation sibling of the poly flip — the #137 integrity
+        # block never runs (budget guard stops before calibration_prices).
+        "task": "app.tasks.unresolve_datagolf_premature",
+        "schedule": crontab(minute=50, hour="5,11,17,23"),
+        "options": {"queue": "background"},
+    },
+    "null-impossible-both-sides-openings": {
+        # #146 Item 2: starvation sibling of the poly flip (same reason).
+        "task": "app.tasks.null_impossible_both_sides_openings",
+        "schedule": crontab(minute=55, hour="5,11,17,23"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

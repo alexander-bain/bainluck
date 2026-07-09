@@ -20,6 +20,7 @@ from sqlalchemy import select, update, text, func
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
+from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +158,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     GROUP BY fm.id
                                     HAVING SUM(CASE WHEN fo.is_winner
                                                AND fo.resolution_source NOT IN
-                                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                                   """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                                THEN 1 ELSE 0 END) = 0
                                        AND COUNT(*) FILTER (
                                            WHERE fo.current_probability >= 0.95
@@ -298,8 +298,7 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
                   AND fm.external_id > :cursor
-                  AND fo.resolution_source IN ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                  AND fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                 ORDER BY fm.external_id ASC
                 LIMIT :limit
             """),
@@ -556,8 +555,7 @@ async def _backfill_polymarket_winners():
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
-                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                       """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                    THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
@@ -1252,8 +1250,7 @@ async def _resolve_kalshi_from_scores():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                   """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 100000
                 """))
@@ -1689,8 +1686,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                   """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 100000
                 """))
@@ -2458,8 +2454,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                       AND e.box_score_data IS NOT NULL
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
-                               ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                               """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                            -- #937: re-process ALL already box_score-resolved prop
                            -- outcomes (was scoped to kxnhlpts only to dodge the #899
                            -- OOM — now fixed, so the broadened set is memory-safe).
@@ -2795,8 +2790,7 @@ async def _resolve_kalshi_period_props():
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
                                AND fo.resolution_source NOT IN
-                                   ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                   """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                THEN 1 ELSE 0 END) = 0
                        AND COUNT(*) = 1
                     LIMIT 5000
@@ -3768,8 +3762,7 @@ async def _backfill_from_current_probability():
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
-                                       ('pass2_guess', 'binary_higher_wins', 'multi_max_prob',
-                                         'clean_resolution', 'pass2_loser', 'pass3_threshold')
+                                       """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
                                    THEN 1 ELSE 0 END) = 0
                            AND COUNT(*) FILTER (
                                WHERE fo.current_probability >= 0.95
@@ -4995,7 +4988,7 @@ async def _resolve_winners_only(limit: int = 2000):
                             r = await sess.execute(
                                 text("""
                                 UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
                             """),
                                 {"t": yes_t},
                             )
@@ -5004,7 +4997,7 @@ async def _resolve_winners_only(limit: int = 2000):
                             r = await sess.execute(
                                 text("""
                                 UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
+                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
                             """),
                                 {"t": no_t},
                             )
