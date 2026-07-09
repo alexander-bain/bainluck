@@ -1345,6 +1345,10 @@ async def public_calibration(
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        # L2-78 Item 0: resolved-data span for the hero. None on a cold cache
+        # (same convention as liquidity_filter/void_filter below); the precompute
+        # served path above populates the true MIN/MAX span.
+        "date_range": None,
         # L2-73 §E: corrections log (single source of truth in the precompute task).
         "corrections": _CALIBRATION_CORRECTIONS,
         "spreads_summary": spreads_summary,

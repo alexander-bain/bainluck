@@ -5,7 +5,8 @@
 // section nav that anchor-scrolls to the page sections. Light tokens, no odds,
 // no source names.
 
-import { statusLabel, eventDateRange } from "@/lib/eventConceptDisplay";
+import { useEffect, useState } from "react";
+import { statusLabel, eventDateRange, countdownLabel } from "@/lib/eventConceptDisplay";
 import type { EventConceptResponse } from "@/lib/types";
 
 interface SectionNavItem {
@@ -30,6 +31,14 @@ export default function EventHeader({
   const dateRange = eventDateRange(event.start_date, event.end_date);
   const meta = [dateRange, event.venue, event.location].filter(Boolean).join(" · ");
 
+  // L2-78: honest "Starts in N days" countdown for the pre-tournament header
+  // (The Open, July 15). Computed after mount so the SSR/CSR clocks can't diverge
+  // and trip a hydration mismatch near a day boundary.
+  const [countdown, setCountdown] = useState<string | null>(null);
+  useEffect(() => {
+    setCountdown(countdownLabel(event.status, event.start_date, Date.now()));
+  }, [event.status, event.start_date]);
+
   return (
     <header className="border-b border-surface-border pb-4">
       <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-widest text-text-muted">
@@ -48,6 +57,11 @@ export default function EventHeader({
         {event.is_major && (
           <span className="px-1.5 py-0.5 rounded font-semibold bg-accent-futures/10 text-accent-futures">
             Major
+          </span>
+        )}
+        {countdown && (
+          <span className="px-1.5 py-0.5 rounded font-semibold bg-accent-brand/10 text-accent-brand">
+            {countdown}
           </span>
         )}
       </div>

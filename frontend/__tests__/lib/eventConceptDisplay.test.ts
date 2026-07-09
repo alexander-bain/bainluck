@@ -12,7 +12,45 @@ import {
   seriesForName,
   seriesFromCompetitor,
   competitorsToOutcomeHistory,
+  daysUntilStart,
+  countdownLabel,
 } from "../../lib/eventConceptDisplay";
+
+describe("daysUntilStart / countdownLabel (L2-78 pre-tournament countdown)", () => {
+  const now = new Date("2026-07-09T21:44:00Z").getTime();
+
+  test("The Open (Jul 15 00:00Z) reads 6 days out from Jul 9", () => {
+    expect(daysUntilStart("2026-07-15T00:00:00Z", now)).toBe(6);
+    expect(countdownLabel("upcoming", "2026-07-15T00:00:00Z", now)).toBe(
+      "Starts in 6 days",
+    );
+  });
+
+  test("same calendar date → 0 → 'Starts today'", () => {
+    expect(daysUntilStart("2026-07-09T23:30:00Z", now)).toBe(0);
+    expect(countdownLabel("upcoming", "2026-07-09T23:30:00Z", now)).toBe(
+      "Starts today",
+    );
+  });
+
+  test("next calendar day is singular ('in 1 day')", () => {
+    expect(daysUntilStart("2026-07-10T09:00:00Z", now)).toBe(1);
+    expect(countdownLabel("scheduled", "2026-07-10T09:00:00Z", now)).toBe(
+      "Starts in 1 day",
+    );
+    expect(countdownLabel("scheduled", "2026-07-11T09:00:00Z", now)).toBe(
+      "Starts in 2 days",
+    );
+  });
+
+  test("past start / live / settled / missing → null (nothing to count down)", () => {
+    expect(daysUntilStart("2026-07-01T00:00:00Z", now)).toBeNull();
+    expect(countdownLabel("live", "2026-07-15T00:00:00Z", now)).toBeNull();
+    expect(countdownLabel("settled", "2026-07-15T00:00:00Z", now)).toBeNull();
+    expect(countdownLabel("upcoming", null, now)).toBeNull();
+    expect(countdownLabel("upcoming", "not-a-date", now)).toBeNull();
+  });
+});
 
 describe("seriesFromCompetitor (L2-71 envelope history)", () => {
   test("extracts the competitor's own probability series", () => {

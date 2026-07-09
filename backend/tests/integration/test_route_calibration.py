@@ -202,8 +202,18 @@ class TestCalibrationPublicEndpoint:
             "liquidity_filter",
             "void_filter",
             "corrections",  # L2-73 §E
+            "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
         }
+
+    async def test_date_range_present(self, client, mock_db):
+        # L2-78 Item 0: date_range ships in the payload (None on cold-cache
+        # fallback; {start,end} ISO strings from the precompute served path).
+        resp = await client.get("/api/calibration")
+        body = resp.json()
+        assert "date_range" in body
+        dr = body["date_range"]
+        assert dr is None or {"start", "end"} <= set(dr)
 
     async def test_corrections_log_present(self, client, mock_db):
         # L2-73 §E: the corrections log ships in the payload for the trust panel.

@@ -1,7 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
+
+// L2-78 Item 2 — golf-default flip PREP (Alex's pending glance, Scottish Open
+// weekend). Flip is ONE line: set true and golf tournament rows route to the
+// unified Event Concept page instead of the bespoke golf tournament detail page.
+// LEFT FALSE on purpose — his side-by-side phone comparison decides, not us.
+// Side-by-side for the glance (e.g. The Open):
+//   bespoke (current): /categories/golf/tournaments/the-open-championship
+//   event (flipped):   /event/event:golf:the-open-championship
+const GOLF_DEFAULT_TO_EVENT_PAGE = false;
 
 // ============================================================================
 // Types
@@ -26,8 +36,14 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // leaderboard/scores. NOT the generic /sport market page (#926), and — during
   // OPEN-SPRINT-1 (L2-66) — NOT /event/[key] either, until that surface's fused
   // live leaderboard clears the "leave-it-open-during-The-Open" bar. hrefOverride
-  // still wins.
-  const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
+  // still wins. The GOLF_DEFAULT_TO_EVENT_PAGE flip (above) redirects the default
+  // to the Event Concept page when Alex greenlights it.
+  const eventKey = tournamentEventKey(tournament);
+  const defaultHref =
+    GOLF_DEFAULT_TO_EVENT_PAGE && eventKey
+      ? eventPath(eventKey)
+      : `/categories/golf/tournaments/${slug}`;
+  const href = hrefOverride || defaultHref;
 
   // Cup events (Ryder Cup, Presidents Cup, etc.) with exactly 2 teams
   // get a head-to-head layout instead of leader + chasers

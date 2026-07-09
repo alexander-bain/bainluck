@@ -892,6 +892,26 @@ async def _precompute_calibration_main():
     spreads_summary = _source_summary("odds_api_spreads")
     totals_summary = _source_summary("odds_api_totals")
 
+    # L2-78 Item 0 (flagged since L2-73): the true resolved-data span for the
+    # calibration hero. Cheap MIN/MAX over resolved futures resolution_date (the
+    # Kalshi/Polymarket bulk of the curve). None-safe so a cold aggregate never
+    # breaks the payload; the hero falls back to generated_at when absent.
+    date_range = None
+    try:
+        dr = (
+            await db.execute(
+                text(
+                    "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+                    "FROM futures_markets "
+                    "WHERE status = 'resolved' AND resolution_date IS NOT NULL"
+                )
+            )
+        ).one()
+        if dr.lo and dr.hi:
+            date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
+    except Exception:
+        logger.warning("calibration date_range aggregate failed", exc_info=True)
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
@@ -901,6 +921,7 @@ async def _precompute_calibration_main():
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        "date_range": date_range,  # L2-78 Item 0: resolved-data span for the hero
         "corrections": CALIBRATION_CORRECTIONS,  # L2-73 §E trust panel
         # #997 App Store ship-gate: the minimum resolved-outcome count for a
         # chartable sub-category. Shipped so web + native gate on the SAME bar

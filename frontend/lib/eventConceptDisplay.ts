@@ -162,6 +162,39 @@ export function competitorsToOutcomeHistory(
   return out;
 }
 
+/** L2-78: calendar days until an event starts, from `now` (ms). Honest countdown
+ *  for the pre-tournament header — the *calendar-day* difference (UTC), so July 9
+ *  → July 15 reads "6 days" the way a person counts it (not 5-and-a-fraction).
+ *  Returns null when there's no start, the date is unparseable, or the start day
+ *  is already past. 0 = starts on today's date. Pure so it's clock-free tested. */
+export function daysUntilStart(
+  start: string | null | undefined,
+  now: number,
+): number | null {
+  if (!start) return null;
+  const t = new Date(start).getTime();
+  if (Number.isNaN(t)) return null;
+  const dayMs = 24 * 3600 * 1000;
+  const days = Math.floor(t / dayMs) - Math.floor(now / dayMs);
+  if (days < 0) return null;
+  return days;
+}
+
+/** L2-78: the header countdown label for an upcoming event, or null when there's
+ *  nothing to show (live/settled, or no future start). Kept pure + separate from
+ *  the component so the wording is unit-tested. */
+export function countdownLabel(
+  status: string,
+  start: string | null | undefined,
+  now: number,
+): string | null {
+  if (status === "live" || status === "settled") return null;
+  const days = daysUntilStart(start, now);
+  if (days == null) return null;
+  if (days === 0) return "Starts today";
+  return `Starts in ${days} day${days === 1 ? "" : "s"}`;
+}
+
 /** A readable event date range (either bound optional). */
 export function eventDateRange(
   start?: string | null,
