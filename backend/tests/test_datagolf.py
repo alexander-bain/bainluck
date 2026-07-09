@@ -600,3 +600,23 @@ class TestInplayWindowGuard:
 
         # Never starve live play on a Redis hiccup — degrade to poll (True).
         assert _golf_inplay_window_active(_Boom()) is True
+
+
+# ---------------------------------------------------------------------------
+# #994: historical tour-code alias (alt -> euro) so the DNP recovery stops 400ing
+# ---------------------------------------------------------------------------
+class TestHistoricalTourAlias:
+    def test_alt_maps_to_euro(self):
+        from app.services.datagolf_api import _historical_tour
+        assert _historical_tour("alt") == "euro"
+        assert _historical_tour("ALT") == "euro"
+
+    def test_valid_tours_unchanged(self):
+        from app.services.datagolf_api import _historical_tour
+        for t in ("pga", "euro", "kft", "cha", "jpn"):
+            assert _historical_tour(t) == t
+
+    def test_none_and_empty_safe(self):
+        from app.services.datagolf_api import _historical_tour
+        assert _historical_tour("") == ""
+        assert _historical_tour(None) is None

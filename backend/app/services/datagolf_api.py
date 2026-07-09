@@ -22,6 +22,21 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+# #994: some tour codes our external_ids carry as ingestion aliases are rejected
+# by DataGolf's HISTORICAL endpoints (which accept: pga, euro, kft, cha, jpn, anz,
+# alp, champ, kor, ngl, bet, chn, afr, pgt, pgti, atvt, atgt, sam). 'alt' is our
+# alias for the DP World Tour, which DataGolf's historical API calls 'euro'. The
+# DNP-recovery (#994) 400'd on tour='alt' for ~24 markets; mapping it to the
+# accepted code lets those resolve instead of residual-ing out. Non-harmful: an
+# unmapped/wrong tour still just returns [] (residual), never worse.
+_HISTORICAL_TOUR_ALIASES = {"alt": "euro"}
+
+
+def _historical_tour(tour: str) -> str:
+    """Translate an ingestion tour alias to a DataGolf historical tour code."""
+    return _HISTORICAL_TOUR_ALIASES.get((tour or "").lower(), tour)
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -327,7 +342,7 @@ class DataGolfAPIService(BaseAPIClient):
 
         Returns an empty list if the event is not found or the endpoint errors.
         """
-        params: dict = {"tour": tour}
+        params: dict = {"tour": _historical_tour(tour)}
         if event_id:
             params["event_id"] = event_id
         if year:
@@ -396,7 +411,7 @@ class DataGolfAPIService(BaseAPIClient):
 
         The bet_outcome field indicates the actual result (1=won, 0=lost).
         """
-        params: dict = {"tour": tour, "market": market, "book": book}
+        params: dict = {"tour": _historical_tour(tour), "market": market, "book": book}
         if event_id:
             params["event_id"] = event_id
         if year:
@@ -433,7 +448,7 @@ class DataGolfAPIService(BaseAPIClient):
         1. Resolving Kalshi H2H/3-ball golf markets
         2. Displaying multi-source aggregated matchup odds on event pages
         """
-        params: dict = {"tour": tour, "book": book}
+        params: dict = {"tour": _historical_tour(tour), "book": book}
         if event_id:
             params["event_id"] = event_id
         if year:
