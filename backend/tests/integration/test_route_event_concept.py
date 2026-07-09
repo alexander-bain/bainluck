@@ -183,3 +183,96 @@ class TestTennisCanonicalResolution:
         names = [c["name"] for c in body["primary"]["competitors"]]
         assert "Carlos Alcaraz" in names
         assert "Coco Gauff" not in names
+
+
+def _f1_market(id_, name, ext, players, source="kalshi", rd_days=3):
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    return SimpleNamespace(
+        id=id_, name=name, external_id=ext, status="open",
+        llm_sport_category="motorsports", source=source, group_id=None,
+        commence_time=None,
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=rd_days),
+        outcomes=[_tennis_outcome(n, p) for n, p in players],
+    )
+
+
+class TestF1EventAdapter:
+    """#999 L2-72: F1 winner-field (motorsports) renders through the envelope."""
+
+    async def test_f1_winner_field(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        winner = _f1_market(
+            1, "British Grand Prix Winner", "KXF1RACE-BRIGP26",
+            [("Lando Norris", 0.35), ("Max Verstappen", 0.30), ("Charles Leclerc", 0.20)],
+        )
+        sprint = _f1_market(
+            2, "British Grand Prix: Sprint Race Winner", "KXF1RACESPRINT-BRIGP26",
+            [("Max Verstappen", 0.4), ("Lando Norris", 0.35)],
+        )
+        mock_db.execute.return_value = _query_result([winner, sprint])
+        resp = await client.get("/api/event/event:f1:british-grand-prix")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "f1"
+        assert body["primary"]["kind"] == "winner_field"
+        names = [c["name"] for c in body["primary"]["competitors"]]
+        assert "Lando Norris" in names
+        # the sprint sub-market folds in as a child, not the primary
+        assert any("Sprint" in (c.get("market_name") or "") for c in body["children"])
+
+    async def test_f1_no_markets_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([])
+        resp = await client.get("/api/event/event:f1:british-grand-prix")
+        assert resp.status_code == 404
+
+
+def _ufc_fight(id_, name, ext, a, b, ct_hours=2):
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    return SimpleNamespace(
+        id=id_, name=name, external_id=ext, status="open",
+        llm_sport_category="mma", source="kalshi", group_id=None,
+        commence_time=datetime.now(timezone.utc) + timedelta(hours=ct_hours),
+        resolution_date=None,
+        outcomes=[_tennis_outcome(a[0], a[1]), _tennis_outcome(b[0], b[1])],
+    )
+
+
+class TestUFCEventAdapter:
+    """#999 L2-72: UFC card renders as co_equal_list (the TwoSidedTimeline variant)."""
+
+    async def test_ufc_co_equal_card(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        f1 = _ufc_fight(
+            101, "Fight Night: Collins vs Tanzilovi",
+            "kalshi:KXUFCFIGHT-26JUN20COLTAN", ("Collins", 0.6), ("Tanzilovi", 0.4), ct_hours=1,
+        )
+        f2 = _ufc_fight(
+            102, "Fight Night: Kape vs Horiguchi",
+            "kalshi:KXUFCFIGHT-26JUN20KAPHOR", ("Kape", 0.55), ("Horiguchi", 0.45), ct_hours=3,
+        )
+        # A title future on the same category, different ticker — must be excluded.
+        prop = _ufc_fight(
+            103, "UFC Heavyweight Title Holder?",
+            "kalshi:KXUFCHEAVYWEIGHTTITLE-26", ("A", 0.5), ("B", 0.5),
+        )
+        mock_db.execute.return_value = _query_result([f1, f2, prop])
+        resp = await client.get("/api/event/event:ufc:26jun20")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "ufc"
+        assert body["primary"]["kind"] == "co_equal_list"
+        # main event = latest commence_time (Kape, +3h)
+        names = [c["name"] for c in body["primary"]["competitors"]]
+        assert "Kape" in names and "Horiguchi" in names
+        # both fights are children; the title future is excluded
+        assert len(body["children"]) == 2
+        assert not any("Title" in (c.get("market_name") or "") for c in body["children"])
+
+    async def test_ufc_no_card_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([])
+        resp = await client.get("/api/event/event:ufc:26jun20")
+        assert resp.status_code == 404

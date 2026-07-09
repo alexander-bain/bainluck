@@ -95,8 +95,14 @@ class TestRegistry:
     def test_tennis_adapter_registered(self):
         assert "tennis" in registered_domains()  # slice 2
 
+    def test_f1_and_ufc_adapters_registered(self):
+        # L2-72: slices 3/4 (co_equal_list UFC + winner-field F1).
+        assert "f1" in registered_domains()
+        assert "ufc" in registered_domains()
+        assert get_adapter("ufc").domain == "ufc"
+
     def test_unknown_domain_returns_none(self):
-        assert get_adapter("ufc") is None  # future slice (F1/UFC/awards)
+        assert get_adapter("awards") is None  # future slice (awards/etc.)
 
 
 def _golf_fixture():

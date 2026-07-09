@@ -522,3 +522,10 @@ register_adapter(GolfEventAdapter())
 from app.utils.event_tennis import TennisEventAdapter  # noqa: E402
 
 register_adapter(TennisEventAdapter())
+
+# F1 (winner-field) + UFC (co_equal_list) adapters — slices 3/4 (#999 L2-72).
+from app.utils.event_f1 import F1EventAdapter  # noqa: E402
+from app.utils.event_ufc import UFCEventAdapter  # noqa: E402
+
+register_adapter(F1EventAdapter())
+register_adapter(UFCEventAdapter())
