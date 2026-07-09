@@ -158,3 +158,11 @@ OVERWRITABLE_WINNER_SOURCES_SQL: str = _sql_in_list(OVERWRITABLE_WINNER_SOURCES)
 # SQL fragment for the strict guess-family set (for guards that must protect ANY
 # non-guess resolution, including deterministic/soft ones).
 GUESS_FAMILY_SOURCES_SQL: str = _sql_in_list(GUESS_FAMILY_SOURCES)
+
+# SQL fragment for the AUTHORITATIVE (tier-3) set. #845 batch 2: the phases that
+# write api_settlement previously guarded only `!= 'api_settlement'`, so they
+# could clobber a sibling authoritative source (clob_authoritative,
+# datagolf_settlement, …). Routing those guards through this set protects the
+# whole tier — strictly more conservative (an UPDATE skips MORE rows, never
+# resolves more), so it can only prevent a downgrade, never cause one.
+AUTHORITATIVE_SOURCES_SQL: str = _sql_in_list(AUTHORITATIVE_SOURCES)

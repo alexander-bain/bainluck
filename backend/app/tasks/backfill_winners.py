@@ -20,7 +20,10 @@ from sqlalchemy import select, update, text, func
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
-from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL
+from app.utils.resolution_authority import (
+    AUTHORITATIVE_SOURCES_SQL,
+    OVERWRITABLE_WINNER_SOURCES_SQL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
-                        AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                        AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                   )
                 GROUP BY fm.external_id
                 ORDER BY fm.external_id ASC
@@ -123,7 +126,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                             JOIN futures_markets fm ON fo.market_id = fm.id
                             WHERE fm.source = 'kalshi'
                               AND fm.external_id = :event_ticker
-                              AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                              AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                             LIMIT 5
                         """),
                         {"event_ticker": event_ticker},
@@ -367,7 +370,7 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
                                   AND fo.external_id = ANY(:tickers)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                             """),
                             {"tickers": yes_tickers},
                         )
@@ -381,7 +384,7 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
                                   AND fo.external_id = ANY(:tickers)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                             """),
                             {"tickers": no_tickers},
                         )
@@ -480,7 +483,7 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
                                   AND fo.external_id = ANY(:tickers)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                             """),
                             {"tickers": yes_tickers},
                         )
@@ -497,7 +500,7 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
                                   AND fo.external_id = ANY(:tickers)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                             """),
                             {"tickers": no_tickers},
                         )
@@ -4385,7 +4388,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
                             WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') != 'api_settlement'
+                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                         """),
                         {"price": prices[0], "won": yes_won, "cid": cid},
                     )
@@ -4404,7 +4407,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
                             WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') != 'api_settlement'
+                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
                         """),
                         {
                             "price": (

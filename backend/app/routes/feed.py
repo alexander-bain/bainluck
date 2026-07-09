@@ -79,6 +79,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
     editorial_archetype,
     has_no_real_price,
+    is_locked_near_certain,
 )
 from app.utils.feed_reasons import (
     generate_event_reason,
@@ -5118,6 +5119,24 @@ async def _score_futures(
         # are far above the floor and stay eligible.
         if market.outcomes and has_no_real_price(
             [o["probability"] for o in outcomes_data]
+        ):
+            continue
+
+        # #1004: drop unresolved markets pinned at a dead-extreme price (leader
+        # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
+        # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
+        # or a high-volume market stays eligible.
+        if market.outcomes and is_locked_near_certain(
+            leader_prob,
+            max(
+                (
+                    abs(o["probability_change_24h"])
+                    for o in outcomes_data
+                    if o.get("probability_change_24h") is not None
+                ),
+                default=None,
+            ),
+            float(market.volume_24h) if market.volume_24h is not None else None,
         ):
             continue
 

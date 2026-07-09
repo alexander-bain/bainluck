@@ -13,6 +13,7 @@ import pytest
 
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES,
+    AUTHORITATIVE_SOURCES_SQL,
     DETERMINISTIC_SOURCES,
     GUESS_FAMILY_SOURCES,
     KNOWN_SOURCES,
@@ -94,6 +95,15 @@ class TestCanonicalSqlFragment:
             "clean_resolution", "pass2_loser", "pass3_threshold",
         )
 
+    def test_authoritative_sql_covers_the_tier_and_includes_api_settlement(self):
+        # #845 batch 2: the api_settlement write-guards route through this set.
+        # It must contain api_settlement (back-compat with the old guard) and the
+        # rest of the tier (the hardening), rendered deterministically.
+        assert AUTHORITATIVE_SOURCES_SQL.startswith("(") and AUTHORITATIVE_SOURCES_SQL.endswith(")")
+        for s in AUTHORITATIVE_SOURCES:
+            assert f"'{s}'" in AUTHORITATIVE_SOURCES_SQL
+        assert "'api_settlement'" in AUTHORITATIVE_SOURCES_SQL
+
 
 class TestBackfillSourceGuards:
     """Scan the backfill task source — the actual drift/poisoning guard."""
@@ -115,6 +125,17 @@ class TestBackfillSourceGuards:
             f"{len(offenders)} inline guess-family tuple(s) remain in "
             "backfill_winners.py — route them through "
             "resolution_authority.OVERWRITABLE_WINNER_SOURCES_SQL"
+        )
+
+    def test_no_bare_api_settlement_write_guard_remains(self):
+        # #845 batch 2: the `!= 'api_settlement'` write-guards must route through
+        # AUTHORITATIVE_SOURCES_SQL so a phase protects the whole authoritative
+        # tier, not just api_settlement. A new bare guard re-opens the clobber gap.
+        src = self._src()
+        offenders = re.findall(r"!=\s*'api_settlement'", src)
+        assert offenders == [], (
+            f"{len(offenders)} bare `!= 'api_settlement'` write-guard(s) remain — "
+            "route them through NOT IN AUTHORITATIVE_SOURCES_SQL"
         )
 
     def test_every_written_source_is_classified(self):

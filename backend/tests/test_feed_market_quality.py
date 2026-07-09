@@ -23,6 +23,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
     editorial_archetype,
     has_no_real_price,
+    is_locked_near_certain,
     has_specific_explanation,
     has_strong_hook,
     quality_score_adjustment,
@@ -2759,3 +2760,38 @@ class TestEditorialArchetypes:
 
         for name, expected in examples.items():
             assert editorial_archetype(name, None) == expected
+
+
+class TestLockedNearCertain:
+    """#1004: suppress unresolved markets pinned at a dead extreme (100%/0%)."""
+
+    def test_high_extreme_no_interest_suppressed(self):
+        assert is_locked_near_certain(0.99) is True
+        assert is_locked_near_certain(0.995, None, None) is True
+
+    def test_low_extreme_no_interest_suppressed(self):
+        assert is_locked_near_certain(0.01) is True
+        assert is_locked_near_certain(0.005) is True
+
+    def test_normal_probability_not_suppressed(self):
+        assert is_locked_near_certain(0.60) is False
+        assert is_locked_near_certain(0.90) is False   # near but not dead-extreme
+        assert is_locked_near_certain(0.985) is False
+
+    def test_none_leader_not_suppressed(self):
+        assert is_locked_near_certain(None) is False
+
+    def test_genuine_mover_kept(self):
+        # jumped to 99% on a big 24h swing → interesting, keep
+        assert is_locked_near_certain(0.99, 0.35, None) is False
+        assert is_locked_near_certain(0.99, 0.10, None) is False  # exactly at bar
+
+    def test_small_move_still_suppressed(self):
+        assert is_locked_near_certain(0.99, 0.02, None) is True
+
+    def test_high_volume_kept(self):
+        assert is_locked_near_certain(0.995, None, 25000.0) is False
+        assert is_locked_near_certain(0.995, 0.0, 100000.0) is False
+
+    def test_low_volume_still_suppressed(self):
+        assert is_locked_near_certain(0.995, 0.0, 100.0) is True

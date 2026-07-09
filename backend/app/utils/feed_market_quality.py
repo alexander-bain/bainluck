@@ -35,6 +35,46 @@ def has_no_real_price(outcome_probabilities: "list[float | None]") -> bool:
     return max(real) < FEED_MIN_REAL_PROBABILITY
 
 
+# #1004: unresolved markets whose leader is pinned at a dead extreme render as a
+# lone "100%" (or "0%") card — the locked-near-certain junk class Manus flagged
+# (split from #921; cf. gotcha #23). Suppress them UNLESS there's live interest:
+# a genuine near-certain MOVER (a big 24h swing — e.g. it just jumped to 99% on
+# news) or a high-volume market stays eligible.
+FEED_LOCKED_CERTAIN_HIGH = 0.99   # leader rounds to 100%
+FEED_LOCKED_CERTAIN_LOW = 0.01    # leader rounds to 0%
+FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10       # >=10pt 24h swing = genuine mover
+FEED_LOCKED_CERTAIN_KEEP_VOLUME = 25000.0  # live money = keep
+
+
+def is_locked_near_certain(
+    leader_probability: "float | None",
+    max_abs_movement_24h: "float | None" = None,
+    volume_24h: "float | None" = None,
+) -> bool:
+    """True if an UNRESOLVED market is pinned at a dead-extreme price with no live
+    interest (#1004). The caller applies this only to open/unresolved feed
+    candidates. Guarded so a near-certain MOVER or a high-volume market is kept —
+    only the boring locked-certain cards are suppressed.
+    """
+    if leader_probability is None:
+        return False
+    if not (
+        leader_probability >= FEED_LOCKED_CERTAIN_HIGH
+        or leader_probability <= FEED_LOCKED_CERTAIN_LOW
+    ):
+        return False
+    # Genuine mover — a big recent swing is interesting even at a dead extreme.
+    if (
+        max_abs_movement_24h is not None
+        and abs(max_abs_movement_24h) >= FEED_LOCKED_CERTAIN_KEEP_MOVE
+    ):
+        return False
+    # Live money — high 24h volume means the market is actively traded.
+    if volume_24h is not None and volume_24h >= FEED_LOCKED_CERTAIN_KEEP_VOLUME:
+        return False
+    return True
+
+
 QualityClass = Literal["compelling", "normal", "low_quality", "suppress"]
 EditorialArchetype = Literal[
     "world_event",
