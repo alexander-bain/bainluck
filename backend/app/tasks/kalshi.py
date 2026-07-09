@@ -3081,7 +3081,13 @@ async def _backfill_kalshi_price_history(
                               )
                               OR fo.opening_probability IS NULL
                           )
-                        ORDER BY fm.resolution_date DESC NULLS LAST
+                        -- #152 Item 2 (Queue #151 flag): oldest-resolved FIRST so
+                        -- the drain harvests the 2-3mo EDGE cohort before it crosses
+                        -- the ~2-3mo candlestick cliff (gotcha #35 — Kalshi MARKET
+                        -- data is permanently lost after that window). DESC kept
+                        -- re-harvesting the freshest (safe) cohort and never reached
+                        -- the edge before it expired.
+                        ORDER BY fm.resolution_date ASC NULLS LAST
                         LIMIT :limit
                     """),
                     {"limit": limit},
