@@ -894,8 +894,13 @@ async def _precompute_calibration_main():
 
     # L2-78 Item 0 (flagged since L2-73): the true resolved-data span for the
     # calibration hero. Cheap MIN/MAX over resolved futures resolution_date (the
-    # Kalshi/Polymarket bulk of the curve). None-safe so a cold aggregate never
-    # breaks the payload; the hero falls back to generated_at when absent.
+    # Kalshi/Polymarket bulk of the curve), but BOUNDED to a sane window so
+    # data-quality artifacts can't define the hero: a resolved market must have
+    # resolved in the past (resolution_date <= NOW() — a future date on a
+    # 'resolved' row is a bad date) and within the last 5 years (these sources
+    # are all recent; a 2011 date is a parse artifact, seen live). Without the
+    # bound the raw MIN/MAX read Jul-2011–Jul-2029. None-safe; the hero falls
+    # back to generated_at when absent.
     date_range = None
     try:
         dr = (
@@ -903,7 +908,9 @@ async def _precompute_calibration_main():
                 text(
                     "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
                     "FROM futures_markets "
-                    "WHERE status = 'resolved' AND resolution_date IS NOT NULL"
+                    "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+                    "AND resolution_date <= NOW() "
+                    "AND resolution_date >= NOW() - INTERVAL '5 years'"
                 )
             )
         ).one()
