@@ -2004,8 +2004,16 @@ async def _regrade_golf_extra_winners():
                           SELECT 1 FROM futures_outcomes fo2
                           WHERE fo2.market_id = fm.id
                             AND fo2.is_winner = true
+                            -- #845 batch 3: bespoke golf "a real authoritative/
+                            -- deterministic winner exists" set — intentionally
+                            -- NOT the full authority tier (golf never resolves via
+                            -- box_score/scoring_plays/clob_*), so it is kept
+                            -- context-specific rather than force-fit to the
+                            -- ladder. Dropped the dead 'datagolf' source (never
+                            -- written — resolution_source uses datagolf_settlement
+                            -- / datagolf_matchup; verified absent from prod).
                             AND fo2.resolution_source IN
-                                ('leaderboard', 'api_settlement', 'datagolf',
+                                ('leaderboard', 'api_settlement',
                                  'datagolf_matchup', 'game_score')
                       )
                 """))
@@ -5812,8 +5820,16 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                           SELECT 1 FROM futures_outcomes fo2
                           WHERE fo2.market_id = fm.id
                             AND fo2.is_winner = true
+                            -- #845 batch 3: bespoke golf "a real authoritative/
+                            -- deterministic winner exists" set — intentionally
+                            -- NOT the full authority tier (golf never resolves via
+                            -- box_score/scoring_plays/clob_*), so it is kept
+                            -- context-specific rather than force-fit to the
+                            -- ladder. Dropped the dead 'datagolf' source (never
+                            -- written — resolution_source uses datagolf_settlement
+                            -- / datagolf_matchup; verified absent from prod).
                             AND fo2.resolution_source IN
-                                ('leaderboard', 'api_settlement', 'datagolf',
+                                ('leaderboard', 'api_settlement',
                                  'datagolf_matchup', 'game_score')
                       )
                 """))
