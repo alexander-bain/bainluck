@@ -166,3 +166,20 @@ GUESS_FAMILY_SOURCES_SQL: str = _sql_in_list(GUESS_FAMILY_SOURCES)
 # whole tier — strictly more conservative (an UPDATE skips MORE rows, never
 # resolves more), so it can only prevent a downgrade, never cause one.
 AUTHORITATIVE_SOURCES_SQL: str = _sql_in_list(AUTHORITATIVE_SOURCES)
+
+# Guess-family sources that assert a SINGLE winner in a mutually-exclusive
+# market (moneyline / set-winner / head-to-head). This is GUESS_FAMILY_SOURCES
+# MINUS pass3_threshold: pass3_threshold grades cumulative-threshold ladders
+# ("Over 3.5 maps" AND "Over 4.5 maps"), where multiple YES outcomes are
+# LEGITIMATELY co-winners — flipping one there would corrupt a correct result.
+# The both-winner correction (#997) flips ONLY these when a strictly-higher
+# authority sibling already won; pass3_threshold is deliberately excluded so
+# legit ladders are never touched. Kept in the ladder module so the drift-scan
+# test (which forbids the inline 3-tuple literal in backfill_winners.py) stays
+# the single source of truth for guess-family membership.
+SINGLE_WINNER_GUESS_SOURCES: tuple[str, ...] = (
+    "pass2_guess",
+    "binary_higher_wins",
+    "multi_max_prob",
+)
+SINGLE_WINNER_GUESS_SOURCES_SQL: str = _sql_in_list(SINGLE_WINNER_GUESS_SOURCES)

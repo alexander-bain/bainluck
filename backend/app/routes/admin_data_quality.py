@@ -2846,27 +2846,15 @@ async def trigger_null_impossible_both_sides_openings(
     return {"status": "queued", "task_id": str(result.id)}
 
 
-@router.post("/unresolve-datagolf-premature")
-async def trigger_unresolve_datagolf_premature(
+@router.post("/correct-both-winner-guess-side")
+async def trigger_correct_both_winner_guess_side(
     request: Request, secret: str = Query(None),
 ):
-    """#146 Item 2: run the #137 premature-DataGolf-resolution un-resolve on demand
-    (dedicated because backfill_winners budget-guards out before it)."""
+    """#997: demote the guess side of both-winner mutually-exclusive binaries on
+    demand (dedicated because backfill_winners budget-guards out before it)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.unresolve_datagolf_premature")
-    return {"status": "queued", "task_id": str(result.id)}
-
-
-@router.post("/null-impossible-both-sides-openings")
-async def trigger_null_impossible_both_sides_openings(
-    request: Request, secret: str = Query(None),
-):
-    """#146 Item 2: run the #137 both-sides=1.0 opening null on demand (dedicated
-    because backfill_winners budget-guards out before it)."""
-    _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.null_impossible_both_sides_openings")
+    result = celery_app.send_task("app.tasks.correct_both_winner_guess_side")
     return {"status": "queued", "task_id": str(result.id)}
 
 

@@ -268,6 +268,7 @@ class TestBeatScheduleCompleteness:
         "regrade-polymarket-under-signflip",
         "unresolve-datagolf-premature",
         "null-impossible-both-sides-openings",
+        "correct-both-winner-guess-side",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",

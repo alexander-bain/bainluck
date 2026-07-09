@@ -22,7 +22,9 @@ from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
+    GUESS_FAMILY_SOURCES_SQL,
     OVERWRITABLE_WINNER_SOURCES_SQL,
+    SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
 
 logger = logging.getLogger(__name__)
@@ -2354,6 +2356,67 @@ async def _null_impossible_both_sides_openings():
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Impossible both-1.0 opening repair error: %s", e)
+    return stats
+
+
+async def _correct_both_winner_guess_side():
+    """#997: demote the GUESS side of a both-winner mutually-exclusive binary.
+
+    A mutually-exclusive 2-outcome market (moneyline, set-winner, head-to-head)
+    can have exactly ONE winner. Verified in prod (2026-07-09): 580 outcomes sit
+    in such markets where BOTH outcomes are is_winner=true — one graded by an
+    authoritative source (clean_resolution / game_score) and the other by a
+    tier-0 guess (pass2_guess). The guess wrongly stood as a co-winner, poisoning
+    calibration (two winners summing >1). Examples: "Missouri at Arkansas"
+    (game_score=Missouri, pass2_guess=Arkansas both won), tennis Set-1 winners.
+
+    Fix (authority ladder, #845): flip the guess side to is_winner=false when its
+    sibling is a strictly-higher-authority winner. A guess must never overwrite
+    or co-exist with a non-guess resolution (#754 poison guard). We do NOT assert
+    a NEW winner (the authoritative side already IS the winner) and we do NOT
+    touch resolution_source — only the wrong is_winner flag flips, so the write
+    is minimal and idempotent (once is_winner=false the row no longer matches).
+
+    Deliberately narrow — the guess side is SINGLE_WINNER_GUESS_SOURCES
+    (pass3_threshold EXCLUDED: cumulative-threshold ladders like "Over 3.5 maps"
+    + "Over 4.5 maps" are LEGITIMATELY both-YES). The sibling must be a non-guess
+    (GUESS_FAMILY_SOURCES excluded, incl. pass3_threshold) winner, so both-guess
+    and both-authoritative both-winner markets are left for evidence review, never
+    guessed at (gotcha #21). mutually_exclusive=false ladders are skipped too.
+    """
+    stats = {"flipped": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(text("""
+                UPDATE futures_outcomes u
+                SET is_winner = false, last_updated = NOW()
+                FROM futures_markets m
+                WHERE u.market_id = m.id
+                  AND m.mutually_exclusive = true
+                  AND u.is_winner = true
+                  AND u.resolution_source IN """ + SINGLE_WINNER_GUESS_SOURCES_SQL + """
+                  AND (SELECT COUNT(*) FROM futures_outcomes c
+                       WHERE c.market_id = u.market_id) = 2
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes o
+                      WHERE o.market_id = u.market_id
+                        AND o.id <> u.id
+                        AND o.is_winner = true
+                        AND o.resolution_source IS NOT NULL
+                        AND o.resolution_source NOT IN """ + GUESS_FAMILY_SOURCES_SQL + """
+                  )
+            """))
+            await session.commit()
+            stats["flipped"] = result.rowcount
+        if stats["flipped"]:
+            logger.info(
+                "Both-winner guess-side correction (#997): flipped %d guess "
+                "outcomes to loser",
+                stats["flipped"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Both-winner guess-side correction error: %s", e)
     return stats
 
 
@@ -5370,6 +5433,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     poly_under_stats = await _regrade_polymarket_under_signflip()
     datagolf_premature_stats = await _unresolve_datagolf_premature()
     both_ones_stats = await _null_impossible_both_sides_openings()
+    # #997: demote the guess side of both-winner mutually-exclusive binaries.
+    # Like its siblings above it is budget-guarded out on heavy cycles, so it
+    # ALSO runs as a dedicated beat (correct_both_winner_guess_side).
+    both_winner_stats = await _correct_both_winner_guess_side()
 
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("candlestick_trades")
@@ -5895,6 +5962,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "poly_under_signflip": poly_under_stats,
         "datagolf_premature_unresolve": datagolf_premature_stats,
         "impossible_both_ones": both_ones_stats,
+        "both_winner_guess_flip": both_winner_stats,
         "polymarket_api_group_id": api_group_stats,
         "datagolf_settlement": dg_settlement_stats,
         "datagolf_leaderboard_backfill": dg_leaderboard_stats,

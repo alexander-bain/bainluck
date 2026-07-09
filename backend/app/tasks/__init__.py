@@ -440,6 +440,17 @@ def null_impossible_both_sides_openings(self):
     return _tracked_run("impossible_both_sides_null", _null_impossible_both_sides_openings())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.correct_both_winner_guess_side")
+def correct_both_winner_guess_side(self):
+    """#997: starvation sibling of the #146 integrity beats. Demotes the tier-0
+    guess side of a both-winner mutually-exclusive binary to loser when a
+    strictly-higher authority sibling already won. The in-drain call is
+    budget-guarded out on heavy cycles, so this dedicated beat guarantees it
+    runs. Cheap idempotent set-based UPDATE."""
+    from app.tasks.backfill_winners import _correct_both_winner_guess_side
+    return _tracked_run("both_winner_guess_flip", _correct_both_winner_guess_side())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
 def backfill_kalshi_candlestick(self, limit: int = 500):
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
@@ -2094,6 +2105,14 @@ celery_app.conf.beat_schedule = {
         # #146 Item 2: starvation sibling of the poly flip (same reason).
         "task": "app.tasks.null_impossible_both_sides_openings",
         "schedule": crontab(minute=55, hour="5,11,17,23"),
+        "options": {"queue": "background"},
+    },
+    "correct-both-winner-guess-side": {
+        # #997: starvation sibling of the #146 integrity beats — demote the
+        # guess side of both-winner mutually-exclusive binaries. Offset a few
+        # minutes after the both-sides null so they never contend for the worker.
+        "task": "app.tasks.correct_both_winner_guess_side",
+        "schedule": crontab(minute=58, hour="5,11,17,23"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

@@ -19,6 +19,8 @@ from app.utils.resolution_authority import (
     KNOWN_SOURCES,
     OVERWRITABLE_WINNER_SOURCES,
     OVERWRITABLE_WINNER_SOURCES_SQL,
+    SINGLE_WINNER_GUESS_SOURCES,
+    SINGLE_WINNER_GUESS_SOURCES_SQL,
     TERMINAL_SOURCES,
     authority_tier,
     is_authoritative,
@@ -105,11 +107,46 @@ class TestCanonicalSqlFragment:
         assert "'api_settlement'" in AUTHORITATIVE_SOURCES_SQL
 
 
+class TestSingleWinnerGuessSet:
+    """#997: the both-winner correction flips ONLY single-winner guesses."""
+
+    def test_is_subset_of_guess_family(self):
+        assert set(SINGLE_WINNER_GUESS_SOURCES) <= GUESS_FAMILY_SOURCES
+
+    def test_all_are_tier_zero(self):
+        assert all(authority_tier(s) == 0 for s in SINGLE_WINNER_GUESS_SOURCES)
+
+    def test_pass3_threshold_is_excluded(self):
+        # The safety crux: pass3_threshold grades cumulative-threshold ladders
+        # (Over 3.5 AND Over 4.5 both YES). It is a guess-family member but MUST
+        # NOT be flipped by the both-winner correction, or legit ladders break.
+        assert "pass3_threshold" in GUESS_FAMILY_SOURCES
+        assert "pass3_threshold" not in SINGLE_WINNER_GUESS_SOURCES
+
+    def test_sql_renders_the_three_single_winner_guesses(self):
+        assert SINGLE_WINNER_GUESS_SOURCES_SQL == (
+            "('pass2_guess', 'binary_higher_wins', 'multi_max_prob')"
+        )
+        assert "pass3_threshold" not in SINGLE_WINNER_GUESS_SOURCES_SQL
+
+
 class TestBackfillSourceGuards:
     """Scan the backfill task source — the actual drift/poisoning guard."""
 
     def _src(self) -> str:
         return _BACKFILL.read_text()
+
+    def test_both_winner_flip_excludes_pass3_threshold_ladders(self):
+        # The both-winner correction must flip the guess side via the
+        # SINGLE_WINNER_GUESS set (pass3_threshold excluded) and require the
+        # sibling to be a NON-guess winner via the full GUESS_FAMILY set. If the
+        # function ever hardcodes its own list or drops the sibling guard it
+        # could demote a legit cumulative-threshold ladder — this pins the wiring.
+        src = self._src()
+        assert "_correct_both_winner_guess_side" in src
+        assert "SINGLE_WINNER_GUESS_SOURCES_SQL" in src
+        # the sibling exclusion must use the FULL guess family (incl. pass3)
+        assert "GUESS_FAMILY_SOURCES_SQL" in src
 
     def test_no_hardcoded_guess_family_tuple_remains(self):
         # After rewiring, the guess-family tuple literal must NOT appear inline —
