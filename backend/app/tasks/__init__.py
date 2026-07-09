@@ -407,6 +407,19 @@ def recover_datagolf_participation(self, limit: int = 150):
     return _tracked_run("datagolf_recovery", _recover_datagolf_participation(limit=limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.regrade_polymarket_under_signflip")
+def regrade_polymarket_under_signflip(self):
+    """#145 Item 1: run the #137 Polymarket Under/No sign-flip re-grade as a
+    DEDICATED task. It was a backfill_winners phase positioned AFTER
+    calibration_prices, but that pipeline hits its 840s budget guard and returns
+    partial (stopped_before=calibration_prices) BEFORE the #137 integrity block
+    ever runs — so the regrade applied 0 despite ~36K rows matching in prod. This
+    single cheap set-based UPDATE (flips cp AND opening, so it's durable against a
+    later cal-price fallback) drains the class reliably each cycle. Idempotent."""
+    from app.tasks.backfill_winners import _regrade_polymarket_under_signflip
+    return _tracked_run("poly_under_signflip", _regrade_polymarket_under_signflip())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_kalshi_candlestick")
 def backfill_kalshi_candlestick(self, limit: int = 500):
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
@@ -2039,6 +2052,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.recover_datagolf_participation",
         "schedule": crontab(minute=30, hour="4,10,16,22"),
         "kwargs": {"limit": 200},
+        "options": {"queue": "background"},
+    },
+    "regrade-polymarket-under-signflip": {
+        # #145 Item 1: dedicated task — the #137 poly Under/No sign-flip regrade
+        # was a backfill_winners phase that never ran (pipeline budget-guards out
+        # before calibration_prices). One cheap idempotent UPDATE; drains the
+        # ~36K-row class and forward-fixes any rows the poller re-introduces.
+        "task": "app.tasks.regrade_polymarket_under_signflip",
+        "schedule": crontab(minute=45, hour="5,11,17,23"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

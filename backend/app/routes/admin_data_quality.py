@@ -2809,6 +2809,19 @@ async def trigger_recover_datagolf_participation(
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
+@router.post("/regrade-polymarket-under-signflip")
+async def trigger_regrade_polymarket_under_signflip(
+    request: Request, secret: str = Query(None),
+):
+    """#145 Item 1: run the #137 Polymarket Under/No sign-flip re-grade on demand.
+    Dedicated trigger because the backfill_winners pipeline budget-guards out
+    before this phase runs (stopped_before=calibration_prices)."""
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task("app.tasks.regrade_polymarket_under_signflip")
+    return {"status": "queued", "task_id": str(result.id)}
+
+
 @router.post("/fix-commence-times")
 async def fix_commence_times(request: Request, secret: str = Query(None)):
     """Run golf + hockey commence_time fixes synchronously (no Celery)."""

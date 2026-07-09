@@ -265,6 +265,7 @@ class TestBeatScheduleCompleteness:
         "backfill-settled-gap-creation",
         "recover-datagolf-participation",
         "poll-datagolf-inplay",
+        "regrade-polymarket-under-signflip",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",
