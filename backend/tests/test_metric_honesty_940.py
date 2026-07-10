@@ -77,10 +77,11 @@ def test_curve_excludes_heuristic_and_nullsource_754_989():
     import app.tasks.precompute_calibration as pc
     src = inspect.getsource(pc)
     # heuristic classes added to the NOT IN exclusion at every curve query site:
-    # main ranked_outcomes, time-horizon eligible_outcomes, void-count query, and
-    # (#156 L2-79 Item 2) the golf_placeholder_markets CTE, which reuses the same
-    # eligibility predicate so its high-band count reflects the published set.
-    assert src.count("'pass2_loser', 'all_losers',") == 4
+    # main ranked_outcomes, time-horizon eligible_outcomes, void-count query,
+    # (#156 L2-79 Item 2) the golf_placeholder_markets CTE, and (Queue #157 #1012)
+    # the mex_norm_markets CTE — each reuses the same eligibility predicate so its
+    # population matches the published curve.
+    assert src.count("'pass2_loser', 'all_losers',") == 5
     # null-source now EXCLUDED from the curve (predicate flipped IS NULL OR -> IS NOT NULL AND)
     assert src.count("fo.resolution_source IS NOT NULL\n") >= 3 or \
         src.count("resolution_source IS NOT NULL") >= 3
