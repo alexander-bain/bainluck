@@ -2384,15 +2384,24 @@ async def _correct_both_winner_guess_side():
     and both-authoritative both-winner markets are left for evidence review, never
     guessed at (gotcha #21). mutually_exclusive=false ladders are skipped too.
     """
-    stats = {"flipped": 0, "errors": []}
+    stats = {"flipped": 0, "candidates": 0, "batches": 0, "errors": []}
     try:
+        # Read-side FIRST: identify the guess-side winner outcomes to demote. The
+        # heavy correlated predicate (two self-subqueries over futures_outcomes)
+        # runs ONCE here as a ~3s read, NOT re-planned per-row inside a long-held
+        # UPDATE. The original single monolithic UPDATE evaluated the correlated
+        # subqueries while acquiring row locks (contending with the live poller)
+        # and ran >120s every cycle, tripping the task soft_time_limit before it
+        # could commit — so it NEVER once flipped a row in prod (#997/#157). We
+        # never assert a NEW winner (the authoritative sibling already IS the
+        # winner) and never touch resolution_source (#754 poison guard); only the
+        # wrong is_winner flag flips, so the write is minimal and idempotent.
         async with get_task_session() as session:
-            result = await session.execute(text("""
-                UPDATE futures_outcomes u
-                SET is_winner = false, last_updated = NOW()
-                FROM futures_markets m
-                WHERE u.market_id = m.id
-                  AND m.mutually_exclusive = true
+            rows = await session.execute(text("""
+                SELECT u.id
+                FROM futures_outcomes u
+                JOIN futures_markets m ON u.market_id = m.id
+                WHERE m.mutually_exclusive = true
                   AND u.is_winner = true
                   AND u.resolution_source IN """ + SINGLE_WINNER_GUESS_SOURCES_SQL + """
                   AND (SELECT COUNT(*) FROM futures_outcomes c
@@ -2406,13 +2415,34 @@ async def _correct_both_winner_guess_side():
                         AND o.resolution_source NOT IN """ + GUESS_FAMILY_SOURCES_SQL + """
                   )
             """))
-            await session.commit()
-            stats["flipped"] = result.rowcount
+            ids = [r[0] for r in rows.fetchall()]
+        stats["candidates"] = len(ids)
+
+        # Write-side: tiny id-keyed UPDATEs committed per batch, so partial
+        # progress persists and no single statement holds locks long enough to
+        # trip the soft limit (bounds the longest uninterrupted op — mirrors the
+        # gotcha #13 per-market commit pattern). Idempotent: a row already
+        # is_winner=false won't rematch on the next cycle.
+        BATCH = 200
+        for i in range(0, len(ids), BATCH):
+            chunk = ids[i:i + BATCH]
+            async with get_task_session() as session:
+                result = await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = false, "
+                        "last_updated = NOW() "
+                        "WHERE id = ANY(:ids) AND is_winner = true"
+                    ),
+                    {"ids": chunk},
+                )
+                await session.commit()
+                stats["flipped"] += result.rowcount
+            stats["batches"] += 1
         if stats["flipped"]:
             logger.info(
                 "Both-winner guess-side correction (#997): flipped %d guess "
-                "outcomes to loser",
-                stats["flipped"],
+                "outcomes to loser across %d batches",
+                stats["flipped"], stats["batches"],
             )
     except Exception as e:
         stats["errors"].append(str(e))
