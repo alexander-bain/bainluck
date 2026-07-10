@@ -892,9 +892,42 @@ async def public_calibration(
             WHERE eligible >= 1
               AND has_winner >= 1
         ),
+        -- Queue #157 (#1012): multi-candidate normalization (mirrors the
+        -- precompute task's mex_win_counts / mex_norm_markets). Kept in sync so a
+        -- cold-cache fallback serve is not wildly over-confident on mex markets.
+        mex_win_counts AS (
+            SELECT fo.market_id,
+                COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
+            FROM futures_outcomes fo
+            JOIN market_info mi ON mi.market_id = fo.market_id
+            WHERE mi.mutually_exclusive = true
+            GROUP BY fo.market_id
+        ),
+        mex_norm_markets AS (
+            SELECT fo.market_id,
+                SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS cp_sum
+            FROM futures_outcomes fo
+            JOIN market_info mi ON mi.market_id = fo.market_id
+            JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
+            WHERE mi.mutually_exclusive = true
+              AND mwc.win_count = 1
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND (fo.resolution_source IS NULL
+                   OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'did_not_play', 'withdrew',
+                                                    'no_pregame_trading'))
+              AND COALESCE(fo.volume, -1) != 0
+            GROUP BY fo.market_id
+            HAVING COUNT(*) >= 3
+               AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > 1.15
+        ),
         ranked_outcomes AS (
             SELECT
-                COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
+                CASE WHEN mnm.market_id IS NOT NULL
+                     THEN COALESCE(fo.calibration_probability, fo.opening_probability) / mnm.cp_sum
+                     ELSE COALESCE(fo.calibration_probability, fo.opening_probability)
+                END AS adj_opening_probability,
                 fo.is_winner AS is_winner,
                 (fo.calibration_probability IS NOT NULL
                  AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
@@ -908,6 +941,7 @@ async def public_calibration(
             FROM futures_outcomes fo
             JOIN virtual_market vm ON vm.market_id = fo.market_id
             JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+            LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND (fo.resolution_source IS NULL

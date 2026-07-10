@@ -114,7 +114,15 @@ async def test_public_calibration_classifies_only_non_null_changed_prices_as_clo
     await calibration.public_calibration(db=db, bust=1)
 
     futures_sql = str(db.statements[0])
-    assert "COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability" in futures_sql
+    # adj_opening_probability derives from cal_prob with an opening fallback.
+    # Queue #157 wraps this base in a mex-normalization CASE (cp / per-market
+    # sum for inflated single-winner partitions), so the raw COALESCE now lives
+    # in the ELSE branch and the alias follows the END.
+    assert "COALESCE(fo.calibration_probability, fo.opening_probability)" in futures_sql
+    assert "END AS adj_opening_probability" in futures_sql
+    assert "/ mnm.cp_sum" in futures_sql  # the normalization divisor
+    # price_moved still keys off the raw cal_prob vs opening comparison, NOT the
+    # normalized value — the closing-line classification is unchanged.
     assert "fo.calibration_probability IS NOT NULL" in futures_sql
     assert "fo.calibration_probability IS DISTINCT FROM fo.opening_probability" in futures_sql
     assert "COALESCE(fo.calibration_probability, fo.opening_probability) IS DISTINCT FROM" not in futures_sql

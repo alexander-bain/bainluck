@@ -79,6 +79,19 @@ CALIBRATION_CORRECTIONS = [
                        "two 80%+ outcomes; 98.6% lose). Excluded; genuine single "
                        "leaders (82% win) stay in. Read-side only, no regrade.",
     },
+    {
+        "date": "2026-07-10",
+        "title": "Multi-candidate probability normalization",
+        "rows": None,  # live count in payload.mex_normalization.normalized_outcomes
+        "description": "Mutually-exclusive markets with >=3 outcomes are one "
+                       "question and must sum to ~1.0, but sources stamp each "
+                       "candidate at its one-sided ask so the sum inflated to "
+                       "2.4-5.3 (census 2026-07-09). Now each such market's "
+                       "probabilities are divided by the per-market sum. Only "
+                       "genuine single-winner partitions are touched; multi-winner "
+                       "ladders/independent binaries and voids are excluded. "
+                       "Read-side only, no regrade.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -216,6 +229,68 @@ GOLF_PLACEHOLDER_RULE_TEXT = (
     "Genuine single-leader markets (one outcome >=0.80, 82% win) stay in. "
     "Read-side only; never mutates resolutions."
 )
+
+# Queue #157 (#1012): curve-side MULTI-CANDIDATE NORMALIZATION.
+#
+# A resolved, mutually-exclusive market with >=3 outcomes is a partition of ONE
+# question — its outcome probabilities MUST sum to ~1.0. But Kalshi/Polymarket
+# stamp each candidate at its one-sided ASK, so the per-market cp sum inflates
+# well past 1 (census 2026-07-09, mex >=3 markets, cp = COALESCE(cal_prob,
+# opening): economics avg 2.37, entertainment 3.09, tech 2.23, football 4.63,
+# cricket 1.50, esports 1.91). Leaving the raw over-confident prices in drags ECE
+# hard (isolated per-category sim, raw->normalized: football 17.98->10.50,
+# entertainment 11.80->4.73, cricket 10.62->6.31, tech 6.91->5.00, economics
+# 3.28->2.64 — no category got worse). The fix: divide each eligible outcome's cp
+# by the per-market cp sum when that sum exceeds MEX_NORMALIZE_THRESHOLD, so the
+# market sums to 1. Markets already ~1.0 (sum <= threshold) are left untouched.
+#
+# COUNTER-CLASS GUARD (the critical safety): a genuine mex partition resolves with
+# EXACTLY ONE winner. Cumulative-threshold ladders ("Over 3.5 maps" + "Over 4.5
+# maps") and independent binaries mislabeled mutually_exclusive resolve with 2+
+# winners — their probabilities legitimately sum >1 and must NOT be normalized
+# (#155 pass3 ladder lesson; gotcha #23's own caveat). The census confirmed the
+# discriminator at scale: of the >1.15-sum mex >=3 markets, 6,892 have EXACTLY one
+# winner (normalize) vs ~391 multi-winner (ladders/independent — untouched) and
+# 336 zero-winner (voids — already excluded). Winner count is taken over ALL
+# outcomes, mirroring the malformed_binaries CTE's structure test. Read-side only
+# (gotcha #21) — never mutates is_winner / calibration_probability. Writer-side
+# durable normalization (stamp at capture) is follow-up scope on #1012.
+MEX_NORMALIZE_THRESHOLD = 1.15
+
+MEX_NORMALIZE_RULE_TEXT = (
+    "Normalizes resolved mutually-exclusive markets with >=3 outcomes and exactly "
+    "one winner whose per-market probability sum exceeds 1.15 — each outcome's "
+    "probability is divided by the market sum so the partition sums to ~1.0 (fixes "
+    "one-sided-ask over-confidence; census 2026-07-09 found sums of 2.4-5.3 in "
+    "economics/entertainment/tech/football). Multi-winner ladders / independent "
+    "binaries (2+ winners) and voids (0 winners) are the counter-class and left "
+    "untouched, as are markets already summing to ~1.0. Read-side only; never "
+    "mutates resolutions."
+)
+
+
+def market_needs_mex_normalization(
+    n_eligible: int, n_winners: int, cp_sum: float | None
+) -> bool:
+    """True if a mutually-exclusive market's curve prices should be normalized (Queue #157).
+
+    Canonical, unit-tested definition mirroring the ``mex_norm_markets`` CTE: a
+    resolved mutually-exclusive market qualifies for per-market probability
+    normalization iff it has >=3 eligible outcomes, EXACTLY one winner (a genuine
+    single-winner partition — not a multi-winner ladder / independent-binary set,
+    not a zero-winner void), and its eligible cp sum exceeds
+    ``MEX_NORMALIZE_THRESHOLD`` (a sum already ~1.0 needs no correction). The
+    caller must have already confirmed mutually_exclusive=true. Read-side only
+    (gotcha #21) — the divisor is the eligible cp sum; each outcome's normalized
+    probability is ``cp / cp_sum``.
+    """
+    return (
+        n_eligible >= 3
+        and n_winners == 1
+        and cp_sum is not None
+        and cp_sum > MEX_NORMALIZE_THRESHOLD
+    )
+
 
 # #762: void-resolution filter (mostly DataGolf "Make the Cut" markets).
 #
@@ -424,6 +499,42 @@ async def _precompute_calibration_main():
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 2
             ),
+            -- Queue #157 (#1012): multi-candidate normalization support.
+            -- mex_win_counts: winner count over ALL outcomes of each mex market
+            -- (the structure test — genuine partitions have exactly 1 winner;
+            -- multi-winner = ladder/independent, zero-winner = void).
+            mex_win_counts AS (
+                SELECT fo.market_id,
+                    COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                WHERE mi.mutually_exclusive = true
+                GROUP BY fo.market_id
+            ),
+            -- mex_norm_markets: per-market divisor (eligible cp sum) for markets
+            -- that qualify — mex, exactly one winner, >=3 eligible outcomes, and
+            -- an eligible cp sum over the threshold. Same eligibility predicate as
+            -- the main outcome scan so the divisor matches the curve population.
+            mex_norm_markets AS (
+                SELECT fo.market_id,
+                    SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS cp_sum
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
+                WHERE mi.mutually_exclusive = true
+                  AND mwc.win_count = 1
+                  AND fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND (fo.resolution_source IS NOT NULL
+                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
+                                                    'did_not_play', 'withdrew',
+                                                    'no_pregame_trading'))
+                  AND COALESCE(fo.volume, -1) != 0
+                GROUP BY fo.market_id
+                HAVING COUNT(*) >= 3
+                   AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > {MEX_NORMALIZE_THRESHOLD}
+            ),
             group_sizes AS (
                 SELECT group_id, source, COUNT(*) AS group_size
                 FROM market_info
@@ -476,7 +587,14 @@ async def _precompute_calibration_main():
             ),
             ranked_outcomes AS MATERIALIZED (
                 SELECT
-                    COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
+                    -- Queue #157 (#1012): normalize mex >=3 single-winner markets
+                    -- whose eligible cp sum > threshold (divide each outcome by the
+                    -- per-market sum so the partition sums to ~1); all others raw.
+                    CASE WHEN mnm.market_id IS NOT NULL
+                         THEN COALESCE(fo.calibration_probability, fo.opening_probability) / mnm.cp_sum
+                         ELSE COALESCE(fo.calibration_probability, fo.opening_probability)
+                    END AS adj_opening_probability,
+                    (mnm.market_id IS NOT NULL) AS is_mex_normalized,
                     fo.is_winner AS is_winner,
                     (fo.calibration_probability IS NOT NULL
                      AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
@@ -505,6 +623,7 @@ async def _precompute_calibration_main():
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
+                LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   AND (fo.resolution_source IS NOT NULL
@@ -549,7 +668,10 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 0) AS both_false_excluded,
                     COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 2) AS both_winner_excluded,
                     -- L2-79 Item 2: golf one-sided-ask placeholder exclusion count.
-                    COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded
+                    COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded,
+                    -- Queue #157: multi-candidate normalization transparency —
+                    -- how many curve outcomes had their probability normalized.
+                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -568,7 +690,8 @@ async def _precompute_calibration_main():
                 MAX(ls.poly_included) AS poly_included,
                 MAX(ls.both_false_excluded) AS both_false_excluded,
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
-                MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded
+                MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
+                MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -615,6 +738,12 @@ async def _precompute_calibration_main():
         golf_placeholder_excluded = (
             int(rows[0].golf_placeholder_excluded)
             if rows and rows[0].golf_placeholder_excluded is not None
+            else 0
+        )
+        # Queue #157: multi-candidate normalization transparency count.
+        mex_normalized_outcomes = (
+            int(rows[0].mex_normalized_outcomes)
+            if rows and rows[0].mex_normalized_outcomes is not None
             else 0
         )
 
@@ -1131,6 +1260,12 @@ async def _precompute_calibration_main():
             "applies_to": "golf",
             "rule": GOLF_PLACEHOLDER_RULE_TEXT,
             "excluded": golf_placeholder_excluded,
+        },
+        "mex_normalization": {  # Queue #157 (#1012)
+            "applies_to": "all",
+            "rule": MEX_NORMALIZE_RULE_TEXT,
+            "threshold": MEX_NORMALIZE_THRESHOLD,
+            "normalized_outcomes": mex_normalized_outcomes,
         },
         "void_filter": {
             "applies_to": "datagolf",
