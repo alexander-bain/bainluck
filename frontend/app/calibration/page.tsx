@@ -440,37 +440,21 @@ export default function CalibrationPage() {
         </p>
       </section>
 
-      {/* Overall calibration curve */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-1">
-          {includeThin ? "All-Markets" : "Well-Traded"} Calibration Curve
-        </h2>
-        <p className="text-xs text-text-muted mb-4">
-          Points on the diagonal = perfect calibration. Above = outcomes happened <em>more</em> than predicted. Below = <em>less</em>.
-          Shaded band = &plusmn;5pp. Point size reflects sample count.
-          {includeThin
-            ? " Showing all markets, including thin/untraded outcomes (noisier)."
-            : " Showing well-traded markets only — where real trading moved the price."}
-        </p>
-        <CalibrationChart
-          series={[{
-            data: cohortBuckets,
-            color: includeThin ? "#2563eb" : "#16a34a",
-            label: `${includeThin ? "All markets" : "Well-traded"} (${cohortN.toLocaleString()})`,
-          }]}
-          width={700}
-          height={400}
-        />
-      </section>
-
-      {/* Trading Activity */}
-      {movedN > 0 && unchangedN > 0 && (
+      {/* Calibration curve + trading-activity story (L2-80 Item 2: merged into ONE
+          section. The standalone well-traded curve was redundant — the page-level
+          toggle banner above already carries the well-traded default, and the split
+          curve's green "price moved" series IS the well-traded set. Falls back to a
+          single cohort curve when the moved/unchanged split isn't available, so the
+          page always shows a headline curve.) */}
+      {movedN > 0 && unchangedN > 0 ? (
         <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
           <h2 className="text-title-3 text-text-primary mb-1">Does Trading Activity Matter?</h2>
           <p className="text-xs text-text-muted mb-4">
-            Outcomes where the market price moved from its opening value (indicating real trading
-            activity) vs. outcomes where the price never changed. Active trading produces
-            dramatically better predictions.
+            The calibration curve, split by whether real trading moved the price. Points on the
+            diagonal = perfect calibration; above = outcomes happened <em>more</em> than predicted,
+            below = <em>less</em>. Shaded band = &plusmn;5pp and point size reflects sample count.
+            Outcomes where the price moved (active trading) are dramatically better calibrated than
+            outcomes stuck at their opening price.
           </p>
           <CalibrationChart
             series={[
@@ -496,6 +480,25 @@ export default function CalibrationPage() {
               accurately calibrated than markets using opening prices alone.
             </p>
           )}
+        </section>
+      ) : (
+        <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+          <h2 className="text-title-3 text-text-primary mb-1">
+            {includeThin ? "All-Markets" : "Well-Traded"} Calibration Curve
+          </h2>
+          <p className="text-xs text-text-muted mb-4">
+            Points on the diagonal = perfect calibration. Above = outcomes happened <em>more</em> than
+            predicted. Below = <em>less</em>. Shaded band = &plusmn;5pp. Point size reflects sample count.
+          </p>
+          <CalibrationChart
+            series={[{
+              data: cohortBuckets,
+              color: includeThin ? "#2563eb" : "#16a34a",
+              label: `${includeThin ? "All markets" : "Well-traded"} (${cohortN.toLocaleString()})`,
+            }]}
+            width={700}
+            height={400}
+          />
         </section>
       )}
 
@@ -560,26 +563,9 @@ export default function CalibrationPage() {
         <CalibrationChart series={catChartData} width={700} height={340} />
       </section>
 
-      {/* Category cards grid */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {categories.slice(0, 10).map((cat, i) => {
-          const catBuckets = aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
-          const catN = normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0);
-          const catMCE = mce(catBuckets);
-          return (
-            <div key={cat} className="bg-surface-card rounded-xl p-4 border border-surface-border">
-              <div className="flex justify-between items-baseline mb-2">
-                <h3 className="text-sm font-semibold text-text-primary">{DISPLAY_NAMES[cat] || cat}</h3>
-                <span className="text-xs text-text-muted">{catN.toLocaleString()} outcomes &middot; MCE: {catMCE.toFixed(1)}pp</span>
-              </div>
-              <CalibrationChart
-                series={[{ data: catBuckets, color: COLORS[i % COLORS.length], label: "" }]}
-                width={420} height={240} showLegend={false}
-              />
-            </div>
-          );
-        })}
-      </div>
+      {/* L2-80 Item 1: the standalone per-category chart grid was removed — the
+          tabbed "By Category" explorer above owns per-category curves, and the
+          Category Breakdown table below is the scannable summary. One section per job. */}
 
       {/* Category Breakdown Table */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
@@ -621,36 +607,97 @@ export default function CalibrationPage() {
         </div>
       </section>
 
-      {/* Data corrections log (L2-74 §E — trust panel) */}
+      {/* Too-thin-to-grade honest note (L2-80 Item 4) — answers the friends-and-family
+          skeptic ("what about the weird / novelty / long-shot markets?") without faking
+          a curve. Fully payload-driven from small_sample_categories (real counts), so
+          the native app inherits the same honest note with no extra logic. */}
+      {data.small_sample_categories && data.small_sample_categories.length > 0 && (() => {
+        const thin = [...data.small_sample_categories].sort((a, b) => b.outcomes - a.outcomes);
+        const thinTotal = thin.reduce((s, c) => s + c.outcomes, 0);
+        const examples = thin.slice(0, 8);
+        const catLabel = (raw: string) => DISPLAY_NAMES[normalizeCat(raw)] || raw.replace(/_/g, " ");
+        return (
+          <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+            <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?</h2>
+            <p className="text-sm text-text-secondary mb-3">
+              Fair question &mdash; what about the offbeat ones (crypto, one-off culture bets, minor
+              leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
+              we don&rsquo;t publish one for any category below{" "}
+              {minCategoryOutcomes.toLocaleString()} resolved outcomes &mdash; under that bar it&rsquo;s
+              statistical noise, not a signal. Right now{" "}
+              <strong className="text-text-primary">{thin.length}</strong>{" "}
+              {thin.length === 1 ? "category is" : "categories are"} still accumulating
+              ({thinTotal.toLocaleString()} outcomes and counting). The moment one crosses the bar it
+              appears above automatically &mdash; no fake curve until we can stand behind it.
+            </p>
+            <p className="text-xs text-text-muted mb-2 uppercase tracking-wide">Closest to the bar</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {examples.map(c => (
+                <span
+                  key={c.category}
+                  className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border capitalize"
+                >
+                  {catLabel(c.category)}{" "}
+                  <span className="tabular-nums text-text-muted normal-case">{c.outcomes.toLocaleString()}</span>
+                </span>
+              ))}
+              {thin.length > examples.length && (
+                <span className="text-xs px-2.5 py-1 text-text-muted">
+                  +{(thin.length - examples.length).toLocaleString()} more
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-text-muted">
+              How we&rsquo;ll know it&rsquo;s ready: see{" "}
+              <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a>{" "}
+              for the sample-size bar and full methodology.
+            </p>
+          </section>
+        );
+      })()}
+
+      {/* Data corrections log (L2-74 §E — trust panel; L2-80 Item 3: collapsed into a
+          <details> closed by default and clearly labeled technical — too detailed to
+          show expanded in every view. Content unchanged.) */}
       {data.corrections && data.corrections.length > 0 && (
-        <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <h2 className="text-title-3 text-text-primary mb-1">Data Corrections Log</h2>
-          <p className="text-xs text-text-muted mb-4">
-            A calibration page is only trustworthy if it fixes its own mistakes. Every data-quality
-            correction we&rsquo;ve made &mdash; with dates and rows affected &mdash; is on the record here.
-            See <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a> for the full methodology.
-          </p>
-          <ul className="space-y-0">
-            {data.corrections.map((c, i) => (
-              <li
-                key={`${c.date}-${i}`}
-                className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 border-t border-surface-border py-3 first:border-0 first:pt-0"
-              >
-                <span className="text-xs font-mono text-text-muted whitespace-nowrap w-24 shrink-0">{c.date}</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-text-primary">
-                    {c.title}
-                    {c.rows != null && (
-                      <span className="ml-2 text-xs font-normal text-text-muted tabular-nums">
-                        {c.rows.toLocaleString()} rows
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-text-secondary">{c.description}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
+        <section className="bg-surface-card rounded-xl border border-surface-border">
+          <details className="group">
+            <summary className="cursor-pointer list-none p-5 flex items-center justify-between gap-3 select-none">
+              <span className="flex items-baseline gap-2">
+                <span className="text-title-3 text-text-primary">Technical: data corrections log</span>
+                <span className="text-xs text-text-muted tabular-nums">({data.corrections.length})</span>
+              </span>
+              <span className="text-text-muted text-sm transition-transform group-open:rotate-180" aria-hidden="true">&#9662;</span>
+            </summary>
+            <div className="px-5 pb-5">
+              <p className="text-xs text-text-muted mb-4">
+                A calibration page is only trustworthy if it fixes its own mistakes. Every data-quality
+                correction we&rsquo;ve made &mdash; with dates and rows affected &mdash; is on the record here.
+                See <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a> for the full methodology.
+              </p>
+              <ul className="space-y-0">
+                {data.corrections.map((c, i) => (
+                  <li
+                    key={`${c.date}-${i}`}
+                    className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 border-t border-surface-border py-3 first:border-0 first:pt-0"
+                  >
+                    <span className="text-xs font-mono text-text-muted whitespace-nowrap w-24 shrink-0">{c.date}</span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-text-primary">
+                        {c.title}
+                        {c.rows != null && (
+                          <span className="ml-2 text-xs font-normal text-text-muted tabular-nums">
+                            {c.rows.toLocaleString()} rows
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-text-secondary">{c.description}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
         </section>
       )}
 

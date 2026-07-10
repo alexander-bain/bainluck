@@ -146,21 +146,29 @@ export default function CalibrationChart({
         );
       })}
 
-      {/* Legend */}
-      {showLegend && series.length > 0 && (
-        <g>
-          {series.map((s, i) => {
-            const lx = padL + 10 + i * 180;
-            const ly = padT + 8;
-            return (
-              <g key={i}>
-                <circle cx={Math.min(lx, width - 100)} cy={ly} r="5" fill={s.color} />
-                <text x={Math.min(lx + 10, width - 90)} y={ly + 4} fill="#57534e" fontSize="11">{s.label}</text>
-              </g>
-            );
-          })}
-        </g>
-      )}
+      {/* Legend (L2-80 Item 5: wrap onto rows so many series — By Source / By Category
+          can have 5-6 — don't pile up at one clamped x-position and overlap) */}
+      {showLegend && series.length > 0 && (() => {
+        const itemW = 165;
+        const cols = Math.max(1, Math.floor((width - padL - padR) / itemW));
+        const rowH = 16;
+        return (
+          <g>
+            {series.map((s, i) => {
+              const col = i % cols;
+              const row = Math.floor(i / cols);
+              const lx = padL + 10 + col * itemW;
+              const ly = padT + 8 + row * rowH;
+              return (
+                <g key={i}>
+                  <circle cx={lx} cy={ly} r="5" fill={s.color} />
+                  <text x={lx + 10} y={ly + 4} fill="#57534e" fontSize="11">{s.label}</text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })()}
 
       {/* Dot-size + thin-bucket key (L2-75 §B) */}
       <text x={width - padR} y={padT - 10} textAnchor="end" fill="#a8a29e" fontSize="9.5">
