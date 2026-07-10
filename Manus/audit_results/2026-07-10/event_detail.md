@@ -1,15 +1,3 @@
-# Manus Health Audit — 2026-07-10
-
-**Modules run:** 3
-**Completed:** 1
-**Failed/Timeout:** 2
-- feed: timeout
-- visual_review: timeout
-
----
-
-## Event Detail Deep Audit
-
 Starting the Event Detail Deep Audit on bainluck.com. I'll browse the site, select 6 events across different sports and statuses, then perform a comprehensive quality audit of each event detail page.
 
 I've identified 6 events to audit across 3 sports (MLB, WNBA, NBA Summer League). Note: No games are currently live at this time, so I'm using the most recently completed games as the "live" category. Now auditing each event detail page against the full checklist.
