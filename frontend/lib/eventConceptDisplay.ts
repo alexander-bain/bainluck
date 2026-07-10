@@ -63,6 +63,22 @@ export function splitChildren(
   return { live, settled };
 }
 
+/** L2-81: the champion of a SETTLED winner-field, or null when it can't be named
+ *  honestly. Prefers the authoritative `won` flag (from resolution); falls back to
+ *  the top-probability competitor ONLY when it's a confident ~1.0 (>=0.9), so a
+ *  stale mid-tournament field (or a blowout with a stale midpoint) never falsely
+ *  crowns someone. Pure so the "who won" wording is unit-tested. */
+export function settledChampion(
+  competitors: EventConceptCompetitor[],
+): EventConceptCompetitor | null {
+  const ranked = fieldOrder(competitors);
+  const won = ranked.find((c) => c.won === true);
+  if (won) return won;
+  const top = ranked[0];
+  if (top && (top.probability ?? 0) >= 0.9) return top;
+  return null;
+}
+
 /** Count of distinct markets tracked on this page — for the header "N markets"
  *  chip. Unions section market_ids, child market_ids, and the evolution market so
  *  the count reflects what the page actually surfaces (not a fabricated total). */

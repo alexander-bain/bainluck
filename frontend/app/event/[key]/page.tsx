@@ -130,6 +130,7 @@ export default function EventConceptPage() {
           label={primary.label}
           showSparkline={SHOW_SPARKLINE}
           live={isLive}
+          settled={isSettled}
           asOf={event.as_of}
         />
       )}

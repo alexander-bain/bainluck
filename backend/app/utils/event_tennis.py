@@ -20,9 +20,14 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+# L2-81: how long a concluded tournament's resolved winner market stays queryable
+# so the event page survives the tournament ending (renders the settled state)
+# instead of 404-ing the moment Polymarket flips the market to resolved/closed.
+_RESOLVED_WINDOW_DAYS = 30
 
 # Tokens stripped when deriving the tournament name from a market title.
 _TENNIS_STOPWORDS = {
@@ -99,7 +104,7 @@ class TennisEventAdapter:
     domain = "tennis"
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         from app.models import FuturesMarket
         from app.utils.name_normalization import clean_slug
         from app.utils.outcome_display import (
@@ -109,12 +114,26 @@ class TennisEventAdapter:
         )
 
         now = datetime.now(timezone.utc)
+        # L2-81: keep OPEN markets (live/upcoming) AND recently-resolved ones, so a
+        # tournament that just concluded still renders its settled state instead of
+        # 404-ing. Polymarket flips the winner market to resolved/closed the moment
+        # it settles; without this it drops out of the query and the page vanishes
+        # right when the champion is crowned (Sunday night of a slam). Bounded by
+        # resolution_date so ancient tournaments never resurface / clutter matching.
+        resolved_cutoff = now - timedelta(days=_RESOLVED_WINDOW_DAYS)
         q = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(
                 FuturesMarket.llm_sport_category == "tennis",
-                FuturesMarket.status == "open",
+                or_(
+                    FuturesMarket.status == "open",
+                    and_(
+                        FuturesMarket.status.in_(("resolved", "closed", "settled")),
+                        FuturesMarket.resolution_date.isnot(None),
+                        FuturesMarket.resolution_date >= resolved_cutoff,
+                    ),
+                ),
             )
         )
         markets = list((await db.execute(q)).scalars().unique().all())
@@ -178,6 +197,10 @@ class TennisEventAdapter:
                     round(float(o.current_probability), 4)
                     if o.current_probability is not None else None
                 ),
+                # L2-81: the authoritative settled winner (from resolution), so the
+                # page can render "Won" instead of a stale probability once the
+                # tournament concludes. getattr keeps it mock-safe in unit fixtures.
+                "won": bool(getattr(o, "is_winner", False)),
             })
         # #23: independent candidate binaries can sum >100% (the raw Wimbledon
         # field did: 28.6+26.8+24.6+21.1…). Normalize the displayed field like

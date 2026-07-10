@@ -66,9 +66,9 @@ class TestEventConceptRoute:
         assert resp.status_code == 405
 
 
-def _tennis_outcome(name, prob):
+def _tennis_outcome(name, prob, won=False):
     from types import SimpleNamespace
-    return SimpleNamespace(name=name, current_probability=prob)
+    return SimpleNamespace(name=name, current_probability=prob, is_winner=won)
 
 
 def _tennis_winner_market():
@@ -119,6 +119,52 @@ class TestTennisEventAdapter:
         mock_db.execute.return_value = _query_result([])
         resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
         assert resp.status_code == 404
+
+
+def _tennis_settled_winner_market():
+    """A concluded slam: the winner market has flipped to `resolved` and the
+    champion's outcome carries is_winner=True (L2-81)."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    return SimpleNamespace(
+        id=990001,
+        name="2026 Women's Wimbledon Winner",
+        status="resolved",  # Polymarket flips to resolved the moment it settles
+        llm_sport_category="tennis",
+        source="polymarket",
+        group_id="polymarket:139182",
+        resolution_date=datetime.now(timezone.utc) - timedelta(hours=6),
+        outcomes=[
+            _tennis_outcome("Aryna Sabalenka", 1.0, won=True),
+            _tennis_outcome("Coco Gauff", 0.0),
+            _tennis_outcome("Iga Swiatek", 0.0),
+            _tennis_outcome("Other", 0.0),  # field remainder — dropped
+        ],
+    )
+
+
+class TestTennisSettled:
+    """L2-81: a concluded tournament survives resolution (no 404) and marks the
+    champion so the page renders 'Won' instead of a stale probability."""
+
+    async def test_settled_marks_champion_and_survives_resolution(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        # In prod the broadened query keeps recently-resolved winner markets in the
+        # result set; the mock returns rows regardless of the WHERE, so this proves
+        # the adapter builds a settled envelope from a `resolved` market rather than
+        # skipping it (the pre-L2-81 status=="open" filter would have dropped it →
+        # None → 404).
+        mock_db.execute.return_value = _query_result([_tennis_settled_winner_market()])
+        resp = await client.get("/api/event/event:tennis:wimbledon")
+        assert resp.status_code == 200  # did NOT 404 after the market resolved
+        body = resp.json()
+        assert body["event"]["status"] == "settled"
+        comps = body["primary"]["competitors"]
+        # "Other" dropped; the actual winner is flagged and only the winner.
+        assert [c["name"] for c in comps][0] == "Aryna Sabalenka"
+        assert sum(1 for c in comps if c.get("won")) == 1
+        champ = next(c for c in comps if c.get("won"))
+        assert champ["name"] == "Aryna Sabalenka"
 
 
 def _tennis_winner(id_, name, players, source="polymarket", group_id=None):

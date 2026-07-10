@@ -1716,6 +1716,9 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
+  // L2-81: authoritative settled winner flag (from resolution). When the event is
+  // settled the leaderboard renders the champion as "Won" instead of a stale %.
+  won?: boolean | null;
   // L2-66 golf live-mode fields (present only when the tournament is in play):
   position?: string | null;      // leaderboard position, e.g. "T3"
   score_to_par?: number | null;  // total score to par (negative = under)

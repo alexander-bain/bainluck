@@ -8,6 +8,7 @@
 import { formatProbability } from "@/lib/api";
 import {
   fieldOrder,
+  settledChampion,
   competitorMovement,
   formatMovement,
   seriesForName,
@@ -27,6 +28,8 @@ interface EventLeaderboardProps {
   limit?: number;
   /** Rank 1 gets a "Leader" chip when the event is live. */
   live?: boolean;
+  /** L2-81: the event has concluded — render the champion as "Won" (no stale %). */
+  settled?: boolean;
   /** L2-66: freshness stamp — drives the "as of" chip in golf live mode. */
   asOf?: string | null;
 }
@@ -129,8 +132,66 @@ export default function EventLeaderboard({
   showSparkline = true,
   limit = 20,
   live = false,
+  settled = false,
   asOf = null,
 }: EventLeaderboardProps) {
+  // L2-81 settled winner-field: once the event concludes, showing a normalized
+  // field ("champion 30%, runner-up 25%") reads as a live prediction and is
+  // dishonest. Render the champion with a "Won" chip and NO stale percentages;
+  // collapse the rest into a dimmed "Did not win" list (mirrors the L2-53 futures
+  // detail ruling + the completed-matchups grouping). Applies to any winner-field
+  // domain (tennis slam, golf tournament, F1 race).
+  if (settled) {
+    const ranked = fieldOrder(competitors);
+    if (ranked.length === 0) return null;
+    const champion = settledChampion(competitors);
+    const others = ranked.filter((c) => c !== champion).slice(0, limit);
+    return (
+      <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
+        <h2 className="text-title-3 font-semibold text-text-primary mb-4">
+          {champion ? "Final result" : label || "Final standings"}
+        </h2>
+        {champion ? (
+          <div className="flex items-center gap-3 py-1">
+            <span aria-hidden className="text-xl shrink-0">
+              🏆
+            </span>
+            <span className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
+              {champion.name}
+            </span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded bg-accent-brand/15 text-accent-brand shrink-0">
+              Won
+            </span>
+          </div>
+        ) : (
+          <p className="text-sm text-text-secondary">Awaiting the final result.</p>
+        )}
+        {others.length > 0 && (
+          <details className="mt-3">
+            <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+              {champion ? `Did not win (${others.length})` : `Field (${others.length})`}
+            </summary>
+            <div className="divide-y divide-surface-border/40 mt-2">
+              {others.map((c, i) => (
+                <div
+                  key={`${c.name}-${i}`}
+                  className="flex items-center gap-3 py-2 opacity-70"
+                >
+                  <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 min-w-0 truncate text-sm text-text-secondary">
+                    {c.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </section>
+    );
+  }
+
   // L2-66 golf live mode: when live competitors carry a leaderboard position/thru,
   // render the fused row (position · name · to-par · thru · win% · Δ) and order by
   // score-to-par (a real leaderboard), not win%.

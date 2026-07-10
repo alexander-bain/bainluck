@@ -6,6 +6,7 @@ import {
   childLeader,
   eventDateRange,
   splitChildren,
+  settledChampion,
   marketsTracked,
   competitorMovement,
   formatMovement,
@@ -163,6 +164,38 @@ describe("splitChildren (L2-63: settled vs live)", () => {
 
   test("empty is safe", () => {
     expect(splitChildren([])).toEqual({ live: [], settled: [] });
+  });
+});
+
+describe("settledChampion (L2-81 concluded winner-field)", () => {
+  test("prefers the authoritative won flag over probability order", () => {
+    // Stale field where the top probability is NOT the actual winner.
+    const champ = settledChampion([
+      { name: "Runner Up", probability: 0.55 },
+      { name: "Champion", probability: 0.45, won: true },
+    ]);
+    expect(champ?.name).toBe("Champion");
+  });
+
+  test("falls back to a confident (>=0.9) top competitor when no won flag", () => {
+    const champ = settledChampion([
+      { name: "Winner", probability: 0.98 },
+      { name: "Loser", probability: 0.02 },
+    ]);
+    expect(champ?.name).toBe("Winner");
+  });
+
+  test("null when no won flag and the field is ambiguous (never falsely crowns)", () => {
+    expect(
+      settledChampion([
+        { name: "A", probability: 0.4 },
+        { name: "B", probability: 0.35 },
+      ]),
+    ).toBeNull();
+  });
+
+  test("empty field is safe", () => {
+    expect(settledChampion([])).toBeNull();
   });
 });
 
