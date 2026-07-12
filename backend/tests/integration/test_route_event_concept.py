@@ -633,3 +633,113 @@ class TestAwardsEventAdapter:
         ])
         resp = await client.get("/api/event/event:awards:golden-globes")
         assert resp.status_code == 404
+
+
+def _election_market(id_, name, ext, outs, source="kalshi"):
+    """An election race/primary/novelty market. `outs` is (name, prob[, won])."""
+    from types import SimpleNamespace
+
+    def _o(t):
+        return _tennis_outcome(t[0], t[1], won=t[2] if len(t) > 2 else False)
+
+    return SimpleNamespace(
+        id=id_,
+        name=name,
+        external_id=ext,
+        status="open",
+        llm_sport_category="politics",
+        source=source,
+        group_id=None,
+        commence_time=None,
+        resolution_date=None,
+        market_metadata={},
+        outcomes=[_o(t) for t in outs],
+    )
+
+
+class TestElectionEventAdapter:
+    """L2-89 (B6, civic proof): a midterm election renders as co_equal_list — the
+    genuine governor RACES are the co-equal children, the richest race is the
+    head-to-head hero, and primaries + seat forecasts ride along as props. Novelties
+    (govt shutdown / turnout / margin) and other-edition (2028 pres) are excluded."""
+
+    async def test_races_children_primaries_props_novelties_excluded(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+
+        ca_gov = _election_market(
+            1, "California Governor winner?", "KXGOVCA-26",
+            [("Katie Porter", 0.4), ("Xavier Becerra", 0.25), ("Chad Bianco", 0.2)],
+        )
+        ak_gov = _election_market(
+            2, "Alaska Governor winner? (Person)", "KXGOVAK-26",
+            [("Nick Begich", 0.5), ("Mary Peltola", 0.4)],
+        )
+        oh_primary = _election_market(
+            3, "Ohio Republican Senate nominee?", "KXSENATEOHSR-26",
+            [("Bernie Moreno", 0.6), ("Frank LaRose", 0.3)],
+        )
+        fl_seats = _election_market(
+            4, "How many House seats will Democrats win in Florida?", "KXHOUSEWINSTATE-FLD",
+            [("8", 0.4), ("9", 0.3), ("10", 0.2)],
+        )
+        # Novelties + false-friend govt-shutdown + 2028 pres — all excluded.
+        shutdown = _election_market(
+            5, "How long will the government shutdown last?", "KXGOVTSHUTLENGTH-26FEB07",
+            [("1-7 days", 0.4), ("8-14 days", 0.3)],
+        )
+        turnout = _election_market(
+            6, "2026 Midterms: U.S. House turnout?", "KXHOUSETURNOUT-26NOV03",
+            [("<40%", 0.3), ("40-45%", 0.4)],
+        )
+        pres28 = _election_market(
+            7, "2028 Democratic presidential nominee", "KXPRESNOMD-28",
+            [("Newsom", 0.3), ("AOC", 0.2)],
+        )
+
+        mock_db.execute.return_value = _query_result(
+            [ca_gov, ak_gov, oh_primary, fl_seats, shutdown, turnout, pres28]
+        )
+        resp = await client.get("/api/event/event:election:2026-midterms")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "election"
+        assert body["event"]["name"] == "2026 Midterm Elections"
+        assert body["event"]["key"] == "event:election:2026-midterms"
+        assert body["primary"]["kind"] == "co_equal_list"
+        # marquee = richest race (CA Governor, 3 candidates); label cleaned.
+        assert body["primary"]["label"] == "California Governor"
+        assert "Katie Porter" in [c["name"] for c in body["primary"]["competitors"]]
+
+        # Race children (co-equal, no kind -> MatchupsRail); both governor races present.
+        races = [c for c in body["children"] if c.get("kind") != "prop"]
+        race_names = {c["market_name"] for c in races}
+        assert "California Governor" in race_names
+        assert "Alaska Governor" in race_names
+        # Primary + seat forecast ride along as props.
+        props = [c for c in body["children"] if c.get("kind") == "prop"]
+        prop_types = {c["prop_type"] for c in props}
+        assert prop_types == {"primary", "seats"}
+        # Novelties + govt shutdown + 2028 pres are NOT rendered anywhere.
+        all_ids = {c["market_id"] for c in body["children"]}
+        assert all_ids.isdisjoint({5, 6, 7})
+        assert any(s["type"] == "races" for s in body["sections"])
+
+    async def test_no_races_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+
+        # Only novelties + primaries, no genuine general race -> honest 404 (no stub).
+        mock_db.execute.return_value = _query_result([
+            _election_market(1, "Ohio Republican Senate nominee?", "KXSENATEOHSR-26", [("A", 0.6), ("B", 0.3)]),
+            _election_market(2, "How long will the government shutdown last?", "KXGOVTSHUTLENGTH-26", [("1-7 days", 0.5), ("8+", 0.5)]),
+        ])
+        resp = await client.get("/api/event/event:election:2026-midterms")
+        assert resp.status_code == 404
+
+    async def test_unknown_election_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([
+            _election_market(1, "California Governor winner?", "KXGOVCA-30", [("A", 0.5), ("B", 0.4)]),
+        ])
+        # 2030 has no config -> adapter returns None -> 404, not a crash.
+        resp = await client.get("/api/event/event:election:2030-midterms")
+        assert resp.status_code == 404

@@ -15,6 +15,8 @@ const PROP_GROUPS: { key: string; label: string }[] = [
   { key: "distance", label: "Goes the distance" },
   { key: "nominations", label: "Nominations" }, // L2-87: awards nomination markets
   { key: "round", label: "By round" }, // L2-89: golf round leaders + per-round Top-N
+  { key: "primary", label: "Primaries" }, // L2-89: election primary/nominee contests
+  { key: "seats", label: "Seat forecasts" }, // L2-89: election seat-count markets
   { key: "occurrence", label: "Will it happen?" },
 ];
 
