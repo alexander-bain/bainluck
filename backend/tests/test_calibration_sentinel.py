@@ -18,7 +18,39 @@ from app.tasks.calibration_sentinel import (
     severity_for,
     structure_class,
 )
-from app.tasks.calibration_sentinel import _empty_buckets, _finalize_cohort, _new_cohort
+from app.tasks.calibration_sentinel import (
+    _empty_buckets,
+    _finalize_cohort,
+    _new_cohort,
+    dedup_overlapping,
+)
+
+
+def _mk(dims, mce):
+    ck = tuple(sorted(dims.items()))
+    c = _new_cohort(ck, {})
+    c["mce"] = mce
+    return c
+
+
+class TestDedupOverlapping:
+    def test_nested_views_of_same_break_collapse(self):
+        # highest-severity, most-specific survives; coarser/finer cuts drop
+        cohorts = [
+            _mk({"provenance": "futures", "source": "polymarket", "category": "hockey"}, 16.4),
+            _mk({"provenance": "futures", "category": "hockey"}, 12.0),
+            _mk({"provenance": "futures", "source": "polymarket", "series": "hockey"}, 16.4),
+        ]
+        kept = dedup_overlapping(cohorts)
+        assert len(kept) == 1
+        assert kept[0]["dims"]["source"] == "polymarket"
+
+    def test_disjoint_breaks_both_survive(self):
+        cohorts = [
+            _mk({"provenance": "futures", "source": "polymarket", "category": "hockey"}, 16.4),
+            _mk({"provenance": "futures", "source": "polymarket", "category": "tennis"}, 13.0),
+        ]
+        assert len(dedup_overlapping(cohorts)) == 2
 
 
 def _cohort(dims, buckets=None, overlap=None, min_created=None):

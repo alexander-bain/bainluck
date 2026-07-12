@@ -68,6 +68,10 @@ SENTINEL_COVERAGE_THRESHOLD = 0.40  # calibration:sentinel_coverage_threshold
 # Bound the number of flagged cohorts we build a (snapshot-touching) evidence
 # census for, so a pathological run can't grind the snapshot table.
 SENTINEL_MAX_EVIDENCE_COHORTS = 40
+# A live run files AT MOST this many issues (highest-severity first, after
+# cross-view dedup) so one run can't spam the board with 100+ near-duplicate
+# cards. The rest are visible in the cached findings for the next run.
+SENTINEL_MAX_ISSUES_PER_RUN = 6  # calibration:sentinel_max_issues_per_run
 
 # Guess/terminal/void resolution sources folded into the "heuristic" overlap
 # signal — mirrors the inline NOT IN (...) list the main calibration scan uses.
@@ -112,6 +116,29 @@ def structure_class(n_outcomes: int, mutually_exclusive: bool) -> str:
     if n_outcomes >= 3:
         return "mex_multi" if mutually_exclusive else "multi_nonmex"
     return "single"
+
+
+def dedup_overlapping(cohorts: list[dict]) -> list[dict]:
+    """Collapse cohorts that describe the SAME underlying break at different
+    granularities.
+
+    The cohort views intentionally re-slice the same rows (a poly-hockey break
+    surfaces as `category=hockey`, `source=poly·category=hockey`,
+    `category=hockey·structure=...` all at once). For FILING we want one issue per
+    break, so — walking a severity-sorted list — drop any cohort whose dimension
+    VALUE set is a subset/superset of one already kept (the same break family, a
+    coarser/finer cut). The first (highest-severity) survivor wins. Cohorts with
+    disjoint value sets are independent breaks and both survive.
+    """
+    kept: list[dict] = []
+    kept_valuesets: list[frozenset] = []
+    for c in cohorts:
+        vals = frozenset(c["dims"].values())
+        if any(vals <= ks or ks <= vals for ks in kept_valuesets):
+            continue
+        kept.append(c)
+        kept_valuesets.append(vals)
+    return kept
 
 
 def cohort_fingerprint(cohort_key: tuple[tuple[str, str], ...]) -> str:
@@ -691,7 +718,7 @@ def file_cohort_issue(cohort: dict, explained_by: str | None, coverage: float) -
 # ---------------------------------------------------------------------------
 def _load_overrides() -> None:
     global SENTINEL_N_FLOOR, SENTINEL_MCE_THRESHOLD, SENTINEL_NEW_N_FLOOR
-    global SENTINEL_NEW_MCE_THRESHOLD, SENTINEL_COVERAGE_THRESHOLD
+    global SENTINEL_NEW_MCE_THRESHOLD, SENTINEL_COVERAGE_THRESHOLD, SENTINEL_MAX_ISSUES_PER_RUN
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -702,6 +729,7 @@ def _load_overrides() -> None:
             ("calibration:sentinel_new_n_floor", "SENTINEL_NEW_N_FLOOR", int),
             ("calibration:sentinel_new_mce_threshold", "SENTINEL_NEW_MCE_THRESHOLD", float),
             ("calibration:sentinel_coverage_threshold", "SENTINEL_COVERAGE_THRESHOLD", float),
+            ("calibration:sentinel_max_issues_per_run", "SENTINEL_MAX_ISSUES_PER_RUN", int),
         ):
             v = r.get(key)
             if v is not None:
@@ -831,10 +859,15 @@ async def _run_calibration_sentinel(
     # --- Filing (outside the session; httpx calls) ---
     # Suppress cohorts explained by a shipped exclusion in a live run so the
     # sentinel doesn't re-file known work; still surface them in the findings.
+    candidates = [c for c in flagged if not (suppress_known and c.get("explained_by"))]
+    candidates.sort(
+        key=lambda c: (0 if c.get("explained_by") else 1, c["mce"] or 0), reverse=True
+    )
+    candidates = dedup_overlapping(candidates)
+    stats["file_candidates_deduped"] = len(candidates)
+    stats["filing_capped"] = len(candidates) > SENTINEL_MAX_ISSUES_PER_RUN
     if file_issues:
-        for c in flagged:
-            if suppress_known and c.get("explained_by"):
-                continue
+        for c in candidates[:SENTINEL_MAX_ISSUES_PER_RUN]:
             action = file_cohort_issue(c, c.get("explained_by"), c.get("coverage", 0.0))
             stats["filed"].append(action)
 
