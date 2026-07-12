@@ -323,6 +323,22 @@ class TennisEventAdapter:
             if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
                 top["won"] = True
 
+        # L2-88 render-gap fix: an OPEN winner-market marked "settled" ONLY because a
+        # placeholder resolution_date passed is not actually decided. Polymarket sets a
+        # tennis final's resolution_date to MIDNIGHT of finals day (e.g. men's Wimbledon
+        # 2026-07-12 00:00), which `tennis_status` reads as past → "settled" while the
+        # final is still being played (both source markets status='open', no graded
+        # winner, top price 0.815 < 0.97). That renders an empty "Awaiting the final
+        # result." crown on a live final. If no winner signal survived the crown block
+        # (no graded is_winner AND no price-settled leader) and the chosen market is
+        # still open, the event is NOT settled — treat it as live so the field renders.
+        if (
+            event_status == "settled"
+            and (winner.status or "").lower() == "open"
+            and not any(c["won"] for c in competitors)
+        ):
+            event_status = "live"
+
         # #23: independent candidate binaries can sum >100% (the raw Wimbledon
         # field did: 28.6+26.8+24.6+21.1…). Normalize the displayed field like
         # search/detail do, so the winner-field reads as a coherent distribution.

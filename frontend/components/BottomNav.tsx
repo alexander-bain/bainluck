@@ -7,6 +7,7 @@ import { useAnalyticsContext } from "@/components/Analytics";
 
 const browsePages = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
+  { label: "Boxing", href: "/hub/boxing", emoji: "🥊" },
   { label: "Golf", href: "/hub/golf", emoji: "⛳" },
   { label: "Tennis", href: "/hub/tennis", emoji: "🎾" },
   { label: "Politics", href: "/politics", emoji: "🏛" },

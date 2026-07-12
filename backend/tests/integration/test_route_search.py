@@ -328,7 +328,39 @@ class TestTypeaheadEndpoint:
             assert "text" in item
             assert isinstance(item["type"], str)
             assert isinstance(item["text"], str)
-            assert item["type"] in {"team", "event", "futures", "event_concept"}
+            assert item["type"] in {"team", "event", "futures", "event_concept", "hub"}
+
+
+class TestTypeaheadHubRows:
+    """L2-88: competition-hub landings are reachable as first-class typeahead rows."""
+
+    def test_match_hub_suggestions_by_label(self):
+        from app.routes.events import _match_hub_suggestions
+        rows = _match_hub_suggestions("golf")
+        assert any(r["competition"] == "golf" and r["href"] == "/hub/golf" for r in rows)
+        assert all(r["type"] == "hub" for r in rows)
+
+    def test_match_hub_suggestions_by_synonym(self):
+        from app.routes.events import _match_hub_suggestions
+        # "ufc" → the MMA hub; "pga" → golf.
+        assert any(r["competition"] == "mma" for r in _match_hub_suggestions("ufc"))
+        assert any(r["competition"] == "golf" for r in _match_hub_suggestions("pga"))
+
+    def test_boxing_hub_reachable(self):
+        from app.routes.events import _match_hub_suggestions
+        assert any(r["competition"] == "boxing" for r in _match_hub_suggestions("boxing"))
+
+    def test_no_hub_for_unrelated_query(self):
+        from app.routes.events import _match_hub_suggestions
+        assert _match_hub_suggestions("lakers") == []
+
+    async def test_typeahead_surfaces_hub_row(self, client):
+        # Even with the empty mock DB, a hub-named query yields the hub shortcut row.
+        resp = await client.get("/api/events/typeahead?q=golf")
+        assert resp.status_code == 200
+        body = resp.json()
+        hubs = [s for s in body["suggestions"] if s["type"] == "hub"]
+        assert hubs and hubs[0]["href"] == "/hub/golf"
 
 
 # ============================================================================

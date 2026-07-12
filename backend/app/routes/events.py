@@ -1502,6 +1502,7 @@ async def search_events(
     # so no dead links; golf discovery is served by the golf page's tournament
     # cards. One concept per event key, richest-first (deduped_futures is
     # volume-reranked).
+    from app.utils.event_awards import derive_awards_concept as _derive_awards_concept
     from app.utils.event_tennis import is_winner_market as _is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _event_clean_slug
@@ -1510,6 +1511,24 @@ async def search_events(
     _seen_concept_keys: set[str] = set()
     for _m in deduped_futures:
         _cat = (_m.llm_sport_category or "").lower()
+        # L2-88: awards ceremonies (Oscars/Emmys/Tonys/Grammys) are event concepts
+        # too — surface a matched category/nomination market as its ceremony page
+        # (event:awards:<slug>, bare → latest edition, never dead). Ticker-stem match
+        # is category-agnostic (awards markets carry llm_sport_category=entertainment).
+        _aw = _derive_awards_concept(_m.external_id, _m.name)
+        if _aw is not None:
+            if _aw["key"] in _seen_concept_keys:
+                continue
+            _seen_concept_keys.add(_aw["key"])
+            event_concepts.append({
+                "key": _aw["key"],
+                "name": _aw["name"],
+                "domain": "awards",
+                "market_id": _m.id,
+            })
+            if len(event_concepts) >= 5:
+                break
+            continue
         # L2-84: UFC cards have no winner-field market — derive the card concept
         # (event:ufc:<date-token>) from a matched FIGHT market via its Kalshi
         # ticker, the co-equal analogue of the tennis winner-field derivation.
@@ -1618,6 +1637,49 @@ async def search_events(
         **({"did_you_mean": fuzzy_corrected} if fuzzy_corrected else {}),
     }
 
+
+
+# L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve
+# to the hub row even though the word isn't in the hub label. Kept tiny and specific
+# to avoid stealing the slot from a better result.
+_HUB_QUERY_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "mma": ("ufc", "mixed martial arts", "fight", "fights"),
+    "boxing": ("box", "boxer"),
+    "golf": ("pga", "golfer"),
+    "tennis": ("atp", "wta"),
+}
+
+
+def _match_hub_suggestions(q: str) -> list[dict]:
+    """Match a typeahead query against the built competition hubs (HUB_CONFIGS).
+
+    Returns hub suggestion rows ({type:"hub", text, competition, href, emoji}) for
+    hubs whose slug/label/synonym the query is a prefix of (or vice-versa) — so
+    "golf", "pga", "mma", "ufc", "boxing", "tennis" surface the /hub/<slug> landing
+    as a first-class row. Config-imported lazily to avoid a route↔route import cycle."""
+    ql = (q or "").strip().lower()
+    if len(ql) < 2:
+        return []
+    try:
+        from app.routes.hub import HUB_CONFIGS
+    except Exception:
+        return []
+    rows: list[dict] = []
+    for cfg in HUB_CONFIGS.values():
+        terms = {cfg.slug.lower(), cfg.label.lower()} | {
+            s.lower() for s in _HUB_QUERY_SYNONYMS.get(cfg.slug, ())
+        }
+        # Match when the query is a prefix of a hub term (keystroke-friendly) or a
+        # term is contained in the query ("ufc fight night" still finds the mma hub).
+        if any(t.startswith(ql) or ql in t for t in terms):
+            rows.append({
+                "type": "hub",
+                "text": f"{cfg.title} hub",
+                "competition": cfg.slug,
+                "href": f"/hub/{cfg.slug}",
+                "emoji": cfg.emoji,
+            })
+    return rows
 
 
 @router.get("/typeahead")
@@ -1845,6 +1907,7 @@ async def typeahead_search(
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
     # ranked futures — tennis winner fields resolve to /event/[key] via the
     # adapter (exact clean_slug), so no dead links. First-class, above markets.
+    from app.utils.event_awards import derive_awards_concept as _ta_derive_awards
     from app.utils.event_tennis import is_winner_market as _ta_is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _ta_derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _ta_clean_slug
@@ -1854,6 +1917,19 @@ async def typeahead_search(
         if len(event_concept_pool) >= 3:
             break
         _ta_cat = (market.llm_sport_category or "").lower()
+        # L2-88: awards ceremonies as first-class typeahead concepts (event:awards:<slug>).
+        _ta_aw = _ta_derive_awards(market.external_id, market.name)
+        if _ta_aw is not None:
+            if _ta_aw["key"] in _ta_seen_concept_keys:
+                continue
+            _ta_seen_concept_keys.add(_ta_aw["key"])
+            event_concept_pool.append({
+                "type": "event_concept",
+                "text": _ta_aw["name"],
+                "event_key": _ta_aw["key"],
+                "sport_key": "awards",
+            })
+            continue
         # L2-84: UFC cards (co-equal) — derive event:ufc:<token> from a fight ticker.
         if _ta_cat == "mma":
             _ta_c = _ta_derive_ufc_concept(market.external_id, market.name)
@@ -1963,10 +2039,18 @@ async def typeahead_search(
         except Exception:
             pass
 
+    # L2-88: HUB rows — a competition-hub landing (/hub/mma|boxing|golf|tennis) is a
+    # navigational shortcut, so surface it as a first-class typeahead row when the
+    # query names a hub. Static match against HUB_CONFIGS (+ a few synonyms), so the
+    # four built hubs are reachable from search, not only the Browse nav.
+    hub_pool = _match_hub_suggestions(q)
+
     # --- Slot-based assembly ---
-    # Guarantee: 1 team, up to 2 events, up to 3 futures. Max 7 total.
+    # Guarantee: 1 hub (when matched), 1 team, up to 2 events, up to 3 futures. Max 7.
     # Events get priority for extra slots over futures.
     suggestions = []
+    # A matched hub leads — it's the most direct answer to "golf"/"mma"/etc.
+    suggestions.extend(hub_pool[:1])
     suggestions.extend(team_pool[:1])
     suggestions.extend(event_pool[:2])
     # L2-65: event concepts (tournament pages) rank above individual markets.

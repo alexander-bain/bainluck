@@ -170,11 +170,16 @@ export default function SearchBar({
       from_page: 'search',
       to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
         : suggestion.type === 'event_concept' ? (suggestion.event_key ? eventPath(suggestion.event_key) : `/search?q=${suggestion.text}`)
+        : suggestion.type === 'hub' ? (suggestion.href || `/hub/${suggestion.competition}`)
         : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`
         : teamUrl || `/search?q=${suggestion.text}`,
     });
 
     switch (suggestion.type) {
+      case "hub":
+        // L2-88: competition-hub landing shortcut (/hub/<slug>).
+        router.push(suggestion.href || `/hub/${suggestion.competition ?? ""}`);
+        break;
       case "team":
         if (teamUrl) {
           router.push(teamUrl);
@@ -418,6 +423,7 @@ export default function SearchBar({
                 )}
                 {suggestion.type === "futures" && <span>{"\u{1F4C8}"}</span>}
                 {suggestion.type === "event_concept" && <span>{"\u{1F3C6}"}</span>}
+                {suggestion.type === "hub" && <span>{suggestion.emoji || "\u{1F3DF}"}</span>}
               </span>
 
               <div className="flex-1 min-w-0">
@@ -437,6 +443,9 @@ export default function SearchBar({
                   <div className="text-xs text-slate">
                     Event{suggestion.sport_key ? ` · ${suggestion.sport_key}` : ""}
                   </div>
+                )}
+                {suggestion.type === "hub" && (
+                  <div className="text-xs text-slate">Browse all markets</div>
                 )}
                 {suggestion.type === "futures" && (() => {
                   // #993 Slice A: lead with the answer — leader + probability
@@ -478,6 +487,10 @@ export default function SearchBar({
                   ? "Team"
                   : suggestion.type === "event"
                   ? "Game"
+                  : suggestion.type === "hub"
+                  ? "Hub"
+                  : suggestion.type === "event_concept"
+                  ? "Event"
                   : "Futures"}
               </span>
             </button>

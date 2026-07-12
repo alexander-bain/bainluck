@@ -13,7 +13,7 @@ import {
   formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
-import { marketEventKey, eventPath } from "@/lib/eventKey";
+import { marketEventKey, eventPath, awardsCeremonyName } from "@/lib/eventKey";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -389,7 +389,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // a breadcrumb into the richer /event/[key] surface. The label strips the
   // "Winner/Champion" suffix so it reads as the event ("… Wimbledon →").
   const conceptKey = marketEventKey(market);
-  const conceptLabel = market.name.replace(/\s*(winner|champion|champ|to win)\s*$/i, "").trim() || market.name;
+  // L2-88: an awards category/nomination market links up to its ceremony page —
+  // label with the ceremony ("The Oscars"), not the bare category, so the
+  // breadcrumb reads "Part of: The Oscars →". Sports winner-fields keep the
+  // name-minus-suffix label ("… Wimbledon →").
+  const conceptLabel =
+    awardsCeremonyName(conceptKey) ||
+    market.name.replace(/\s*(winner|champion|champ|to win)\s*$/i, "").trim() ||
+    market.name;
 
   return (
     <div className="space-y-6">

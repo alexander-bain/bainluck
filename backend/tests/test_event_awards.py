@@ -8,6 +8,7 @@ from app.utils.event_awards import (
     CEREMONIES,
     classify_market,
     clean_category_label,
+    derive_awards_concept,
     edition_year,
     parse_awards_slug,
 )
@@ -100,6 +101,39 @@ class TestCleanCategoryLabel:
 
     def test_empty_falls_back(self):
         assert clean_category_label("") == ""
+
+
+class TestDeriveAwardsConcept:
+    """L2-88: the discovery-entry helper for search/typeahead + futures breadcrumb.
+    Maps a matched awards MARKET to its bare ceremony concept key."""
+
+    def test_ticker_stem_wins(self):
+        assert derive_awards_concept("KXOSCARPIC-27", "anything")["key"] == "event:awards:oscars"
+        assert derive_awards_concept("KXEMMYDSERIES-26SEP14", "x")["key"] == "event:awards:emmys"
+        assert derive_awards_concept("KXTONYAWARDS-26BM", "x")["key"] == "event:awards:tonys"
+        assert derive_awards_concept("KXGRAMAOTY-69", "x")["key"] == "event:awards:grammys"
+
+    def test_bare_key_no_edition(self):
+        # Bare slug → the adapter resolves to the latest rich edition (never a dead link).
+        c = derive_awards_concept("kalshi:KXOSCARDIR-26", "Oscar for Best Director?")
+        assert c["key"] == "event:awards:oscars"
+        assert c["domain"] == "awards"
+        assert c["name"] == "The Oscars"
+
+    def test_name_fallback_when_no_ticker(self):
+        assert derive_awards_concept(None, "Oscar winner: Best Picture")["key"] == "event:awards:oscars"
+        assert derive_awards_concept("", "Emmy Award for Drama Series")["key"] == "event:awards:emmys"
+        assert derive_awards_concept(None, "Tony Award for Best Play?")["key"] == "event:awards:tonys"
+
+    def test_non_awards_is_none(self):
+        assert derive_awards_concept("KXPGATOUR-GESO26", "Genesis Scottish Open Winner") is None
+        assert derive_awards_concept(None, "2026 Men's Wimbledon Winner") is None
+        assert derive_awards_concept(None, None) is None
+
+    def test_sports_emmy_ticker_excluded(self):
+        # KXEMMY is not a substring of KXSPORTSEMMY → the ticker path never
+        # miscategorizes the Sports Emmys as the (TV) Emmys.
+        assert derive_awards_concept("KXSPORTSEMMY-26", "Sports Broadcasting Award") is None
 
 
 class TestCeremoniesConfig:

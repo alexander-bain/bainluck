@@ -64,6 +64,25 @@ EVENTS = [
             "AND external_id ILIKE '%KXOSCAR%'"
         ),
     },
+    {
+        # L2-88: Emmys + Tonys join Oscars as tracked awards ceremonies (the awards
+        # adapter already resolves both via CEREMONIES). Ceiling = every open market
+        # for the ceremony's Kalshi ticker stem (KXEMMY / KXTONYAWARDS).
+        "key": "event:awards:emmys",
+        "label": "Emmys (Awards)",
+        "candidate_sql": (
+            "SELECT count(*) FROM futures_markets WHERE status='open' "
+            "AND external_id ILIKE '%KXEMMY%'"
+        ),
+    },
+    {
+        "key": "event:awards:tonys",
+        "label": "Tonys (Awards)",
+        "candidate_sql": (
+            "SELECT count(*) FROM futures_markets WHERE status='open' "
+            "AND external_id ILIKE '%KXTONYAWARDS%'"
+        ),
+    },
 ]
 
 

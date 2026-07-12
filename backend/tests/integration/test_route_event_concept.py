@@ -219,9 +219,14 @@ class TestTennisPriceSettledCrown:
         # her — the `won` flag is what makes the settled page honest.
         assert champ[0]["probability"] < 0.9
 
-    async def test_undecided_settled_field_not_crowned(self, client, mock_db):
-        """Men's-Wimbledon shape: settled by date but the price never converged
-        (top ~0.81). Must NOT fabricate a champion — the page shows 'awaiting'."""
+    async def test_undecided_settled_field_renders_live_not_empty_crown(self, client, mock_db):
+        """Men's-Wimbledon shape (verified live 2026-07-12): an OPEN winner-market
+        marked 'settled' ONLY by a placeholder resolution_date (Polymarket sets it to
+        midnight of finals day) while the final is still being played — top price
+        ~0.81, no graded winner. L2-88 render-gap fix: this must NOT render an empty
+        'Awaiting the final result.' settled crown. With no winner signal (no graded
+        is_winner, no price-settled leader) and the market still open, the event is
+        downgraded to 'live' so the field still renders — and no champion is fabricated."""
         from types import SimpleNamespace
         from datetime import datetime, timezone, timedelta
         from tests.integration.test_route_weather import _query_result
@@ -240,8 +245,11 @@ class TestTennisPriceSettledCrown:
         resp = await client.get("/api/event/event:tennis:2026-mens-wimbledon")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["event"]["status"] == "settled"
+        # L2-88: NOT "settled" — an open, undecided field past a placeholder date is live.
+        assert body["event"]["status"] == "live"
         assert not any(c.get("won") for c in body["primary"]["competitors"])
+        # The field still renders (both finalists present) rather than a blank crown.
+        assert {c["name"] for c in body["primary"]["competitors"]} >= {"Jannik Sinner", "Alexander Zverev"}
 
 
 def _tennis_winner(id_, name, players, source="polymarket", group_id=None):

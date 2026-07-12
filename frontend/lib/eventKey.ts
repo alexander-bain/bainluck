@@ -30,16 +30,70 @@ export function isWinnerMarketName(name: string | null | undefined): boolean {
  *  tournamentEventKey). Extend as adapters land (F1/UFC = later slice). */
 const MARKET_EVENT_DOMAINS = new Set(["tennis"]);
 
+// L2-88: awards ceremony detection, mirroring backend `derive_awards_concept`
+// (event_awards.py CEREMONIES). Ticker stem (unambiguous) first, then a name
+// keyword — award category markets carry the ceremony word ("Oscar winner: …").
+// The BARE ceremony slug resolves server-side to the latest rich edition, so the
+// breadcrumb is never a dead link even for an older-edition market.
+const AWARDS_TICKER_STEMS: [string, string][] = [
+  ["KXOSCAR", "oscars"],
+  ["KXEMMY", "emmys"],
+  ["KXTONYAWARDS", "tonys"],
+  ["KXGRAM", "grammys"],
+];
+const AWARDS_NAME_STEMS: [string, string][] = [
+  ["academy award", "oscars"],
+  ["oscar", "oscars"],
+  ["emmy", "emmys"],
+  ["grammy", "grammys"],
+  ["tony award", "tonys"],
+];
+
+const AWARDS_SLUG_DISPLAY: Record<string, string> = {
+  oscars: "The Oscars",
+  emmys: "The Emmys",
+  grammys: "The Grammys",
+  tonys: "The Tony Awards",
+};
+
+/** Human ceremony name for an `event:awards:<slug>` key ("The Oscars"), or null. */
+export function awardsCeremonyName(key: string | null | undefined): string | null {
+  if (!key || !key.startsWith("event:awards:")) return null;
+  const slug = key.slice("event:awards:".length).replace(/-\d{2,4}$/, "");
+  return AWARDS_SLUG_DISPLAY[slug] || null;
+}
+
+/** Ceremony event key for an awards MARKET (Oscar/Emmy/Tony/Grammy), or null. */
+export function awardsEventKey(m: {
+  name?: string | null;
+  external_id?: string | null;
+}): string | null {
+  const eid = (m.external_id || "").toUpperCase();
+  for (const [stem, slug] of AWARDS_TICKER_STEMS) {
+    if (eid.includes(stem)) return `event:awards:${slug}`;
+  }
+  const n = (m.name || "").toLowerCase();
+  for (const [stem, slug] of AWARDS_NAME_STEMS) {
+    if (n.includes(stem)) return `event:awards:${slug}`;
+  }
+  return null;
+}
+
 /**
  * Event key for a futures MARKET (Discover futures card / futures-detail), or
- * null when the market isn't part of an event concept. Only winner-field markets
- * in an adapter domain resolve — a single match/prop can't derive its parent
+ * null when the market isn't part of an event concept. Winner-field markets in an
+ * adapter domain (tennis) resolve by name-slug; awards category/nomination markets
+ * resolve to their ceremony page. A single sports match/prop can't derive its parent
  * event key client-side (that needs the backend matcher; tracked as a follow-up).
  */
 export function marketEventKey(m: {
   name?: string | null;
   llm_sport_category?: string | null;
+  external_id?: string | null;
 }): string | null {
+  // L2-88: awards ceremonies (config-driven, engine-link pattern) link up first.
+  const awards = awardsEventKey(m);
+  if (awards) return awards;
   const cat = (m.llm_sport_category || "").toLowerCase();
   if (!MARKET_EVENT_DOMAINS.has(cat)) return null;
   if (!isWinnerMarketName(m.name)) return null;

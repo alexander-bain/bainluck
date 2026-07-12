@@ -193,6 +193,42 @@ def clean_category_label(name: str | None) -> str:
     return s or (name or "")
 
 
+def derive_awards_concept(
+    external_id: str | None, name: str | None = None
+) -> dict | None:
+    """Map an awards MARKET to its ceremony event concept, or None if not an award.
+
+    L2-88 discovery-entry helper (the co-equal analogue of `derive_ufc_concept`):
+    search/typeahead and the futures-detail breadcrumb call this to surface a matched
+    Oscar/Emmy/Tony/Grammy category market as a first-class ``event:awards:<ceremony>``
+    row / "Part of:" link. Matches the unambiguous Kalshi ticker stem in external_id
+    (``KXOSCARPIC-27`` → oscars); falls back to a ceremony keyword in the market name
+    (``"Oscar winner: Best Picture"`` → oscars) when the ticker is absent. Returns the
+    BARE ceremony slug (no edition), which the adapter resolves to the latest rich
+    edition — so the link is never dead even for an older-edition market."""
+    eid = (external_id or "").upper()
+    for cfg in CEREMONIES.values():
+        if cfg.ticker.upper() in eid:
+            return {"key": f"event:awards:{cfg.slug}", "name": cfg.display, "domain": "awards"}
+    # Name fallback: category/novelty markets carry the ceremony word ("Oscar",
+    # "Emmy Award", "Grammy", "Tony Award"). Keyed off the display stem, longest
+    # first so "Tony Award" wins before a bare "tony" substring elsewhere.
+    n = (name or "").lower()
+    _NAME_STEMS = (
+        ("academy award", "oscars"),
+        ("oscar", "oscars"),
+        ("emmy", "emmys"),
+        ("grammy", "grammys"),
+        ("tony award", "tonys"),
+    )
+    for stem, slug in _NAME_STEMS:
+        if stem in n:
+            cfg = CEREMONIES.get(slug)
+            if cfg is not None:
+                return {"key": f"event:awards:{cfg.slug}", "name": cfg.display, "domain": "awards"}
+    return None
+
+
 class AwardsEventAdapter:
     """Event-concept adapter for awards ceremonies (co_equal_list). Resolves
     ``event:awards:<ceremony>[-<year>]`` into the generic envelope, grouping the

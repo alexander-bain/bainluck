@@ -7,6 +7,7 @@ import Link from "next/link";
 import { searchMovie, posterUrl, hasTMDBToken } from "@/lib/tmdb";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEntertainment } from "@/lib/api";
+import { eventPath } from "@/lib/eventKey";
 import type {
   EntertainmentData,
   EntMarketRow,
@@ -854,6 +855,14 @@ function MoviesTVSection({ data }: { data: EntThemeMoviesTV }) {
           </h2>
         </div>
         <div className={s.sectionMeta}>
+          {/* L2-88: entry point into the awards event-concept pages (Oscars ceremony
+              — categories, marquee hero, nominations) — the awards adapter's surface. */}
+          <Link
+            href={eventPath("event:awards:oscars")}
+            className="text-sm font-medium text-accent-brand hover:underline whitespace-nowrap"
+          >
+            Awards markets →
+          </Link>
           <TabBar tabs={MOVIE_TABS} active={tab} onChange={setTab} />
         </div>
       </div>

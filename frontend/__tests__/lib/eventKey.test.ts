@@ -6,6 +6,8 @@ import {
   marketEventKey,
   tournamentEventKey,
   eventPath,
+  awardsEventKey,
+  awardsCeremonyName,
 } from "../../lib/eventKey";
 
 describe("cleanSlug", () => {
@@ -37,6 +39,43 @@ describe("marketEventKey", () => {
     expect(marketEventKey({ name: "The Open Winner", llm_sport_category: "golf" })).toBeNull(); // golf → tournament card path
     expect(marketEventKey({ name: "Gauff vs Sabalenka", llm_sport_category: "tennis" })).toBeNull();
     expect(marketEventKey({ name: "Fed Rate Decision", llm_sport_category: "economics" })).toBeNull();
+  });
+});
+
+describe("awardsEventKey (L2-88)", () => {
+  test("ticker stem → ceremony key (mirrors backend derive_awards_concept)", () => {
+    expect(awardsEventKey({ external_id: "KXOSCARPIC-27" })).toBe("event:awards:oscars");
+    expect(awardsEventKey({ external_id: "kalshi:KXEMMYDSERIES-26SEP14" })).toBe("event:awards:emmys");
+    expect(awardsEventKey({ external_id: "KXTONYAWARDS-26BM" })).toBe("event:awards:tonys");
+    expect(awardsEventKey({ external_id: "KXGRAMAOTY-69" })).toBe("event:awards:grammys");
+  });
+  test("name fallback when no ticker", () => {
+    expect(awardsEventKey({ name: "Oscar winner: Best Picture" })).toBe("event:awards:oscars");
+    expect(awardsEventKey({ name: "Emmy Award for Drama Series" })).toBe("event:awards:emmys");
+    expect(awardsEventKey({ name: "Tony Award for Best Play?" })).toBe("event:awards:tonys");
+  });
+  test("null for non-awards", () => {
+    expect(awardsEventKey({ external_id: "KXPGATOUR-GESO26", name: "Scottish Open Winner" })).toBeNull();
+    expect(awardsEventKey({ name: "2026 Men's Wimbledon Winner" })).toBeNull();
+    expect(awardsEventKey({})).toBeNull();
+  });
+});
+
+describe("awardsCeremonyName", () => {
+  test("maps a ceremony key to its display name (edition-tolerant)", () => {
+    expect(awardsCeremonyName("event:awards:oscars")).toBe("The Oscars");
+    expect(awardsCeremonyName("event:awards:oscars-2027")).toBe("The Oscars");
+    expect(awardsCeremonyName("event:awards:tonys")).toBe("The Tony Awards");
+    expect(awardsCeremonyName("event:tennis:wimbledon")).toBeNull();
+    expect(awardsCeremonyName(null)).toBeNull();
+  });
+});
+
+describe("marketEventKey — awards branch (L2-88)", () => {
+  test("an awards market links up to its ceremony page", () => {
+    expect(
+      marketEventKey({ name: "Oscar for Best Director?", external_id: "KXOSCARDIR-26", llm_sport_category: "entertainment" }),
+    ).toBe("event:awards:oscars");
   });
 });
 
