@@ -746,8 +746,31 @@ class KalshiAPIService(BaseAPIClient):
         import asyncio
         import time as _time
 
+        # #999 / Queue #166: reserve a floor of the total fetch budget for the
+        # guaranteed supplementary rescue (golf majors, championship series).
+        # The main unfiltered scan will happily drain the ENTIRE deadline paging
+        # the backlog; the supplementary loop's first `_past_deadline()` check
+        # then fires immediately and breaks with ZERO series fetched — a
+        # deterministic 0-golf poll on the exact weeks a marquee tournament
+        # (e.g. The Open, KXPGATOUR-THOC26) opens with only a handful of markets.
+        # Capping the main scan at `deadline - reserve` guarantees the rescue
+        # always gets its floor. The main scan's resumable cursor means the 60s
+        # it gives up is not lost — the next beat continues the tail from where
+        # this one stopped, so the backlog still drains, just one page slower.
+        _RESCUE_RESERVE_S = 60.0
+        _main_scan_deadline = (
+            deadline - _RESCUE_RESERVE_S if deadline is not None else None
+        )
+
         def _past_deadline() -> bool:
             return deadline is not None and _time.monotonic() >= deadline
+
+        def _past_main_scan_deadline() -> bool:
+            # The main scan stops early so the guaranteed rescue keeps its floor.
+            return (
+                _main_scan_deadline is not None
+                and _time.monotonic() >= _main_scan_deadline
+            )
 
         def _progress(sub: str) -> None:
             # #995 attempt-5 sub-phase marker: names the exact fetch call in
@@ -767,10 +790,12 @@ class KalshiAPIService(BaseAPIClient):
 
         while page_count < max_pages:
             _progress(f"fetch:unfiltered:p{page_count}")
-            if _past_deadline():
+            if _past_main_scan_deadline():
                 logger.warning(
-                    "Kalshi fetch deadline hit during main scan at page %d "
-                    "(%d events so far) — returning partial", page_count, len(all_events),
+                    "Kalshi main scan hit its capped deadline at page %d "
+                    "(%d events so far) — stopping early to reserve %.0fs for the "
+                    "guaranteed supplementary rescue; cursor resumes next beat.",
+                    page_count, len(all_events), _RESCUE_RESERVE_S,
                 )
                 break
             if page_count > 0:
@@ -791,7 +816,7 @@ class KalshiAPIService(BaseAPIClient):
                         with_nested_markets=True,
                         limit=self._MAIN_SCAN_PAGE_LIMIT,
                         cursor=cursor,
-                        deadline=deadline,
+                        deadline=_main_scan_deadline,
                         progress_cb=_progress,
                     ),
                     timeout=45.0,
@@ -912,7 +937,18 @@ class KalshiAPIService(BaseAPIClient):
         # below fetches their markets per-event, lazily + bounded. Small
         # championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
         _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
-        for st in _SPORTS_SERIES_TICKERS:
+        # #999 / Queue #166: fetch the priority (golf) rescue tickers FIRST so
+        # they get first claim on the reserved supplementary window. Even with
+        # the main-scan cap, the earlier championship/game series could otherwise
+        # eat the whole reserve before the loop ever reached the golf entries at
+        # the tail of the list. `str.startswith` accepts a tuple; `sorted` is
+        # stable, so within each group the original order is preserved.
+        _PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+        _ordered_series = sorted(
+            _SPORTS_SERIES_TICKERS,
+            key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
+        )
+        for st in _ordered_series:
             _supp_nested = not any(tok in st.upper() for tok in _HEAVY_TOKENS)
             _progress(f"fetch:supp:{st}")
             if _past_deadline():

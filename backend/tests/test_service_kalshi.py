@@ -501,6 +501,81 @@ class TestFetchDeadlineAndSettledTrim:
         assert all("deadline" in kw for kw in seen_kw)
 
 
+class TestSupplementaryRescueBudgetReservation:
+    """#999 / Queue #166: the guaranteed supplementary rescue (golf majors,
+    championship series) runs AFTER the main unfiltered scan. If the main scan
+    drains the whole fetch deadline, the supplementary loop's first
+    `_past_deadline()` check fires immediately → ZERO series fetched → a
+    deterministic 0-golf poll on the exact weeks a marquee tournament (e.g. The
+    Open, KXPGATOUR-THOC26) opens. The fix caps the main scan at
+    `deadline - _RESCUE_RESERVE_S` and fetches the priority (golf) tickers
+    first so the rescue always keeps its floor."""
+
+    _PRIORITY = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+
+    async def test_rescue_runs_when_main_scan_exhausts_capped_budget(self, client, monkeypatch):
+        import asyncio
+        import time
+        calls = []
+
+        async def fake_get_events(**kw):
+            calls.append(kw)
+            return ([], None)
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        # deadline inside the reserve window: main_scan_deadline (deadline-60s)
+        # is already in the past, so the main scan does 0 pages, but the FULL
+        # deadline is still in the future so the rescue MUST still run.
+        await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 30)
+        main = [kw for kw in calls if kw.get("series_ticker") is None]
+        supp = [kw.get("series_ticker") for kw in calls if kw.get("series_ticker")]
+        assert main == [], "main scan must stop immediately once past its capped deadline"
+        assert any(s.upper().startswith(self._PRIORITY) for s in supp), (
+            "golf rescue must fetch even when the main scan exhausts its budget"
+        )
+
+    async def test_priority_golf_tickers_fetched_before_other_series(self, client, monkeypatch):
+        import asyncio
+        import time
+        order = []
+
+        async def fake_get_events(**kw):
+            st = kw.get("series_ticker")
+            if st is not None:
+                order.append(st)
+            return ([], None)
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 1000)
+        prio = [i for i, s in enumerate(order) if s.upper().startswith(self._PRIORITY)]
+        other = [i for i, s in enumerate(order) if not s.upper().startswith(self._PRIORITY)]
+        assert prio and other, "expected both golf and non-golf supplementary fetches"
+        assert max(prio) < min(other), "golf rescue tickers must be fetched first"
+
+    async def test_main_scan_gets_capped_deadline_supplementary_gets_full(self, client, monkeypatch):
+        import asyncio
+        import time
+        calls = []
+
+        async def fake_get_events(**kw):
+            calls.append(kw)
+            return ([], None)
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        full = time.monotonic() + 1000
+        await client._fetch_all_events_unfiltered(deadline=full)
+        main_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is None]
+        supp_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is not None]
+        assert main_dls, "expected a main-scan page fetch"
+        assert supp_dls, "expected supplementary series fetches"
+        # main scan runs against deadline - 60s; supplementary uses the full deadline
+        assert all(abs(d - (full - 60.0)) < 1e-6 for d in main_dls)
+        assert all(abs(d - full) < 1e-6 for d in supp_dls)
+
+
 class TestPollKalshiSigkillHardening:
     """#995 attempt-4 (observability-first): poll_kalshi SIGKILLs before it can
     record any metric (no_data). Guard the source so the timeouts + phase marker
