@@ -182,8 +182,9 @@ def classify_coverage(
     provenance rather than a per-outcome flag.
     """
     # Structural known class: events-table soccer moneyline == the draw-omission
-    # (soccer_2way) exclusion.
-    if provenance == "events" and (category or "").startswith("soccer_"):
+    # (soccer_2way) exclusion. Events are grouped by sport family (soccer_epl ->
+    # "soccer") so all leagues aggregate past the n-floor; match either form.
+    if provenance == "events" and (category or "").startswith("soccer"):
         return "soccer_2way", 1.0
 
     best_key = None
@@ -275,7 +276,7 @@ GROUP BY 1, 2, 3, 4, 5, 6
 # (schema drift), so new-format detection does not apply here.
 _EVENTS_MINING_SQL = """
 WITH sides AS (
-    SELECT s.key AS category,
+    SELECT split_part(s.key, '_', 1) AS category,
            CASE WHEN e.home_score > e.away_score THEN 1 ELSE 0 END AS win,
            COALESCE(e.closing_home_probability, e.opening_home_probability) AS cp
     FROM events e
@@ -284,7 +285,7 @@ WITH sides AS (
       AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
       AND COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL
     UNION ALL
-    SELECT s.key AS category,
+    SELECT split_part(s.key, '_', 1) AS category,
            CASE WHEN e.away_score > e.home_score THEN 1 ELSE 0 END AS win,
            COALESCE(e.closing_away_probability, e.opening_away_probability) AS cp
     FROM events e
