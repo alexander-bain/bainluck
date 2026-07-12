@@ -137,8 +137,12 @@ def _is_golf_market(market) -> bool:
 
 # Patterns that look like "Open Championship" but are NOT The Open Championship.
 # Must be checked before _TOURNAMENT_PATTERNS to prevent false classification.
+# "senior open" catches the U.S. Senior Open Championship (KXCHAMPTOUR-USSOC*)
+# and The Senior Open Championship — Champions/senior-tour majors whose names
+# contain "Open Championship" and would otherwise fold into The (British) Open's
+# family, contaminating its winner group with a different field (L2-90 render gap).
 _NOT_THE_OPEN_RE = re.compile(
-    r"south\s+african\s+open|joburg\s+open|kenya\s+open",
+    r"south\s+african\s+open|joburg\s+open|kenya\s+open|senior\s+open",
     re.I,
 )
 

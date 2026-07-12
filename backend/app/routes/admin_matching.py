@@ -404,21 +404,16 @@ async def fix_sport_categories(
     }
 
 
-@router.get("/prediction-markets/link-rate")
-async def prediction_market_link_rate(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Game-level market link rate — the metric that matters.
+async def _compute_link_rate(db: AsyncSession) -> dict:
+    """Compute the game-level prediction-market link-rate payload.
 
     Filters to only markets that SHOULD be linked (game-level sports markets,
     excluding politics/crypto/weather) and reports what % are actually linked,
     broken down by sport.
-    """
-    _check_admin_secret(secret, request=request)
 
+    Extracted from the route (L2-90) so the precompute task and the route's
+    cold-cache fallback share one implementation.
+    """
     # Build game-level ticker filter for Kalshi.
     # Only count markets with game ticker prefixes — these are the markets
     # the matching task's Pass 1 scans. The old `event_id IS NOT NULL` clause
@@ -629,6 +624,7 @@ async def prediction_market_link_rate(
     )
 
     return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall": {
             "total_game_markets": grand_total,
             "linked": grand_linked,
@@ -674,6 +670,44 @@ async def prediction_market_link_rate(
             },
         },
     }
+
+
+@router.get("/prediction-markets/link-rate")
+async def prediction_market_link_rate(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    bust: int = Query(0, include_in_schema=False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Game-level market link rate — served from the L2-90 async cache.
+
+    The compute (~25s over the sports futures subset) was 503ing at the 30s
+    router limit under load. The ``precompute_admin_link_rate`` beat keeps a
+    Redis snapshot warm; a cold cache or ``?bust=1`` falls back to computing
+    inline (same result as before) and rewarms the cache.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+
+    if not bust:
+        try:
+            from app.tasks.redis_state import get_redis_client
+            cached = get_redis_client().get("bainluck:admin:link_rate")
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass
+
+    payload = await _compute_link_rate(db)
+    try:
+        from app.tasks.redis_state import get_redis_client
+        get_redis_client().set(
+            "bainluck:admin:link_rate", _json.dumps(payload), ex=3600
+        )
+    except Exception:
+        pass
+    return payload
 
 
 @router.get("/prediction-markets/tier1-compliance")

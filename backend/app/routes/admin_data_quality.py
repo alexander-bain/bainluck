@@ -1285,15 +1285,17 @@ async def run_audit(
         return {"status": "error", "error": str(exc)[:500]}
 
 
-@router.get("/audit/all")
-async def run_audit_all_grids(
-    request: Request, secret: str = Query(None),
-):
-    """Run audit across all grids and return combined results."""
-    _check_admin_secret(secret, request=request)
+async def _compute_audit_all_grids() -> dict:
+    """Run the matching-quality audit across all grids and return combined results.
 
+    Extracted from the route (L2-90) so the precompute task and the route's
+    cold-cache fallback share one implementation. This spawns the audit script
+    subprocess four times (nba, nhl, mlb, golf) — the ~25s cost that was 503ing
+    the endpoint at the 30s router limit under load.
+    """
     import asyncio
     import json as json_mod
+    from datetime import datetime, timezone
 
     grids = ["nba", "nhl", "mlb", "golf"]
     results = {}
@@ -1332,10 +1334,47 @@ async def run_audit_all_grids(
     }
 
     return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "scores": scores,
         "avg_score": round(sum(scores.values()) / len(scores)) if scores else None,
         "grids": results,
     }
+
+
+@router.get("/audit/all")
+async def run_audit_all_grids(
+    request: Request,
+    secret: str = Query(None),
+    bust: int = Query(0, include_in_schema=False),
+):
+    """Run audit across all grids — served from the L2-90 async cache.
+
+    The four-subprocess compute (~25s) was 503ing at the 30s router limit under
+    load. The ``precompute_admin_audit_all`` beat keeps a Redis snapshot warm;
+    a cold cache or ``?bust=1`` falls back to computing inline and rewarms it.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+
+    if not bust:
+        try:
+            from app.tasks.redis_state import get_redis_client
+            cached = get_redis_client().get("bainluck:admin:audit_all")
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass
+
+    payload = await _compute_audit_all_grids()
+    try:
+        from app.tasks.redis_state import get_redis_client
+        get_redis_client().set(
+            "bainluck:admin:audit_all", _json.dumps(payload), ex=3600
+        )
+    except Exception:
+        pass
+    return payload
 
 
 @router.get("/debug/golf-markets")

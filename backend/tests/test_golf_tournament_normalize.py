@@ -27,3 +27,19 @@ def test_fix_scrambled_major_is_noop_for_clean_names():
 def test_fix_scrambled_major_preserves_surrounding_text():
     out = _fix_scrambled_major("2026 uptspt Open First Round Leader")
     assert "U.S. Open" in out and out.startswith("2026 ") and out.endswith("Leader")
+
+
+def test_senior_open_does_not_fold_into_the_open():
+    # L2-90: senior-tour majors contain "Open Championship" and were wrongly
+    # folding into The (British) Open's family, contaminating its winner group
+    # with a different field (e.g. KXCHAMPTOUR-USSOC "U.S. Senior Open").
+    assert _normalize_tournament("U.S. Senior Open Championship Winner") != "the_open"
+    assert _normalize_tournament("The Senior Open Championship - Winner") != "the_open"
+
+
+def test_real_the_open_still_normalizes():
+    # Regression guard: the genuine major must still merge onto one the_open card.
+    assert _normalize_tournament("The Open Championship Winner") == "the_open"
+    assert _normalize_tournament("The Open Winner") == "the_open"
+    assert _normalize_tournament("British Open Winner") == "the_open"
+    assert _normalize_tournament("The Open - Top 10") == "the_open"

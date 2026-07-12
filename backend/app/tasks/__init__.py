@@ -1646,6 +1646,20 @@ def precompute_category_pages(self):
     return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_admin_audit_all")
+def precompute_admin_audit_all(self):
+    """Precompute /api/admin/audit/all (4 grid subprocesses) into Redis (L2-90)."""
+    from app.tasks.precompute_admin_health import _precompute_admin_audit_all
+    return _tracked_run("precompute_admin_audit_all", _precompute_admin_audit_all())
+
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_admin_link_rate")
+def precompute_admin_link_rate(self):
+    """Precompute /api/admin/prediction-markets/link-rate into Redis (L2-90)."""
+    from app.tasks.precompute_admin_health import _precompute_admin_link_rate
+    return _tracked_run("precompute_admin_link_rate", _precompute_admin_link_rate())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_backfill_winners_status")
 def precompute_backfill_winners_status(self):
     """Precompute backfill-winners/status response and cache in Redis (every 1h)."""
@@ -2249,6 +2263,16 @@ celery_app.conf.beat_schedule = {
     "compute-fair-fight-comparison": {
         "task": "app.tasks.compute_fair_fight_comparison",
         "schedule": crontab(minute=15, hour="1,7,13,19"),  # Every 6 hours, offset 15min
+        "options": {"queue": "background"},
+    },
+    "precompute-admin-audit-all": {
+        "task": "app.tasks.precompute_admin_audit_all",
+        "schedule": crontab(minute="*/15"),  # Every 15 min — keeps /audit/all cache warm
+        "options": {"queue": "background"},
+    },
+    "precompute-admin-link-rate": {
+        "task": "app.tasks.precompute_admin_link_rate",
+        "schedule": crontab(minute="*/10"),  # Every 10 min — keeps /link-rate cache warm
         "options": {"queue": "background"},
     },
 }

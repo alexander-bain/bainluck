@@ -258,6 +258,8 @@ class TestBeatScheduleCompleteness:
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
         "precompute-category-pages",
+        "precompute-admin-audit-all",
+        "precompute-admin-link-rate",
         "precompute-backfill-winners-status",
         "data-quality-watchdog",
         "calibration-sentinel-weekly",
