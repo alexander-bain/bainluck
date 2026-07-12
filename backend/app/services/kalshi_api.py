@@ -884,6 +884,24 @@ class KalshiAPIService(BaseAPIClient):
             "KXNFLSERIES",
             # Announcer/broadcast mention props
             "KXNBAMENTION", "KXNHLMENTION", "KXMLBMENTION", "KXNFLMENTION",
+            # Golf tournaments + props (Queue #163): the main unfiltered scan's
+            # resumable cursor was not reaching the KXPGA* series pages, so
+            # OPEN tournaments — incl. marquee majors like The Open Championship
+            # (KXPGATOUR-THOC26, listed but 0 markets ingested) AND the current
+            # week's Scottish Open / ISCO — surfaced with no cross-source
+            # markets. Golf had no supplementary safety net (this list was
+            # NBA/NHL/MLB/NFL only). None of these carry a _HEAVY_TOKEN, so they
+            # fetch WITH nested markets; per-series open-event counts are tiny
+            # (~4 events/series), well under the #995 monster-payload threshold.
+            # NB: the highest-volume matchup series (KXPGAH2H ~724, KXPGA3BALL
+            # ~677) are intentionally EXCLUDED — they open only during play and
+            # their nested payloads are the largest, so we keep them off the
+            # guaranteed rescue to avoid re-introducing #995 monster-page risk;
+            # the pre-tournament futures below are what marquee readiness needs.
+            "KXPGATOUR", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20",
+            "KXPGAMAKECUT", "KXPGAR1LEAD", "KXPGAR2LEAD", "KXPGAR3LEAD",
+            "KXPGAHOLEINONE",
+            "KXLPGATOUR", "KXLIVTOUR", "KXDPWORLDTOUR",
         ]
         supplemented = 0
         _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
