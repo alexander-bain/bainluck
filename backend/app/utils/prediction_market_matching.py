@@ -24,6 +24,48 @@ from app.utils.sport_keys import (
 logger = logging.getLogger(__name__)
 
 
+# ── Win-prob blend eligibility ───────────────────────────────────────────────
+# A5 (#1024): which Kalshi tickers carry a two-sided WINNER line whose YES
+# probability belongs in an event's win_probability_sources blend.
+#
+# Team sports encode the game-winner as a ``…game`` ticker (kxnbagame, kxmlbgame,
+# …). Combat sports (UFC/boxing) encode the bout-winner as a dedicated FIGHT
+# ticker; every other ticker on the card (method / rounds / distance / occurrence,
+# and spreads/totals) is a PROP that is correctly linked for display but must NOT
+# contribute to the probability time-series. So the blend admits ``…game`` OR a
+# combat fight-winner prefix, and nothing else.
+COMBAT_FIGHT_WINNER_PREFIXES = frozenset({"kxufcfight", "kxboxing"})
+
+
+def _ticker_prefix(external_id: Optional[str]) -> str:
+    """Lowercased ticker prefix (the token before the first ``-``)."""
+    return (external_id or "").lower().split("-", 1)[0]
+
+
+def is_combat_fight_ticker(external_id: Optional[str]) -> bool:
+    """True for a combat-sport FIGHT-WINNER ticker (a UFC/boxing bout moneyline).
+
+    Excludes the card's prop tickers (kxufcmof / kxufcrounds / kxufcdistance /
+    kxufcvicround / kxufcmov, and their boxing analogues), which share the card
+    date-token but are not the bout winner line.
+    """
+    return _ticker_prefix(external_id) in COMBAT_FIGHT_WINNER_PREFIXES
+
+
+def feeds_win_prob_blend(external_id: Optional[str]) -> bool:
+    """Whether a Kalshi ticker's YES probability should write into the event
+    ``win_probability_sources`` blend.
+
+    Admits team-sport game winners (prefix ends in ``game``) and combat fight
+    winners (``kxufcfight`` / ``kxboxing``). Everything else — spreads, totals,
+    player props, method/round/distance combat props — is excluded. Replaces the
+    old ``prefix.endswith("game")`` heuristic, which silently dropped every
+    combat bout (their tickers don't end in ``game``) from the blend.
+    """
+    prefix = _ticker_prefix(external_id)
+    return prefix.endswith("game") or prefix in COMBAT_FIGHT_WINNER_PREFIXES
+
+
 # ── Game-level market detection ──────────────────────────────────────────────
 
 # "Team A at/vs/v/@ Team B" (bare matchup without stat — no colon separator)

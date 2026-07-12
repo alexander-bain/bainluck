@@ -32,6 +32,8 @@ from app.utils.prediction_market_matching import (
     _score_fragment_match,
     match_teams_to_event,
     find_moneyline_outcome,
+    feeds_win_prob_blend,
+    is_combat_fight_ticker,
     _fuzzy_team_match,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
@@ -62,10 +64,10 @@ class _LinkedMarketRef:
 
     @property
     def is_game_winner(self) -> bool:
-        if not self.external_id:
-            return False
-        prefix = self.external_id.lower().split("-")[0]
-        return prefix.endswith("game")
+        # A5 (#1024): a two-sided winner line — team-sport …game OR a combat
+        # fight winner (kxufcfight/kxboxing) — so the fight-winner is preferred
+        # over its card's props when picking the group's primary market.
+        return feeds_win_prob_blend(self.external_id)
 
 
 def _derive_sport_category(external_id: str | None) -> str | None:
@@ -982,9 +984,7 @@ async def _match_prediction_markets(limit: int = 500):
                 # half winner) are correctly linked for display but should
                 # not contribute to the probability time-series.
                 if market.source == "kalshi" and market.external_id:
-                    ext = market.external_id.lower()
-                    prefix = ext.split("-")[0] if "-" in ext else ext
-                    if not prefix.endswith("game"):
+                    if not feeds_win_prob_blend(market.external_id):
                         phase2_skipped_not_ml += 1
                         continue
 
@@ -993,8 +993,18 @@ async def _match_prediction_markets(limit: int = 500):
                     # match by team name. If the ticker date doesn't match the
                     # event's commence_time, this market is linked to the wrong
                     # event. Unlink it rather than writing bad data.
+                    #
+                    # Combat fights are exempt: they are disambiguated by fighter
+                    # names (no same-card double-header), and their date-only
+                    # ticker (e.g. 26JUL11) legitimately sits up to ~28h from the
+                    # event's UTC commence (gotcha #14 — Kalshi close-time ≠ start),
+                    # which the ±18h date-only threshold would wrongly unlink.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
-                    if ticker_date and market.event_commence_time:
+                    if (
+                        ticker_date
+                        and market.event_commence_time
+                        and not is_combat_fight_ticker(market.external_id)
+                    ):
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = market.event_commence_time if market.event_commence_time.tzinfo else market.event_commence_time.replace(tzinfo=timezone.utc)
                         # Use tight threshold when HHMM was parsed (non-midnight),
@@ -1987,7 +1997,7 @@ async def _poll_live_prediction_market_prices():
         def _is_game_winner_market(m) -> bool:
             if m.source != "kalshi" or not m.external_id:
                 return False
-            return m.external_id.lower().split("-")[0].endswith("game")
+            return feeds_win_prob_blend(m.external_id)
 
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for key, group in all_per_event_source_live.items():
@@ -2004,9 +2014,9 @@ async def _poll_live_prediction_market_prices():
         for market, event in best_per_event_source.values():
             try:
                 # Only write snapshots for moneyline/game-winner markets
+                # (team-sport …game + combat fight winners; props excluded).
                 if market.source == "kalshi" and market.external_id:
-                    prefix = market.external_id.lower().split("-")[0]
-                    if not prefix.endswith("game"):
+                    if not feeds_win_prob_blend(market.external_id):
                         continue
 
                 # Uses ticker fallback for generic-named Kalshi markets

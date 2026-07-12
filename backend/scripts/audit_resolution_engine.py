@@ -377,15 +377,110 @@ def audit_cross_source(limit: int) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# A5 (#1024): per-card MMA association — the tournament-completeness cells.
+# ---------------------------------------------------------------------------
+def audit_mma_card_association(limit: int = 400) -> dict:
+    """Per UFC card (grouped by the Kalshi fight ticker's date-token), report
+    how many bouts are (a) linked to an Event and (b) MULTI-SOURCE — the event's
+    ``win_probability_sources`` blend carries a Kalshi or Polymarket reading, not
+    just the Odds API ``betting`` line. This is the A5 acceptance made countable:
+    the whole point is upcoming fights gaining cross-source blend coverage.
+
+    Read-only. Uses the shared ``card_token`` grammar so a "card" here is the
+    exact same date-token the UFC card page groups on.
+    """
+    from app.utils.event_ufc import ufc_card_token
+
+    rows = db_query(
+        "SELECT fm.external_id, fm.name, fm.event_id, "
+        "e.status AS event_status, e.commence_time, "
+        "e.win_probability_sources AS wps "
+        "FROM futures_markets fm "
+        "LEFT JOIN events e ON e.id = fm.event_id "
+        "WHERE fm.source = 'kalshi' AND lower(fm.external_id) LIKE 'kxufcfight-%' "
+        "ORDER BY e.commence_time DESC NULLS LAST",
+        limit=limit,
+    )
+
+    cards: dict[str, dict] = {}
+    for r in rows:
+        token = ufc_card_token(r["external_id"])
+        if not token:
+            continue
+        c = cards.setdefault(
+            token,
+            {"fights": 0, "linked": 0, "kalshi": 0, "poly": 0, "multi": 0,
+             "commence": r.get("commence_time")},
+        )
+        c["fights"] += 1
+        if r.get("event_id"):
+            c["linked"] += 1
+        wps = r.get("wps")
+        if isinstance(wps, str):
+            try:
+                wps = json.loads(wps.replace("'", '"'))
+            except Exception:
+                wps = {}
+        wps = wps or {}
+        has_k = "kalshi" in wps
+        has_p = "polymarket" in wps
+        if has_k:
+            c["kalshi"] += 1
+        if has_p:
+            c["poly"] += 1
+        if has_k or has_p:
+            c["multi"] += 1
+
+    total_fights = sum(c["fights"] for c in cards.values())
+    total_linked = sum(c["linked"] for c in cards.values())
+    total_multi = sum(c["multi"] for c in cards.values())
+    return {
+        "cards": cards,
+        "total_cards": len(cards),
+        "total_fights": total_fights,
+        "total_linked": total_linked,
+        "total_multi": total_multi,
+        "link_rate": (total_linked / total_fights) if total_fights else 0.0,
+        "multi_rate": (total_multi / total_fights) if total_fights else 0.0,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--show-disagreements", type=int, default=12)
+    parser.add_argument(
+        "--mma-cards", action="store_true",
+        help="Only run the A5 per-card MMA association table.",
+    )
     args = parser.parse_args()
 
     if not TOKEN:
         print("ERROR: ADMIN_TOKEN not set. Run: source ~/.claude/.env", file=sys.stderr)
         return 2
+
+    if args.mma_cards:
+        mma = audit_mma_card_association(args.limit)
+        print("=" * 72)
+        print("A5 (#1024) — PER-CARD MMA ASSOCIATION (tournament-completeness cells)")
+        print("=" * 72)
+        print(f"{'card (date-token)':20} {'fights':>7} {'linked':>7} "
+              f"{'kalshi':>7} {'poly':>6} {'multi-source':>13}")
+        for token, c in sorted(
+            mma["cards"].items(),
+            key=lambda kv: (kv[1]["commence"] or ""), reverse=True,
+        ):
+            print(f"{token:20} {c['fights']:>7} {c['linked']:>7} "
+                  f"{c['kalshi']:>7} {c['poly']:>6} {c['multi']:>13}")
+        print("-" * 72)
+        print(f"{'TOTAL':20} {mma['total_fights']:>7} {mma['total_linked']:>7} "
+              f"{'':>7} {'':>6} {mma['total_multi']:>13}")
+        print(f"\nlink rate  : {mma['total_linked']}/{mma['total_fights']} "
+              f"= {mma['link_rate']*100:.1f}%")
+        print(f"multi-source rate (kalshi|poly in blend): {mma['total_multi']}/"
+              f"{mma['total_fights']} = {mma['multi_rate']*100:.1f}%")
+        return 0
 
     print("=" * 72)
     print("A4 RESOLUTION ENGINE — SHADOW-MODE AGREEMENT (no writes, no cutover)")

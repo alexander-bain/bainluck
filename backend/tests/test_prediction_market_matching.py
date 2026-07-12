@@ -767,6 +767,69 @@ class TestWinProbSources:
         }
 
 
+class TestFeedsWinProbBlend:
+    """A5 (#1024): the blend-eligibility classifier that lets combat fight
+    winners into win_probability_sources while keeping props out. This is the
+    gate that previously dropped every UFC/boxing bout (their tickers don't end
+    in ``game``) — so the whole MMA cross-source proof rides on it."""
+
+    def test_team_sport_game_tickers_feed_blend(self):
+        from app.utils.prediction_market_matching import feeds_win_prob_blend
+        for t in ("KXNBAGAME-26X", "KXMLBGAME-26X", "KXNHLGAME-26X",
+                  "KXNFLGAME-26X", "KXMLSGAME-26X"):
+            assert feeds_win_prob_blend(t) is True, t
+
+    def test_combat_fight_winners_feed_blend(self):
+        from app.utils.prediction_market_matching import feeds_win_prob_blend
+        # The core fix: UFC + boxing bout-winner tickers now feed the blend.
+        assert feeds_win_prob_blend("KXUFCFIGHT-26JUL11MCGHOL") is True
+        assert feeds_win_prob_blend("KXBOXING-26JUL04MASONBELL") is True
+
+    def test_combat_props_excluded(self):
+        from app.utils.prediction_market_matching import feeds_win_prob_blend
+        # Method / rounds / distance / round-of-victory / method-of-victory are
+        # props on the same card — linked for display, NOT part of the win line.
+        for t in ("KXUFCMOF-26JUL11MCGHOL", "KXUFCMOV-26JUL11MCGHOL",
+                  "KXUFCROUNDS-26JUL11MCGHOL", "KXUFCVICROUND-26JUL11MCGHOL",
+                  "KXUFCDISTANCE-26JUL11MCGHOL"):
+            assert feeds_win_prob_blend(t) is False, t
+
+    def test_spreads_and_totals_excluded(self):
+        from app.utils.prediction_market_matching import feeds_win_prob_blend
+        for t in ("KXNBASPREAD-26X", "KXMLBTOTAL-26X", "KXMLSSPREAD-26X"):
+            assert feeds_win_prob_blend(t) is False, t
+
+    def test_none_and_empty(self):
+        from app.utils.prediction_market_matching import feeds_win_prob_blend
+        assert feeds_win_prob_blend(None) is False
+        assert feeds_win_prob_blend("") is False
+
+    def test_is_combat_fight_ticker(self):
+        from app.utils.prediction_market_matching import is_combat_fight_ticker
+        assert is_combat_fight_ticker("KXUFCFIGHT-26JUL11MCGHOL") is True
+        assert is_combat_fight_ticker("kxufcfight-26jul11mcghol") is True  # case
+        assert is_combat_fight_ticker("KXBOXING-26JUL04X") is True
+        # Props and team games are NOT combat fight tickers.
+        assert is_combat_fight_ticker("KXUFCMOF-26JUL11MCGHOL") is False
+        assert is_combat_fight_ticker("KXNBAGAME-26X") is False
+        assert is_combat_fight_ticker(None) is False
+
+    def test_linked_market_ref_prefers_fight_winner(self):
+        """The Phase 2 primary-picker (_LinkedMarketRef.is_game_winner) must
+        treat a fight winner as a winner so it beats a prop with a lower id."""
+        from app.tasks.prediction_market_matching import _LinkedMarketRef
+
+        def ref(ext_id, mid):
+            return _LinkedMarketRef(
+                market_id=mid, source="kalshi", external_id=ext_id,
+                name="", event_id=1, event_commence_time=None,
+                home_team_name=None, away_team_name=None,
+            )
+
+        assert ref("KXUFCFIGHT-26JUL11MCGHOL", 5).is_game_winner is True
+        assert ref("KXUFCMOF-26JUL11MCGHOL", 1).is_game_winner is False
+
+
 # =============================================================================
 # Edge cases and integration scenarios
 # =============================================================================

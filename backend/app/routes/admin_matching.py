@@ -3837,7 +3837,11 @@ async def backfill_win_probability_sources(
     """Backfill win_probability_sources for linked moneyline game markets."""
     _check_admin_secret(secret, request=request)
 
-    from app.utils.prediction_market_matching import find_moneyline_outcome, extract_matchup
+    from app.utils.prediction_market_matching import (
+        find_moneyline_outcome,
+        extract_matchup,
+        feeds_win_prob_blend,
+    )
 
     stats = {"processed": 0, "written": 0, "skipped": 0, "errors": 0}
 
@@ -3862,8 +3866,9 @@ async def backfill_win_probability_sources(
     by_event_source = {}
     for market, event in rows:
         key = (event.id, market.source)
-        ext = (market.external_id or "").lower()
-        if key not in by_event_source or "game" in ext:
+        # Prefer the blend-eligible winner line (team-sport …game OR combat
+        # fight winner) over any prop sibling fetched for the same event.
+        if key not in by_event_source or feeds_win_prob_blend(market.external_id):
             by_event_source[key] = (market, event)
 
     for (event_id, source), (market, event) in by_event_source.items():
@@ -3874,9 +3879,7 @@ async def backfill_win_probability_sources(
             continue
 
         if market.source == "kalshi":
-            ext = (market.external_id or "").lower()
-            prefix = ext.split("-")[0] if "-" in ext else ext
-            if not prefix.endswith("game"):
+            if not feeds_win_prob_blend(market.external_id):
                 stats["skipped"] += 1
                 continue
 
