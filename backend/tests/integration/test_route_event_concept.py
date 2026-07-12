@@ -722,7 +722,9 @@ class TestElectionEventAdapter:
         # Novelties + govt shutdown + 2028 pres are NOT rendered anywhere.
         all_ids = {c["market_id"] for c in body["children"]}
         assert all_ids.isdisjoint({5, 6, 7})
-        assert any(s["type"] == "races" for s in body["sections"])
+        races_section = next(s for s in body["sections"] if s["type"] == "races")
+        # Honest full-count rides on the section (2 races here, under the cap).
+        assert races_section["total"] == 2
 
     async def test_no_races_404(self, client, mock_db):
         from tests.integration.test_route_weather import _query_result

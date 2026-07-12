@@ -44,6 +44,15 @@ from sqlalchemy.orm import selectinload
 # the is_winner grading-lag window (parity with awards/tennis — display-only).
 _WON_PRICE_THRESHOLD = 0.97
 
+# Coverage is RICH, not thin: ~375 individual House-district winner races exist, most
+# of them safe seats (leader >0.97). Rendering all 375 in one rail is heavy (128KB /
+# 3s cold) and buries the interesting contests. So the co-equal race list is CAPPED
+# to the statewide races (always) + the most-COMPETITIVE district races (leader prob
+# closest to a coin flip), and primaries/forecasts are capped too. The full counts
+# ride on the section dicts (`total`) for honesty / API consumers.
+_RACE_CAP = 60
+_PROP_CAP = 40
+
 # Ticker stems whose markets this adapter considers (governor / senate / house /
 # congress). ``kxgovt`` (government-shutdown) is a FALSE friend of ``kxgov`` and is
 # excluded in classification, not here.
@@ -363,18 +372,38 @@ class ElectionEventAdapter:
                 row["prop_type"] = prop_type
             return row
 
-        # Children: every race (co-equal list) + primaries + seat forecasts as props.
-        # Races sort by leader probability (most-decided first); marquee floats front.
-        race_markets = [t[0] for t in races]
-        race_children = [_child(m) for m in race_markets]
-        race_children.sort(
-            key=lambda c: (c["market_id"] != marquee.id, -(c["probability"] or 0))
-        )
+        def _lead_prob_raw(m) -> float:
+            outs = _outcomes(m, limit=1)
+            return (
+                float(outs[0].current_probability)
+                if outs and outs[0].current_probability is not None
+                else 1.0
+            )
+
+        # Rank races: marquee first, then statewide (governor/senate/control) always,
+        # then district races by COMPETITIVENESS (lowest leader prob = most contested
+        # → surfaces toss-ups, drops safe 0.99 seats). Cap to keep the rail + payload
+        # sane; the full total rides on the section for honesty.
+        def _race_sort_key(mk):
+            m, kind = mk
+            is_marquee = 0 if m.id == marquee.id else 1
+            statewide = 0 if kind in ("control", "governor_race", "senate_race") else 1
+            return (is_marquee, statewide, _lead_prob_raw(m))
+
+        race_rows = sorted(((t[0], t[1]) for t in races), key=_race_sort_key)
+        race_total = len(race_rows)
+        race_children = [_child(m) for m, _ in race_rows[:_RACE_CAP]]
+
+        # Primaries + seat forecasts as props — most-contested first, capped.
+        primaries_sorted = sorted(primaries, key=_lead_prob_raw)
+        seats_sorted = sorted(seat_forecasts, key=_lead_prob_raw)
+        primary_total = len(primaries_sorted)
+        seat_total = len(seats_sorted)
         primary_children = [
-            _child(m, kind="prop", prop_type="primary") for m in primaries
+            _child(m, kind="prop", prop_type="primary") for m in primaries_sorted[:_PROP_CAP]
         ]
         seat_children = [
-            _child(m, kind="prop", prop_type="seats") for m in seat_forecasts
+            _child(m, kind="prop", prop_type="seats") for m in seats_sorted[:_PROP_CAP]
         ]
         children = race_children + primary_children + seat_children
 
@@ -383,12 +412,18 @@ class ElectionEventAdapter:
                 "type": "races",
                 "label": "Races",
                 "market_ids": [c["market_id"] for c in race_children],
+                "total": race_total,  # honest: full race count before the cap
             }
         ]
         prop_ids = [c["market_id"] for c in primary_children + seat_children]
         if prop_ids:
             sections.append(
-                {"type": "props", "label": "Primaries & forecasts", "market_ids": prop_ids}
+                {
+                    "type": "props",
+                    "label": "Primaries & forecasts",
+                    "market_ids": prop_ids,
+                    "total": primary_total + seat_total,
+                }
             )
 
         return {
