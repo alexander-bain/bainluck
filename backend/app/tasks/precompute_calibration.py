@@ -92,6 +92,21 @@ CALIBRATION_CORRECTIONS = [
                        "ladders/independent binaries and voids are excluded. "
                        "Read-side only, no regrade.",
     },
+    {
+        "date": "2026-07-11",
+        "title": "Soccer 2-way (draw-omission) historical exclusion",
+        "rows": None,  # live count in payload.soccer_2way_filter.excluded
+        "description": "Soccer game-odds were captured 2-way (home/away only) — "
+                       "the events table has no draw column, so every soccer "
+                       "moneyline row summed to ~1.0 and structurally dropped the "
+                       "~25% draw mass (#1011). That over-predicted home/away "
+                       "uniformly across all ~20 leagues (EPL 17.6pp, Switzerland "
+                       "15.0pp, Turkey 7.6pp). The draw was never stored so these "
+                       "rows can't be reconstructed — historical soccer game-odds "
+                       "are excluded from the curve (league-scoped by the soccer_* "
+                       "key). Forward fix = 3-way capture (#1011 draw column). "
+                       "Read-side only, no regrade.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -322,6 +337,41 @@ def outcome_is_calibration_void(resolution_source: str | None) -> bool:
     "counts toward calibration" for this dimension.
     """
     return resolution_source in VOID_RESOLUTION_SOURCES
+
+
+# Queue #158 (#1011): curve-side exclusion of HISTORICAL SOCCER GAME-ODDS captured
+# 2-way (draw omitted). The Odds API soccer h2h is 3-way (home/draw/away) but the
+# events table has NO draw column, so every soccer game-odds row was stored as a
+# 2-way home/away split summing to ~1.0 — structurally omitting the ~25% draw mass.
+# That over-predicts home/away systematically (ops-lane census #1010/#1011: EPL
+# predicted 0.573 home vs ACTUAL 0.397 = 17.6pp over; Switzerland 15.0pp; Turkey
+# 7.6pp; uniform across all ~20 leagues = one mechanism, not model bias). The draw
+# was never captured, so these historical rows cannot be reconstructed/re-graded —
+# they are excluded from the published curve, league-scoped by the ``soccer_*``
+# sport key. The forward fix (3-way capture into a new draw column) is #1011's
+# separate schema+ingest step. Read-side only (gotcha #21) — never mutates
+# scores or probabilities.
+SOCCER_2WAY_EXCLUDE_PATTERN = "soccer_%"
+
+SOCCER_2WAY_RULE_TEXT = (
+    "Excludes historical soccer game-odds (moneyline) from the curve. Soccer h2h "
+    "is 3-way (home/draw/away) but the events table stored only a 2-way home/away "
+    "split summing to ~1.0, dropping the ~25% draw mass and over-predicting "
+    "home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never "
+    "captured so these rows can't be re-graded; league-scoped by the soccer_* key. "
+    "Forward fix = 3-way capture. Read-side only; never mutates resolutions."
+)
+
+
+def category_is_soccer_2way_excluded(category: str | None) -> bool:
+    """True if an events-table category (sport key) is an excluded soccer league.
+
+    Canonical, unit-tested definition of the Queue #158 (#1011) rule mirroring the
+    ``s.key NOT LIKE 'soccer_%'`` events-curve filter: every soccer league game-odds
+    row was captured 2-way (draw dropped at ingest), so it is excluded from the
+    published moneyline curve. Read-side only (gotcha #21).
+    """
+    return bool(category) and category.startswith("soccer_")
 
 
 def outcome_is_calibration_liquid(
@@ -782,6 +832,12 @@ async def _precompute_calibration_main():
                   AND home_score != away_score
             ) outcomes
             JOIN sports s ON s.id = outcomes.sport_id
+            -- Queue #158 (#1011): soccer game-odds were captured 2-way (draw
+            -- dropped at ingest — no draw column) so every soccer moneyline row
+            -- sums to ~1.0 and over-predicts home/away by 7-18pp. Excluded from
+            -- the published curve, league-scoped by the soccer_* key. Read-side
+            -- only (gotcha #21); forward fix = 3-way capture (#1011).
+            WHERE s.key NOT LIKE 'soccer_%'
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
         """)
@@ -959,6 +1015,40 @@ async def _precompute_calibration_main():
         """)
         heur_result = await db.execute(heur_sql)
         heuristic_excluded = {r.source: int(r.excluded) for r in heur_result.all()}
+
+        # -----------------------------------------------------------
+        # Query 10: Queue #158 (#1011) soccer 2-way exclusion transparency —
+        # how many events-table soccer moneyline outcomes the draw-omission rule
+        # drops from the published curve. Mirrors the events_sql population
+        # (same eligibility, both home + away outcomes) so the count is honest,
+        # never silent — the same contract as the #762 void_filter count.
+        # -----------------------------------------------------------
+        soccer_2way_sql = text("""
+            SELECT COUNT(*) AS excluded
+            FROM (
+                SELECT sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
+                  AND COALESCE(closing_home_probability, opening_home_probability) > 0
+                  AND COALESCE(closing_home_probability, opening_home_probability) < 1
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND home_score != away_score
+                UNION ALL
+                SELECT sport_id
+                FROM events
+                WHERE status IN ('completed', 'closed')
+                  AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
+                  AND COALESCE(closing_away_probability, opening_away_probability) > 0
+                  AND COALESCE(closing_away_probability, opening_away_probability) < 1
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND home_score != away_score
+            ) outcomes
+            JOIN sports s ON s.id = outcomes.sport_id
+            WHERE s.key LIKE 'soccer_%'
+        """)
+        soccer_2way_result = await db.execute(soccer_2way_sql)
+        soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
 
     # -----------------------------------------------------------
     # Post-processing (runs outside the DB session)
@@ -1271,6 +1361,11 @@ async def _precompute_calibration_main():
             "applies_to": "datagolf",
             "rule": VOID_FILTER_RULE_TEXT,
             "excluded": void_excluded,
+        },
+        "soccer_2way_filter": {  # Queue #158 (#1011)
+            "applies_to": "odds_api",
+            "rule": SOCCER_2WAY_RULE_TEXT,
+            "excluded": soccer_2way_excluded,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",

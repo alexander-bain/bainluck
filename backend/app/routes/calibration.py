@@ -1028,6 +1028,11 @@ async def public_calibration(
               AND home_score != away_score
         ) outcomes
         JOIN sports s ON s.id = outcomes.sport_id
+        -- Queue #158 (#1011): soccer game-odds were captured 2-way (draw dropped
+        -- at ingest — no draw column) so every soccer moneyline row sums to ~1.0
+        -- and over-predicts home/away by 7-18pp. Excluded from the published
+        -- curve, league-scoped by the soccer_* key. Mirrors the precompute twin.
+        WHERE s.key NOT LIKE 'soccer_%'
         GROUP BY bucket_idx, s.key
         ORDER BY bucket_idx, s.key
     """)
@@ -1406,6 +1411,11 @@ async def public_calibration(
         # cold cache. The exclusion itself IS applied in this fallback's query
         # (resolution_source NOT IN (...)); only the transparency count is None.
         "void_filter": None,
+        # Queue #158 (#1011): soccer 2-way (draw-omission) exclusion. The
+        # exclusion IS applied in this fallback's events query (s.key NOT LIKE
+        # 'soccer_%'); only the transparency count is deferred to the precompute
+        # served path, so it is None here on a cold cache.
+        "soccer_2way_filter": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
