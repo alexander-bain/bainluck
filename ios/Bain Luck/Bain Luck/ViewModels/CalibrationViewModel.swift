@@ -2,54 +2,28 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Drives the native Calibration tab. #894: this used to re-derive every headline
+/// number with its OWN client-side formulas, so native disagreed with the web
+/// page. It now delegates ALL math to `CalibrationMath` — the exact web-parity
+/// port — and reads the payload-v2 metadata (sample gate, held-out categories,
+/// corrections) straight from the API. The view renders these numbers verbatim;
+/// there is no bespoke calibration arithmetic left in the view layer.
 @MainActor
 final class CalibrationViewModel: ObservableObject {
     @Published private(set) var data: CalibrationData?
     @Published private(set) var loading = true
     @Published private(set) var error: String?
 
+    /// L2-74 §C default: the WELL-TRADED view (real trading moved the price). The
+    /// toggle layers thin/untraded markets back in — it never hides, both counts
+    /// are always visible. View-bound, so it stays mutable.
+    @Published var includeThin = false
+
     private static let nf: NumberFormatter = { let f = NumberFormatter(); f.numberStyle = .decimal; return f }()
 
-    var formattedOutcomes: String { data.map { Self.nf.string(from: NSNumber(value: $0.totalOutcomes)) ?? "\($0.totalOutcomes)" } ?? "\u{2014}" }
-    var formattedMarkets: String { data.map { Self.nf.string(from: NSNumber(value: $0.totalMarkets)) ?? "\($0.totalMarkets)" } ?? "\u{2014}" }
+    private var buckets: [CalibrationBucket] { data?.buckets ?? [] }
 
-    var filteredBuckets: [CalibrationBucket] {
-        data?.buckets ?? []
-    }
-
-    var chartPoints: [CalibrationChartPoint] { makePoints(from: filteredBuckets) }
-    var movedBuckets: [CalibrationChartPoint] { makePoints(from: (data?.buckets ?? []).filter { $0.priceMoved == true }) }
-    var unchangedBuckets: [CalibrationChartPoint] { makePoints(from: (data?.buckets ?? []).filter { $0.priceMoved == false }) }
-
-    var mce: Double { (data?.mceClosingLine).map { $0 / 100.0 } ?? computeMCE(chartPoints) }
-    var mceColor: Color { let v = mce * 100; return v < 4 ? .green : v < 8 ? .blue : .orange }
-    var mceQualityLabel: String { let v = mce * 100; return v < 3 ? "Excellent" : v < 5 ? "Very Good" : v < 8 ? "Good" : "Fair" }
-    var cohortColor: Color { .blue }
-
-    var brier: Double {
-        let b = filteredBuckets; let n = b.reduce(0) { $0 + $1.n }
-        return n > 0 ? b.reduce(0.0) { $0 + $1.sumSqErr } / Double(n) : 0
-    }
-
-    var sourceRows: [CalibrationTableRow] {
-        buildRows(from: filteredBuckets, key: { $0.source }, displayName: Self.sourceDisplayName)
-    }
-    var categoryRows: [CalibrationTableRow] {
-        buildRows(from: filteredBuckets, key: { Self.normalizedCategory($0.category) }, displayName: Self.categoryDisplayName)
-            .filter { $0.n >= 100 }
-    }
-    var topCategoryRows: [CalibrationTableRow] { Array(categoryRows.prefix(10)) }
-    var bestCategoryRow: CalibrationTableRow? {
-        categoryRows.filter { $0.n >= 1000 }.min { $0.mce < $1.mce } ?? categoryRows.min { $0.mce < $1.mce }
-    }
-    var worstCategoryRow: CalibrationTableRow? {
-        categoryRows.filter { $0.n >= 1000 }.max { $0.mce < $1.mce } ?? categoryRows.max { $0.mce < $1.mce }
-    }
-
-    func computeMCE(_ points: [CalibrationChartPoint]) -> Double {
-        guard !points.isEmpty else { return 0 }
-        return points.reduce(0.0) { $0 + abs($1.actual - $1.predicted) } / Double(points.count) / 100
-    }
+    // MARK: - Loading
 
     func load() async {
         loading = true; error = nil
@@ -57,45 +31,158 @@ final class CalibrationViewModel: ObservableObject {
         loading = false
     }
 
-    // MARK: - Private
+    // MARK: - Formatting helpers
 
-    private struct AggBucket { let bucketIdx: Int; var n = 0; var winners = 0; var sumSqErr: Double = 0 }
+    private static func fmt(_ n: Int) -> String { nf.string(from: NSNumber(value: n)) ?? "\(n)" }
 
-    private func makePoints(from buckets: [CalibrationBucket]) -> [CalibrationChartPoint] {
-        aggregateByBucket(buckets).map { b in
-            let pred = Double(b.bucketIdx) * 10 + 5
-            let act = b.n > 0 ? Double(b.winners) / Double(b.n) * 100 : pred
-            return CalibrationChartPoint(predicted: pred, actual: act, size: max(30, min(200, CGFloat(b.n) / 8)), n: b.n)
+    var formattedTotalOutcomes: String { data.map { Self.fmt($0.totalOutcomes) } ?? "\u{2014}" }
+    var formattedMarkets: String { data.map { Self.fmt($0.totalMarkets) } ?? "\u{2014}" }
+    var formattedCohortOutcomes: String { data == nil ? "\u{2014}" : Self.fmt(cohortN) }
+
+    // MARK: - Sample gate
+
+    /// #997: the minimum-sample bar comes from the API (Redis-tunable) so web and
+    /// native gate on the same threshold. Fall back to 1000 if a lean/older
+    /// payload omits it — never regress to a noisy floor.
+    var minCategoryOutcomes: Int { data?.minCategoryOutcomes ?? 1000 }
+
+    // MARK: - Cohort metrics (ECE-first)
+
+    /// Aggregated curve for the active cohort (well-traded by default).
+    var cohortBuckets: [CalibrationMath.AggBucket] {
+        let thin = includeThin
+        return CalibrationMath.aggregate(buckets) { thin || $0.priceMoved != false }
+    }
+
+    /// Headline metric: n-weighted error (pp). This is what the web page leads with.
+    var cohortECE: Double { CalibrationMath.ece(cohortBuckets) }
+    /// Demoted secondary: equal-weighted worst-bucket-sensitivity error (pp).
+    var cohortMCE: Double { CalibrationMath.mce(cohortBuckets) }
+    var cohortBrier: Double {
+        let thin = includeThin
+        return CalibrationMath.brier(buckets) { thin || $0.priceMoved != false }
+    }
+    var cohortN: Int {
+        let thin = includeThin
+        return CalibrationMath.totalN(buckets) { thin || $0.priceMoved != false }
+    }
+    var fullN: Int { CalibrationMath.totalN(buckets) }
+    var wellTradedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved != false } }
+    var thinAddN: Int { max(0, fullN - wellTradedN) }
+
+    var eceQualityLabel: String {
+        let v = cohortECE
+        return v < 3 ? "Excellent" : v < 5 ? "Very Good" : v < 8 ? "Good" : "Fair"
+    }
+
+    // MARK: - Per-source / per-category rows (from the same web-parity math)
+
+    var sources: [String] {
+        let bks = buckets
+        var counts: [String: Int] = [:]
+        for b in bks { counts[b.source, default: 0] += b.n }
+        return counts.keys.sorted { (counts[$0] ?? 0) > (counts[$1] ?? 0) }
+    }
+
+    /// Normalized, sample-gated categories (top 15 by outcomes), matching the web.
+    var categories: [String] {
+        let bks = buckets
+        let minN = minCategoryOutcomes
+        var catMap: [String: Int] = [:]
+        for b in bks { catMap[Self.normalizedCategory(b.category), default: 0] += b.n }
+        return catMap
+            .filter { $0.value >= minN }
+            .sorted { $0.value > $1.value }
+            .prefix(15)
+            .map { $0.key }
+    }
+
+    var sourceRows: [CalSourceRow] {
+        let bks = buckets
+        let thin = includeThin
+        return sources.map { src in
+            let f: (CalibrationBucket) -> Bool = { $0.source == src && (thin || $0.priceMoved != false) }
+            let agg = CalibrationMath.aggregate(bks, filter: f)
+            let band = agg.filter { abs($0.error) <= 5 }.count
+            return CalSourceRow(
+                source: src, name: Self.sourceDisplayName(src),
+                n: CalibrationMath.totalN(bks, filter: f),
+                ece: CalibrationMath.ece(agg), mce: CalibrationMath.mce(agg),
+                brier: CalibrationMath.brier(bks, filter: f),
+                bucketsInBand: band, totalBuckets: agg.count
+            )
+        }.sorted { $0.ece < $1.ece }
+    }
+
+    var categoryRows: [CalCategoryRow] {
+        let bks = buckets
+        let thin = includeThin
+        return categories.map { cat in
+            let f: (CalibrationBucket) -> Bool = { Self.normalizedCategory($0.category) == cat && (thin || $0.priceMoved != false) }
+            let agg = CalibrationMath.aggregate(bks, filter: f)
+            return CalCategoryRow(
+                category: cat, name: Self.categoryDisplayName(cat),
+                n: CalibrationMath.totalN(bks, filter: f),
+                ece: CalibrationMath.ece(agg), mce: CalibrationMath.mce(agg),
+                brier: CalibrationMath.brier(bks, filter: f)
+            )
+        }.sorted { $0.ece < $1.ece }
+    }
+
+    var topCategoryRows: [CalCategoryRow] { Array(categoryRows.prefix(10)) }
+    var bestCategoryRow: CalCategoryRow? { categoryRows.min { $0.ece < $1.ece } }
+    var worstCategoryRow: CalCategoryRow? { categoryRows.max { $0.ece < $1.ece } }
+
+    // MARK: - Trading-activity split (always the full moved/unchanged cohorts)
+
+    var movedBuckets: [CalibrationMath.AggBucket] { CalibrationMath.aggregate(buckets) { $0.priceMoved == true } }
+    var unchangedBuckets: [CalibrationMath.AggBucket] { CalibrationMath.aggregate(buckets) { $0.priceMoved == false } }
+    var movedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved == true } }
+    var unchangedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved == false } }
+    var movedECE: Double { CalibrationMath.ece(movedBuckets) }
+    var unchangedECE: Double { CalibrationMath.ece(unchangedBuckets) }
+
+    // MARK: - Payload-v2 trust content
+
+    var smallSampleCategories: [SmallSampleCategory] {
+        (data?.smallSampleCategories ?? []).sorted { $0.outcomes > $1.outcomes }
+    }
+    var smallSampleTotal: Int { smallSampleCategories.reduce(0) { $0 + $1.outcomes } }
+    var corrections: [CalibrationCorrection] { data?.corrections ?? [] }
+
+    // MARK: - Chart point conversion (rendering only)
+
+    /// Convert aggregated buckets into chart points. Point size reflects sample
+    /// count; low-n ("thin") buckets fade so the eye trusts the well-sampled ones.
+    func points(from agg: [CalibrationMath.AggBucket]) -> [CalibrationChartPoint] {
+        agg.map { b in
+            CalibrationChartPoint(
+                predicted: b.midpoint, actual: b.actual,
+                size: max(30, min(200, CGFloat(b.n) / 8)),
+                n: b.n, opacity: Self.opacity(forN: b.n)
+            )
         }
     }
 
-    private func aggregateByBucket(_ buckets: [CalibrationBucket]) -> [AggBucket] {
-        var byIdx: [Int: AggBucket] = [:]
-        for b in buckets {
-            var a = byIdx[b.bucketIdx] ?? AggBucket(bucketIdx: b.bucketIdx)
-            a.n += b.n; a.winners += b.winners; a.sumSqErr += b.sumSqErr; byIdx[b.bucketIdx] = a
-        }
-        return (0..<10).compactMap { byIdx[$0] }.sorted { $0.bucketIdx < $1.bucketIdx }
+    static func opacity(forN n: Int) -> Double { n >= 200 ? 1.0 : (n >= 50 ? 0.7 : 0.4) }
+
+    // MARK: - Colors / labels
+
+    func eceColor(_ ece: Double) -> Color { ece < 4 ? .green : (ece < 8 ? .blue : .orange) }
+
+    /// "Jul 2026 – May 2026" style span, or nil if the payload omits the range.
+    var dateRangeLabel: String? {
+        guard let s = data?.dateRange?.start, let e = data?.dateRange?.end else { return nil }
+        return "\(Self.monthYear(s))\u{2013}\(Self.monthYear(e))"
     }
 
-    private func buildRows(
-        from buckets: [CalibrationBucket],
-        key: (CalibrationBucket) -> String,
-        displayName: (String) -> String
-    ) -> [CalibrationTableRow] {
-        var groups: [String: (n: Int, winners: Int, sqErr: Double, buckets: [CalibrationBucket])] = [:]
-        for b in buckets {
-            let k = key(b)
-            var g = groups[k] ?? (0, 0, 0, [])
-            g.n += b.n; g.winners += b.winners; g.sqErr += b.sumSqErr; g.buckets.append(b); groups[k] = g
-        }
-        return groups.map { k, g in
-            let agg = aggregateByBucket(g.buckets); let total = agg.reduce(0) { $0 + $1.n }
-            var wErr = 0.0
-            for a in agg { let m = Double(a.bucketIdx) * 0.1 + 0.05; let w = a.n > 0 ? Double(a.winners) / Double(a.n) : m; wErr += abs(w - m) * Double(a.n) }
-            return CalibrationTableRow(name: displayName(k), n: g.n, mce: total > 0 ? wErr / Double(total) : 0, brier: g.n > 0 ? g.sqErr / Double(g.n) : 0)
-        }.sorted { $0.n > $1.n }
+    var updatedLabel: String {
+        guard let g = data?.generatedAt, let date = Self.parseISO(g) else { return "hourly" }
+        let f = DateFormatter(); f.dateFormat = "MMM d"
+        return f.string(from: date)
     }
+
+    // MARK: - Category / source normalization (mirrors the web maps)
 
     private static func normalizedCategory(_ category: String) -> String {
         if let mapped = sportKeyMap[category] { return mapped }
@@ -105,12 +192,32 @@ final class CalibrationViewModel: ObservableObject {
         return categoryDisplayNames[base] == nil ? category : base
     }
 
-    private static func categoryDisplayName(_ category: String) -> String {
+    static func categoryDisplayName(_ category: String) -> String {
         categoryDisplayNames[category] ?? category.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    private static func sourceDisplayName(_ source: String) -> String {
+    static func sourceDisplayName(_ source: String) -> String {
         sourceDisplayNames[source] ?? source.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    /// Display label for a raw (un-normalized) small-sample category token.
+    static func nicheDisplayName(_ raw: String) -> String {
+        categoryDisplayNames[normalizedCategory(raw)] ?? raw.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private static func monthYear(_ iso: String) -> String {
+        guard let date = parseISO(iso) else { return iso }
+        let f = DateFormatter(); f.dateFormat = "MMM yyyy"
+        return f.string(from: date)
+    }
+
+    private static func parseISO(_ iso: String) -> Date? {
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFrac.date(from: iso) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: iso)
     }
 
     private static let sportKeyMap: [String: String] = [
@@ -144,4 +251,28 @@ final class CalibrationViewModel: ObservableObject {
         "odds_api_totals": "Totals (Odds API)",
         "odds_api_bookmaker": "Per-Bookmaker (Odds API)",
     ]
+}
+
+// MARK: - Presentation rows
+
+struct CalSourceRow: Identifiable {
+    let id = UUID()
+    let source: String
+    let name: String
+    let n: Int
+    let ece: Double
+    let mce: Double
+    let brier: Double
+    let bucketsInBand: Int
+    let totalBuckets: Int
+}
+
+struct CalCategoryRow: Identifiable {
+    let id = UUID()
+    let category: String
+    let name: String
+    let n: Int
+    let ece: Double
+    let mce: Double
+    let brier: Double
 }

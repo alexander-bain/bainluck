@@ -1,0 +1,353 @@
+{
+  "closing_line_coverage": {
+    "has_closing": 12896,
+    "needs_closing": 2048,
+    "total": 14944
+  },
+  "buckets": [
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "ai_safety",
+      "price_moved": false,
+      "n": 1,
+      "winners": 0,
+      "avg_prob": 0.07,
+      "sum_prob": 0.07,
+      "sum_sq_err": 0.0049,
+      "ci_lower": 0.0,
+      "ci_upper": 0.7935
+    },
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "auto_industry",
+      "price_moved": true,
+      "n": 3,
+      "winners": 0,
+      "avg_prob": 0.0317,
+      "sum_prob": 0.095,
+      "sum_sq_err": 0.0052,
+      "ci_lower": 0.0,
+      "ci_upper": 0.5615
+    },
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "baseball",
+      "price_moved": false,
+      "n": 7825,
+      "winners": 574,
+      "avg_prob": 0.0534,
+      "sum_prob": 417.7801,
+      "sum_sq_err": 523.2217,
+      "ci_lower": 0.0678,
+      "ci_upper": 0.0793
+    },
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "baseball",
+      "price_moved": true,
+      "n": 8827,
+      "winners": 504,
+      "avg_prob": 0.0518,
+      "sum_prob": 457.6169,
+      "sum_sq_err": 465.4627,
+      "ci_lower": 0.0524,
+      "ci_upper": 0.0621
+    },
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "basketball",
+      "price_moved": false,
+      "n": 2292,
+      "winners": 100,
+      "avg_prob": 0.0525,
+      "sum_prob": 120.2341,
+      "sum_sq_err": 95.4833,
+      "ci_lower": 0.036,
+      "ci_upper": 0.0528
+    },
+    {
+      "bucket_idx": 0,
+      "source": "kalshi",
+      "category": "basketball",
+      "price_moved": true,
+      "n": 11548,
+      "winners": 564,
+      "avg_prob": 0.053,
+      "sum_prob": 611.8273,
+      "sum_sq_err": 529.9911,
+      "ci_lower": 0.0451,
+      "ci_upper": 0.0529
+    },
+    {
+      "bucket_idx": 5,
+      "source": "polymarket",
+      "category": "esports",
+      "price_moved": false,
+      "n": 28992,
+      "winners": 11741,
+      "avg_prob": 0.5158,
+      "sum_prob": 14952.7335,
+      "sum_sq_err": 7294.317,
+      "ci_lower": 0.3993,
+      "ci_upper": 0.4106
+    }
+  ],
+  "by_category": [
+    {
+      "category": "baseball",
+      "mce": 2.34,
+      "mce_unweighted": 2.25,
+      "outcomes": 184989,
+      "ece": 2.34,
+      "mce_worst": 2.25,
+      "n": 184989,
+      "gated": false
+    },
+    {
+      "category": "esports",
+      "mce": 6.24,
+      "mce_unweighted": 4.25,
+      "outcomes": 146020,
+      "ece": 6.24,
+      "mce_worst": 4.25,
+      "n": 146020,
+      "gated": false
+    },
+    {
+      "category": "basketball",
+      "mce": 2.1,
+      "mce_unweighted": 1.92,
+      "outcomes": 144757,
+      "ece": 2.1,
+      "mce_worst": 1.92,
+      "n": 144757,
+      "gated": false
+    },
+    {
+      "category": "soccer",
+      "mce": 3.67,
+      "mce_unweighted": 4.07,
+      "outcomes": 106381,
+      "ece": 3.67,
+      "mce_worst": 4.07,
+      "n": 106381,
+      "gated": false
+    }
+  ],
+  "by_source": [
+    {
+      "source": "polymarket",
+      "mce": 2.59,
+      "mce_unweighted": 2.04,
+      "outcomes": 490554,
+      "ece": 2.59,
+      "mce_worst": 2.04,
+      "n": 490554,
+      "gated": false
+    },
+    {
+      "source": "kalshi",
+      "mce": 1.02,
+      "mce_unweighted": 1.11,
+      "outcomes": 414542,
+      "ece": 1.02,
+      "mce_worst": 1.11,
+      "n": 414542,
+      "gated": false
+    },
+    {
+      "source": "odds_api_bookmaker",
+      "mce": 1.17,
+      "mce_unweighted": 1.43,
+      "outcomes": 122413,
+      "ece": 1.17,
+      "mce_worst": 1.43,
+      "n": 122413,
+      "gated": false
+    },
+    {
+      "source": "odds_api",
+      "mce": 1.09,
+      "mce_unweighted": 1.06,
+      "outcomes": 22848,
+      "ece": 1.09,
+      "mce_worst": 1.06,
+      "n": 22848,
+      "gated": false
+    },
+    {
+      "source": "odds_api_totals",
+      "mce": 1.23,
+      "mce_unweighted": 15.77,
+      "outcomes": 12395,
+      "ece": 1.23,
+      "mce_worst": 15.77,
+      "n": 12395,
+      "gated": false
+    },
+    {
+      "source": "odds_api_spreads",
+      "mce": 0.74,
+      "mce_unweighted": 7.58,
+      "outcomes": 12104,
+      "ece": 0.74,
+      "mce_worst": 7.58,
+      "n": 12104,
+      "gated": false
+    }
+  ],
+  "date_range": {
+    "start": "2021-07-13T00:00:00+00:00",
+    "end": "2026-07-12T00:05:00+00:00"
+  },
+  "corrections": [
+    {
+      "date": "2026-07-09",
+      "title": "Polymarket hockey sign-flip",
+      "rows": 36207,
+      "description": "Player-threshold props stored the OVER probability against the Under/No side (gotcha #17). Re-graded the Polymarket half (poly MCE 4.68 \u2192 4.01)."
+    },
+    {
+      "date": "2026-07-08",
+      "title": "Premature golf resolutions",
+      "rows": 230,
+      "description": "Golf markets resolved at cp=1.0 with future dates were un-resolved so they grade against the real result."
+    },
+    {
+      "date": "2026-07-09",
+      "title": "DataGolf survivorship exclusion",
+      "rows": null,
+      "description": "Symmetric exclusion of did-not-play / withdrew outcomes so the golf curve isn't inflated by non-participants."
+    },
+    {
+      "date": "2026-07-09",
+      "title": "Polymarket no-bid placeholder exclusion",
+      "rows": null,
+      "description": "Illiquid poly props stamped a no-signal ~0.50 midpoint (Gamma synthetic prices, gotcha #19). #151's census proved no-bid near-0.50 outcomes resolve at 0.10\u20130.28 (placeholders) vs 0.43\u20130.55 for has-bid coin-flips. Now excluded from the curve by bid presence \u2014 read-side only, no regrade."
+    },
+    {
+      "date": "2026-07-09",
+      "title": "Malformed-binary exclusion",
+      "rows": null,
+      "description": "Resolved 2-outcome mutually-exclusive markets must have exactly one winner. Zero-winner (void) and two-winner (impossible) markets are data artifacts, not scoreable outcomes \u2014 now excluded from the curve. Census: ~43K both-false + ~1.5K both-winner across all categories. Read-side only, no regrade."
+    },
+    {
+      "date": "2026-07-09",
+      "title": "Golf FIELD one-sided-ask placeholder exclusion",
+      "rows": null,
+      "description": "Golf winner/round-leader outcomes priced >=0.80 in a mutually-exclusive market with >=2 such outcomes are Kalshi one-sided-ask placeholders (mex probs can't have two 80%+ outcomes; 98.6% lose). Excluded; genuine single leaders (82% win) stay in. Read-side only, no regrade."
+    },
+    {
+      "date": "2026-07-10",
+      "title": "Multi-candidate probability normalization",
+      "rows": null,
+      "description": "Mutually-exclusive markets with >=3 outcomes are one question and must sum to ~1.0, but sources stamp each candidate at its one-sided ask so the sum inflated to 2.4-5.3 (census 2026-07-09). Now each such market's probabilities are divided by the per-market sum. Only genuine single-winner partitions are touched; multi-winner ladders/independent binaries and voids are excluded. Read-side only, no regrade."
+    }
+  ],
+  "min_category_outcomes": 1000,
+  "small_sample_categories": [
+    {
+      "category": "soccer_spl",
+      "outcomes": 949
+    },
+    {
+      "category": "soccer_conmebol_copa_libertadores",
+      "outcomes": 933
+    },
+    {
+      "category": "aussierules_afl",
+      "outcomes": 868
+    }
+  ],
+  "spreads_summary": {
+    "mce": 0.74,
+    "outcomes": 12104,
+    "winners": 6057,
+    "by_sport": [
+      {
+        "sport": "basketball_ncaab",
+        "mce": 1.26,
+        "outcomes": 1892
+      },
+      {
+        "sport": "baseball_mlb",
+        "mce": 3.0,
+        "outcomes": 1022
+      }
+    ]
+  },
+  "totals_summary": {
+    "mce": 1.23,
+    "outcomes": 12395,
+    "winners": 6025,
+    "by_sport": [
+      {
+        "sport": "basketball_ncaab",
+        "mce": 0.8,
+        "outcomes": 1888
+      },
+      {
+        "sport": "baseball_mlb",
+        "mce": 2.87,
+        "outcomes": 1011
+      }
+    ]
+  },
+  "total_markets": 404168,
+  "total_outcomes": 1074856,
+  "total_winners": 448179,
+  "mce_ci_lower": 0.67,
+  "mce_ci_upper": 1.78,
+  "mce_closing_line": 1.5,
+  "mce_opening_price": 2.28,
+  "liquidity_filter": {
+    "applies_to": "kalshi",
+    "rule": "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade (last_price > 0) in any snapshot \u2014 pure one-sided, never-traded placeholder prices. Applied to Kalshi only; never mutates resolutions.",
+    "kalshi_included": 620379,
+    "kalshi_excluded": 57466
+  },
+  "poly_placeholder_filter": {
+    "applies_to": "polymarket",
+    "rule": "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed a real bid or trade in any snapshot \u2014 Gamma synthetic placeholder prices, not genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10\u20130.28 vs has-bid at 0.43\u20130.55). Read-side only; never mutates resolutions.",
+    "included": 835219,
+    "excluded": 63586
+  },
+  "malformed_binary_filter": {
+    "applies_to": "all",
+    "rule": "Excludes resolved 2-outcome mutually-exclusive markets whose winner count is not exactly 1 \u2014 zero winners (void/malformed resolution) or two winners (impossible / double-graded). These are data artifacts, not scoreable outcomes. Read-side only; never mutates resolutions.",
+    "both_false_excluded": 12415,
+    "both_winner_excluded": 1735,
+    "excluded": 14150
+  },
+  "golf_placeholder_filter": {
+    "applies_to": "golf",
+    "rule": "Excludes golf winner/round-leader outcomes priced >=0.80 in mutually-exclusive markets that have >=2 outcomes in that band \u2014 one-sided-ask placeholder prices (mex probabilities can't have two 80%+ outcomes; ~98.6% resolve as losers). Genuine single-leader markets (one outcome >=0.80, 82% win) stay in. Read-side only; never mutates resolutions.",
+    "excluded": 891
+  },
+  "mex_normalization": {
+    "applies_to": "all",
+    "rule": "Normalizes resolved mutually-exclusive markets with >=3 outcomes and exactly one winner whose per-market probability sum exceeds 1.15 \u2014 each outcome's probability is divided by the market sum so the partition sums to ~1.0 (fixes one-sided-ask over-confidence; census 2026-07-09 found sums of 2.4-5.3 in economics/entertainment/tech/football). Multi-winner ladders / independent binaries (2+ winners) and voids (0 winners) are the counter-class and left untouched, as are markets already summing to ~1.0. Read-side only; never mutates resolutions.",
+    "threshold": 1.15,
+    "normalized_outcomes": 74143
+  },
+  "void_filter": {
+    "applies_to": "datagolf",
+    "rule": "Excludes resolved outcomes for players who never participated (did_not_play / withdrew) \u2014 VOIDs with no real outcome to score, not losses. Mostly DataGolf 'Make the Cut' markets; never mutates resolutions.",
+    "excluded": 13030
+  },
+  "heuristic_filter": {
+    "applies_to": "polymarket",
+    "rule": "Outcomes resolved by legacy heuristic passes (pass2_guess, pass2_loser, all_losers) are excluded from the published curve: they were guessed, not authoritatively settled (Lane-2 #754 measured pass2_loser at 0.0% winrate even at 0.5-0.9 prices), and 97% lack a polymarket_event_id so authoritative re-resolution is infeasible. Read-side exclusion only; markets stay resolved, never re-graded (gotcha #21).",
+    "excluded_by_source": {
+      "datagolf": 675,
+      "kalshi": 17345,
+      "polymarket": 50070
+    }
+  },
+  "generated_at": "2026-07-12T01:25:30.868184+00:00"
+}
