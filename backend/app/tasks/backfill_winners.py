@@ -6204,10 +6204,29 @@ async def _compute_calibration_prices():
             # ORDER BY commence_time DESC so recent games are processed first.
             part_a_total = 0
             for _ in range(20):
+                # Queue #167 (#941/#1054) writer-side guard: for Kalshi
+                # player-prop "<subject>: N+" OVER props, a settled no-bid snapshot
+                # (yes_bid=0, yes_ask≈1.00) that lands before commence_time is a
+                # degenerate post-settlement quote (gotcha #14), not a closing line
+                # — e.g. "6+ total bases" at 0.96. Note the poison enters via
+                # last_price: the poller uses last_price when yes_bid=0, and a
+                # settled contract's last trade is ~0.99, so a last_price>0 gate
+                # would NOT keep it out. The guard therefore requires a real resting
+                # YES BID (fos.yes_bid > 0) — a genuine two-sided quote, matching the
+                # read-side keep signature (current_yes_bid > 0). Threshold rows also
+                # never fall back to the (also-degenerate) opening; if no bid-backed
+                # snapshot exists, cal_prob stays NULL (correctly absent from the
+                # curve) rather than a fabricated line. The `is_threshold` flag is
+                # the SQL mirror of precompute_calibration.KALSHI_PROP_THRESHOLD_NAME_RE
+                # (keep in sync); it is FALSE for every non-Kalshi/non-prop row so
+                # this branch is a provable no-op for all other sources.
                 result_a = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
-                                   fo.opening_probability
+                                   fo.opening_probability,
+                                   (fm.source = 'kalshi'
+                                    AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$')
+                                       AS is_threshold
                             FROM futures_outcomes fo
                             JOIN futures_markets fm ON fm.id = fo.market_id
                             JOIN events e ON e.id = fm.event_id
@@ -6219,7 +6238,9 @@ async def _compute_calibration_prices():
                         )
                         UPDATE futures_outcomes fo
                         SET calibration_probability = COALESCE(
-                            closing.probability, nc.opening_probability
+                            closing.probability,
+                            CASE WHEN nc.is_threshold THEN NULL
+                                 ELSE nc.opening_probability END
                         )
                         FROM needs_cal nc
                         LEFT JOIN LATERAL (
@@ -6228,11 +6249,16 @@ async def _compute_calibration_prices():
                             WHERE fos.outcome_id = nc.outcome_id
                               AND fos.captured_at < nc.commence_time
                               AND fos.probability > 0 AND fos.probability < 1
+                              AND (NOT nc.is_threshold OR fos.yes_bid > 0)
                             ORDER BY fos.captured_at DESC
                             LIMIT 1
                         ) closing ON true
                         WHERE fo.id = nc.outcome_id
-                          AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
+                          AND COALESCE(
+                              closing.probability,
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          ) IS NOT NULL
                     """))
                 await session.commit()
                 part_a_total += result_a.rowcount

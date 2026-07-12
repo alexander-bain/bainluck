@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import random
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -124,6 +125,32 @@ CALIBRATION_CORRECTIONS = [
                        "malformed-binary filter; excluded from the curve, never "
                        "re-graded (the many-YES grading is correct). Read-side "
                        "only, no regrade.",
+    },
+    {
+        "date": "2026-07-12",
+        "title": "Kalshi player-prop threshold degenerate-capture exclusion",
+        "rows": None,  # live count in payload.kalshi_prop_threshold_filter.excluded
+        "description": "Kalshi player-prop 'Player: N+' OVER markets (points/"
+                       "assists/goals/total-bases/hits/HR/strikeouts/rebounds/"
+                       "blocks) are polled near/after game time with Kalshi's "
+                       "commence_time ≈ resolution time (gotcha #14). When the "
+                       "last snapshot before commence_time is a settled no-bid "
+                       "quote (yes_bid=0, yes_ask≈1.00), that degenerate price is "
+                       "stamped as the closing line — '6+ total bases' at 0.96, "
+                       "physically impossible as a real OVER. The verify pass "
+                       "(#1054/#941, 2026-07-12) sub-classed the cohort by live-bid "
+                       "presence: the 69K no-bid rows are the poison (cp 0.97 vs "
+                       "winrate 0.19, MCE 0.78) while the 83K real-bid rows are a "
+                       "genuine calibration diagonal (ECE 0.023) and are KEPT. "
+                       "Excluding only the no-bid rows takes the class from "
+                       "ECE 0.123/MCE 0.779 to ECE 0.023/MCE 0.062. No Under/No "
+                       "sibling exists to flip (0 across the class) and no honest "
+                       "pre-game price to recover, so the excluded rows are never "
+                       "re-graded — dropped by structural signature (source=kalshi "
+                       "+ 'N+' name + no live bid), self-maintaining for future "
+                       "props and consistent with the writer-side capture guard. "
+                       "The Kalshi twin of the 2026-07-09 Polymarket sign-flip. "
+                       "Read-side only, no regrade (gotcha #21).",
     },
 ]
 
@@ -454,6 +481,96 @@ def market_is_esports_multi_bundle(
     )
 
 
+# Queue #167 (#941 / #1054): Kalshi player-prop threshold DEGENERATE-CAPTURE
+# curve exclusion.
+#
+# Kalshi player-prop markets are single-sided "Player: N+" OVER outcomes (points,
+# assists, goals, total bases, hits, HR, strikeouts, rebounds, blocks, ...). A
+# large slice of their captured calibration_probability is corrupt: these markets
+# are polled near/after game time (Kalshi commence_time ≈ resolution time,
+# gotcha #14), so when the *last snapshot before commence_time* is a settled,
+# no-bid quote (Kalshi pins yes_ask≈1.00 / yes_bid=0 on a resolved contract), the
+# cal-price writer stamps that degenerate quote as the "closing line" — e.g.
+# "6+ total bases" at 0.96, cal_prob == current_probability. A YES price ≥0.90 on
+# a high threshold with ZERO live YES bid is physically impossible as a real OVER
+# price; it is the settlement artifact, not a prediction.
+#
+# The mandatory verify-before pass (#1054 evidence + Queue #167 db-query trace,
+# 2026-07-12) sub-classed the whole "Player: N+" cohort by live-bid presence and
+# proved the poison is EXCLUSIVELY the no-live-bid rows:
+#   * current_yes_bid > 0  → 83,355 outcomes, a genuine calibration diagonal
+#       across every decile (cp 0.07→wr 0.09, 0.44→0.41, 0.67→0.64, 0.97→0.995;
+#       class ECE 0.023 / MCE 0.062). These are real live/pre-resolution market
+#       prices — KEEP them (gotcha #21: "SAVE all possible", never assume gone).
+#   * current_yes_bid = 0/NULL → 69,457 outcomes, cp 0.97 vs winrate 0.19
+#       (MCE 0.78). Degenerate post-settlement captures with no honest market
+#       line. Regrade is impossible: there is no Under/No sibling to flip (0
+#       across the class), the stored opening is itself often degenerate (mean
+#       0.97 for the impossible tail; still +15pp off where sane), and flipping to
+#       the complement would be dishonest post-hoc peeking. So they are EXCLUDED
+#       from the published curve, never re-graded.
+# Excluding only the no-bid rows drops the class from ECE 0.123 / MCE 0.779 to
+# ECE 0.023 / MCE 0.062 while retaining 83K honest data points. The signature is
+# structural (source=kalshi + "<subject>: N+" name + no live YES bid), so it is
+# self-maintaining: any future degenerate capture is auto-excluded, and any future
+# real-bid prop is auto-kept — consistent with the writer-side guard in
+# backfill_winners._compute_calibration_prices that refuses to stamp a no-bid
+# snapshot as the closing line for these props. Read-side only; never mutates
+# is_winner or probabilities. Overlaps #941 (the NHL slice); the Kalshi twin of
+# the 2026-07-09 Polymarket sign-flip correction.
+#
+# POSIX form for the SQL ``~`` operator ([+] is a literal plus in a bracket
+# expression so no backslash escaping is needed inside the f-string).
+KALSHI_PROP_THRESHOLD_NAME_RE = r"^.+:[[:space:]]*[0-9]+[+][[:space:]]*$"
+
+# Python mirror of the SQL regex for the unit-tested helper.
+_KALSHI_PROP_THRESHOLD_RE = re.compile(r"^.+:\s*\d+\+\s*$")
+
+KALSHI_PROP_THRESHOLD_RULE_TEXT = (
+    "Excludes the corrupt slice of Kalshi player-prop threshold outcomes "
+    "(single-sided 'Player: N+' OVER markets — points/assists/goals/total-bases/"
+    "hits/HR/strikeouts/rebounds/blocks): the ones whose captured closing line is "
+    "a degenerate post-settlement quote with NO live YES bid (current_yes_bid = 0/"
+    "NULL). Polled near/after game time with Kalshi's commence_time ≈ resolution "
+    "time (gotcha #14), a settled no-bid quote (yes_ask≈1.00) gets stamped as the "
+    "line — '6+ total bases' at 0.96 is physically impossible as a real OVER, so "
+    "it is the settlement artifact, not a prediction. Verify (#1054/#941, "
+    "2026-07-12) proved the poison is exactly the no-bid rows (69K, cp 0.97 vs "
+    "winrate 0.19, MCE 0.78); the real-bid rows (83K) are a genuine diagonal "
+    "(ECE 0.023) and are KEPT. No Under/No sibling exists to flip and no honest "
+    "pre-game price to recover, so the excluded rows are never re-graded (gotcha "
+    "#21). Kalshi twin of the 2026-07-09 Polymarket sign-flip. Read-side only; "
+    "never mutates resolutions."
+)
+
+
+def outcome_is_kalshi_prop_threshold(
+    source: str | None, name: str | None, current_yes_bid: float | None = None
+) -> bool:
+    """True if an outcome is a DEGENERATE Kalshi player-prop threshold capture excluded from the curve (Queue #167).
+
+    Canonical, unit-tested definition mirroring the ``is_kalshi_prop_threshold``
+    flag in the main outcome scan. A row is excluded only when ALL hold:
+      1. source == 'kalshi'
+      2. name is a single-sided "<subject>: N+" OVER threshold (points/assists/
+         total-bases/... player props)
+      3. it carries NO live YES bid (``current_yes_bid`` is None or 0) — i.e. its
+         captured cal_prob is a degenerate post-settlement quote, not a real
+         market line (gotcha #14).
+
+    Rows that satisfy (1) and (2) but have a real YES bid (``current_yes_bid`` >
+    0) are genuine live/pre-resolution predictions (a near-diagonal 83K cohort,
+    class ECE 0.023 — verify #1054/#941 2026-07-12) and are KEPT. The excluded
+    rows have no Under/No sibling to flip and no honest pre-game price, so they are
+    never re-graded (gotcha #21). Read-side only.
+    """
+    if source != "kalshi" or not name:
+        return False
+    if not _KALSHI_PROP_THRESHOLD_RE.match(name):
+        return False
+    return current_yes_bid is None or current_yes_bid == 0
+
+
 def outcome_is_calibration_liquid(
     ever_yes_bid: float | None, ever_last_price: float | None
 ) -> bool:
@@ -767,6 +884,18 @@ async def _precompute_calibration_main():
                     (gpm.market_id IS NOT NULL
                      AND COALESCE(fo.calibration_probability, fo.opening_probability)
                          >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
+                    -- Queue #167 (#941/#1054): Kalshi player-prop threshold
+                    -- DEGENERATE captures. A "<subject>: N+" OVER outcome whose
+                    -- captured closing line is a settled no-bid quote
+                    -- (current_yes_bid = 0/NULL) is a post-settlement artifact
+                    -- (gotcha #14), not a prediction — excluded, never re-graded
+                    -- (gotcha #21). Real-bid rows are a genuine diagonal (verify
+                    -- #1054/#941) and are KEPT. Self-maintaining: any future
+                    -- degenerate capture is auto-dropped, any real-bid prop kept.
+                    (cv.source = 'kalshi'
+                     AND fo.name ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'
+                     AND (fo.current_yes_bid IS NULL
+                          OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
                         ORDER BY ABS(fo.opening_probability - 0.5)
@@ -801,7 +930,8 @@ async def _precompute_calibration_main():
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle
-                    AND NOT ro.is_golf_placeholder AND
+                    AND NOT ro.is_golf_placeholder
+                    AND NOT ro.is_kalshi_prop_threshold AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -829,7 +959,9 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
-                    COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded
+                    COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
+                    -- Queue #167 (#941/#1054): Kalshi player-prop threshold count.
+                    COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -850,7 +982,8 @@ async def _precompute_calibration_main():
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
                 MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
-                MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded
+                MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
+                MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -909,6 +1042,12 @@ async def _precompute_calibration_main():
         esports_bundle_excluded = (
             int(rows[0].esports_bundle_excluded)
             if rows and rows[0].esports_bundle_excluded is not None
+            else 0
+        )
+        # Queue #167 (#941/#1054): Kalshi player-prop threshold exclusion count.
+        kalshi_prop_threshold_excluded = (
+            int(rows[0].kalshi_prop_threshold_excluded)
+            if rows and rows[0].kalshi_prop_threshold_excluded is not None
             else 0
         )
 
@@ -1488,6 +1627,11 @@ async def _precompute_calibration_main():
             "applies_to": "esports",
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
+        },
+        "kalshi_prop_threshold_filter": {  # Queue #167 (#941/#1054)
+            "applies_to": "kalshi",
+            "rule": KALSHI_PROP_THRESHOLD_RULE_TEXT,
+            "excluded": kalshi_prop_threshold_excluded,
         },
         "void_filter": {
             "applies_to": "datagolf",

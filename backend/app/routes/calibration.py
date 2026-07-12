@@ -947,6 +947,16 @@ async def public_calibration(
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
                 (emb.market_id IS NOT NULL) AS is_esports_bundle,
+                -- Queue #167 (#941/#1054): Kalshi player-prop threshold DEGENERATE
+                -- capture exclusion (mirrors the precompute task's flag; keep in
+                -- sync so a cold-cache fallback serve isn't poisoned). Only the
+                -- no-live-bid rows (current_yes_bid = 0/NULL) are the corrupt
+                -- post-settlement "Player: N+" OVER captures (gotcha #14/#21);
+                -- real-bid rows are a genuine diagonal (verify #1054/#941) and stay.
+                (cv.source = 'kalshi'
+                 AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$'
+                 AND (fo.current_yes_bid IS NULL
+                      OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
                 ROW_NUMBER() OVER (
                     PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
@@ -978,7 +988,8 @@ async def public_calibration(
             SELECT ro.* FROM ranked_outcomes ro
             LEFT JOIN mode_prices mp
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
-            WHERE NOT ro.is_esports_bundle AND
+            WHERE NOT ro.is_esports_bundle
+                AND NOT ro.is_kalshi_prop_threshold AND
                 CASE
                     -- Multi-outcome: exclude default-priced + extreme tails
                     WHEN ro.is_multi
