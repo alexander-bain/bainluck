@@ -922,6 +922,18 @@ async def public_calibration(
             HAVING COUNT(*) >= 3
                AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > 1.15
         ),
+        -- Queue #159 (#1010): esports match-bundle exclusion (mirrors the
+        -- precompute task's esports_multi_bundles CTE). Kept in sync so a
+        -- cold-cache fallback serve is not silently esports-inflated.
+        esports_multi_bundles AS (
+            SELECT fo.market_id
+            FROM futures_outcomes fo
+            JOIN market_info mi ON mi.market_id = fo.market_id
+            WHERE mi.category = 'esports'
+            GROUP BY fo.market_id
+            HAVING COUNT(*) >= 3
+               AND COUNT(*) FILTER (WHERE fo.is_winner = true) >= 2
+        ),
         ranked_outcomes AS (
             SELECT
                 CASE WHEN mnm.market_id IS NOT NULL
@@ -934,6 +946,7 @@ async def public_calibration(
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
+                (emb.market_id IS NOT NULL) AS is_esports_bundle,
                 ROW_NUMBER() OVER (
                     PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
@@ -942,6 +955,7 @@ async def public_calibration(
             JOIN virtual_market vm ON vm.market_id = fo.market_id
             JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
             LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
+            LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND (fo.resolution_source IS NULL
@@ -964,7 +978,7 @@ async def public_calibration(
             SELECT ro.* FROM ranked_outcomes ro
             LEFT JOIN mode_prices mp
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
-            WHERE
+            WHERE NOT ro.is_esports_bundle AND
                 CASE
                     -- Multi-outcome: exclude default-priced + extreme tails
                     WHEN ro.is_multi
@@ -1416,6 +1430,11 @@ async def public_calibration(
         # 'soccer_%'); only the transparency count is deferred to the precompute
         # served path, so it is None here on a cold cache.
         "soccer_2way_filter": None,
+        # Queue #159 (#1010): esports match-bundle exclusion. The exclusion IS
+        # applied in this fallback's futures query (NOT ro.is_esports_bundle);
+        # only the transparency count is deferred to the precompute served path,
+        # so esports_multi_bundle_filter is None here on a cold cache.
+        "esports_multi_bundle_filter": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

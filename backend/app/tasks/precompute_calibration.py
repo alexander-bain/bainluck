@@ -108,6 +108,23 @@ CALIBRATION_CORRECTIONS = [
                        "spreads/totals are kept. Forward fix = 3-way capture "
                        "(#1011 draw column). Read-side only, no regrade.",
     },
+    {
+        "date": "2026-07-12",
+        "title": "Esports match-bundle exclusion",
+        "rows": None,  # live count in payload.esports_multi_bundle_filter.excluded
+        "description": "Polymarket packs a whole esports match (cumulative "
+                       "Total-Kills Over/Under ladders per game, per-game winners, "
+                       "first-blood props) into one non-partition market with >=3 "
+                       "outcomes. Cumulative Over rungs legitimately resolve many "
+                       "YES at once (gotcha #17), so the market has >=2 winners and "
+                       "its prices neither sum to ~1.0 (can't be normalized) nor "
+                       "bucket as a clean prediction — the counter-class #157 "
+                       "refuses to normalize (OPS-557: 93,629 outcomes over-predict "
+                       "+9.2pp, avg cp-sum 17.9). The >=3-outcome sibling of the "
+                       "malformed-binary filter; excluded from the curve, never "
+                       "re-graded (the many-YES grading is correct). Read-side "
+                       "only, no regrade.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -377,6 +394,66 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
     return bool(category) and category.startswith("soccer_")
 
 
+# Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
+#
+# Polymarket packs a whole esports match into ONE non-partition market —
+# cumulative "Total Kills Over/Under X.5 in Game N" ladders (Over 17.5, 18.5,
+# ... 54.5), per-game winners, first-blood props, series totals — flattened into
+# a single market with dozens of outcomes (market 128754: 73 outcomes). Because
+# the Over rungs are CUMULATIVE, a high-kill game legitimately resolves many YES
+# at once (gotcha #17), so the market resolves with >=2 winners. That makes it
+# the exact counter-class #157's normalization deliberately REFUSES: the prices
+# neither sum to ~1.0 (multiple partitions mashed together — can't be normalized
+# by one per-market divisor) nor bucket as a clean single prediction. OPS-557
+# census (2026-07-11): n=93,629 poly outcomes, winrate 0.395 vs cp 0.487
+# (+9.2pp), avg per-market cp-sum 17.9; sub-bands <25%-win +23.7pp (longshot Over
+# rungs that missed) / 25-50% +10.1pp / >50% -4.1pp (near-certain Over rungs that
+# hit). The >=2-winner grading is CORRECT for cumulative ladders, so these rows
+# are EXCLUDED from the curve, never re-graded — the >=3-outcome sibling of the
+# malformed-binary filter. Read-side only (gotcha #21). esports-scoped: the same
+# poly bundle shape is well-calibrated in basketball/tennis/hockey (~+1.5pp), so
+# a blanket exclusion would drop good data; the general sweep is #160's sentinel.
+ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
+
+ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
+    "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
+    "(cumulative Total-Kills Over/Under ladders per game, per-game winners, "
+    "first-blood props) into one non-partition market with >=3 outcomes that "
+    "resolves with >=2 winners. Because the Over rungs are cumulative, many "
+    "resolve YES at once (gotcha #17), so the prices neither sum to ~1.0 (can't "
+    "be normalized — multiple partitions mashed) nor bucket as a clean prediction "
+    "(OPS-557 census: 93,629 outcomes, winrate 0.395 vs cp 0.487 = +9.2pp, avg "
+    "per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary "
+    "filter and the exclusion complement of #157's counter-class guard. The "
+    "many-YES ladder grading is correct, so these are excluded from the curve, "
+    "never re-graded. Read-side only; never mutates resolutions."
+)
+
+
+def market_is_esports_multi_bundle(
+    category: str | None, n_outcomes: int, n_winners: int
+) -> bool:
+    """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
+
+    Canonical, unit-tested definition mirroring the ``esports_multi_bundles`` CTE:
+    an esports market with >=3 outcomes that resolved with >=2 winners is a
+    Polymarket match bundle (cumulative Total-Kills Over ladders + per-game
+    winners + props mashed into one non-partition market; gotcha #17/#23). The
+    >=2-winner test is the discriminator — a genuine single-winner partition
+    resolves with EXACTLY one winner — the same signal #157's counter-class guard
+    uses to REFUSE normalization, here used to EXCLUDE from the published curve.
+    Outcome/winner counts are over ALL outcomes of the market, mirroring the
+    malformed_binaries CTE. Read-side only (gotcha #21) — never mutates is_winner;
+    the many-YES cumulative-ladder grading is correct, so the rows are dropped
+    from the curve rather than re-graded.
+    """
+    return (
+        category == ESPORTS_MULTI_BUNDLE_CATEGORY
+        and n_outcomes >= 3
+        and n_winners >= 2
+    )
+
+
 def outcome_is_calibration_liquid(
     ever_yes_bid: float | None, ever_last_price: float | None
 ) -> bool:
@@ -528,6 +605,27 @@ async def _precompute_calibration_main():
                 HAVING COUNT(*) = 2
                    AND COUNT(*) FILTER (WHERE fo.is_winner = true) <> 1
             ),
+            -- Queue #159 (#1010): esports malformed-MULTI "match bundle" markets —
+            -- the >=3-outcome sibling of malformed_binaries and the exclusion-side
+            -- complement of #157's counter-class guard. Polymarket flattens a whole
+            -- match (cumulative Total-Kills Over ladders per game, per-game winners,
+            -- first-blood props) into one non-partition market; because the Over
+            -- rungs are cumulative, a high-kill game legitimately resolves many YES
+            -- (gotcha #17), so the market has >=2 winners and its prices neither
+            -- sum to 1 (multiple partitions mashed — can't be normalized) nor
+            -- bucket as a clean prediction (OPS-557: n=93,629, winrate 0.395 vs cp
+            -- 0.487 = +9.2pp, avg per-market cp-sum 17.9). Counts ALL outcomes,
+            -- mirroring malformed_binaries. Read-side only (gotcha #21) — the
+            -- many-YES ladder grading is CORRECT, so exclude, never re-grade.
+            esports_multi_bundles AS (
+                SELECT fo.market_id
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                WHERE mi.category = 'esports'
+                GROUP BY fo.market_id
+                HAVING COUNT(*) >= 3
+                   AND COUNT(*) FILTER (WHERE fo.is_winner = true) >= 2
+            ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
             -- (structurally impossible for genuine mex probabilities). Same
@@ -662,6 +760,8 @@ async def _precompute_calibration_main():
                     -- 0 = void, or 2 = impossible). mb.win_count carries which.
                     (mb.market_id IS NOT NULL) AS is_malformed_binary,
                     mb.win_count AS malformed_win_count,
+                    -- Queue #159 (#1010): esports match-bundle exclusion flag.
+                    (emb.market_id IS NOT NULL) AS is_esports_bundle,
                     -- L2-79 Item 2: golf one-sided-ask placeholder — this outcome
                     -- sits in the >=0.80 band of an over-subscribed golf mex market.
                     (gpm.market_id IS NOT NULL
@@ -675,6 +775,7 @@ async def _precompute_calibration_main():
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
+                LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
                 LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
@@ -699,6 +800,7 @@ async def _precompute_calibration_main():
                   ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                     AND NOT ro.is_malformed_binary
+                    AND NOT ro.is_esports_bundle
                     AND NOT ro.is_golf_placeholder AND
                     CASE
                         WHEN ro.is_multi
@@ -724,7 +826,10 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE is_golf_placeholder) AS golf_placeholder_excluded,
                     -- Queue #157: multi-candidate normalization transparency —
                     -- how many curve outcomes had their probability normalized.
-                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes
+                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
+                    -- Queue #159: esports match-bundle exclusion count (eligible
+                    -- outcomes flagged in ranked_outcomes that the filter drops).
+                    COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -744,7 +849,8 @@ async def _precompute_calibration_main():
                 MAX(ls.both_false_excluded) AS both_false_excluded,
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
-                MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes
+                MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
+                MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -797,6 +903,12 @@ async def _precompute_calibration_main():
         mex_normalized_outcomes = (
             int(rows[0].mex_normalized_outcomes)
             if rows and rows[0].mex_normalized_outcomes is not None
+            else 0
+        )
+        # Queue #159 (#1010): esports match-bundle exclusion transparency count.
+        esports_bundle_excluded = (
+            int(rows[0].esports_bundle_excluded)
+            if rows and rows[0].esports_bundle_excluded is not None
             else 0
         )
 
@@ -1371,6 +1483,11 @@ async def _precompute_calibration_main():
             "rule": MEX_NORMALIZE_RULE_TEXT,
             "threshold": MEX_NORMALIZE_THRESHOLD,
             "normalized_outcomes": mex_normalized_outcomes,
+        },
+        "esports_multi_bundle_filter": {  # Queue #159 (#1010)
+            "applies_to": "esports",
+            "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
+            "excluded": esports_bundle_excluded,
         },
         "void_filter": {
             "applies_to": "datagolf",

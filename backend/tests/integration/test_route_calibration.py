@@ -202,6 +202,7 @@ class TestCalibrationPublicEndpoint:
             "liquidity_filter",
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
+            "esports_multi_bundle_filter",  # Queue #159 (#1010): esports bundle exclusion
             "corrections",  # L2-73 §E
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
