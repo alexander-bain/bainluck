@@ -58,7 +58,22 @@ export default function EventConceptPage() {
       revalidateOnFocus: false,
       // L2-66 freshness-as-a-feature: during live play, refetch at in-play cadence
       // (~45s) so the fused leaderboard + "as of" chip stay honestly fresh.
-      refreshInterval: (latest) => (latest?.event?.status === "live" ? 45000 : 0),
+      // L2-91: an UPCOMING event within ~24h of its start also polls slowly (5 min)
+      // so a page left open transitions countdown → live on its own when the server
+      // flips status (The Open goes live Wednesday) — without a manual reload. Only
+      // near-start open pages poll, so the added load is negligible.
+      refreshInterval: (latest) => {
+        const status = latest?.event?.status;
+        if (status === "live") return 45000;
+        if (status === "upcoming" && latest?.event?.start_date) {
+          const start = Date.parse(latest.event.start_date);
+          if (!Number.isNaN(start)) {
+            const hoursToStart = (start - Date.now()) / 3_600_000;
+            if (hoursToStart <= 24 && hoursToStart >= -12) return 300000;
+          }
+        }
+        return 0;
+      },
     },
   );
 

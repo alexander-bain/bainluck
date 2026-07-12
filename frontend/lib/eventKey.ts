@@ -25,10 +25,41 @@ export function isWinnerMarketName(name: string | null | undefined): boolean {
   return WINNER_RE.test(n) && !MATCHUP_RE.test(n);
 }
 
-/** Domains that have a registered event-concept adapter today. Tennis winner
- *  markets map by name-slug; golf routes via tournament data (see
- *  tournamentEventKey). Extend as adapters land (F1/UFC = later slice). */
-const MARKET_EVENT_DOMAINS = new Set(["tennis"]);
+/** Winner-FIELD event-concept domains, keyed by `llm_sport_category`. A winner
+ *  market's name-slug resolves server-side to the canonical event page (the tennis
+ *  and F1 adapters match token-tolerantly). Golf is NOT here: golf slug matching is
+ *  EXACT, so a client-derived slug can dead-link — golf links come from the
+ *  backend-attached `event_concept_key` (see FuturesMarket) or tournamentEventKey.
+ *  Mirrors backend `utils/concept_links.derive_market_concept_key`. */
+const WINNER_FIELD_DOMAINS: Record<string, string> = {
+  tennis: "tennis",
+  motorsports: "f1",
+};
+
+// F1 sub-markets (sprint/quali/pole/…) are children, not the GP winner field.
+// Mirrors backend `event_f1._F1_SUBMARKET_RE`.
+const F1_SUBMARKET_RE =
+  /\b(sprint|qualifying|pole|podium|constructor|fastest|top\s*\d|q[123])\b/i;
+
+// L2-91: UFC + boxing card FIGHT ticker prefixes -> event domain. A fight ticker is
+// `<PREFIX>-<YYMONDD><FIGHTERS>`; the date-token groups a card. Prop tickers
+// (KXUFCMOV… / KXBOXINGMOV…) don't match the `<PREFIX>-<date>` shape, so only real
+// fights derive a card concept. Mirrors backend `event_combat.card_token`.
+const COMBAT_FIGHT_PREFIXES: [string, string][] = [
+  ["KXUFCFIGHT", "ufc"],
+  ["KXBOXING", "boxing"],
+];
+
+/** Card event key for a combat FIGHT market (UFC/boxing), from its fight ticker's
+ *  date-token, or null. e.g. "kalshi:KXUFCFIGHT-26JUL11MCGHOL" -> "event:ufc:26jul11". */
+export function combatCardKey(m: { external_id?: string | null }): string | null {
+  const eid = (m.external_id || "").toUpperCase();
+  for (const [prefix, domain] of COMBAT_FIGHT_PREFIXES) {
+    const mt = eid.match(new RegExp(`${prefix}-(\\d{2}[A-Z]{3}\\d{2})`));
+    if (mt) return `event:${domain}:${mt[1].toLowerCase()}`;
+  }
+  return null;
+}
 
 // L2-88: awards ceremony detection, mirroring backend `derive_awards_concept`
 // (event_awards.py CEREMONIES). Ticker stem (unambiguous) first, then a name
@@ -94,11 +125,21 @@ export function marketEventKey(m: {
   // L2-88: awards ceremonies (config-driven, engine-link pattern) link up first.
   const awards = awardsEventKey(m);
   if (awards) return awards;
+  // L2-91: a combat fight ticker is authoritative regardless of category.
+  const combat = combatCardKey(m);
+  if (combat) return combat;
   const cat = (m.llm_sport_category || "").toLowerCase();
-  if (!MARKET_EVENT_DOMAINS.has(cat)) return null;
+  const domain = WINNER_FIELD_DOMAINS[cat];
+  if (!domain) return null;
   if (!isWinnerMarketName(m.name)) return null;
+  // F1: only true Grand Prix winner fields (not sprint/quali/pole, and require
+  // "grand prix" so a motorsports-miscategorized market can't leak a bad concept).
+  if (domain === "f1") {
+    const n = (m.name || "").toLowerCase();
+    if (!n.includes("grand prix") || F1_SUBMARKET_RE.test(m.name || "")) return null;
+  }
   const slug = cleanSlug(m.name);
-  return slug ? `event:${cat}:${slug}` : null;
+  return slug ? `event:${domain}:${slug}` : null;
 }
 
 /**
@@ -124,4 +165,43 @@ export function tournamentEventKey(t: {
 /** Build the app path for an event key (single-encode the colons for the route). */
 export function eventPath(key: string): string {
   return `/event/${encodeURIComponent(key)}`;
+}
+
+// L2-91: competition hub display labels (mirrors routes/hub.py HUB_CONFIGS). Used
+// for the fallback up-link when a market has no specific event concept but its
+// competition has a /hub/<slug> page (e.g. a UFC futures market -> /hub/mma).
+const HUB_LABELS: Record<string, string> = {
+  mma: "MMA",
+  boxing: "Boxing",
+  golf: "Golf",
+  tennis: "Tennis",
+};
+
+/** Display label for a competition hub slug ("MMA"), or null if unknown. */
+export function hubLabel(slug: string | null | undefined): string | null {
+  return slug ? HUB_LABELS[slug] || null : null;
+}
+
+/** Build the app path for a competition hub slug. */
+export function hubPath(slug: string): string {
+  return `/hub/${slug}`;
+}
+
+/** Human breadcrumb label for an event-concept key + its market name. Awards read
+ *  as the ceremony ("The Oscars"); combat cards read as the card; winner fields drop
+ *  the "Winner/Champion" suffix ("… British Grand Prix"). */
+export function conceptDisplayLabel(
+  key: string | null | undefined,
+  marketName: string | null | undefined,
+): string | null {
+  if (!key) return null;
+  const ceremony = awardsCeremonyName(key);
+  if (ceremony) return ceremony;
+  if (key.startsWith("event:ufc:") || key.startsWith("event:boxing:")) {
+    return "the full fight card";
+  }
+  const name = marketName || "";
+  return (
+    name.replace(/\s*(winner|champion|champ|to win)\s*$/i, "").trim() || name || null
+  );
 }

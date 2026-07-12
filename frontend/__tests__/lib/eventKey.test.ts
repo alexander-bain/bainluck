@@ -4,8 +4,12 @@ import {
   cleanSlug,
   isWinnerMarketName,
   marketEventKey,
+  combatCardKey,
   tournamentEventKey,
   eventPath,
+  hubLabel,
+  hubPath,
+  conceptDisplayLabel,
   awardsEventKey,
   awardsCeremonyName,
 } from "../../lib/eventKey";
@@ -36,9 +40,59 @@ describe("marketEventKey", () => {
     ).toBe("event:tennis:2026-women-s-wimbledon-winner");
   });
   test("null for non-adapter category, non-winner, or match markets", () => {
-    expect(marketEventKey({ name: "The Open Winner", llm_sport_category: "golf" })).toBeNull(); // golf → tournament card path
+    expect(marketEventKey({ name: "The Open Winner", llm_sport_category: "golf" })).toBeNull(); // golf → server event_concept_key / tournament card path
     expect(marketEventKey({ name: "Gauff vs Sabalenka", llm_sport_category: "tennis" })).toBeNull();
     expect(marketEventKey({ name: "Fed Rate Decision", llm_sport_category: "economics" })).toBeNull();
+  });
+  test("L2-91: combat fight ticker → card concept (any category)", () => {
+    expect(
+      marketEventKey({ name: "McGregor vs. Holloway", external_id: "kalshi:KXUFCFIGHT-26JUL11MCGHOL", llm_sport_category: "mma" }),
+    ).toBe("event:ufc:26jul11");
+    expect(
+      marketEventKey({ name: "Mason vs Bell", external_id: "KXBOXING-26JUL04MASONBELL", llm_sport_category: "boxing" }),
+    ).toBe("event:boxing:26jul04");
+  });
+  test("L2-91: combat prop ticker → null (not a fight)", () => {
+    expect(
+      marketEventKey({ name: "Method of victory", external_id: "KXUFCMOV-26JUL11MCG", llm_sport_category: "mma" }),
+    ).toBeNull();
+  });
+  test("L2-91: F1 GP winner → f1 event key, submarkets/non-GP → null", () => {
+    expect(
+      marketEventKey({ name: "British Grand Prix Winner", llm_sport_category: "motorsports" }),
+    ).toBe("event:f1:british-grand-prix-winner");
+    expect(
+      marketEventKey({ name: "British Grand Prix Sprint Winner", llm_sport_category: "motorsports" }),
+    ).toBeNull();
+    expect(
+      marketEventKey({ name: "Any Group Winner", llm_sport_category: "motorsports" }),
+    ).toBeNull(); // no "grand prix" → miscategorization guard
+  });
+});
+
+describe("combatCardKey (L2-91)", () => {
+  test("date-token off a fight ticker; null for props / non-combat", () => {
+    expect(combatCardKey({ external_id: "kalshi:KXUFCFIGHT-26JUL11MCGHOL" })).toBe("event:ufc:26jul11");
+    expect(combatCardKey({ external_id: "KXBOXING-26JUL04MASONBELL" })).toBe("event:boxing:26jul04");
+    expect(combatCardKey({ external_id: "KXUFCMOV-26JUL11MCG" })).toBeNull();
+    expect(combatCardKey({ external_id: "KXNBA-CHAMP" })).toBeNull();
+    expect(combatCardKey({})).toBeNull();
+  });
+});
+
+describe("hub helpers + conceptDisplayLabel (L2-91)", () => {
+  test("hubLabel / hubPath", () => {
+    expect(hubLabel("mma")).toBe("MMA");
+    expect(hubLabel("golf")).toBe("Golf");
+    expect(hubLabel("nba")).toBeNull();
+    expect(hubLabel(null)).toBeNull();
+    expect(hubPath("mma")).toBe("/hub/mma");
+  });
+  test("conceptDisplayLabel: ceremony, fight card, winner-suffix stripped", () => {
+    expect(conceptDisplayLabel("event:awards:oscars", "Best Picture")).toBe("The Oscars");
+    expect(conceptDisplayLabel("event:ufc:26jul11", "McGregor vs Holloway")).toBe("the full fight card");
+    expect(conceptDisplayLabel("event:f1:british-grand-prix-winner", "British Grand Prix Winner")).toBe("British Grand Prix");
+    expect(conceptDisplayLabel(null, "Whatever")).toBeNull();
   });
 });
 

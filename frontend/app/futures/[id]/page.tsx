@@ -13,7 +13,13 @@ import {
   formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
-import { marketEventKey, eventPath, awardsCeremonyName } from "@/lib/eventKey";
+import {
+  marketEventKey,
+  eventPath,
+  conceptDisplayLabel,
+  hubLabel,
+  hubPath,
+} from "@/lib/eventKey";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -385,18 +391,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const resolvedWinner = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
   const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
 
-  // L2-65 Item 1b: when this market is the winner-field of an event concept, offer
-  // a breadcrumb into the richer /event/[key] surface. The label strips the
-  // "Winner/Champion" suffix so it reads as the event ("… Wimbledon →").
-  const conceptKey = marketEventKey(market);
-  // L2-88: an awards category/nomination market links up to its ceremony page —
-  // label with the ceremony ("The Oscars"), not the bare category, so the
-  // breadcrumb reads "Part of: The Oscars →". Sports winner-fields keep the
-  // name-minus-suffix label ("… Wimbledon →").
-  const conceptLabel =
-    awardsCeremonyName(conceptKey) ||
-    market.name.replace(/\s*(winner|champion|champ|to win)\s*$/i, "").trim() ||
-    market.name;
+  // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
+  // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
+  // dead-links); fall back to the client resolver for older payloads. When there's
+  // no specific concept but the competition has a hub (/hub/mma, /hub/golf, …), link
+  // that instead. Where neither exists, no link — honest.
+  const conceptKey = market.event_concept_key || marketEventKey(market);
+  const conceptLabel = conceptDisplayLabel(conceptKey, market.name);
+  const hubSlug = !conceptKey ? market.hub_slug || null : null;
+  const hubLinkLabel = hubLabel(hubSlug);
 
   return (
     <div className="space-y-6">
@@ -448,9 +451,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         resolvedWon={resolvedWinner?.is_winner === true}
       />
 
-      {/* L2-65: breadcrumb into the event concept surface (richer than this single
-          market — leaderboard, race chart, matchups). */}
-      {conceptKey && (
+      {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
+          (leaderboard, race chart, matchups), or the competition hub when there's no
+          specific concept. */}
+      {conceptKey && conceptLabel ? (
         <Link
           href={eventPath(conceptKey)}
           className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
@@ -458,7 +462,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           Part of: {conceptLabel}
           <span aria-hidden="true">→</span>
         </Link>
-      )}
+      ) : hubSlug && hubLinkLabel ? (
+        <Link
+          href={hubPath(hubSlug)}
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
+        >
+          Part of: {hubLinkLabel}
+          <span aria-hidden="true">→</span>
+        </Link>
+      ) : null}
 
       {/* Context line (auto-upgrades when #870 ships) */}
       {market.hook_description && (

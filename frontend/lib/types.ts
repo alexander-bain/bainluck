@@ -390,6 +390,10 @@ export interface FuturesMarket {
   canonical_market_key?: string | null;
   hook_description?: string | null;
   image_url?: string | null;
+  // B7 (L2-91): up-link mesh — the richer event-concept page + competition hub this
+  // market belongs to (null where no mapping exists). Server-derived so links resolve.
+  event_concept_key?: string | null;
+  hub_slug?: string | null;
 }
 
 // ---------------------------------------------------------------------------

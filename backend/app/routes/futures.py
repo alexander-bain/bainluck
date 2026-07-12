@@ -3037,6 +3037,29 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     normalize_display_probs(outcomes)
     leader_pick_order(outcomes)
 
+    # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
+    # (`event:<domain>:<slug>`, richer per-event page) and its competition hub slug
+    # (`/hub/<slug>`) via the shared server-side resolver so the frontend breadcrumb
+    # links UP without client-side slug guessing. Best-effort — a derivation slip
+    # must never 500 the detail page (honest degrade to no breadcrumb).
+    event_concept_key = None
+    hub_slug = None
+    try:
+        from app.utils.concept_links import (
+            derive_market_concept_key,
+            derive_market_hub_slug,
+        )
+
+        event_concept_key = derive_market_concept_key(
+            market.external_id,
+            market.name,
+            market.llm_sport_category,
+            len(outcomes),
+        )
+        hub_slug = derive_market_hub_slug(market.llm_sport_category)
+    except Exception:
+        pass
+
     return {
         "id": market.id,
         "name": market.name,
@@ -3061,6 +3084,9 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "canonical_market_key": market.canonical_market_key,
         "hook_description": market.hook_description,
         "image_url": market.image_url,
+        # B7 (L2-91): up-link mesh — concept page + competition hub (null where none).
+        "event_concept_key": event_concept_key,
+        "hub_slug": hub_slug,
     }
 
 

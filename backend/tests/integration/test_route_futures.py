@@ -216,6 +216,8 @@ class TestFuturesMarketDetail:
             "canonical_market_key",
             "hook_description",
             "image_url",
+            "event_concept_key",
+            "hub_slug",
             "source_breakdown",
         }
         assert set(body) == expected_keys
