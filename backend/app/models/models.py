@@ -931,6 +931,119 @@ class TeamIdentityMapping(Base):
     team: Mapped["Team"] = relationship()
 
 
+class Entity(Base):
+    """A1 (#1020) — Universal identity-graph entity (Layer 0).
+
+    One store for every real-world thing markets can reference: **team**,
+    **person** (players/fighters/golfers/drivers/candidates/nominees),
+    **event_concept** (tournament/card/GP/award-ceremony/election-night), and
+    **competition** (league/tour/promotion). Teams are the first kind, folded in
+    from the existing ``teams`` table (``source_team_id`` bridges the two during
+    the transition — the legacy team readers are UNTOUCHED, so team matching
+    cannot regress; the L1-L4 audit is the guard). Downstream layers (A2 grammar
+    adapters, A4 resolution engine) read ``entity_aliases`` to resolve a mention
+    to an entity, and use ``date_window_*`` as a first-class match signal (a
+    concept carries its own date window so time is a signature dimension).
+    """
+
+    __tablename__ = "entities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # 'team' | 'person' | 'event_concept' | 'competition'
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    canonical_name: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
+    slug: Mapped[Optional[str]] = mapped_column(String(300), index=True)
+
+    # Competition/sport this entity belongs to (a team's league, a concept's
+    # tour). sport_key is denormalized for fast grammar binding without a join.
+    sport_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sports.id"), index=True
+    )
+    sport_key: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+
+    # Transition bridge for kind='team': points back to the folded-in teams row
+    # so existing team consumers can be migrated onto the registry incrementally.
+    source_team_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), index=True
+    )
+
+    # Date-windows as first-class match signals (event-concepts carry their own
+    # window: a tournament's dates, a card's night, an election night).
+    date_window_start: Mapped[Optional[date]] = mapped_column(Date, index=True)
+    date_window_end: Mapped[Optional[date]] = mapped_column(Date)
+
+    # External anchor for concepts/competitions (Kalshi series ticker, Poly event
+    # id, etc.) so a source's own identifier can pin the entity.
+    external_ref: Mapped[Optional[str]] = mapped_column(String(200), index=True)
+
+    entity_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    confidence: Mapped[Optional[float]] = mapped_column(
+        Numeric(3, 2), server_default="1.0"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    aliases: Mapped[list["EntityAlias"]] = relationship(
+        back_populates="entity", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_entities_kind_sport_key", "kind", "sport_key"),
+        Index("ix_entities_date_window", "date_window_start", "date_window_end"),
+    )
+
+
+class EntityAlias(Base):
+    """A1 (#1020) — a typed, provenance-tagged name for an :class:`Entity`.
+
+    The resolution read path matches on ``alias_norm`` (normalized: lowercased,
+    diacritics/punct stripped) so "resolve mention -> entity" is an indexed O(1)
+    lookup for the grammar adapters (A2) and the resolution engine (A4). Alias
+    types: ``canonical``, ``common_name``, ``abbreviation``, ``source_name`` (a
+    source's own label, e.g. Odds API team name), ``ticker_token`` (a Kalshi
+    ticker fragment). ``source`` records where the alias came from and
+    ``confidence`` how trustworthy it is.
+    """
+
+    __tablename__ = "entity_aliases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alias: Mapped[str] = mapped_column(String(300), nullable=False)
+    alias_norm: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
+    # 'canonical' | 'common_name' | 'abbreviation' | 'source_name' | 'ticker_token'
+    alias_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    confidence: Mapped[Optional[float]] = mapped_column(
+        Numeric(3, 2), server_default="1.0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    entity: Mapped["Entity"] = relationship(back_populates="aliases")
+
+    __table_args__ = (
+        # Idempotent seeding/annotation: the same normalized alias of the same
+        # type from the same source collapses to one row per entity.
+        UniqueConstraint(
+            "entity_id",
+            "alias_norm",
+            "alias_type",
+            "source",
+            name="uq_entity_alias_norm_type_source",
+        ),
+        Index("ix_entity_aliases_norm_type", "alias_norm", "alias_type"),
+    )
+
+
 class OscarsPool(Base):
     """A private Oscars prediction pool (e.g., family competition)."""
 
