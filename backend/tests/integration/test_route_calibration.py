@@ -201,6 +201,7 @@ class TestCalibrationPublicEndpoint:
             "mce_opening_price",
             "liquidity_filter",
             "void_filter",
+            "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
             "corrections",  # L2-73 §E
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
