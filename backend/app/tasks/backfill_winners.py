@@ -557,7 +557,7 @@ async def _backfill_polymarket_winners():
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
                           AND fm.status = 'resolved'
-                        GROUP BY fm.id
+                        GROUP BY fm.id, fm.mutually_exclusive
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
                                        """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
@@ -566,6 +566,19 @@ async def _backfill_polymarket_winners():
                                WHERE fo.current_probability >= 0.95
                                   OR fo.current_probability <= 0.05
                            ) = COUNT(*)
+                           -- Queue #167 Item 2 (#999): never price-resolve a
+                           -- mutually-exclusive market that has >1 near-certain
+                           -- outcome. A single-champion partition can have only
+                           -- ONE winner, but a stale neg_risk "Other"/catch-all
+                           -- quote pinned near 1.0 (gotcha #19) would be crowned
+                           -- alongside the real winner (the Women's Wimbledon
+                           -- two-winner bug: "Other" 1.00 + "Nosková" 0.9995).
+                           -- Defer these to authoritative Gamma settlement
+                           -- (Phase 3) instead of guessing from a stale price.
+                           AND NOT (fm.mutually_exclusive
+                                    AND COUNT(*) FILTER (
+                                        WHERE fo.current_probability >= 0.95
+                                    ) > 1)
                     )
                     UPDATE futures_outcomes fo
                     SET is_winner = (fo.current_probability >= 0.95),
@@ -2383,8 +2396,33 @@ async def _correct_both_winner_guess_side():
     (GUESS_FAMILY_SOURCES excluded, incl. pass3_threshold) winner, so both-guess
     and both-authoritative both-winner markets are left for evidence review, never
     guessed at (gotcha #21). mutually_exclusive=false ladders are skipped too.
+
+    Queue #167 Item 2 (#999): the "tennis shape" extension. Polymarket neg_risk
+    winner-partition markets (multi-outcome "Who wins X?") stamp their "Other"/
+    field and untraded-longshot outcomes at a flat opening_probability = 1.0 that
+    never moved (current_probability ≈ 1.0), and the heuristic resolver then marks
+    every ~1.0 outcome is_winner=true. Result: a market with the GENUINE champion
+    (opening a real longshot → converged to ~1.0) co-crowned with 1..N degenerate
+    flat-1.0 placeholders — e.g. "2026 Women's Wimbledon Winner" crowned both
+    Linda Nosková (0.008 → 0.9995, the real winner) and "Other" (1.0 → 1.0), and
+    "2026 Seoul Mayoral Election Winner" crowned 52 flat placeholders + 1 real.
+    These are neither a 2-outcome market nor a guess-side sibling, so the block
+    above skips them. The second pass demotes the flat-1.0 placeholder co-winners
+    ONLY in markets that also hold a genuinely-converged winner (opening < 0.9 →
+    current ≥ 0.9), so ≥1 real champion always survives (gotcha #21: we never
+    leave a market winnerless, never re-resolve, never touch resolution_source —
+    only the degenerate co-winner flags flip; idempotent). This also rescues the
+    market back into the calibration curve (winner-count → 1, no longer dropped by
+    the malformed-binary filter).
     """
-    stats = {"flipped": 0, "candidates": 0, "batches": 0, "errors": []}
+    stats = {
+        "flipped": 0,
+        "candidates": 0,
+        "batches": 0,
+        "placeholder_flipped": 0,
+        "placeholder_candidates": 0,
+        "errors": [],
+    }
     try:
         # Read-side FIRST: identify the guess-side winner outcomes to demote. The
         # heavy correlated predicate (two self-subqueries over futures_outcomes)
@@ -2443,6 +2481,55 @@ async def _correct_both_winner_guess_side():
                 "Both-winner guess-side correction (#997): flipped %d guess "
                 "outcomes to loser across %d batches",
                 stats["flipped"], stats["batches"],
+            )
+
+        # Queue #167 Item 2 (#999): flat-1.0 placeholder co-winner demotion. Same
+        # read-first / id-keyed batched-write shape (bounds the longest
+        # uninterrupted op). A degenerate winner has opening_probability = 1.0 that
+        # never moved (current ≈ 1.0); it is demoted ONLY when its market also
+        # holds a genuinely-converged winner (a real longshot opening < 0.9 that
+        # rose to current ≥ 0.9), so a true champion always survives (gotcha #21).
+        async with get_task_session() as session:
+            ph_rows = await session.execute(text("""
+                SELECT u.id
+                FROM futures_outcomes u
+                JOIN futures_markets m ON u.market_id = m.id
+                WHERE m.mutually_exclusive = true
+                  AND m.status = 'resolved'
+                  AND u.is_winner = true
+                  AND u.opening_probability = 1.0
+                  AND u.current_probability >= 0.99
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes o
+                      WHERE o.market_id = u.market_id
+                        AND o.id <> u.id
+                        AND o.is_winner = true
+                        AND o.opening_probability < 0.9
+                        AND o.current_probability >= 0.9
+                  )
+            """))
+            ph_ids = [r[0] for r in ph_rows.fetchall()]
+        stats["placeholder_candidates"] = len(ph_ids)
+
+        for i in range(0, len(ph_ids), BATCH):
+            chunk = ph_ids[i:i + BATCH]
+            async with get_task_session() as session:
+                result = await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = false, "
+                        "last_updated = NOW() "
+                        "WHERE id = ANY(:ids) AND is_winner = true"
+                    ),
+                    {"ids": chunk},
+                )
+                await session.commit()
+                stats["placeholder_flipped"] += result.rowcount
+            stats["batches"] += 1
+        if stats["placeholder_flipped"]:
+            logger.info(
+                "Both-winner flat-placeholder demotion (#167/#999): flipped %d "
+                "degenerate co-winners across mex winner-partition markets",
+                stats["placeholder_flipped"],
             )
     except Exception as e:
         stats["errors"].append(str(e))
@@ -4331,10 +4418,21 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
                   AND fm.id > :last_id
-                GROUP BY fm.id
+                GROUP BY fm.id, fm.mutually_exclusive, fm.resolution_date
                 HAVING BOOL_OR(
                     COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution')
                 )
+                -- Queue #167 Item 2 (#999): also re-settle mutually-exclusive
+                -- markets that clean_resolution crowned with >1 winner — a
+                -- single-champion partition can't have two, so a stale neg_risk
+                -- "Other" quote (gotcha #19) was wrongly co-crowned (the Women's
+                -- Wimbledon two-winner bug). Authoritatively re-resolve from Gamma
+                -- so the envelope crowns exactly one. Recency-bounded to ~90d
+                -- because Gamma market data ages out (gotcha #35) — older ones
+                -- can't be re-fetched and are left for the curve-exclusion net.
+                OR (fm.mutually_exclusive
+                    AND SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1
+                    AND fm.resolution_date > NOW() - INTERVAL '90 days')
                 ORDER BY fm.id ASC
                 LIMIT :limit
             """),
