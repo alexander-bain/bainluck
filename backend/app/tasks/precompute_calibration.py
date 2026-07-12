@@ -97,15 +97,16 @@ CALIBRATION_CORRECTIONS = [
         "title": "Soccer 2-way (draw-omission) historical exclusion",
         "rows": None,  # live count in payload.soccer_2way_filter.excluded
         "description": "Soccer game-odds were captured 2-way (home/away only) — "
-                       "the events table has no draw column, so every soccer "
-                       "moneyline row summed to ~1.0 and structurally dropped the "
-                       "~25% draw mass (#1011). That over-predicted home/away "
-                       "uniformly across all ~20 leagues (EPL 17.6pp, Switzerland "
-                       "15.0pp, Turkey 7.6pp). The draw was never stored so these "
-                       "rows can't be reconstructed — historical soccer game-odds "
-                       "are excluded from the curve (league-scoped by the soccer_* "
-                       "key). Forward fix = 3-way capture (#1011 draw column). "
-                       "Read-side only, no regrade.",
+                       "no draw column — so every soccer moneyline row summed to "
+                       "~1.0 and structurally dropped the ~25% draw mass (#1011), "
+                       "in BOTH the events aggregate and the per-bookmaker curve. "
+                       "That over-predicted home/away uniformly across all ~20 "
+                       "leagues (EPL 17.6pp, Switzerland 15.0pp, Turkey 7.6pp). "
+                       "The draw was never stored so these rows can't be "
+                       "reconstructed — historical soccer moneyline is excluded "
+                       "from the curve (league-scoped by the soccer_* key); soccer "
+                       "spreads/totals are kept. Forward fix = 3-way capture "
+                       "(#1011 draw column). Read-side only, no regrade.",
     },
 ]
 
@@ -354,12 +355,14 @@ def outcome_is_calibration_void(resolution_source: str | None) -> bool:
 SOCCER_2WAY_EXCLUDE_PATTERN = "soccer_%"
 
 SOCCER_2WAY_RULE_TEXT = (
-    "Excludes historical soccer game-odds (moneyline) from the curve. Soccer h2h "
-    "is 3-way (home/draw/away) but the events table stored only a 2-way home/away "
+    "Excludes historical soccer game-odds (moneyline) from the curve — BOTH the "
+    "events aggregate (odds_api) and the per-bookmaker (odds_api_bookmaker) sources. "
+    "Soccer h2h is 3-way (home/draw/away) but both stored only a 2-way home/away "
     "split summing to ~1.0, dropping the ~25% draw mass and over-predicting "
     "home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never "
     "captured so these rows can't be re-graded; league-scoped by the soccer_* key. "
-    "Forward fix = 3-way capture. Read-side only; never mutates resolutions."
+    "Soccer spreads/totals (genuinely 2-way) are kept. Forward fix = 3-way capture. "
+    "Read-side only; never mutates resolutions."
 )
 
 
@@ -938,12 +941,24 @@ async def _precompute_calibration_main():
         # Query 5: Per-bookmaker calibration from Redis
         # -----------------------------------------------------------
         bookmaker_rows = []
+        # Queue #158 (#1011): the per-bookmaker calibration (odds_api_bookmaker)
+        # devigs soccer moneyline as home_prob/(home_prob+away_prob) — the SAME
+        # 2-way draw-omission bug as the events curve (_precompute_bookmaker_
+        # calibration in backfill_winners.py has no draw term). Left in, it
+        # dominates the soccer_* by_category lines (~40K draw-inflated outcomes).
+        # Drop the soccer_* bookmaker buckets here (read-side, consumption-side)
+        # so the exclusion is robust even though the 6h source keeps writing them.
+        bookmaker_soccer_excluded = 0
         try:
             from types import SimpleNamespace as _NS
             rc = get_redis_client()
             _cached = rc.get("bainluck:bookmaker_calibration")
             if _cached:
-                bookmaker_rows = [_NS(**row) for row in json.loads(_cached)]
+                for row in json.loads(_cached):
+                    if category_is_soccer_2way_excluded(row.get("category")):
+                        bookmaker_soccer_excluded += int(row.get("n") or 0)
+                        continue
+                    bookmaker_rows.append(_NS(**row))
         except Exception:
             pass
 
@@ -1363,9 +1378,11 @@ async def _precompute_calibration_main():
             "excluded": void_excluded,
         },
         "soccer_2way_filter": {  # Queue #158 (#1011)
-            "applies_to": "odds_api",
+            "applies_to": "odds_api, odds_api_bookmaker",
             "rule": SOCCER_2WAY_RULE_TEXT,
-            "excluded": soccer_2way_excluded,
+            "excluded": soccer_2way_excluded + bookmaker_soccer_excluded,
+            "events_excluded": soccer_2way_excluded,
+            "bookmaker_excluded": bookmaker_soccer_excluded,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",

@@ -61,6 +61,10 @@ class TestRuleText:
         assert "draw" in t
         assert "soccer_*" in t or "soccer" in t
         assert "never mutates" in t
+        # Rule must name BOTH excluded moneyline sources.
+        assert "odds_api_bookmaker" in t
+        # And clarify spreads/totals are kept.
+        assert "spreads/totals" in t
 
 
 class TestCorrectionsLog:
@@ -79,6 +83,17 @@ class TestPrecomputeQueryEmbedsExclusion:
         # Transparency count query + payload surface.
         assert "soccer_2way_excluded" in src
         assert '"soccer_2way_filter"' in src
+
+    def test_bookmaker_source_also_excludes_soccer(self):
+        # The per-bookmaker source (odds_api_bookmaker) has the SAME 2-way
+        # draw-omission bug and dominates the soccer_* lines — it must be
+        # filtered on the consumption side too, else the D5 win is lost.
+        src = inspect.getsource(
+            precompute_calibration._precompute_calibration_main
+        )
+        assert "bookmaker_soccer_excluded" in src
+        # The consumption filter uses the canonical predicate.
+        assert "category_is_soccer_2way_excluded(row.get(\"category\"))" in src
 
     def test_exclusion_is_read_side_only(self):
         # Guardrail (gotcha #21): the exclusion must never mutate scores/probs.
