@@ -115,8 +115,15 @@ async def list_f1_gp_concepts(
     )
 
     # Anchor each GP on its main-race winner market; group by distinctive GP token.
+    # The lister is F1-Grand-Prix-scoped: require "grand prix" in the name. This
+    # both matches the product ask and guards against non-race "winner" markets that
+    # are miscategorized as motorsports (e.g. the World Cup KXWCGROUPPTS "Any Group
+    # Winner…" market) leaking a nonsense concept onto the feed — `is_gp_winner_market`
+    # stays untouched (the /event adapter still resolves NASCAR/MotoGP by slug).
     groups: dict[frozenset, dict] = {}
     for _mid, name, status, res in rows:
+        if "grand prix" not in (name or "").lower():
+            continue
         if not is_gp_winner_market(name):
             continue
         toks = frozenset(gp_tokens(name))

@@ -103,6 +103,18 @@ class TestListF1GpConcepts:
         rows = [(1, "F1 Drivers Champion", "open", None)]
         assert await list_f1_gp_concepts(_MockDB(rows)) == []
 
+    async def test_non_grand_prix_winner_market_excluded(self):
+        # A non-race "winner" market miscategorized as motorsports (the real World
+        # Cup KXWCGROUPPTS case) must NOT leak a nonsense GP concept — the lister is
+        # Grand-Prix-scoped.
+        soon = datetime.now(timezone.utc) + timedelta(days=3)
+        rows = [
+            (1, "Any Group Winner to Finish with Fewer than 6 Points", "open", soon),
+            (2, "British Grand Prix Winner", "open", soon),
+        ]
+        concepts = await list_f1_gp_concepts(_MockDB(rows))
+        assert [c["name"] for c in concepts] == ["British Grand Prix Winner"]
+
     async def test_far_off_gp_excluded_by_status(self):
         far = datetime.now(timezone.utc) + timedelta(days=40)
         rows = [(1, "Singapore Grand Prix Winner", "open", far)]
