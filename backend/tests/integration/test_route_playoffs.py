@@ -848,6 +848,7 @@ class TestLeagueFuturesEndpoint:
                 "id": 301,
                 "name": "NBA MVP 2026",
                 "source": "kalshi",
+                "external_id": "KXNBAMVP-26",
                 "market_tier": 3,
                 "category": "award",
                 "resolution_date": None,
