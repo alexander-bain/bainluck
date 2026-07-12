@@ -61,6 +61,13 @@ class TestEditionYear:
         assert edition_year("KXGRAMAOTY", rd) == 27
         assert edition_year("KXGRAMAOTY", None) is None
 
+    def test_implausible_ticker_token_is_not_a_year(self):
+        # KXGRAMAOTY-69 ends in a Kalshi series id (69), NOT a 2069 edition — must
+        # fall back to the resolution date (2027), never yield "The Grammys 2069".
+        rd = datetime(2027, 12, 31, tzinfo=timezone.utc)
+        assert edition_year("KXGRAMAOTY-69", rd) == 27
+        assert edition_year("KXGRAMMYNOMAOTY-69", rd) == 27
+
 
 class TestClassifyMarket:
     def test_winner_categories(self):

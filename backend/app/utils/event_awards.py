@@ -144,11 +144,15 @@ def edition_year(external_id: str | None, resolution_date=None) -> int | None:
 
     The Kalshi ticker carries it as the first ``-NN`` group
     (``KXOSCARPIC-27`` -> 27; ``KXEMMYDSERIES-26SEP14`` -> 26;
-    ``KXEMMYNOMS-26-DS`` -> 26). Grammy tickers carry no year token, so fall back
-    to the resolution date's year."""
+    ``KXEMMYNOMS-26-DS`` -> 26). A 2-digit token is only accepted as an edition
+    year when it's PLAUSIBLE (2020s–2040s) — Grammy tickers end in a Kalshi series
+    id (``KXGRAMAOTY-69``), not a year, so an implausible token falls through to
+    the resolution date's year (2027) instead of yielding "The Grammys 2069"."""
     m = re.search(r"-(\d{2})(?!\d)", external_id or "")
     if m:
-        return int(m.group(1))
+        yr = int(m.group(1))
+        if 20 <= yr <= 45:  # a real ceremony edition year, not a series id
+            return yr
     if resolution_date is not None:
         try:
             return resolution_date.year % 100
