@@ -423,19 +423,30 @@ async def _placeholder_fraction(session, dims: dict) -> float | None:
     if dims.get("source") != "polymarket":
         return None
     where, params = _cohort_where(dims)
+    params["cap"] = 3000
+    # Bounded SAMPLE: the per-outcome NOT EXISTS over snapshots is the one op that
+    # can run away over a whole category, so cap the candidate set first (a 3000-row
+    # sample gives a fine fraction estimate) — the budget-guard "bound the inner op"
+    # lesson (gotcha #38/#966).
     sql = text(f"""
+        WITH sample AS (
+            SELECT fo.id AS oid,
+                   COALESCE(fo.calibration_probability, fo.opening_probability) AS cp
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE {where}
+              AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
+            LIMIT :cap
+        )
         SELECT
             COUNT(*) AS total,
-            SUM(CASE WHEN COALESCE(fo.calibration_probability, fo.opening_probability) BETWEEN 0.45 AND 0.55
+            SUM(CASE WHEN cp BETWEEN 0.45 AND 0.55
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
-                          WHERE fos.outcome_id = fo.id
+                          WHERE fos.outcome_id = sample.oid
                             AND (fos.yes_bid > 0 OR fos.last_price > 0))
                      THEN 1 ELSE 0 END) AS placeholder
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE {where}
-          AND COALESCE(fo.calibration_probability, fo.opening_probability) IS NOT NULL
+        FROM sample
     """)
     res = (await session.execute(sql, params)).first()
     if not res or not res.total:
@@ -450,15 +461,23 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
         return []
     where, params = _cohort_where(dims)
     params["lim"] = limit
+    params["cap"] = 5000
+    # Bound the candidate set before the top-N sort so a huge cohort can't force a
+    # full-category sort (same inner-op-bounding discipline as the placeholder census).
     sql = text(f"""
-        SELECT fm.source, fm.external_id, fo.name AS outcome,
-               COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
-               fo.is_winner, fo.resolution_source
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE {where}
-          AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.6
-        ORDER BY COALESCE(fo.calibration_probability, fo.opening_probability) DESC
+        WITH sample AS (
+            SELECT fm.source AS source, fm.external_id AS external_id, fo.name AS outcome,
+                   COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
+                   fo.is_winner AS is_winner, fo.resolution_source AS resolution_source
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE {where}
+              AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.6
+            LIMIT :cap
+        )
+        SELECT source, external_id, outcome, cp, is_winner, resolution_source
+        FROM sample
+        ORDER BY cp DESC
         LIMIT :lim
     """)
     rows = (await session.execute(sql, params)).all()
