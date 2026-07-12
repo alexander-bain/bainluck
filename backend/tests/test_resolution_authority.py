@@ -148,6 +148,24 @@ class TestBackfillSourceGuards:
         # the sibling exclusion must use the FULL guess family (incl. pass3)
         assert "GUESS_FAMILY_SOURCES_SQL" in src
 
+    def test_flat_placeholder_demotion_requires_converged_sibling(self):
+        # Queue #167 Item 2 (#999): the "tennis shape" second pass demotes flat-1.0
+        # placeholder co-winners (opening=1.0, current≈1.0 that never moved) in mex
+        # winner-partition markets — but ONLY when a genuinely-converged winner
+        # (opening < 0.9 → current ≥ 0.9) also exists, so a real champion always
+        # survives (gotcha #21). Pin the safety gate and the read-side/no-reresolve
+        # guarantees so a later edit can't strip them.
+        src = self._src()
+        assert "placeholder_flipped" in src
+        # The degenerate signature: a flat, never-moved opening.
+        assert "u.opening_probability = 1.0" in src
+        # The survivor gate: a converged sibling winner must exist.
+        assert "o.opening_probability < 0.9" in src
+        assert "o.current_probability >= 0.9" in src
+        # Only the is_winner flag flips — resolution_source is never rewritten and
+        # no new winner is asserted (mirrors the guess-side pass).
+        assert "SET is_winner = false" in src
+
     def test_no_hardcoded_guess_family_tuple_remains(self):
         # After rewiring, the guess-family tuple literal must NOT appear inline —
         # every occurrence must interpolate OVERWRITABLE_WINNER_SOURCES_SQL. This
