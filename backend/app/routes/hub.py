@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.league_futures import get_league_futures
 from app.services import get_db
+from app.utils.event_boxing import classify_boxing_prop, list_boxing_card_concepts
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class HubConfig:
 # Per-domain prop classifiers. Signature: (external_id, name) -> prop_type | None.
 _PROP_CLASSIFIERS: dict[str, Callable[[str | None, str | None], str | None]] = {
     "ufc": classify_ufc_prop,
+    "boxing": classify_boxing_prop,
 }
 
 
@@ -83,6 +85,23 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         concept_domain="ufc",
         prop_classifier_domain="ufc",
     ),
+    # B5 (L2-86): boxing drops in as ONE config entry — the combat engine
+    # (event_combat/event_boxing) supplies the upcoming lister + prop classifier,
+    # league_futures already routes boxing markets, and the frontend hub page is
+    # generic. No new page code.
+    "boxing": HubConfig(
+        slug="boxing",
+        label="Boxing",
+        title="Boxing",
+        emoji="🥊",
+        blurb=(
+            "Upcoming fight cards, method-and-round props, and title odds — every "
+            "market translated into plain probabilities."
+        ),
+        sport_key="boxing_boxing",
+        concept_domain="boxing",
+        prop_classifier_domain="boxing",
+    ),
 }
 
 
@@ -91,6 +110,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
 # frontend links to `/event/<key>`. Signature: (db, *, limit) -> list[dict].
 _UPCOMING_LISTERS: dict[str, Callable[..., Awaitable[list[dict]]]] = {
     "ufc": list_ufc_card_concepts,
+    "boxing": list_boxing_card_concepts,
 }
 
 

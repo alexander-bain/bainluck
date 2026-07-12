@@ -65,4 +65,26 @@ describe("no American-moneyline leak (L2-48)", () => {
       expect(src).not.toMatch(/odds\s*>\s*0\s*\?\s*[`"]\+/);
     });
   }
+
+  // L2-86 (#163 deferred): search + typeahead answer surfaces. The
+  // /api/events/search payload carries `american_odds` on each futures outcome
+  // (lean=false), so the correct fix is a RENDER guard, not a payload change:
+  // these components must never surface the field. They reference neither an odds
+  // formatter nor `american_odds` today — this locks that in against regression.
+  const SEARCH_SURFACES = [
+    "components/SearchBar.tsx",
+    "components/MobileSearchOverlay.tsx",
+    "components/SearchFamilyCard.tsx",
+    "components/searchFamilyDisplay.ts",
+    "components/FuturesCard.tsx",
+  ];
+  for (const rel of SEARCH_SURFACES) {
+    test(`${rel} renders no american_odds / moneyline`, () => {
+      const src = read(rel);
+      expect(src).not.toContain("american_odds");
+      expect(src).not.toMatch(/format(American)?Odds\s*\(/);
+      expect(src).not.toMatch(/formatMoneyline\s*\(/);
+      expect(src).not.toMatch(/odds\s*>\s*0\s*\?\s*[`"]\+/);
+    });
+  }
 });

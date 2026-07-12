@@ -109,6 +109,26 @@ class TestHubContract:
         assert (await client.post("/api/hub/mma")).status_code == 405
 
 
+class TestBoxingHub:
+    """L2-86 (B5): boxing is a config drop — the same generic hub, one HUB_CONFIGS
+    entry + combat-engine lister/classifier, no new page code."""
+
+    async def test_boxing_returns_200_and_echoes_config(self, client):
+        body = (await client.get("/api/hub/boxing")).json()
+        assert body["competition"] == "boxing"
+        assert body["label"] == "Boxing"
+        assert body["sport_key"] == "boxing_boxing"
+        # Same top-level shape as MMA.
+        for key in (
+            "competition", "label", "title", "emoji", "blurb",
+            "sport_key", "upcoming", "sections", "total_markets",
+        ):
+            assert key in body, f"missing {key}"
+
+    async def test_boxing_case_insensitive(self, client):
+        assert (await client.get("/api/hub/Boxing")).status_code == 200
+
+
 # ============================================================================
 # Upcoming rail (event-concept lister)
 # ============================================================================

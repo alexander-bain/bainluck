@@ -1252,7 +1252,10 @@ async def get_feed(
     _skip_concepts = not include_events
     if static_tag_filter:
         _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
-        if _concept_sport_tags and "sport:mma" not in _concept_sport_tags:
+        # Concepts exist for combat cards (mma) + motorsports GPs (f1). A sport
+        # filter for anything else means the concept streams have nothing to add.
+        _concept_allowed = {"sport:mma", "sport:motorsports", "sport:f1"}
+        if _concept_sport_tags and not (set(_concept_sport_tags) & _concept_allowed):
             _skip_concepts = True
     if not _skip_concepts:
         try:
@@ -6267,44 +6270,68 @@ def _concept_headline(c: dict, now: datetime) -> Optional[str]:
     return None
 
 
+def _concept_reason(c: dict) -> str:
+    """Honest per-domain reason line for a concept card."""
+    domain = c.get("domain")
+    if domain == "f1":
+        n = c.get("entry_count", 0)
+        return (
+            f"{n} weekend market{'' if n == 1 else 's'}"
+            if n
+            else "Grand Prix race winner"
+        )
+    fc = c.get("fight_count", 0)
+    return f"{fc} fight{'' if fc == 1 else 's'} on the card"
+
+
 async def _score_event_concepts(
     db: AsyncSession,
     now: datetime,
     sport_filter: Optional[str],
     ctx=None,
 ) -> list[dict]:
-    """Score UFC card concepts for the unified feed (the "UFC 329 wasn't bubbling"
-    gap). Returns feed items with type="concept" that link to /event/{key}.
+    """Score event concepts (UFC cards + F1 Grands Prix, L2-84/L2-86) for the
+    unified feed — the "UFC 329 / British GP wasn't bubbling" gap. Returns feed
+    items with type="concept" that link to /event/{key}.
 
-    Additive: pulls its own data via list_ufc_card_concepts (no dependency on the
-    futures candidate pools) and emits candidates the shared _rank_key sort ranks
-    alongside everything else. Best-effort — a failure returns a partial feed."""
-    if sport_filter and sport_filter not in ("mma", "all", "ufc"):
-        return []
+    Additive: each domain pulls its own data (no dependency on the futures
+    candidate pools) and emits candidates the shared _rank_key sort ranks alongside
+    everything else. Best-effort — a per-domain failure never drops the others."""
+    concepts: list[dict] = []
 
-    from app.utils.event_ufc import list_ufc_card_concepts
+    # UFC cards (co_equal_list).
+    if not sport_filter or sport_filter in ("mma", "all", "ufc"):
+        from app.utils.event_ufc import list_ufc_card_concepts
 
-    try:
-        concepts = await list_ufc_card_concepts(
-            db, statuses=("upcoming", "live"), limit=12
-        )
-    except Exception as e:
-        logger.warning("Feed: failed to list UFC card concepts: %s", e)
-        return []
+        try:
+            concepts += await list_ufc_card_concepts(
+                db, statuses=("upcoming", "live"), limit=12
+            )
+        except Exception as e:
+            logger.warning("Feed: failed to list UFC card concepts: %s", e)
+
+    # F1 Grands Prix (winner-field). Motorsports GPs surface as concepts too (B5).
+    if not sport_filter or sport_filter in ("motorsports", "f1", "all"):
+        from app.utils.event_f1 import list_f1_gp_concepts
+
+        try:
+            concepts += await list_f1_gp_concepts(
+                db, statuses=("upcoming", "live"), limit=8
+            )
+        except Exception as e:
+            logger.warning("Feed: failed to list F1 GP concepts: %s", e)
 
     feed_items: list[dict] = []
     for c in concepts:
         score = _score_event_concept(c, now)
         if score <= 0:
             continue
-        fc = c.get("fight_count", 0)
-        reason = f"{fc} fight{'' if fc == 1 else 's'} on the card"
         latest = c.get("latest_commence")
         feed_items.append(
             {
                 "type": "concept",
                 "score": score,
-                "reason": reason,
+                "reason": _concept_reason(c),
                 "headline": _concept_headline(c, now),
                 "data": {
                     "key": c["key"],
@@ -6313,7 +6340,8 @@ async def _score_event_concepts(
                     "status": c["status"],
                     "start_date": c["start_date"],
                     "is_major": c["is_major"],
-                    "fight_count": fc,
+                    "fight_count": c.get("fight_count", 0),
+                    "entry_count": c.get("entry_count", 0),
                 },
                 "_sort_time": latest.timestamp() if latest is not None else 0,
             }

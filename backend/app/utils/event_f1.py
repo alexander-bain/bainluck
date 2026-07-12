@@ -75,6 +75,105 @@ def f1_status(status: str | None, resolution_date, now) -> str:
     return "upcoming"
 
 
+async def list_f1_gp_concepts(
+    db: AsyncSession,
+    *,
+    statuses: tuple[str, ...] = ("upcoming", "live"),
+    limit: int = 20,
+) -> list[dict]:
+    """Enumerate F1 Grand Prix concepts for the sports feed (L2-86 B5) — the
+    winner-field analogue of `list_ufc_card_concepts`. Groups open motorsports
+    markets by their distinctive GP token (british / austrian / …), anchoring each
+    GP on its main-race winner market. Returns lightweight dicts the feed scorer
+    turns into candidates linking to `/event/{key}`:
+
+        {key, name, domain, status, start_date, is_major, entry_count,
+         latest_commence}
+
+    Read-only, best-effort. Uses `resolution_date` (the race time) as the event
+    time — `commence_time` is the market-open date, not the race (gotcha #14)."""
+    from datetime import datetime, timezone
+
+    from app.models import FuturesMarket
+    from app.utils.name_normalization import clean_slug
+
+    now = datetime.now(timezone.utc)
+    rows = list(
+        (
+            await db.execute(
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.name,
+                    FuturesMarket.status,
+                    FuturesMarket.resolution_date,
+                ).where(
+                    FuturesMarket.llm_sport_category == "motorsports",
+                    FuturesMarket.status == "open",
+                )
+            )
+        ).all()
+    )
+
+    # Anchor each GP on its main-race winner market; group by distinctive GP token.
+    groups: dict[frozenset, dict] = {}
+    for _mid, name, status, res in rows:
+        if not is_gp_winner_market(name):
+            continue
+        toks = frozenset(gp_tokens(name))
+        if not toks:
+            continue
+        g = groups.get(toks)
+        if g is None:
+            slug = clean_slug(name or "")
+            if not slug:
+                continue
+            groups[toks] = {
+                "name": name,
+                "slug": slug,
+                "status": status,
+                "resolution": res,
+                "markets": 0,
+            }
+        elif res is not None and (g["resolution"] is None or res < g["resolution"]):
+            # Prefer the soonest-resolving winner market's race time as the anchor.
+            g["resolution"] = res
+
+    # Count all weekend markets per GP (winner + quali/sprint/podium/…) as a size
+    # proxy — the analogue of a card's fight_count.
+    for _mid, name, _status, _res in rows:
+        toks_n = gp_tokens(name)
+        for toks, g in groups.items():
+            if toks & toks_n:
+                g["markets"] += 1
+
+    concepts: list[dict] = []
+    for _toks, g in groups.items():
+        res = g["resolution"]
+        status = f1_status(g["status"], res, now)
+        if status not in statuses:
+            continue
+        concepts.append(
+            {
+                "key": f"event:f1:{g['slug']}",
+                "name": g["name"],
+                "domain": "f1",
+                "status": status,
+                "start_date": res.isoformat() if res is not None else None,
+                "is_major": False,
+                "entry_count": g["markets"],
+                "latest_commence": res,
+            }
+        )
+
+    # Soonest race first (the imminent GP is the interesting one).
+    concepts.sort(
+        key=lambda x: (
+            x["latest_commence"] or datetime.max.replace(tzinfo=timezone.utc)
+        )
+    )
+    return concepts[:limit]
+
+
 class F1EventAdapter:
     domain = "f1"
 

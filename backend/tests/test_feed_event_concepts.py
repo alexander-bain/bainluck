@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from app.routes.feed import _score_event_concept, _concept_headline
+from app.routes.feed import _score_event_concept, _concept_headline, _concept_reason
 from app.utils.event_ufc import list_ufc_card_concepts
 
 NOW = datetime(2026, 7, 12, 18, 0, tzinfo=timezone.utc)
@@ -77,6 +77,19 @@ class TestConceptHeadline:
         assert _concept_headline(
             _concept(latest_commence=NOW + timedelta(days=30)), NOW
         ) is None
+
+
+class TestConceptReason:
+    """L2-86: the reason line is domain-aware (UFC fights vs F1 weekend markets)."""
+
+    def test_ufc_reason(self):
+        assert _concept_reason({"domain": "ufc", "fight_count": 12}) == "12 fights on the card"
+        assert _concept_reason({"domain": "ufc", "fight_count": 1}) == "1 fight on the card"
+
+    def test_f1_reason(self):
+        assert _concept_reason({"domain": "f1", "entry_count": 6}) == "6 weekend markets"
+        assert _concept_reason({"domain": "f1", "entry_count": 1}) == "1 weekend market"
+        assert _concept_reason({"domain": "f1", "entry_count": 0}) == "Grand Prix race winner"
 
 
 class _MockResult:

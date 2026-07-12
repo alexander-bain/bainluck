@@ -1,12 +1,16 @@
-"""#999 L2-72: F1 adapter pure helpers (winner-field motorsports)."""
+"""#999 L2-72: F1 adapter pure helpers (winner-field motorsports).
+L2-86 (B5): the GP concept lister that surfaces Grands Prix on the /sports feed."""
 
 from datetime import datetime, timezone, timedelta
+
+import pytest
 
 from app.utils.event_f1 import (
     is_gp_winner_market,
     gp_tokens,
     shares_gp,
     f1_status,
+    list_f1_gp_concepts,
 )
 
 NOW = datetime(2026, 7, 9, tzinfo=timezone.utc)
@@ -51,3 +55,60 @@ class TestF1Status:
     def test_upcoming_when_far_or_unknown(self):
         assert f1_status("open", NOW + timedelta(days=20), NOW) == "upcoming"
         assert f1_status("open", None, NOW) == "upcoming"
+
+
+class _MockResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _MockDB:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, *_a, **_k):
+        return _MockResult(self._rows)
+
+
+@pytest.mark.asyncio
+class TestListF1GpConcepts:
+    async def test_groups_gp_and_counts_weekend_markets(self):
+        # One British GP: winner market anchors; sub-markets fold into entry_count.
+        soon = datetime.now(timezone.utc) + timedelta(days=3)
+        rows = [
+            (1, "British Grand Prix: Driver Winner", "open", soon),
+            (2, "British Grand Prix: Driver Pole Position", "open", soon),
+            (3, "British Grand Prix: Constructor Fastest Lap", "open", soon),
+            # A different GP, further out.
+            (4, "Hungarian Grand Prix Winner", "open", soon + timedelta(days=14)),
+        ]
+        concepts = await list_f1_gp_concepts(_MockDB(rows))
+        # British (soonest) first.
+        assert concepts[0]["key"] == "event:f1:british-grand-prix-driver-winner"
+        assert concepts[0]["domain"] == "f1"
+        assert concepts[0]["status"] == "live"  # 3 days out = race weekend
+        assert concepts[0]["entry_count"] == 3  # winner + pole + fastest-lap
+        assert concepts[0]["is_major"] is False
+        # Both GPs surfaced.
+        assert {c["name"] for c in concepts} == {
+            "British Grand Prix: Driver Winner",
+            "Hungarian Grand Prix Winner",
+        }
+
+    async def test_season_championship_is_not_a_gp_concept(self):
+        # "F1 Drivers Champion" has no winner/to-win token → not a GP concept.
+        rows = [(1, "F1 Drivers Champion", "open", None)]
+        assert await list_f1_gp_concepts(_MockDB(rows)) == []
+
+    async def test_far_off_gp_excluded_by_status(self):
+        far = datetime.now(timezone.utc) + timedelta(days=40)
+        rows = [(1, "Singapore Grand Prix Winner", "open", far)]
+        # Default statuses are (upcoming, live); a 40-day-out GP is "upcoming" and
+        # DOES surface — assert the descriptor is well-formed.
+        concepts = await list_f1_gp_concepts(_MockDB(rows))
+        assert len(concepts) == 1
+        assert concepts[0]["status"] == "upcoming"
+        assert concepts[0]["start_date"] == far.isoformat()
