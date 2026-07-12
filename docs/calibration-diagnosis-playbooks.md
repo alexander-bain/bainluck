@@ -37,6 +37,40 @@ Pull 20 rows from the offending bucket (read-only, `POST /api/admin/db-query`). 
 
 **totals 75%→0%:** Count the bucket first. If n < ~30: annotate as noise, done. If material: check for a residual inverted family the #945 re-grade missed (a specific series or season slice), then row-trace per protocol.
 
+## Step 4 — The Sentinel decision tree (auto-routing, #1054)
+
+The Calibration Sentinel (`app/tasks/calibration_sentinel.py`, weekly beat +
+`POST /api/admin/calibration-sentinel/run`) automates Steps 0–1 at scale: it mines
+resolved-outcome cohorts across `category × source × series-family × structure ×
+table-provenance` (the r127 wrong-table field is a hard dimension), computes
+n-weighted MCE per cohort on the RAW (un-excluded) population, and for each flag
+runs the known-class overlap census below. It files ONE deduped issue per cohort
+fingerprint (`alert-intake` + `area:calibration` + `needs-agent` + severity) and
+NEVER writes market data (gotcha #21). It removes the human from DETECTION only —
+D5/ship and any destructive regrade stay human.
+
+When a sentinel issue lands, route by which known-class overlap it reports (this is
+the decision tree the sentinel attaches as `Playbook branch`):
+
+| Overlap signal (the tell) | Class | Route |
+|---|---|---|
+| poly, cp∈[0.45,0.55], never-bid/never-traded | poly_placeholder | **curve-exclusion** (read-side; #151) — verify the shipped filter covers this new series/source |
+| 2-outcome mex, winner-count ≠ 1 | malformed_binary | **curve-exclusion** (read-side; L2-79) |
+| esports, ≥3 outcomes, ≥2 winners | esports_multi_bundle | **curve-exclusion** (read-side; #159) — the cumulative-ladder grading is correct |
+| mex ≥3, exactly 1 winner, cp-sum > 1.15 | mex_normalization | **normalize** per-market cp-sum (read-side; #157) |
+| resolution_source ∈ did_not_play/withdrew | void | **denominator fix** (read-side; #762) |
+| resolution_source ∈ guess-family | heuristic | **curve-exclude then authoritative re-resolve** (#754; gotcha #21) — never bulk re-grade |
+| events soccer moneyline (structural) | soccer_2way | **3-way capture** / historical exclude (#1011) — draw never stored |
+| high-cp band under-resolving, NO class ≥ threshold | **UNEXPLAINED** | row-trace (Step 2) first; assume-our-bug; verify-before-regrade |
+
+The **UNEXPLAINED** row is the one that matters — it's a candidate NEW break (a new
+format, a new source, a grammar gap). Treat it as real until the row-trace proves
+otherwise; a fully-explained cohort is suppressed in a live run so the sentinel
+doesn't re-file already-shipped exclusions. Backtest mode
+(`?inline=true&file_issues=false&suppress_known=false`) reports every flag with its
+class — that's the honest self-test that the detector can still rediscover the
+season's known cohorts unaided.
+
 ## Standing links
 
 Gotcha catalog: `docs/gotchas-reference.md` (#14, #17, #21, #23, #35 are the calibration five). Decision register: `docs/decisions-2026-07-06.md`. Prior incidents: #937/#938a/#939/#941/#942/#944/#945 (the 2026-06 chain — read before proposing any re-grade). Verify-before-regrade is a hard staging gate, not advice.

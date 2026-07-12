@@ -1434,6 +1434,21 @@ def run_data_quality_watchdog(self):
     return _tracked_run("data_quality_watchdog", _run_data_quality_watchdog())
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.calibration_sentinel")
+def calibration_sentinel(self, file_issues=True, suppress_known=True):
+    """Calibration Sentinel (#1054): mine resolved-outcome cohorts across
+    category × source × series × structure × table-provenance, n-weighted MCE per
+    cohort, evidence-pack each break, and file ONE deduped GitHub issue per cohort
+    fingerprint. Read-only detection — never writes market data (gotcha #21).
+    The 840s soft limit (under the 900s hard limit, clear of the global 300s) plus
+    the task's own 600s inner deadline keep it from SIGKILLing untracked (#966)."""
+    from app.tasks.calibration_sentinel import _run_calibration_sentinel
+    return _tracked_run(
+        "calibration_sentinel",
+        _run_calibration_sentinel(file_issues=file_issues, suppress_known=suppress_known),
+    )
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -1997,6 +2012,15 @@ celery_app.conf.beat_schedule = {
     "data-quality-watchdog": {
         "task": "app.tasks.run_data_quality_watchdog",
         "schedule": crontab(minute=45, hour="*/2"),  # Every 2 hours at :45
+        "options": {"queue": "background"},
+    },
+    "calibration-sentinel-weekly": {
+        # #1054: self-serve calibration break detection → evidence pack → issue
+        # filing. Weekly (Monday 06:20 UTC) — resolved-outcome cohorts move slowly,
+        # and the new-format early-warning tier catches a broken format long before
+        # a 50K-outcome pileup, so a weekly cadence is enough. background queue.
+        "task": "app.tasks.calibration_sentinel",
+        "schedule": crontab(minute=20, hour=6, day_of_week=1),  # Weekly Monday 06:20 UTC
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

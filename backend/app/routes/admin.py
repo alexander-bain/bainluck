@@ -638,6 +638,64 @@ async def trigger_ground_truth_capture(
     return await capture_all_featured(db)
 
 
+@router.post("/calibration-sentinel/run")
+async def trigger_calibration_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    suppress_known: bool = Query(True, description="Suppress cohorts already covered by a shipped exclusion"),
+    inline: bool = Query(False, description="Run inline and return findings (default: enqueue on worker)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """#1054: on-demand run of the Calibration Sentinel.
+
+    Enqueues the weekly detection task, or (inline=True) runs it in-request and
+    returns the findings — handy for the backtest rediscovery test
+    (?inline=true&file_issues=false&suppress_known=false). Read-only detection;
+    never writes market data (gotcha #21)."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.calibration_sentinel import _run_calibration_sentinel
+
+        return await _run_calibration_sentinel(
+            file_issues=file_issues, suppress_known=suppress_known
+        )
+
+    from app.tasks import celery_app
+
+    result = celery_app.send_task(
+        "app.tasks.calibration_sentinel",
+        kwargs={"file_issues": file_issues, "suppress_known": suppress_known},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/calibration-sentinel/last")
+async def get_calibration_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    backtest: bool = Query(False, description="Read the last backtest run instead of the last live run"),
+):
+    """#1054: read the last cached Calibration Sentinel run (findings + filed
+    issues). Lets an enqueued worker run be inspected without a web-request scan."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    key = (
+        "bainluck:calibration_sentinel:last_backtest"
+        if backtest
+        else "bainluck:calibration_sentinel:last"
+    )
+    raw = get_redis_client().get(key)
+    if not raw:
+        return {"status": "no_run_cached", "key": key}
+    return json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Pairwise Discover Card Preference Labeling
 # ---------------------------------------------------------------------------

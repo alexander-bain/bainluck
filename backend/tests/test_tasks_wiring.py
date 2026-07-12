@@ -260,6 +260,7 @@ class TestBeatScheduleCompleteness:
         "precompute-category-pages",
         "precompute-backfill-winners-status",
         "data-quality-watchdog",
+        "calibration-sentinel-weekly",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",
