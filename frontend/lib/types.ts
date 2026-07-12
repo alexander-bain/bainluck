@@ -1240,11 +1240,15 @@ export interface GolfTournamentDetailResponse {
   biggest_movers: GolfMover[];
   h2h_matchups?: GolfH2HMatchup[];
   // #951: per-round "Round N Top M Finishers" markets, grouped by round → tier.
+  // L2-89: also carries "End of Round N Leader" fields (kind="leader"); `label`
+  // is the pre-formatted card title ("Round Leader" / "Top N Finishers").
   round_top_groups?: {
     market_id: number;
     market_name: string;
     round: number | null;
     top_n: number | null;
+    kind?: "top" | "leader";
+    label?: string;
     source?: string;
     outcomes: { name: string; probability: number | null }[];
   }[];

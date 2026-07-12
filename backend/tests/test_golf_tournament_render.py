@@ -14,6 +14,7 @@ from app.routes.golf import (
     _prefer_datagolf_merge,
     _NON_CONTENDER_WINNER_RE,
     _detect_market_type,
+    _tournament_market_type,
 )
 
 
@@ -74,3 +75,34 @@ class TestWinnerChartExclusion:
         # let its 26 outcomes through into the contenders chart.
         type_key, _ = _detect_market_type("2026 U.S. Open: Winner Nationality")
         assert type_key == "winner"
+
+
+class TestTournamentMarketType:
+    """L2-89: the detail-grouping reclass — non-contender-winner props and
+    last-chance qualifier fields move OUT of the winner group into `other`, so
+    they surface in Related Futures instead of vanishing."""
+
+    def test_real_winner_field_stays_winner(self):
+        for name in (
+            "The Open Championship Winner",
+            "The Open Winner",
+            "U.S. Open Winner",
+        ):
+            assert _tournament_market_type(name)[0] == "winner", name
+
+    def test_qualifier_winner_downgraded_to_other(self):
+        # "The Open: Last-Chance Qualifier Winner" is a separate qualifying field,
+        # not the tournament winner — it must not pollute the winner group.
+        assert _tournament_market_type("The Open: Last-Chance Qualifier Winner")[0] == "other"
+        assert _tournament_market_type("U.S. Open Final Qualifying Winner")[0] == "other"
+
+    def test_nationality_winner_downgraded_to_other(self):
+        assert _tournament_market_type("Winner Nationality - Europe")[0] == "other"
+        assert _tournament_market_type("2026 U.S. Open: Winner Nationality")[0] == "other"
+
+    def test_placement_families_unaffected(self):
+        # The reclass only touches "winner"-typed markets; placement families are
+        # detected before it and pass through unchanged.
+        assert _tournament_market_type("The Open Championship: Top 5 Finishers")[0] == "top_5"
+        assert _tournament_market_type("The Open Championship: To Make the Cut")[0] == "make_cut"
+        assert _tournament_market_type("The Open Championship End of Round 1 Leader")[0] == "round_leader"

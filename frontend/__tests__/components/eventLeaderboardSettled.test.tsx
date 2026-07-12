@@ -64,6 +64,30 @@ describe("EventLeaderboard settled mode (L2-81)", () => {
     expect(html).not.toContain("%");
   });
 
+  // L2-89 Item 3 (render-side guard): the DATA layer can hand us a corrupt
+  // settled field with TWO `won: true` competitors (the Women's Wimbledon
+  // "two winners" mis-grade — data fix owned by the resolver lane). The render
+  // must degrade gracefully: crown exactly ONE champion (the higher-probability
+  // `won` per `settledChampion`'s `.find` over `fieldOrder`), and sink the second
+  // "winner" into the "Did not win" group. Never two crowns.
+  test("crowns exactly ONE champion when the data hands it two winners", () => {
+    const field: EventConceptCompetitor[] = [
+      { name: "Iga Swiatek", probability: 0.55, won: true },
+      { name: "Amanda Anisimova", probability: 0.45, won: true },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={field} label="Winner" settled />,
+    );
+    // Exactly one crown + one "Won" chip — the negative case that guards against
+    // a future refactor switching settledChampion/render to .filter()+.map().
+    expect(html.split("🏆").length - 1).toBe(1);
+    expect(html.split("Won").length - 1).toBe(1);
+    // The higher-probability winner is crowned; the second sinks into the group.
+    expect(html).toContain("Iga Swiatek");
+    expect(html).toContain("Did not win (1)");
+    expect(html).not.toContain("%");
+  });
+
   test("empty field renders nothing", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard competitors={[]} label="Winner" settled />,

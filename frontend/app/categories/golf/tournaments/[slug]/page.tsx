@@ -695,7 +695,8 @@ function TournamentRounds({
                 >
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <h4 className="text-xs font-semibold text-gray-700">
-                      {tier.top_n ? `Top ${tier.top_n} Finishers` : tier.market_name}
+                      {tier.label ||
+                        (tier.top_n ? `Top ${tier.top_n} Finishers` : tier.market_name)}
                     </h4>
                     {tier.source && (
                       <span className="text-[10px] text-gray-400 shrink-0">

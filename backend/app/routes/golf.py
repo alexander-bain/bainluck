@@ -1789,6 +1789,33 @@ def _detect_market_type(market_name: str) -> tuple[str, str]:
     return "other", "Other"
 
 
+# L2-89: "Winner"-named markets that are NOT the tournament's golfer winner field.
+# "The Open: Last-Chance Qualifier Winner" is a separate qualifying field (15
+# golfers who never make the main grid); nationality/continent/etc. props are
+# caught by _NON_CONTENDER_WINNER_RE. Both classify as type "winner" (they contain
+# "Winner") but must not pollute the winner group/evolution chart.
+_QUALIFIER_WINNER_RE = re.compile(r"\bqualif(?:y|ier|ying|ication|iers)\b", re.I)
+
+
+def _tournament_market_type(market_name: str) -> tuple[str, str]:
+    """Market type for the tournament DETAIL grouping.
+
+    Wraps _detect_market_type but DOWN-CLASSIFIES a "winner" market that is not the
+    real golfer winner field — nationality/continent/country-of-winner props (#955)
+    and last-chance *qualifier* fields (L2-89) — into "other" so they surface in
+    Related Futures instead of vanishing. Previously they were filtered out of the
+    golfer grid + evolution chart (#955) but never routed anywhere, so the whole
+    family was invisible on the event page.
+    """
+    type_key, label = _detect_market_type(market_name or "")
+    if type_key == "winner" and (
+        _NON_CONTENDER_WINNER_RE.search(market_name or "")
+        or _QUALIFIER_WINNER_RE.search(market_name or "")
+    ):
+        return "other", "Other"
+    return type_key, label
+
+
 _PLAYOFF_RE = re.compile(r"\bplayoff\b", re.I)
 
 # Source preference when collapsing cross-source duplicate "other" markets into
@@ -2004,7 +2031,7 @@ async def get_golf_tournament(
     market_groups: dict[str, dict] = {}
     for mid in market_ids:
         mname = id_to_name.get(mid, "")
-        type_key, label = _detect_market_type(mname)
+        type_key, label = _tournament_market_type(mname)
         if type_key not in market_groups:
             market_groups[type_key] = {
                 "type": type_key,
@@ -2156,17 +2183,27 @@ async def get_golf_tournament(
                         win = g[col]
 
     # ------------------------------------------------------------------
-    # #951: round_top groups — "Round N Top M Finishers" markets are excluded
-    # from the tournament placement grid (round-specific Top-N would corrupt the
-    # whole-tournament Top-N columns) and previously surfaced only as bare
-    # ids/names. Expose them per-market (round + tier + per-golfer outcomes) so
-    # the frontend can render a dedicated rounds panel. Disambiguated by
-    # round + top_n, so there is no grid-key collision across rounds.
+    # Round-scoped groups (#951 round_top + L2-89 round_leader).
+    #   * "Round N Top M Finishers" (DataGolf projections, kind="top")
+    #   * "End of Round N Leader" (first/second/third-round leader fields, kind="leader")
+    # Both are excluded from the tournament placement grid (round-specific numbers
+    # would corrupt the whole-tournament Top-N columns). round_top previously
+    # surfaced only as bare ids; round_leader was collapsed into a single averaged
+    # phantom `round_leader_prob` that NO surface renders (L2-89 gap). Expose both
+    # per-market (round + kind + per-golfer outcomes) so the frontend renders a
+    # dedicated per-round panel. Disambiguated by (round, kind, top_n) — no
+    # grid-key collision.
     # ------------------------------------------------------------------
     round_top_groups: list[dict] = []
     rt_group = next((g for g in sorted_groups if g["type"] == "round_top"), None)
-    if rt_group and rt_group["market_ids"]:
-        rt_ids = rt_group["market_ids"]
+    rl_group = next((g for g in sorted_groups if g["type"] == "round_leader"), None)
+    round_market_kinds: dict[int, str] = {}
+    for mid in (rt_group or {}).get("market_ids", []):
+        round_market_kinds[mid] = "top"
+    for mid in (rl_group or {}).get("market_ids", []):
+        round_market_kinds[mid] = "leader"
+    if round_market_kinds:
+        rt_ids = list(round_market_kinds.keys())
         rt_out_result = await db.execute(
             select(FuturesOutcome).where(
                 FuturesOutcome.market_id.in_(rt_ids),
@@ -2182,13 +2219,21 @@ async def get_golf_tournament(
             )
         )
         rt_src = {row[0]: row[1] for row in rt_src_result.all()}
-        rt_names = dict(zip(rt_group["market_ids"], rt_group["market_names"]))
         for mid in rt_ids:
             outs = rt_by_market.get(mid)
             if not outs:
                 continue  # false-positive-safe: never surface an empty group
-            name = rt_names.get(mid, "")
-            m = re.search(r"Round\s+(\d+)\s+Top\s+(\d+)", name, re.I)
+            name = id_to_name.get(mid, "")
+            kind = round_market_kinds[mid]
+            rnd_m = re.search(r"Round\s+(\d+)", name, re.I)
+            rnd = int(rnd_m.group(1)) if rnd_m else None
+            if kind == "top":
+                tn_m = re.search(r"Top\s+(\d+)", name, re.I)
+                top_n = int(tn_m.group(1)) if tn_m else None
+                label = f"Top {top_n} Finishers" if top_n else "Top Finishers"
+            else:
+                top_n = None
+                label = "Round Leader"
             outcomes = sorted(
                 (
                     {
@@ -2204,13 +2249,22 @@ async def get_golf_tournament(
                 {
                     "market_id": mid,
                     "market_name": name,
-                    "round": int(m.group(1)) if m else None,
-                    "top_n": int(m.group(2)) if m else None,
+                    "round": rnd,
+                    "top_n": top_n,
+                    "kind": kind,
+                    "label": label,
                     "source": "datagolf_model" if rt_src.get(mid) == "datagolf" else rt_src.get(mid, ""),
                     "outcomes": outcomes,
                 }
             )
-        round_top_groups.sort(key=lambda g: (g["round"] or 99, g["top_n"] or 99))
+        # Within a round: leader field first, then Top-N ascending.
+        round_top_groups.sort(
+            key=lambda g: (
+                g["round"] or 99,
+                0 if g["kind"] == "leader" else 1,
+                g["top_n"] or 99,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Build "Related Futures" — tournament-specific markets NOT in the grid.

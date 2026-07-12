@@ -14,6 +14,7 @@ const PROP_GROUPS: { key: string; label: string }[] = [
   { key: "rounds", label: "Rounds" },
   { key: "distance", label: "Goes the distance" },
   { key: "nominations", label: "Nominations" }, // L2-87: awards nomination markets
+  { key: "round", label: "By round" }, // L2-89: golf round leaders + per-round Top-N
   { key: "occurrence", label: "Will it happen?" },
 ];
 

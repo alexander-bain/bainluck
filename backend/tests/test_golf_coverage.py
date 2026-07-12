@@ -69,17 +69,21 @@ class TestYesNoProp:
 
 
 class TestRoundTopGroups:
-    """#951 residual: round_top markets exposed per-round/tier with outcomes."""
+    """#951 + L2-89: round_top AND round_leader markets exposed per-round/tier
+    with outcomes (both surface in the frontend Rounds panel)."""
 
     def test_round_top_groups_built_and_exposed(self):
         import inspect
         from app.routes.golf import get_golf_tournament
         src = inspect.getsource(get_golf_tournament)
-        # builds the structure from the round_top market group
+        # builds the structure from the round_top + round_leader market groups
         assert "round_top_groups" in src
         assert 'g["type"] == "round_top"' in src
-        # parses round + tier from the market name
-        assert r"Round\s+(\d+)\s+Top\s+(\d+)" in src
+        assert 'g["type"] == "round_leader"' in src  # L2-89: leaders folded in
+        # parses the round number from the market name (shared by both kinds)
+        assert r"Round\s+(\d+)" in src
+        # tags each entry so the frontend can label leader vs top-N
+        assert '"kind": kind,' in src
         # false-positive-safe: skips groups with no outcomes (no bare cards)
         assert "if not outs:" in src
         # exposed on the response

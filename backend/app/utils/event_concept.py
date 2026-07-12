@@ -355,6 +355,34 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     Pure — unit-tested. Preserves the golf data (parity) under generic keys so the
     frontend renders domain-agnostically."""
     t = data.get("tournament", {}) or {}
+
+    # L2-89: forward round-scoped groups (round leaders + Round-N Top-M projections)
+    # as PROP children so the concept page's props section renders them. Previously
+    # `round_top_groups` was dropped from the envelope entirely, so the round-leader
+    # and per-round families were invisible on /event/<key> even though the bespoke
+    # golf page rendered them. Each group is already {market_id, outcomes:[{name,
+    # probability}]}, compatible with EventConceptChild; a round-qualified label
+    # disambiguates the cards (EventProps does not group by round).
+    def _round_child_label(g: dict) -> str:
+        rnd = g.get("round")
+        if g.get("kind") == "leader":
+            return f"Round {rnd} Leader" if rnd else "Round Leader"
+        tn = g.get("top_n")
+        base = f"Top {tn} Finishers" if tn else "Top Finishers"
+        return f"Round {rnd}: {base}" if rnd else base
+
+    round_children = [
+        {
+            "market_id": g.get("market_id"),
+            "market_name": _round_child_label(g),
+            "outcomes": g.get("outcomes", []),
+            "kind": "prop",
+            "prop_type": "round",
+        }
+        for g in (data.get("round_top_groups") or [])
+    ]
+    children = (data.get("related_futures") or []) + round_children
+
     return {
         "event": {
             "key": key if key.startswith("event:") else f"event:golf:{slug}",
@@ -377,7 +405,7 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             "evolution_market_id": data.get("evolution_market_id"),
         },
         "sections": data.get("markets", []) or [],
-        "children": data.get("related_futures", []) or [],
+        "children": children,
         "movers": data.get("biggest_movers", []) or [],
     }
 

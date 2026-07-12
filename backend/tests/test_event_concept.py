@@ -162,6 +162,37 @@ class TestGolfEnvelope:
         env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
         assert env["event"]["as_of"] is None
 
+    def test_round_groups_forwarded_as_prop_children(self):
+        # L2-89: round leaders + per-round Top-N were dropped from the envelope
+        # entirely (invisible on /event/<key>). They must forward as PROP children
+        # with a round-qualified label so the props section renders them.
+        f = _golf_fixture()
+        f["round_top_groups"] = [
+            {
+                "market_id": 11, "round": 1, "top_n": None, "kind": "leader",
+                "label": "Round Leader",
+                "outcomes": [{"name": "Scottie Scheffler", "probability": 0.08}],
+            },
+            {
+                "market_id": 12, "round": 2, "top_n": 5, "kind": "top",
+                "label": "Top 5 Finishers",
+                "outcomes": [{"name": "Rory McIlroy", "probability": 0.3}],
+            },
+        ]
+        env = golf_detail_to_envelope("event:golf:x", "x", f)
+        # Original related_futures child still present, plus two prop children.
+        assert env["children"][0]["market_name"] == "H2H: A vs B"
+        props = [c for c in env["children"] if c.get("kind") == "prop"]
+        assert len(props) == 2
+        assert all(c["prop_type"] == "round" for c in props)
+        labels = {c["market_name"] for c in props}
+        assert labels == {"Round 1 Leader", "Round 2: Top 5 Finishers"}
+
+    def test_no_round_groups_leaves_children_unchanged(self):
+        env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
+        assert len(env["children"]) == 1
+        assert env["children"][0]["market_name"] == "H2H: A vs B"
+
 
 class TestFuseGolfLive:
     """L2-66: fuse stored DataGolf leaderboard into competitors by name."""
