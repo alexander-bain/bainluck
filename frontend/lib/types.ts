@@ -921,6 +921,18 @@ export interface FeedTournamentData {
   source_count: number;
 }
 
+// Event-concept feed card (#999 B3 / L2-84) — a tournament/card (UFC 329, …)
+// surfaced as a rankable candidate that links to /event/{key}.
+export interface FeedConceptData {
+  key: string;
+  name: string;
+  domain: string;
+  status: string;
+  start_date?: string | null;
+  is_major: boolean;
+  fight_count: number;
+}
+
 // Theme/comparison bundle: one feed slot that folds several same-theme markets
 // into a single expandable card (geopolitics story clusters, comparison ranges).
 export interface FeedBundleData {
@@ -940,12 +952,17 @@ export interface FeedBundleData {
 }
 
 export interface FeedItem {
-  type: "event" | "futures" | "tournament" | "bundle";
+  type: "event" | "futures" | "tournament" | "bundle" | "concept";
   score: number;
   reason: string;
   headline: string | null;
   context_summary?: string | null;
-  data: FeedEventData | FeedFuturesData | FeedTournamentData | FeedBundleData;
+  data:
+    | FeedEventData
+    | FeedFuturesData
+    | FeedTournamentData
+    | FeedBundleData
+    | FeedConceptData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
   base_score?: number;
@@ -1748,6 +1765,10 @@ export interface EventConceptChild {
   probability?: number | null;
   settled?: boolean;
   outcomes?: { name: string; probability: number | null }[];
+  // L2-84: UFC cards tag children so the page splits fights (matchups rail) from
+  // props (dedicated props section). Other domains leave these unset (all → rail).
+  kind?: "fight" | "prop";
+  prop_type?: "method" | "rounds" | "distance" | "occurrence" | string;
   [k: string]: unknown;
 }
 

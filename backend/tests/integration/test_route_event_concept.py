@@ -432,3 +432,61 @@ class TestUFCEventAdapter:
         mock_db.execute.return_value = _query_result([])
         resp = await client.get("/api/event/event:ufc:26jun20")
         assert resp.status_code == 404
+
+    async def test_ufc_329_naming_and_props(self, client, mock_db):
+        """L2-84 (B2): a numbered card reads "UFC 329" and shows a real props
+        section — Kalshi occurrence + Polymarket method props ride along, while
+        the matchup-shaped negrisk bundle is excluded."""
+        from types import SimpleNamespace
+        from tests.integration.test_route_weather import _query_result
+
+        fight = _ufc_fight(
+            201, "UFC 329: McGregor vs. Holloway 2",
+            "kalshi:KXUFCFIGHT-26JUL11MCGHOL",
+            ("Conor McGregor", 0.6), ("Max Holloway", 0.4), ct_hours=48,
+        )
+
+        def _mkt(id_, name, ext, source, outs):
+            return SimpleNamespace(
+                id=id_, name=name, external_id=ext, status="open",
+                llm_sport_category="mma", source=source, group_id=None,
+                commence_time=None, resolution_date=None, market_metadata={},
+                outcomes=[_tennis_outcome(n, p) for n, p in outs],
+            )
+
+        # Polymarket method prop (hash ticker, matched by surname in the name).
+        method = _mkt(
+            202, "Will Max Holloway win by KO or TKO?",
+            "0x775f42b26ed999f5043f89932f06e01226651601c69368930bf5cf31359e6952",
+            "polymarket", [("Yes", 0.4), ("No", 0.6)],
+        )
+        # Kalshi occurrence prop (matched by card number in the name + ticker).
+        occ = _mkt(
+            203, "Will Conor McGregor and Max Holloway fight at UFC 329?",
+            "kalshi:KXUFCOCCUR-26CMCGMHOL", "kalshi", [("Yes", 0.9)],
+        )
+        # Polymarket bundled negrisk shape (matchup-named, 3 outcomes) — excluded.
+        bundle = _mkt(
+            204, "UFC 329: Max Holloway vs. Conor McGregor (Welterweight, Main Card)",
+            "0xbundle", "polymarket",
+            [("Holloway to win by KO/TKO?", 0.5), ("O/U 1.5 Rounds", 0.5), ("Distance?", 0.3)],
+        )
+
+        mock_db.execute.return_value = _query_result([fight, method, occ, bundle])
+        resp = await client.get("/api/event/event:ufc:26jul11")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["name"] == "UFC 329: McGregor vs. Holloway 2"
+        assert body["event"]["is_major"] is True
+
+        kinds = [c.get("kind") for c in body["children"]]
+        assert kinds.count("fight") == 1
+        props = [c for c in body["children"] if c.get("kind") == "prop"]
+        prop_names = {c["market_name"] for c in props}
+        assert "Will Max Holloway win by KO or TKO?" in prop_names
+        assert "Will Conor McGregor and Max Holloway fight at UFC 329?" in prop_names
+        # the matchup-named bundle is NOT a prop (nor a fight)
+        assert not any("Welterweight, Main Card" in n for n in prop_names)
+        assert {c["prop_type"] for c in props} == {"method", "occurrence"}
+        # a real props section exists
+        assert any(s["type"] == "props" for s in body["sections"])

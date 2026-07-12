@@ -3,8 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, GolfTournament } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
+import { eventPath } from "@/lib/eventKey";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
@@ -62,6 +63,10 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
       })),
     };
     return <TournamentCard tournament={tournament} />;
+  }
+
+  if (item.type === "concept") {
+    return <ConceptFeedCard item={item} data={item.data as FeedConceptData} />;
   }
 
   return (
@@ -711,6 +716,69 @@ function FuturesFeedCard({
             onThumbsDown={onThumbsDown}
           />
         </div>
+      </div>
+    </Link>
+  );
+}
+
+// ============================================================================
+// Event Concept Feed Card (#999 B3 / L2-84) — a card/tournament teaser that
+// links to /event/{key}. Marquee-badged for numbered cards; probability-free
+// (the card is a hub, not a single market).
+// ============================================================================
+
+function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData }) {
+  const { track } = useAnalyticsContext();
+  const isLive = data.status === "live";
+  return (
+    <Link
+      href={eventPath(data.key)}
+      aria-label={data.name}
+      onClick={() =>
+        track("concept_card_click", {
+          market_id: 0,
+          category: data.domain || "unknown",
+          position_index: 0,
+          source_section: "feed",
+        })
+      }
+    >
+      <div
+        className={`rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated transition-all cursor-pointer ${
+          isLive ? "ring-1 ring-accent-live/20" : ""
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isLive && (
+              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
+                LIVE
+              </span>
+            )}
+            {data.is_major && (
+              <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                Marquee
+              </span>
+            )}
+            {item.headline && !isLive && (
+              <span className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                {item.headline}
+              </span>
+            )}
+            <span className="text-[11px] text-text-muted tracking-wide truncate">
+              <span className="mr-0.5">🥊</span>
+              {data.domain?.toUpperCase() || "EVENT"}
+            </span>
+          </div>
+        </div>
+
+        <div className="text-sm font-semibold text-text-primary line-clamp-2">
+          {data.name}
+        </div>
+        {item.reason && (
+          <p className="text-xs text-text-secondary mt-0.5">{item.reason}</p>
+        )}
       </div>
     </Link>
   );

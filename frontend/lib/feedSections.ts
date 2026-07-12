@@ -39,6 +39,14 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       } else {
         upcoming.push(item);
       }
+    } else if (item.type === "concept") {
+      // Event concepts (UFC cards, …) sort into live or upcoming by status.
+      const cd = item.data as unknown as Record<string, unknown>;
+      if (cd.status === "live") {
+        liveNow.push(item);
+      } else {
+        upcoming.push(item);
+      }
     } else {
       const data = item.data as FeedEventData;
       if (data.status === "live") {

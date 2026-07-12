@@ -593,6 +593,8 @@ export interface AnalyticsEventMap {
 
   // Futures
   futures_card_click: FuturesCardClickParams;
+  // #999 B3 / L2-84 — event-concept (UFC card, …) feed card click.
+  concept_card_click: FuturesCardClickParams;
   futures_detail_view: FuturesDetailViewParams;
 
   // Funnel & Retention (Phase 2)

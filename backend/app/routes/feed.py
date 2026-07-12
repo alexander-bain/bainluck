@@ -1245,6 +1245,24 @@ async def get_feed(
             logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
 
+    # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
+    # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
+    # rankable concepts (the "UFC 329 wasn't bubbling" gap). Gated on
+    # include_events, so the futures-only feed audit never sees them.
+    _skip_concepts = not include_events
+    if static_tag_filter:
+        _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
+        if _concept_sport_tags and "sport:mma" not in _concept_sport_tags:
+            _skip_concepts = True
+    if not _skip_concepts:
+        try:
+            concept_items = await _score_event_concepts(db, now, sport, ctx)
+            if concept_items:
+                feed_items.extend(concept_items)
+        except Exception as e:
+            logger.error("Feed: event-concept scoring failed, partial feed: %s", e)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
+
     # === SCORE FUTURES ===
     _is_sports_mode = (mode or "").lower() == "sports"
     if include_futures:
@@ -6186,6 +6204,122 @@ def _score_tournament(t: dict, now: datetime) -> int:
         score += 3
 
     return min(score, 100)
+
+
+# ============================================================================
+# Event concepts (UFC cards, …) as feed candidates — #999 B3 / L2-84.
+# ADDITIVE candidate plumbing: emit event-concept cards into the pool with their
+# OWN self-contained score, exactly like _score_golf_tournaments. Does NOT call
+# or perturb _score_futures / _score_events / the interestingness blend / the
+# +15 cap (RANK discipline). Gated on include_events, so the futures-only feed
+# audit never sees these (clean no-regression proof).
+# ============================================================================
+
+
+def _score_event_concept(c: dict, now: datetime) -> int:
+    """Self-contained concept score (0-100). Marquee (numbered card) + recency +
+    live + card-size. Mirrors _score_tournament's shape — no shared scoring."""
+    score = 30  # base
+    if c.get("is_major"):
+        score += 15  # marquee: a numbered UFC card
+    if c.get("status") == "live":
+        score += 35
+    start = c.get("latest_commence")
+    if start is not None:
+        try:
+            days_until = (start.date() - now.date()).days
+            if -1 <= days_until <= 0:
+                score += 20   # tonight / just underway
+            elif days_until <= 3:
+                score += 15
+            elif days_until <= 7:
+                score += 10
+            elif days_until > 21:
+                score -= 5    # far-off card — mild demotion
+        except (AttributeError, TypeError):
+            pass
+    # Card size is our proxy for aggregate fight volume (more fights = bigger card).
+    fc = c.get("fight_count", 0)
+    if fc >= 8:
+        score += 8
+    elif fc >= 4:
+        score += 4
+    return max(0, min(score, 100))
+
+
+def _concept_headline(c: dict, now: datetime) -> Optional[str]:
+    """Honest countdown/live headline for a concept card."""
+    if c.get("status") == "live":
+        return "Live"
+    start = c.get("latest_commence")
+    if start is None:
+        return None
+    try:
+        days_until = (start.date() - now.date()).days
+    except (AttributeError, TypeError):
+        return None
+    if days_until <= 0:
+        return "Today"
+    if days_until == 1:
+        return "Tomorrow"
+    if days_until <= 7:
+        return "This week"
+    return None
+
+
+async def _score_event_concepts(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+    ctx=None,
+) -> list[dict]:
+    """Score UFC card concepts for the unified feed (the "UFC 329 wasn't bubbling"
+    gap). Returns feed items with type="concept" that link to /event/{key}.
+
+    Additive: pulls its own data via list_ufc_card_concepts (no dependency on the
+    futures candidate pools) and emits candidates the shared _rank_key sort ranks
+    alongside everything else. Best-effort — a failure returns a partial feed."""
+    if sport_filter and sport_filter not in ("mma", "all", "ufc"):
+        return []
+
+    from app.utils.event_ufc import list_ufc_card_concepts
+
+    try:
+        concepts = await list_ufc_card_concepts(
+            db, statuses=("upcoming", "live"), limit=12
+        )
+    except Exception as e:
+        logger.warning("Feed: failed to list UFC card concepts: %s", e)
+        return []
+
+    feed_items: list[dict] = []
+    for c in concepts:
+        score = _score_event_concept(c, now)
+        if score <= 0:
+            continue
+        fc = c.get("fight_count", 0)
+        reason = f"{fc} fight{'' if fc == 1 else 's'} on the card"
+        latest = c.get("latest_commence")
+        feed_items.append(
+            {
+                "type": "concept",
+                "score": score,
+                "reason": reason,
+                "headline": _concept_headline(c, now),
+                "data": {
+                    "key": c["key"],
+                    "name": c["name"],
+                    "domain": c["domain"],
+                    "status": c["status"],
+                    "start_date": c["start_date"],
+                    "is_major": c["is_major"],
+                    "fight_count": fc,
+                },
+                "_sort_time": latest.timestamp() if latest is not None else 0,
+            }
+        )
+
+    return feed_items
 
 
 @router.get("/tag-counts")

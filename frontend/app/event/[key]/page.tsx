@@ -20,6 +20,7 @@ import RaceToTitleChart from "@/components/event/RaceToTitleChart";
 import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
 import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
+import EventProps from "@/components/event/EventProps";
 import SettledPathChart from "@/components/event/SettledPathChart";
 
 // Design tweaks (queue L2-64): global on/off for per-row sparklines and the
@@ -86,6 +87,11 @@ export default function EventConceptPage() {
   }
 
   const { event, primary, children, movers } = data;
+  // L2-84: UFC cards tag children kind="fight"|"prop" so fights render in the
+  // matchups rail and props get a dedicated section. Untagged children (golf /
+  // tennis / f1) are treated as matchups (unchanged behavior).
+  const fightChildren = children.filter((c) => c.kind !== "prop");
+  const propChildren = children.filter((c) => c.kind === "prop");
   const competitors = primary.competitors || [];
   const isCoEqual = primary.kind === "co_equal_list";
   const isSettled = event.status === "settled";
@@ -97,7 +103,8 @@ export default function EventConceptPage() {
   if (hasWinnerField && evolutionId && !isSettled) nav.push({ id: "race", label: "Race" });
   if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
-  if (children.length > 0) nav.push({ id: "matchups", label: "Matchups" });
+  if (fightChildren.length > 0) nav.push({ id: "matchups", label: "Matchups" });
+  if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
   return (
@@ -135,7 +142,9 @@ export default function EventConceptPage() {
         />
       )}
 
-      <MatchupsRail items={children} />
+      <MatchupsRail items={fightChildren} />
+
+      <EventProps items={propChildren} />
 
       {isSettled && evolutionId && (
         <SettledPathChart marketId={evolutionId} domain={event.domain} />

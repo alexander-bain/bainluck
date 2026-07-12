@@ -1503,12 +1503,30 @@ async def search_events(
     # cards. One concept per event key, richest-first (deduped_futures is
     # volume-reranked).
     from app.utils.event_tennis import is_winner_market as _is_winner_field
+    from app.utils.event_ufc import derive_ufc_concept as _derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _event_clean_slug
     _EVENT_CONCEPT_DOMAINS = {"tennis"}
     event_concepts = []
     _seen_concept_keys: set[str] = set()
     for _m in deduped_futures:
         _cat = (_m.llm_sport_category or "").lower()
+        # L2-84: UFC cards have no winner-field market — derive the card concept
+        # (event:ufc:<date-token>) from a matched FIGHT market via its Kalshi
+        # ticker, the co-equal analogue of the tennis winner-field derivation.
+        if _cat == "mma":
+            _c = _derive_ufc_concept(_m.external_id, _m.name)
+            if _c is None or _c["key"] in _seen_concept_keys:
+                continue
+            _seen_concept_keys.add(_c["key"])
+            event_concepts.append({
+                "key": _c["key"],
+                "name": _c["name"],
+                "domain": "ufc",
+                "market_id": _m.id,
+            })
+            if len(event_concepts) >= 5:
+                break
+            continue
         if _cat not in _EVENT_CONCEPT_DOMAINS or not _is_winner_field(_m.name):
             continue
         _slug = _event_clean_slug(_m.name or "")
@@ -1828,13 +1846,28 @@ async def typeahead_search(
     # ranked futures — tennis winner fields resolve to /event/[key] via the
     # adapter (exact clean_slug), so no dead links. First-class, above markets.
     from app.utils.event_tennis import is_winner_market as _ta_is_winner_field
+    from app.utils.event_ufc import derive_ufc_concept as _ta_derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _ta_clean_slug
     event_concept_pool = []
     _ta_seen_concept_keys: set[str] = set()
     for market in ta_futures_ranked:
         if len(event_concept_pool) >= 3:
             break
-        if (market.llm_sport_category or "").lower() != "tennis":
+        _ta_cat = (market.llm_sport_category or "").lower()
+        # L2-84: UFC cards (co-equal) — derive event:ufc:<token> from a fight ticker.
+        if _ta_cat == "mma":
+            _ta_c = _ta_derive_ufc_concept(market.external_id, market.name)
+            if _ta_c is None or _ta_c["key"] in _ta_seen_concept_keys:
+                continue
+            _ta_seen_concept_keys.add(_ta_c["key"])
+            event_concept_pool.append({
+                "type": "event_concept",
+                "text": _ta_c["name"],
+                "event_key": _ta_c["key"],
+                "sport_key": "mma",
+            })
+            continue
+        if _ta_cat != "tennis":
             continue
         if not _ta_is_winner_field(market.name):
             continue

@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { motion } from "framer-motion";
 import { fetchFeed, fetchGroupedFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
-import type { FeedEventData, FeedFuturesData, FeedTournamentData, GroupedFeedResponse } from "@/lib/types";
+import type { FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GroupedFeedResponse } from "@/lib/types";
 import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
 import FeedCard from "@/components/FeedCard";
 import LeagueChips from "@/components/LeagueChips";
@@ -273,11 +273,15 @@ export default function SportsPage() {
                               ? `feed-event-${(item.data as FeedEventData).id}`
                               : item.type === "tournament"
                               ? `feed-tournament-${(item.data as FeedTournamentData).key}`
+                              : item.type === "concept"
+                              ? `feed-concept-${(item.data as FeedConceptData).key}`
                               : `feed-futures-${(item.data as FeedFuturesData).id}`;
                             const category = item.type === "event"
                               ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
                               : item.type === "tournament"
                               ? "golf"
+                              : item.type === "concept"
+                              ? (item.data as FeedConceptData).domain ?? "other"
                               : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                             return (
                               <motion.div
