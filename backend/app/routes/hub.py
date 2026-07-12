@@ -29,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.routes.league_futures import get_league_futures
 from app.services import get_db
 from app.utils.event_boxing import classify_boxing_prop, list_boxing_card_concepts
+from app.utils.event_concept import list_golf_tournament_concepts
+from app.utils.event_tennis import list_tennis_tournament_concepts
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,34 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         concept_domain="boxing",
         prop_classifier_domain="boxing",
     ),
+    # B6 (L2-87): golf + tennis hubs drop in as config over the winner-field event
+    # concepts. Each links to the per-event surface (/event/event:golf|tennis:<slug>);
+    # the bespoke golf page stays the default for live scores (Alex's ruling). No
+    # prop_classifier_domain — that split is combat-specific.
+    "golf": HubConfig(
+        slug="golf",
+        label="Golf",
+        title="Golf",
+        emoji="⛳",
+        blurb=(
+            "Upcoming tournaments — majors and tour events — with winner fields, "
+            "top-finish props, and matchups translated into plain probabilities."
+        ),
+        sport_key="golf_pga",
+        concept_domain="golf",
+    ),
+    "tennis": HubConfig(
+        slug="tennis",
+        label="Tennis",
+        title="Tennis",
+        emoji="🎾",
+        blurb=(
+            "Upcoming slams and tour events with winner fields, matchups, and props "
+            "— every market translated into plain probabilities."
+        ),
+        sport_key="tennis_atp",
+        concept_domain="tennis",
+    ),
 }
 
 
@@ -111,6 +141,8 @@ HUB_CONFIGS: dict[str, HubConfig] = {
 _UPCOMING_LISTERS: dict[str, Callable[..., Awaitable[list[dict]]]] = {
     "ufc": list_ufc_card_concepts,
     "boxing": list_boxing_card_concepts,
+    "golf": list_golf_tournament_concepts,
+    "tennis": list_tennis_tournament_concepts,
 }
 
 

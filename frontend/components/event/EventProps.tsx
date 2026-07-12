@@ -13,6 +13,7 @@ const PROP_GROUPS: { key: string; label: string }[] = [
   { key: "method", label: "Method of victory" },
   { key: "rounds", label: "Rounds" },
   { key: "distance", label: "Goes the distance" },
+  { key: "nominations", label: "Nominations" }, // L2-87: awards nomination markets
   { key: "occurrence", label: "Will it happen?" },
 ];
 

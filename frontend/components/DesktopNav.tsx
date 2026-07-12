@@ -7,6 +7,8 @@ import { useState, useRef, useEffect } from "react";
 
 const browsePages = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
+  { label: "Golf", href: "/hub/golf", emoji: "⛳" },
+  { label: "Tennis", href: "/hub/tennis", emoji: "🎾" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },

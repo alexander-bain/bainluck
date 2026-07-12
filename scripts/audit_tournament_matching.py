@@ -53,6 +53,17 @@ EVENTS = [
             "AND status='open' AND (name ILIKE '% vs %' OR name ILIKE '% v %')"
         ),
     },
+    {
+        # L2-87 (B6): the awards adapter's non-sports proof. The ceiling is every
+        # open Oscar market (categories + nominations + novelties); the adapter
+        # groups the currently-active edition into co-equal category children.
+        "key": "event:awards:oscars",
+        "label": "Oscars (Awards)",
+        "candidate_sql": (
+            "SELECT count(*) FROM futures_markets WHERE status='open' "
+            "AND external_id ILIKE '%KXOSCAR%'"
+        ),
+    },
 ]
 
 

@@ -101,8 +101,13 @@ class TestRegistry:
         assert "ufc" in registered_domains()
         assert get_adapter("ufc").domain == "ufc"
 
+    def test_awards_adapter_registered(self):
+        # L2-87 (B6): the awards ceremony adapter (co_equal_list, design §6).
+        assert "awards" in registered_domains()
+        assert get_adapter("awards").domain == "awards"
+
     def test_unknown_domain_returns_none(self):
-        assert get_adapter("awards") is None  # future slice (awards/etc.)
+        assert get_adapter("cricket") is None  # no adapter for this domain yet
 
 
 def _golf_fixture():

@@ -490,3 +490,138 @@ class TestUFCEventAdapter:
         assert {c["prop_type"] for c in props} == {"method", "occurrence"}
         # a real props section exists
         assert any(s["type"] == "props" for s in body["sections"])
+
+
+def _award_market(id_, name, ext, outs, source="kalshi", rd=None):
+    """An award category/nominations/novelty market. `outs` is (name, prob[, won])."""
+    from types import SimpleNamespace
+
+    def _o(t):
+        return _tennis_outcome(t[0], t[1], won=t[2] if len(t) > 2 else False)
+
+    return SimpleNamespace(
+        id=id_,
+        name=name,
+        external_id=ext,
+        status="open",
+        llm_sport_category="entertainment",
+        source=source,
+        group_id=None,
+        commence_time=None,
+        resolution_date=rd,
+        market_metadata={},
+        outcomes=[_o(t) for t in outs],
+    )
+
+
+class TestAwardsEventAdapter:
+    """L2-87 (B6): an awards ceremony renders as co_equal_list — categories are the
+    co-equal children, the marquee category is the head-to-head hero, and
+    nomination/novelty markets ride along as props. Design §6."""
+
+    async def test_oscars_categories_and_edition_filter(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+
+        best_pic = _award_market(
+            1, "Oscar winner: Best Picture", "KXOSCARPIC-27",
+            [("Anora", 0.4), ("The Brutalist", 0.3), ("Conclave", 0.2)],
+        )
+        best_dir = _award_market(
+            2, "Oscar winner: Best Director", "KXOSCARDIR-27",
+            [("Sean Baker", 0.5), ("Brady Corbet", 0.35)],
+        )
+        best_act = _award_market(
+            3, "Oscar winner: Best Actor", "KXOSCARACTO-27",
+            [("Adrien Brody", 0.6), ("Timothée Chalamet", 0.3)],
+        )
+        noms = _award_market(
+            4, "Oscar nominations for Best Picture?", "KXOSCARNOMPIC-27",
+            [("Anora", 0.9), ("Wicked", 0.7)],
+        )
+        # A DIFFERENT edition (2026) novelty — must be filtered out when year=27.
+        guests_26 = _award_market(
+            5, "Who will attend the Oscars?", "KXOSCARGUESTS-26",
+            [("Yes", 0.5), ("No", 0.5)],
+        )
+        mock_db.execute.return_value = _query_result(
+            [best_pic, best_dir, best_act, noms, guests_26]
+        )
+
+        resp = await client.get("/api/event/event:awards:oscars-2027")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["domain"] == "awards"
+        assert body["event"]["name"] == "The Oscars 2027"
+        assert body["event"]["key"] == "event:awards:oscars-2027"
+        assert body["primary"]["kind"] == "co_equal_list"
+        # marquee = Best Picture (by name), its nominees are the hero head-to-head
+        assert body["primary"]["label"] == "Best Picture"
+        assert "Anora" in [c["name"] for c in body["primary"]["competitors"]]
+
+        # category children render with cleaned labels, no kind (-> MatchupsRail)
+        cats = [c for c in body["children"] if c.get("kind") != "prop"]
+        cat_names = {c["market_name"] for c in cats}
+        assert {"Best Picture", "Best Director", "Best Actor"} <= cat_names
+        # nominations ride along as a prop; the wrong-edition novelty is excluded
+        props = [c for c in body["children"] if c.get("kind") == "prop"]
+        assert any(c["prop_type"] == "nominations" for c in props)
+        assert not any("attend" in (c["market_name"] or "").lower() for c in body["children"])
+        assert any(s["type"] == "categories" for s in body["sections"])
+
+    async def test_bare_slug_picks_latest_rich_edition(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+
+        # 2026 edition (3 categories) and 2027 edition (3 categories) both "rich" —
+        # a bare slug picks the LATEST rich edition (2027).
+        e26 = [
+            _award_market(10, "Oscar for Best Picture?", "KXOSCARPIC-26", [("Anora", 0.5), ("Emilia", 0.3)]),
+            _award_market(11, "Oscar for Best Director?", "KXOSCARDIR-26", [("Baker", 0.5), ("Corbet", 0.3)]),
+            _award_market(12, "Oscar for Best Actor?", "KXOSCARACTO-26", [("Brody", 0.5), ("Chalamet", 0.4)]),
+        ]
+        e27 = [
+            _award_market(20, "Oscar winner: Best Picture", "KXOSCARPIC-27", [("Sinners", 0.5), ("Wicked", 0.3)]),
+            _award_market(21, "Oscar winner: Best Director", "KXOSCARDIR-27", [("Coogler", 0.5), ("Chazelle", 0.4)]),
+            _award_market(22, "Oscar winner: Best Actor", "KXOSCARACTO-27", [("Washington", 0.5), ("Butler", 0.4)]),
+        ]
+        mock_db.execute.return_value = _query_result(e26 + e27)
+
+        resp = await client.get("/api/event/event:awards:oscars")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["name"] == "The Oscars 2027"
+        # only the 2027 categories are present
+        assert all(
+            c["market_id"] >= 20 for c in body["children"] if c.get("kind") != "prop"
+        )
+
+    async def test_settled_marquee_crowns_price_leader(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+
+        # A concluded category whose leader is priced ~1.0 but not yet graded — the
+        # display `won` crown fires (parity with tennis/f1), status flips to settled.
+        best_pic = _award_market(
+            30, "Oscar winner: Best Picture", "KXOSCARPIC-26",
+            [("Oppenheimer", 0.98), ("Barbie", 0.02)],
+        )
+        mock_db.execute.return_value = _query_result([best_pic])
+        resp = await client.get("/api/event/event:awards:oscars-2026")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["status"] == "settled"
+        champ = [c for c in body["primary"]["competitors"] if c.get("won")]
+        assert len(champ) == 1 and champ[0]["name"] == "Oppenheimer"
+
+    async def test_no_markets_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([])
+        resp = await client.get("/api/event/event:awards:oscars")
+        assert resp.status_code == 404
+
+    async def test_unknown_ceremony_404(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        # Golden Globes has no config yet -> 404 (adapter returns None), not a crash.
+        mock_db.execute.return_value = _query_result([
+            _award_market(40, "Golden Globe: Best Picture", "KXGLOBEPIC-27", [("A", 0.5)]),
+        ])
+        resp = await client.get("/api/event/event:awards:golden-globes")
+        assert resp.status_code == 404

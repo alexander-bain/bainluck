@@ -129,6 +129,52 @@ class TestBoxingHub:
         assert (await client.get("/api/hub/Boxing")).status_code == 200
 
 
+class TestGolfTennisHubs:
+    """L2-87 (B6): golf + tennis hubs drop in as config over the winner-field event
+    concepts — same generic hub, one HUB_CONFIGS entry + a winner-field lister."""
+
+    async def test_golf_returns_200_and_echoes_config(self, client):
+        body = (await client.get("/api/hub/golf")).json()
+        assert body["competition"] == "golf"
+        assert body["label"] == "Golf"
+        assert body["sport_key"] == "golf_pga"
+        for key in (
+            "competition", "label", "title", "emoji", "blurb",
+            "sport_key", "upcoming", "sections", "total_markets",
+        ):
+            assert key in body, f"missing {key}"
+
+    async def test_tennis_returns_200_and_echoes_config(self, client):
+        body = (await client.get("/api/hub/tennis")).json()
+        assert body["competition"] == "tennis"
+        assert body["label"] == "Tennis"
+        assert body["sport_key"] == "tennis_atp"
+
+    async def test_golf_upcoming_rail_links_to_event_page(self, client, monkeypatch):
+        """A golf tournament concept flows into `upcoming` linking to /event/{key}."""
+        import app.routes.hub as hub
+
+        async def _fake_golf(db, *, limit=20):
+            return [{
+                "key": "event:golf:the-open-championship",
+                "name": "The Open Championship",
+                "domain": "golf",
+                "status": "upcoming",
+                "start_date": "2026-07-16T00:00:00+00:00",
+                "is_major": True,
+                "entry_count": 156,
+                "_internal": "dropped",  # non-whitelisted — must not leak
+            }]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "golf", _fake_golf)
+        body = (await client.get("/api/hub/golf")).json()
+        assert len(body["upcoming"]) == 1
+        card = body["upcoming"][0]
+        assert card["key"] == "event:golf:the-open-championship"
+        assert card["is_major"] is True
+        assert "_internal" not in card
+
+
 # ============================================================================
 # Upcoming rail (event-concept lister)
 # ============================================================================

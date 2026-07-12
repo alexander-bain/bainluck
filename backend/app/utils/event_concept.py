@@ -517,6 +517,57 @@ class GolfEventAdapter:
 
 register_adapter(GolfEventAdapter())
 
+
+async def list_golf_tournament_concepts(
+    db,
+    *,
+    statuses: tuple[str, ...] = ("upcoming", "live"),
+    limit: int = 20,
+) -> list[dict]:
+    """Enumerate upcoming/live GOLF tournament concepts for the /hub/golf rail
+    (L2-87 B6) — the winner-field analogue of `list_ufc_card_concepts`. Reuses the
+    proven `get_golf()` aggregation + DataGolf schedule enrichment (parity), so the
+    slug each concept emits is EXACTLY what `GolfEventAdapter`/`get_golf_tournament`
+    resolve — both key off `clean_slug(name)`, which `get_golf` already computes as
+    `t["slug"]`. Read-only, best-effort.
+
+    Returns lightweight dicts the hub links to `/event/{key}`:
+        {key, name, domain, status, start_date, is_major, entry_count}
+    """
+    from app.routes.golf import get_golf
+
+    try:
+        data = await get_golf(db=db)
+    except Exception:
+        return []
+
+    concepts: list[dict] = []
+    for t in data.get("tournaments") or []:
+        name = t.get("name")
+        slug = t.get("slug")
+        # Skip the "other_<id>" catch-all buckets — they aren't real tournaments.
+        if not name or not slug or str(t.get("key", "")).startswith("other_"):
+            continue
+        status = _golf_status(t)
+        if status not in statuses:
+            continue
+        concepts.append(
+            {
+                "key": f"event:golf:{slug}",
+                "name": name,
+                "domain": "golf",
+                "status": status,
+                "start_date": t.get("start_date") or t.get("commence_time"),
+                "is_major": bool(t.get("is_major")),
+                "entry_count": len(t.get("golfers") or []),
+            }
+        )
+
+    # Majors first, then soonest start (the imminent major is the interesting one).
+    concepts.sort(key=lambda c: (0 if c["is_major"] else 1, c.get("start_date") or "9999"))
+    return concepts[:limit]
+
+
 # Tennis adapter (slice 2, #999) — separate module; registered here so the
 # registry stays the single hub. Its DB work is lazy-imported inside build_event.
 from app.utils.event_tennis import TennisEventAdapter  # noqa: E402
@@ -532,3 +583,9 @@ from app.utils.event_ufc import UFCEventAdapter  # noqa: E402
 register_adapter(F1EventAdapter())
 register_adapter(UFCEventAdapter())
 register_adapter(BoxingEventAdapter())
+
+# Awards (co_equal_list) — L2-87 (B6): the framework's non-sports proof (design §6).
+# Categories are the co-equal children; the marquee category is the head-to-head hero.
+from app.utils.event_awards import AwardsEventAdapter  # noqa: E402
+
+register_adapter(AwardsEventAdapter())

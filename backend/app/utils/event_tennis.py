@@ -106,6 +106,102 @@ def tennis_status(status: str | None, resolution_date, now) -> str:
     return "upcoming"
 
 
+async def list_tennis_tournament_concepts(
+    db: AsyncSession,
+    *,
+    statuses: tuple[str, ...] = ("upcoming", "live"),
+    limit: int = 20,
+) -> list[dict]:
+    """Enumerate upcoming/live TENNIS tournament concepts for the /hub/tennis rail
+    (L2-87 B6) — the winner-field analogue of `list_f1_gp_concepts`. Groups open
+    tennis WINNER markets by tournament token (gender-split), then keys each group on
+    the RICHEST field's `clean_slug(name)` so the emitted key converges with what
+    `TennisEventAdapter.build_event` resolves to (it also canonicalizes on the
+    richest winner market — L2-65). Read-only, best-effort.
+
+    Returns {key, name, domain, status, start_date, is_major, entry_count}.
+    """
+    from datetime import datetime, timezone
+
+    from app.models import FuturesMarket
+    from app.utils.name_normalization import clean_slug
+    from app.utils.outcome_display import (
+        is_field_outcome,
+        is_placeholder_outcome_name,
+    )
+
+    now = datetime.now(timezone.utc)
+    q = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.llm_sport_category == "tennis",
+            FuturesMarket.status == "open",
+        )
+    )
+    markets = list((await db.execute(q)).scalars().unique().all())
+
+    def _real_count(m) -> int:
+        return sum(
+            1
+            for o in (m.outcomes or [])
+            if o.name
+            and not is_field_outcome(o.name)
+            and not is_placeholder_outcome_name(o.name)
+        )
+
+    # Group winner markets by tournament token + gender so a men's and women's event
+    # (which share the token) stay distinct concepts with distinct slugs.
+    groups: dict[frozenset, list] = {}
+    for m in markets:
+        if not is_winner_market(m.name):
+            continue
+        toks = set(tournament_tokens(m.name))
+        if not toks:
+            continue
+        g = tennis_gender(m.name)
+        if g:
+            toks.add(f"g:{g}")
+        groups.setdefault(frozenset(toks), []).append(m)
+
+    def _rank(m):
+        vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
+        return (_real_count(m), vol, -(m.id or 0))
+
+    concepts: list[dict] = []
+    for ms in groups.values():
+        winner = max(ms, key=_rank)
+        slug = clean_slug(winner.name or "")
+        if not slug:
+            continue
+        status = tennis_status(winner.status, winner.resolution_date, now)
+        if status not in statuses:
+            continue
+        concepts.append(
+            {
+                "key": f"event:tennis:{slug}",
+                "name": winner.name,
+                "domain": "tennis",
+                "status": status,
+                "start_date": (
+                    winner.resolution_date.isoformat()
+                    if winner.resolution_date is not None
+                    else None
+                ),
+                "is_major": False,
+                "entry_count": _real_count(winner),
+                "_sort": winner.resolution_date,
+            }
+        )
+
+    concepts.sort(
+        key=lambda c: c.get("_sort") or datetime.max.replace(tzinfo=timezone.utc)
+    )
+    for c in concepts:
+        c.pop("_sort", None)
+    return concepts[:limit]
+
+
 class TennisEventAdapter:
     domain = "tennis"
 
