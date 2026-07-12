@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
 
 const browsePages = [
+  { label: "MMA", href: "/hub/mma", emoji: "🥊" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },

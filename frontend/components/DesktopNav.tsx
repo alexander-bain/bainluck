@@ -6,6 +6,7 @@ import { useAnalyticsContext } from "@/components/Analytics";
 import { useState, useRef, useEffect } from "react";
 
 const browsePages = [
+  { label: "MMA", href: "/hub/mma", emoji: "🥊" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },

@@ -342,6 +342,7 @@ async def get_league_futures(
             "id": market.id,
             "name": market.name,
             "source": market.source,
+            "external_id": market.external_id,
             "market_tier": market.market_tier,
             "category": market.category,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,

@@ -1231,6 +1231,7 @@ export interface LeagueMarket {
   id: number;
   name: string;
   source: string;
+  external_id?: string | null;
   market_tier: number | null;
   category: string;
   resolution_date: string | null;
@@ -1238,6 +1239,8 @@ export interface LeagueMarket {
   top_outcomes: LeagueMarketOutcome[];
   canonical_market_key: string | null;
   section: string;
+  /** Set on hub props that were reclassified out of "matches" (e.g. MMA). */
+  prop_type?: string;
 }
 
 export interface LeagueFuturesResponse {
@@ -1248,6 +1251,37 @@ export interface LeagueFuturesResponse {
 
 export async function fetchLeagueMarkets(sportKey: string): Promise<LeagueFuturesResponse> {
   return apiFetch<LeagueFuturesResponse>(`/api/leagues/${sportKey}`);
+}
+
+// ---------------------------------------------------------------------------
+// Competition Hub (B1 / #1028) — GET /api/hub/{competition}
+// ---------------------------------------------------------------------------
+
+/** An upcoming event/card in the hub rail (links to /event/{key}). */
+export interface HubUpcoming {
+  key: string;
+  name: string;
+  domain: string;
+  status: "upcoming" | "live" | "settled" | string;
+  start_date: string | null;
+  is_major: boolean;
+  fight_count?: number | null;
+}
+
+export interface HubResponse {
+  competition: string;
+  label: string;
+  title: string;
+  emoji: string;
+  blurb: string;
+  sport_key: string;
+  upcoming: HubUpcoming[];
+  sections: Record<string, LeagueMarket[]>;
+  total_markets: number;
+}
+
+export async function fetchHub(competition: string): Promise<HubResponse> {
+  return apiFetch<HubResponse>(`/api/hub/${encodeURIComponent(competition)}`);
 }
 
 /**
