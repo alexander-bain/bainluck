@@ -132,6 +132,15 @@ _INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset({
     "tennis", "mma", "boxing", "esports",
 })
 
+# Categories surfaced as a single, futures-ONLY hub: no per-game league split and
+# no per-tournament event grouping yet, so head-to-head matchup markets are pure
+# noise. Esports has thousands of per-map "Team A vs Team B" rows that would bury
+# the genuine tournament outrights (MSI/LCK/Worlds/EWC winners), and there is no
+# championship GRID for these — so we match the whole category, drop matchups, and
+# surface title/winner markets in a "futures" section rather than hiding them.
+# (#159-era lesson: esports data is messy — build only what honestly stands.)
+_CATEGORY_WIDE_FUTURES_ONLY: frozenset[str] = frozenset({"esports"})
+
 # Keywords for player-stat markets (season stats section).
 _SEASON_STAT_KEYWORDS: list[str] = [
     "leader", "scoring title", "assists title", "rebounds title",
@@ -253,22 +262,30 @@ async def get_league_futures(
         FuturesMarket.llm_sport_category == sport_category,
     ]
 
-    # League-level filtering: use ticker prefix (Kalshi) + name patterns
-    league_conditions = []
-    ticker_prefixes = LEAGUE_TICKER_PREFIXES.get(sport_key, [])
-    for prefix in ticker_prefixes:
-        league_conditions.append(FuturesMarket.external_id.ilike(f"{prefix}%"))
+    if sport_key in _CATEGORY_WIDE_FUTURES_ONLY:
+        # Whole category (already scoped by llm_sport_category above) — no per-game
+        # league split. Drop head-to-head matchups; for esports these are the
+        # thousands of per-map "Team A vs Team B" rows that would bury the real
+        # tournament futures.
+        filters.append(~FuturesMarket.name.ilike("% vs %"))
+        filters.append(~FuturesMarket.name.ilike("% vs. %"))
+    else:
+        # League-level filtering: use ticker prefix (Kalshi) + name patterns
+        league_conditions = []
+        ticker_prefixes = LEAGUE_TICKER_PREFIXES.get(sport_key, [])
+        for prefix in ticker_prefixes:
+            league_conditions.append(FuturesMarket.external_id.ilike(f"{prefix}%"))
 
-    name_patterns = LEAGUE_NAME_PATTERNS.get(sport_key, [])
-    for pattern in name_patterns:
-        league_conditions.append(FuturesMarket.name.ilike(pattern))
+        name_patterns = LEAGUE_NAME_PATTERNS.get(sport_key, [])
+        for pattern in name_patterns:
+            league_conditions.append(FuturesMarket.name.ilike(pattern))
 
-    # Also match llm_league if set
-    league_short = sport_key.split("_", 1)[1] if "_" in sport_key else sport_key
-    league_conditions.append(FuturesMarket.llm_league.ilike(league_short))
+        # Also match llm_league if set
+        league_short = sport_key.split("_", 1)[1] if "_" in sport_key else sport_key
+        league_conditions.append(FuturesMarket.llm_league.ilike(league_short))
 
-    if league_conditions:
-        filters.append(or_(*league_conditions))
+        if league_conditions:
+            filters.append(or_(*league_conditions))
 
     # Exclude game-level matchup markets (vs patterns)
     filters.append(~FuturesMarket.name.ilike("% at %"))
@@ -289,6 +306,7 @@ async def get_league_futures(
 
     # Group by section + deduplicate by canonical_market_key
     sections: dict[str, list[dict]] = {
+        "futures": [],
         "series": [],
         "matches": [],
         "awards": [],
@@ -304,7 +322,13 @@ async def get_league_futures(
 
         # Skip championship/conference/division — already on the grid
         if section == "championship":
-            continue
+            if sport_key in _CATEGORY_WIDE_FUTURES_ONLY:
+                # No championship grid exists for these hubs — surface the
+                # title/winner markets in a dedicated "futures" section instead of
+                # dropping them (they are the whole point of the esports hub).
+                section = "futures"
+            else:
+                continue
 
         # Sort outcomes by probability descending
         sorted_outcomes = sorted(

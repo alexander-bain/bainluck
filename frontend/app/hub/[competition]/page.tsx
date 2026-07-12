@@ -27,6 +27,7 @@ import { eventPath } from "@/lib/eventKey";
 // ---------------------------------------------------------------------------
 
 const SECTION_META: Record<string, { label: string }> = {
+  futures: { label: "Tournament Winners" },
   props: { label: "Fight Props" },
   matches: { label: "Fight Markets" },
   awards: { label: "Awards" },
@@ -34,7 +35,7 @@ const SECTION_META: Record<string, { label: string }> = {
   series: { label: "Series" },
   more_markets: { label: "More Markets" },
 };
-const SECTION_ORDER = ["props", "matches", "awards", "season_stats", "series", "more_markets"];
+const SECTION_ORDER = ["futures", "props", "matches", "awards", "season_stats", "series", "more_markets"];
 
 function sectionLabel(key: string): string {
   return (

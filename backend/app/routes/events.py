@@ -1647,6 +1647,10 @@ _HUB_QUERY_SYNONYMS: dict[str, tuple[str, ...]] = {
     "boxing": ("box", "boxer"),
     "golf": ("pga", "golfer"),
     "tennis": ("atp", "wta"),
+    "esports": (
+        "esport", "gaming", "lol", "league of legends", "cs2", "counter-strike",
+        "counter strike", "valorant", "dota", "worlds", "msi",
+    ),
 }
 
 

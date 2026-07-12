@@ -175,6 +175,7 @@ const HUB_LABELS: Record<string, string> = {
   boxing: "Boxing",
   golf: "Golf",
   tennis: "Tennis",
+  esports: "Esports",
 };
 
 /** Display label for a competition hub slug ("MMA"), or null if unknown. */

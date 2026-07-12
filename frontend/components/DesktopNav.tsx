@@ -10,6 +10,7 @@ const browsePages = [
   { label: "Boxing", href: "/hub/boxing", emoji: "🥊" },
   { label: "Golf", href: "/hub/golf", emoji: "⛳" },
   { label: "Tennis", href: "/hub/tennis", emoji: "🎾" },
+  { label: "Esports", href: "/hub/esports", emoji: "🎮" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },

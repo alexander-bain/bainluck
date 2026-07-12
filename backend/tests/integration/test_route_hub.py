@@ -175,6 +175,31 @@ class TestGolfTennisHubs:
         assert "_internal" not in card
 
 
+class TestEsportsHub:
+    """L2-92 (B4): esports drops in as a sections-ONLY hub (no concept_domain).
+    The data is too messy for per-tournament event concepts yet, so the hub
+    surfaces tournament outrights via league_futures and has no upcoming rail."""
+
+    async def test_esports_returns_200_and_echoes_config(self, client):
+        body = (await client.get("/api/hub/esports")).json()
+        assert body["competition"] == "esports"
+        assert body["label"] == "Esports"
+        assert body["sport_key"] == "esports"
+        for key in (
+            "competition", "label", "title", "emoji", "blurb",
+            "sport_key", "upcoming", "sections", "total_markets",
+        ):
+            assert key in body, f"missing {key}"
+
+    async def test_esports_case_insensitive(self, client):
+        assert (await client.get("/api/hub/Esports")).status_code == 200
+
+    async def test_esports_has_no_upcoming_rail(self, client):
+        # No concept_domain → sections-only; the upcoming rail stays empty.
+        body = (await client.get("/api/hub/esports")).json()
+        assert body["upcoming"] == []
+
+
 # ============================================================================
 # Upcoming rail (event-concept lister)
 # ============================================================================

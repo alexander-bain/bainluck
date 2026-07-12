@@ -326,6 +326,55 @@ class TestLeagueFuturesSeeded:
         assert body["total_markets"] == 0
 
 
+class TestEsportsCategoryWideFutures:
+    """L2-92 (B4): the esports hub is category-wide + futures-only. There is no
+    esports championship GRID, so championship-tier title/winner markets must be
+    surfaced in a dedicated "futures" section instead of being dropped (as they
+    are for grid sports). Matchup exclusion is a SQL-level filter, so it's not
+    exercised by the mock DB — this pins the Python-side remap."""
+
+    async def test_championship_tier_esports_surfaces_in_futures(self, client, mock_db):
+        mock_db.execute.return_value = _scalars_result([
+            _mock_market(
+                market_id=80,
+                name="LCK 2026 Season Winner",
+                market_tier=1,
+                llm_sport_category="esports",
+                llm_league="lol",
+                external_id="KXLOL-LCK26",
+                outcomes=[
+                    _mock_outcome(outcome_id=800, name="T1", probability=0.35),
+                    _mock_outcome(outcome_id=801, name="Gen.G", probability=0.30, rank=2),
+                ],
+            ),
+        ])
+
+        resp = await client.get("/api/leagues/esports")
+        assert resp.status_code == 200
+        body = resp.json()
+        # NOT dropped as a grid championship — surfaced in the futures section.
+        assert "futures" in body["sections"], body["sections"].keys()
+        assert body["sections"]["futures"][0]["name"] == "LCK 2026 Season Winner"
+        assert body["sections"]["futures"][0]["section"] == "futures"
+
+    async def test_grid_sports_still_drop_championship(self, client, mock_db):
+        # Guard: the remap is esports-only — NBA championship markets are still
+        # excluded (they live on the playoff grid).
+        mock_db.execute.return_value = _scalars_result([
+            _mock_market(
+                market_id=81,
+                name="NBA Championship Winner",
+                market_tier=1,
+                llm_sport_category="basketball",
+                llm_league="nba",
+                external_id="KXNBA-CHAMP",
+            ),
+        ])
+        body = (await client.get("/api/leagues/basketball_nba")).json()
+        assert "futures" not in body["sections"]
+        assert body["total_markets"] == 0
+
+
 # ============================================================================
 # HTTP behavior
 # ============================================================================

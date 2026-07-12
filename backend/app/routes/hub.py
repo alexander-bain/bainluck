@@ -132,6 +132,25 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         sport_key="tennis_atp",
         concept_domain="tennis",
     ),
+    # L2-92 (B4): esports drops in as a sections-ONLY hub. The data is messy —
+    # thousands of per-map "Team A vs Team B" matchup rows across LoL/CS2/Valorant/
+    # Dota with no clean per-tournament grouping yet — so this hub surfaces the
+    # genuine tournament outrights only (MSI/LCK/LPL/Worlds/EWC/The International
+    # winners). No concept_domain: per-tournament event-concept pages wait for
+    # engine-owned grouping (the person/entity work). league_futures does the
+    # category-wide, futures-only filtering (see _CATEGORY_WIDE_FUTURES_ONLY).
+    "esports": HubConfig(
+        slug="esports",
+        label="Esports",
+        title="Esports",
+        emoji="🎮",
+        blurb=(
+            "Tournament and season titles across League of Legends, Counter-Strike, "
+            "Valorant, and Dota — every market translated into plain probabilities."
+        ),
+        sport_key="esports",
+        concept_domain=None,
+    ),
 }
 
 

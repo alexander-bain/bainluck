@@ -126,6 +126,11 @@ class TestHubSlug:
         assert derive_market_hub_slug("golf") == "golf"
         assert derive_market_hub_slug("tennis") == "tennis"
 
+    def test_esports_hub(self):
+        # L2-92 (B4): esports futures markets up-link to the /hub/esports landing.
+        assert derive_market_hub_slug("esports") == "esports"
+        assert derive_market_hub_slug("Esports") == "esports"
+
     def test_case_insensitive(self):
         assert derive_market_hub_slug("Golf") == "golf"
 

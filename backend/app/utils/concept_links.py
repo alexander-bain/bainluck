@@ -48,6 +48,7 @@ _CATEGORY_HUB: dict[str, str] = {
     "boxing": "boxing",
     "golf": "golf",
     "tennis": "tennis",
+    "esports": "esports",
 }
 
 
