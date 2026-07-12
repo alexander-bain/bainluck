@@ -167,6 +167,83 @@ class TestTennisSettled:
         assert champ["name"] == "Aryna Sabalenka"
 
 
+def _tennis_price_settled_market():
+    """The REAL women's Wimbledon shape (verified live 2026-07-12): the winner
+    market is past its resolution_date but is_winner has NOT been graded yet, and
+    the champion's raw price is ~1.0 while other candidates carry residual price so
+    the field sums >100%. normalize_display_probs then dilutes the leader below the
+    frontend's >=0.9 crown threshold — the exact gap L2-83 closes."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+    # A long residual tail so the field sums >105% (the #23 normalization trigger),
+    # matching the real 51-player Polymarket field that diluted Nosková's raw 0.9995
+    # down to the displayed 0.888.
+    tail = [_tennis_outcome(f"Player {i}", 0.009) for i in range(15)]
+    return SimpleNamespace(
+        id=114157,
+        name="2026 Women's Wimbledon Winner",
+        status="open",  # Polymarket left it 'open'; date is what settles it
+        llm_sport_category="tennis",
+        source="polymarket",
+        group_id="polymarket:139182",
+        resolution_date=datetime.now(timezone.utc) - timedelta(hours=3),
+        outcomes=[
+            _tennis_outcome("Linda Nosková", 0.9995),   # the champion (raw ~1.0)
+            _tennis_outcome("Aryna Sabalenka", 0.018),
+            _tennis_outcome("Jessica Pegula", 0.01),
+            _tennis_outcome("Serena Williams", 0.009),
+            *tail,
+            _tennis_outcome("Other", 1.0),  # field remainder — dropped
+        ],
+    )
+
+
+class TestTennisPriceSettledCrown:
+    """L2-83: during the is_winner grading-lag window, a settled winner-market whose
+    top outcome is priced ~1.0 is crowned via the display `won` flag — read from the
+    RAW price BEFORE #23 normalization dilutes the leader under the crown threshold."""
+
+    async def test_price_settled_market_crowns_leader(self, client, mock_db):
+        from tests.integration.test_route_weather import _query_result
+        mock_db.execute.return_value = _query_result([_tennis_price_settled_market()])
+        resp = await client.get("/api/event/event:tennis:2026-womens-wimbledon")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["status"] == "settled"  # resolution_date is past
+        comps = body["primary"]["competitors"]
+        champ = [c for c in comps if c.get("won")]
+        assert len(champ) == 1, "exactly one price-settled champion crowned"
+        assert champ[0]["name"] == "Linda Nosková"
+        # The dilution that motivated the fix: her DISPLAYED prob is scaled under
+        # 0.9, so without the crown the frontend's >=0.9 fallback would fail to name
+        # her — the `won` flag is what makes the settled page honest.
+        assert champ[0]["probability"] < 0.9
+
+    async def test_undecided_settled_field_not_crowned(self, client, mock_db):
+        """Men's-Wimbledon shape: settled by date but the price never converged
+        (top ~0.81). Must NOT fabricate a champion — the page shows 'awaiting'."""
+        from types import SimpleNamespace
+        from datetime import datetime, timezone, timedelta
+        from tests.integration.test_route_weather import _query_result
+        mkt = SimpleNamespace(
+            id=114156, name="2026 Men’s Wimbledon Winner", status="open",
+            llm_sport_category="tennis", source="polymarket",
+            group_id="polymarket:139181",
+            resolution_date=datetime.now(timezone.utc) - timedelta(hours=3),
+            outcomes=[
+                _tennis_outcome("Jannik Sinner", 0.81),
+                _tennis_outcome("Alexander Zverev", 0.19),
+                _tennis_outcome("Other", 1.0),
+            ],
+        )
+        mock_db.execute.return_value = _query_result([mkt])
+        resp = await client.get("/api/event/event:tennis:2026-mens-wimbledon")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["status"] == "settled"
+        assert not any(c.get("won") for c in body["primary"]["competitors"])
+
+
 def _tennis_winner(id_, name, players, source="polymarket", group_id=None):
     from types import SimpleNamespace
     from datetime import datetime, timezone, timedelta
@@ -272,6 +349,39 @@ class TestF1EventAdapter:
         mock_db.execute.return_value = _query_result([])
         resp = await client.get("/api/event/event:f1:british-grand-prix")
         assert resp.status_code == 404
+
+    async def test_f1_upcoming_populates_start_date_for_countdown(self, client, mock_db):
+        """L2-83: an UPCOMING GP (>4d out) exposes start_date = the race time so the
+        L2-78 countdown chip renders (daysUntilStart needs a start). Without it the
+        chip could never show for F1."""
+        from tests.integration.test_route_weather import _query_result
+        winner = _f1_market(
+            1, "Hungarian Grand Prix Winner", "KXF1RACE-HUNGP26",
+            [("Lando Norris", 0.4), ("Max Verstappen", 0.35)], rd_days=10,
+        )
+        mock_db.execute.return_value = _query_result([winner])
+        resp = await client.get("/api/event/event:f1:hungarian-grand-prix")
+        assert resp.status_code == 200
+        ev = resp.json()["event"]
+        assert ev["status"] == "upcoming"
+        assert ev["start_date"] is not None, "countdown chip needs a start_date"
+        assert ev["start_date"] == ev["end_date"]  # one-day event
+
+    async def test_f1_price_settled_crowns_winner(self, client, mock_db):
+        """L2-83: a settled race whose leader is priced ~1.0 (grading lag) is crowned
+        via the display `won` flag — parity with tennis."""
+        from tests.integration.test_route_weather import _query_result
+        winner = _f1_market(
+            1, "British Grand Prix Winner", "KXF1RACE-BRIGP26",
+            [("Lando Norris", 0.98), ("Max Verstappen", 0.02)], rd_days=-1,
+        )
+        mock_db.execute.return_value = _query_result([winner])
+        resp = await client.get("/api/event/event:f1:british-grand-prix")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["status"] == "settled"
+        champ = [c for c in body["primary"]["competitors"] if c.get("won")]
+        assert len(champ) == 1 and champ[0]["name"] == "Lando Norris"
 
 
 def _ufc_fight(id_, name, ext, a, b, ct_hours=2):

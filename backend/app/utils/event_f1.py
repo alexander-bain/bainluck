@@ -32,6 +32,11 @@ _F1_SUBMARKET_RE = re.compile(
 )
 _F1_WINNER_RE = re.compile(r"\b(winner|to win)\b", re.IGNORECASE)
 
+# L2-83: raw price at/above which a SETTLED race-winner outcome is the crowned
+# winner during the is_winner grading-lag window. Display-only; never authoritative
+# (gotcha #21). Mirrors the tennis adapter.
+_WON_PRICE_THRESHOLD = 0.97
+
 
 def is_gp_winner_market(name: str | None) -> bool:
     """True for the main-race GP winner field (not a sprint/quali/pole sub-market)."""
@@ -122,6 +127,9 @@ class F1EventAdapter:
 
         canonical_slug = clean_slug(winner.name or "") or slug
 
+        # L2-83: compute the status once — reused by the settled crown and envelope.
+        event_status = f1_status(winner.status, winner.resolution_date, now)
+
         competitors = []
         for o in winner.outcomes or []:
             if is_field_outcome(o.name) or is_placeholder_outcome_name(o.name):
@@ -132,7 +140,20 @@ class F1EventAdapter:
                     round(float(o.current_probability), 4)
                     if o.current_probability is not None else None
                 ),
+                # L2-83: authoritative graded winner (parity with tennis). Absent
+                # before Lane-1 grades a settled race; the price-settled crown below
+                # fills the grading-lag window.
+                "won": bool(getattr(o, "is_winner", False)),
             })
+
+        # L2-83: crown the price-settled winner during the grading-lag window (same
+        # rationale as tennis) — read the RAW price BEFORE normalize dilutes a
+        # dominant leader below the frontend's >=0.9 crown threshold. Display-only.
+        if event_status == "settled" and not any(c["won"] for c in competitors):
+            top = max(competitors, key=lambda c: (c["probability"] or -1), default=None)
+            if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
+                top["won"] = True
+
         normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
@@ -170,17 +191,24 @@ class F1EventAdapter:
         if section_ids:
             sections.append({"type": "prop", "label": "Weekend markets", "market_ids": section_ids})
 
+        # L2-83: a GP is a one-day event — its resolution_date IS the race time, the
+        # only reliable event-time proxy (commence_time is the market-open date, not
+        # the race — gotcha #14). Populate start_date from it so the L2-78 countdown
+        # chip ("Starts in N days") renders for an UPCOMING GP; without a start_date
+        # daysUntilStart() returns null and the chip never shows. No effect on a live
+        # (≤4d) or settled race — countdownLabel() suppresses those.
+        race_iso = (
+            winner.resolution_date.isoformat()
+            if winner.resolution_date is not None else None
+        )
         envelope = {
             "event": {
                 "key": f"event:f1:{canonical_slug}",
                 "domain": "f1",
                 "name": winner.name,
-                "status": f1_status(winner.status, winner.resolution_date, now),
-                "start_date": None,
-                "end_date": (
-                    winner.resolution_date.isoformat()
-                    if winner.resolution_date is not None else None
-                ),
+                "status": event_status,
+                "start_date": race_iso,
+                "end_date": race_iso,
                 "venue": None,
                 "location": None,
                 "is_major": False,

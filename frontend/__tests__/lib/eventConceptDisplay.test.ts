@@ -197,6 +197,23 @@ describe("settledChampion (L2-81 concluded winner-field)", () => {
   test("empty field is safe", () => {
     expect(settledChampion([])).toBeNull();
   });
+
+  test("L2-83: crowns a diluted champion via the backend won flag", () => {
+    // The REAL settled women's Wimbledon envelope: the champion's raw ~1.0 price is
+    // #23-normalized DOWN to 0.888 (the residual field summed >100%), which is under
+    // the >=0.9 confident-leader fallback. The backend L2-83 fix stamps `won` from
+    // the raw price so the settled page still names the champion honestly.
+    const field = [
+      { name: "Linda Nosková", probability: 0.888, won: true },
+      { name: "Aryna Sabalenka", probability: 0.018 },
+      { name: "Jessica Pegula", probability: 0.01 },
+    ];
+    expect(settledChampion(field)?.name).toBe("Linda Nosková");
+    // Without the backend won flag the diluted 0.888 (<0.9) would crown nobody —
+    // proving the flag, not the display probability, is what makes it honest.
+    const undiluted = field.map((c) => ({ ...c, won: undefined }));
+    expect(settledChampion(undiluted)).toBeNull();
+  });
 });
 
 describe("eventDateRange", () => {

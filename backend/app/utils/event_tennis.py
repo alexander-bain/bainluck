@@ -29,6 +29,12 @@ from sqlalchemy.orm import selectinload
 # instead of 404-ing the moment Polymarket flips the market to resolved/closed.
 _RESOLVED_WINDOW_DAYS = 30
 
+# L2-83: raw price at/above which a SETTLED winner-field outcome is the crowned
+# champion during the is_winner grading-lag window. Matches the child "decided"
+# threshold below (0.97) — a settled winner-market outcome priced this high is the
+# resolved winner. Display-only; never authoritative (gotcha #21).
+_WON_PRICE_THRESHOLD = 0.97
+
 # Tokens stripped when deriving the tournament name from a market title.
 _TENNIS_STOPWORDS = {
     "winner", "champion", "champ", "tennis", "atp", "wta", "mens", "men", "s",
@@ -186,6 +192,10 @@ class TennisEventAdapter:
         # differently-named-per-source) reports the same event key.
         canonical_slug = clean_slug(winner.name or "") or slug
 
+        # L2-83: compute the event status once, up front — the settled-winner crown
+        # below references it, and the envelope reuses it (single source of truth).
+        event_status = tennis_status(winner.status, winner.resolution_date, now)
+
         # Competitors = real players (drop the field-remainder "Other" + placeholders).
         competitors = []
         for o in winner.outcomes or []:
@@ -202,6 +212,21 @@ class TennisEventAdapter:
                 # tournament concludes. getattr keeps it mock-safe in unit fixtures.
                 "won": bool(getattr(o, "is_winner", False)),
             })
+
+        # L2-83: crown the price-settled champion during the is_winner grading-lag
+        # window. A concluded winner-market (status/date settled) whose top outcome
+        # is priced ~1.0 IS the champion — but `normalize_display_probs` below scales
+        # a dominant leader DOWN (women's Wimbledon: Nosková's raw 0.9995 → 0.888,
+        # under the frontend's >=0.9 crown threshold → "Awaiting the final result" on
+        # a decided tournament). So read the RAW price here (pre-normalize) and set
+        # the display `won` flag on the single leader. Display-only: never writes
+        # is_winner — authoritative grading stays Lane-1's (gotcha #21). No-op once
+        # is_winner is graded (that path already set won=True above).
+        if event_status == "settled" and not any(c["won"] for c in competitors):
+            top = max(competitors, key=lambda c: (c["probability"] or -1), default=None)
+            if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
+                top["won"] = True
+
         # #23: independent candidate binaries can sum >100% (the raw Wimbledon
         # field did: 28.6+26.8+24.6+21.1…). Normalize the displayed field like
         # search/detail do, so the winner-field reads as a coherent distribution.
@@ -285,7 +310,7 @@ class TennisEventAdapter:
                 "key": f"event:tennis:{canonical_slug}",
                 "domain": "tennis",
                 "name": winner.name,
-                "status": tennis_status(winner.status, winner.resolution_date, now),
+                "status": event_status,
                 "start_date": None,
                 "end_date": (
                     winner.resolution_date.isoformat()
