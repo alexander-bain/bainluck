@@ -2825,7 +2825,12 @@ async def _backfill_settled_gap_creation(
     _MAX_SECONDS = 300  # well under any beat soft limit; resumes via cursor
     _rc = get_redis_client()
 
-    # Discover Kalshi series (same source as the settled task).
+    # Discover Kalshi series. DB-derived is the base, but a category NEVER once
+    # ingested has ZERO rows here → invisible → zero-by-omission (the "hand-built
+    # net has holes" class, #174 Item 2). So UNION the SOURCE's own full series
+    # listing (`get_series`, crypto-excluded) so gap-creation can create series
+    # with no prior DB rows. Bounded (≤8 listing pages, cheap non-nested responses)
+    # and fallback-safe: any enumeration failure keeps the DB-only set unchanged.
     async with get_task_session() as session:
         series_rows = await session.execute(text("""
             SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
@@ -2834,6 +2839,36 @@ async def _backfill_settled_gap_creation(
             ORDER BY 1
         """))
         all_series = [r[0] for r in series_rows.all()]
+
+    _db_series_count = len(all_series)
+    try:
+        from app.services.kalshi_api import KalshiAPIService as _KAS
+        from app.utils.settled_recovery import extract_series_tickers
+
+        _enum_service = _KAS()
+        _source_rows: list[dict] = []
+        _cursor = None
+        for _pg in range(8):  # ≤1600 series; series listing is tiny (no nested)
+            if (_time.monotonic() - _start) > (_MAX_SECONDS * 0.4):
+                break  # never let enumeration eat the creation budget
+            _rows, _cursor = await _enum_service.get_series(cursor=_cursor)
+            _source_rows.extend(_rows or [])
+            if not _cursor:
+                break
+        _source_series = extract_series_tickers(_source_rows)
+        if _source_series:
+            _existing = set(all_series)
+            all_series = all_series + [s for s in _source_series if s not in _existing]
+            logger.info(
+                "Gap-creation series: %d DB-derived + %d new from source listing "
+                "= %d total (category-agnostic)",
+                _db_series_count, len(all_series) - _db_series_count, len(all_series),
+            )
+    except Exception as _enum_err:
+        logger.warning(
+            "Gap-creation source enumeration failed (%s) — using %d DB-derived series",
+            _enum_err, _db_series_count,
+        )
 
     if not all_series:
         return stats

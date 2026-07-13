@@ -460,9 +460,42 @@ async def _poll_polymarket_markets():
         # live: gamma tag_slug=mma / =boxing return settled UFC/boxing events.
         # The pass is budget-guarded (per-tag + per-page `_MAX_SECONDS` breaks),
         # so extending the tag list can't push the task past the 540s wall.
-        _SPORTS_TAG_SLUGS = [
+        #
+        # #174 Item 2: CATEGORY-AGNOSTIC. A hand list is the "hand-built net has
+        # holes" class (golf-class → combat-class, same bug rediscovered). Enumerate
+        # tags from the SOURCE (`get_tags`) minus crypto, keep the proven sports tags
+        # as a PRIORITY head (never regress), and rotate the remainder through a
+        # resumable cursor so any category is reached within a few runs and per-run
+        # work stays bounded (gotcha #34). Fallback-safe: any enumeration failure
+        # falls back to the hand list, so behavior can only ever improve, never break.
+        _PRIORITY_TAG_SLUGS = [
             "baseball", "basketball", "hockey", "football", "mma", "boxing",
         ]
+        _TAGS_PER_RUN = 14  # priority(6) + ~8 rotated; well within _MAX_SECONDS
+        _tag_cursor_key = "bainluck:poly_settled_tag_cursor"
+        try:
+            from app.utils.settled_recovery import extract_tag_slugs, select_rotation
+
+            _all_tags = extract_tag_slugs(await service.get_tags(limit=200))
+            if _all_tags:
+                _cursor_pos = int(_rc.get(_tag_cursor_key) or 0)
+                _SPORTS_TAG_SLUGS, _next_pos = select_rotation(
+                    _all_tags, _PRIORITY_TAG_SLUGS, _cursor_pos, _TAGS_PER_RUN
+                )
+                _rc.setex(_tag_cursor_key, 86400 * 14, str(_next_pos))
+                logger.info(
+                    "Polymarket settled-recovery: %d tags at source, scanning %d "
+                    "this run (priority + rotated from %d)",
+                    len(_all_tags), len(_SPORTS_TAG_SLUGS), _cursor_pos,
+                )
+            else:
+                _SPORTS_TAG_SLUGS = _PRIORITY_TAG_SLUGS
+        except Exception as _tag_err:
+            logger.warning(
+                "Polymarket tag enumeration failed (%s) — falling back to hand list",
+                _tag_err,
+            )
+            _SPORTS_TAG_SLUGS = _PRIORITY_TAG_SLUGS
         supplemented = 0
         for tag_slug in _SPORTS_TAG_SLUGS:
             # #984: skip the settled-sports pass entirely if the main scan already
