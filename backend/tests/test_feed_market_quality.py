@@ -13,6 +13,7 @@ from app.routes.feed import (
     _trace_search_tokens,
 )
 from app.utils.feed_market_quality import (
+    _discover_category_group,
     apply_explanation_quality_score,
     apply_quality_score,
     backfill_discover_editorial_tail,
@@ -2345,6 +2346,67 @@ class TestDiscoverFirstPageMixer:
                 "llm_sport_category": category,
             },
         }
+
+    def _tournament(self, idx: int, score: int = 100, name: str | None = None):
+        """A golf tournament card as emitted by _score_golf_tournaments —
+        note the data dict carries NO llm_sport_category / sport / sport_name
+        field (feed.py:6099), which is exactly what let these cards escape the
+        sports cap in #1087."""
+        return {
+            "type": "tournament",
+            "score": score,
+            "data": {
+                "key": f"golf-{idx}",
+                "name": name or f"Golf Tournament {idx}",
+                "tour": "pga",
+            },
+        }
+
+    def _concept(self, idx: int, domain: str = "mma", score: int = 100):
+        """A UFC/F1 concept card as emitted by _score_event_concepts
+        (feed.py:6330) — also carries no llm_sport_category."""
+        return {
+            "type": "concept",
+            "score": score,
+            "data": {
+                "key": f"concept-{idx}",
+                "name": f"{domain} concept {idx}",
+                "domain": domain,
+            },
+        }
+
+    def test_category_less_tournament_card_buckets_as_sports_not_other(self):
+        # #1087 guard: a tournament card with NO category field must not fall
+        # through to the "other" bucket (which gave golf its own escape hatch).
+        assert _discover_category_group(self._tournament(1)) == "sports_culture"
+
+    def test_category_less_concept_card_buckets_as_sports_not_other(self):
+        # Sibling escape class: UFC/F1 concept cards also carry no category.
+        assert _discover_category_group(self._concept(1, domain="mma")) == "sports_culture"
+        assert _discover_category_group(self._concept(2, domain="f1")) == "sports_culture"
+
+    def test_golf_tournament_flood_is_capped_on_first_page(self):
+        # #1087: a saturated pool of category-less golf tournament cards must be
+        # capped on the first page (sports_culture cap = 3), not flood it.
+        tournaments = [self._tournament(i, score=100 - i) for i in range(11)]
+        fillers = [
+            self._item(100 + i, category, 60 - i)
+            for i, category in enumerate(
+                ["politics", "tech", "entertainment", "economics", "geopolitics", "weather"]
+            )
+        ]
+        items = tournaments + fillers
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+
+        assert len(mixed) == len(items)  # nothing dropped
+        golf_on_first_page = sum(1 for it in first_page if it["type"] == "tournament")
+        assert golf_on_first_page <= 3, (
+            f"golf tournaments flooded first page: {golf_on_first_page}"
+        )
+        # other categories should get room instead of a golf wall
+        assert any(it.get("data", {}).get("llm_sport_category") == "politics" for it in first_page)
 
     def test_mixer_caps_politics_in_first_page_without_dropping_items(self):
         items = [self._item(i, "politics", 100 - i) for i in range(8)] + [

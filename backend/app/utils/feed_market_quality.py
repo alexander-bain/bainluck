@@ -1201,7 +1201,12 @@ def _discover_category_group(item: dict) -> str:
         or data.get("sport")
         or ""
     ).lower()
-    if item.get("type") == "event":
+    if item.get("type") in ("event", "tournament", "concept"):
+        # Golf tournament cards and UFC/F1 concept cards carry no
+        # llm_sport_category / sport on their payload, so without this they fall
+        # through to the "other" bucket and escape the sports first-page cap,
+        # letting a single sport (e.g. golf during a major week) flood Discover
+        # (#1087). Bucket them with sports the same way event cards are.
         return "sports_culture"
     if category in {"weather", "health"}:
         return "weather_health"
