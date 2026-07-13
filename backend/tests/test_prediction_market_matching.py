@@ -1367,6 +1367,21 @@ class TestBuildGameMarketName:
         )
         assert result == "San Francisco 49ers at Denver Broncos"
 
+    def test_combat_identical_subtitles_use_event_title(self):
+        """#173/#1024: a UFC fight-winner market is ONE competitor, so both
+        sub-titles are the SAME fighter — building "X at X" is wrong. Fall through
+        to the event title, which carries the real matchup."""
+        result = _build_game_market_name(
+            event_title="329: Saint-Denis vs Pimblett",
+            event_ticker="KXUFCFIGHT-26JUL11SAIPIM",
+            market_title=None,
+            yes_sub_title="Benoit Saint-Denis",
+            no_sub_title="Benoit Saint-Denis",
+            sport_label="UFC",
+        )
+        assert result == "329: Saint-Denis vs Pimblett"
+        assert " at " not in result  # never the mirrored "X at X" artifact
+
     def test_market_title_fallback(self):
         """No sub-titles → use market title if it has a matchup."""
         result = _build_game_market_name(

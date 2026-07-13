@@ -76,8 +76,13 @@ def _build_game_market_name(
     if _check_game_level(stripped) or _check_game_level(event_title):
         return event_title
 
-    # Construct from sub-titles (most reliable for Kalshi game markets)
-    if yes_sub_title and no_sub_title:
+    # Construct from sub-titles (most reliable for TEAM game markets, where the
+    # two sub-titles are the two teams). Combat sports (#173/#1024) break this:
+    # each KXUFCFIGHT market is ONE competitor, so yes/no sub_titles are the SAME
+    # fighter → "Benoit Saint-Denis at Benoit Saint-Denis". Guard on inequality
+    # and fall through to the event title, which carries the real matchup
+    # ("329: Saint-Denis vs Pimblett").
+    if yes_sub_title and no_sub_title and yes_sub_title != no_sub_title:
         return f"{yes_sub_title} at {no_sub_title}"
 
     # Try market title if it's different and has a matchup
