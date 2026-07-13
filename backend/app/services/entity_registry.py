@@ -582,6 +582,162 @@ async def seed_persons_from_futures_fields(
     return stats
 
 
+# ---------------------------------------------------------------------------
+# Canonicalization — merge same-family duplicate entities (A1 #175 Item 1)
+# ---------------------------------------------------------------------------
+# The person dedup anchor is ``person:<sport_key>:<norm>`` and the seeds feed it
+# TWO sport_key sources (``Sport.key`` from events, ``llm_sport_category`` from
+# futures fields). Tennis, whose events span a distinct sport key per tournament
+# edition, therefore multiplies: one entity per sport_key for the SAME player
+# ("Alexandra Eala" ×15). Teams inherit their own dups from the legacy ``teams``
+# table. ``scripts/audit_entity_dups.py`` censuses this population; this is the
+# FIX it enables. See that census for the SAFE/RISKY split rationale.
+
+# The sport "family" is the first underscore-delimited segment of the sport_key
+# (tennis_atp / tennis_wta / tennis_wimbledon → "tennis"). Copies that all share
+# a family are same-sport edition dups (safe to collapse into one entity); copies
+# spanning families are cross-sport homonyms ("John Smith" the golfer vs. the
+# footballer) — the sport_key bucket exists precisely to keep those apart, so a
+# blind (kind, canonical_name) merge would fuse two distinct people. RISKY groups
+# are deliberately LEFT ALONE.
+_FAMILY_SQL = "split_part(lower(coalesce(sport_key, '')), '_', 1)"
+
+
+async def canonicalize_entities(
+    session: AsyncSession,
+    *,
+    kinds: tuple[str, ...] = (KIND_PERSON, KIND_TEAM),
+    dry_run: bool = False,
+    commit_each: bool = True,
+) -> dict[str, int]:
+    """Merge SAFE same-family duplicate entities into one canonical entity.
+
+    A ``(kind, canonical_name)`` group is SAFE to merge when every copy sits in
+    ONE sport family (see ``_FAMILY_SQL``): collapsing edition-multiplied copies
+    of the SAME real person/team into a single entity drops no distinct
+    real-world participant. For each safe group the lowest-id entity SURVIVES;
+    every other copy's aliases REPOINT to it (idempotently — ``ON CONFLICT DO
+    NOTHING`` on the alias uniqueness constraint drops the exact duplicates), the
+    union of merged sport_keys is recorded on the survivor's metadata under
+    ``canonical_sport_keys`` (so edition scoping is preserved, not lost), and the
+    now-emptied duplicate entities are deleted (their leftover aliases cascade).
+
+    Additive-first + census-gated: aliases move BEFORE any entity is deleted, and
+    only same-family groups are touched — cross-family homonyms are left apart.
+    Idempotent: a re-run finds no group with >1 copy (0 merges). ``dry_run``
+    counts what WOULD merge without writing. ``commit_each`` commits per group so
+    a very large pass persists incrementally and a soft-time-limit overrun leaves
+    committed progress intact (mirrors the seeds).
+    """
+    import json
+
+    from sqlalchemy import bindparam, cast, delete, func, literal, text, update
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    stats = {
+        "groups_merged": 0,
+        "entities_removed": 0,
+        "aliases_repointed": 0,
+        "risky_skipped": 0,
+        "dry_run": int(dry_run),
+    }
+
+    for kind in kinds:
+        # SAFE groups only: >1 copy AND every copy in one family. The RISKY
+        # count (families > 1) is reported so the census stays visible.
+        group_rows = (
+            await session.execute(
+                text(
+                    "SELECT canonical_name, count(*) AS copies, "
+                    f"count(DISTINCT {_FAMILY_SQL}) AS families "
+                    "FROM entities WHERE kind = :kind "
+                    "GROUP BY canonical_name HAVING count(*) > 1"
+                ),
+                {"kind": kind},
+            )
+        ).all()
+
+        for canonical_name, copies, families in group_rows:
+            if families > 1:
+                stats["risky_skipped"] += 1
+                continue
+
+            # Load the group's entity ids (deterministic: lowest id survives).
+            ids = (
+                (
+                    await session.execute(
+                        select(Entity.id)
+                        .where(Entity.kind == kind, Entity.canonical_name == canonical_name)
+                        .order_by(Entity.id.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(ids) < 2:
+                continue  # raced away since the census query
+            survivor, dups = ids[0], ids[1:]
+
+            if dry_run:
+                stats["groups_merged"] += 1
+                stats["entities_removed"] += len(dups)
+                continue
+
+            # 1. Repoint aliases (additive): copy every dup alias onto the
+            #    survivor, dropping exact duplicates via the unique constraint.
+            ins = text(
+                "INSERT INTO entity_aliases "
+                "(entity_id, alias, alias_norm, alias_type, source, confidence, created_at) "
+                "SELECT :survivor, alias, alias_norm, alias_type, source, confidence, now() "
+                "FROM entity_aliases WHERE entity_id = ANY(:dups) "
+                "ON CONFLICT ON CONSTRAINT uq_entity_alias_norm_type_source DO NOTHING"
+            ).bindparams(bindparam("dups", value=dups))
+            res = await session.execute(ins, {"survivor": survivor})
+            stats["aliases_repointed"] += int(res.rowcount or 0)
+
+            # 2. Preserve edition scoping: record the union of the group's
+            #    sport_keys on the survivor's metadata (JSONB || per gotcha #4).
+            keys = sorted(
+                {
+                    k
+                    for k in (
+                        await session.execute(
+                            select(Entity.sport_key)
+                            .where(Entity.id.in_(ids))
+                            .where(Entity.sport_key.isnot(None))
+                        )
+                    ).scalars()
+                }
+            )
+            if keys:
+                await session.execute(
+                    update(Entity)
+                    .where(Entity.id == survivor)
+                    .values(
+                        entity_metadata=func.coalesce(
+                            Entity.entity_metadata, cast(literal("{}"), JSONB)
+                        ).op("||")(
+                            func.jsonb_build_object(
+                                "canonical_sport_keys",
+                                cast(literal(json.dumps(keys)), JSONB),
+                            )
+                        )
+                    )
+                )
+
+            # 3. Delete the now-empty dup entities (leftover aliases cascade).
+            await session.execute(delete(Entity).where(Entity.id.in_(dups)))
+
+            stats["groups_merged"] += 1
+            stats["entities_removed"] += len(dups)
+            if commit_each:
+                await session.commit()
+
+    if not dry_run and not commit_each:
+        await session.commit()
+    return stats
+
+
 async def registry_counts(session: AsyncSession) -> dict[str, int]:
     """Return quick coverage counts for reporting / audit ("registry queryable")."""
     by_kind = {

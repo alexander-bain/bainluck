@@ -1405,6 +1405,24 @@ def seed_entity_registry(self, persons_only: bool = True):
     bind=True,
     soft_time_limit=900,
     time_limit=960,
+    name="app.tasks.canonicalize_entities",
+)
+def canonicalize_entities_task(self, dry_run: bool = False):
+    """#175 Item 1 — collapse same-family duplicate entities in-worker.
+
+    On-demand merge of edition-multiplied person/team dups (e.g. "Alexandra Eala"
+    ×15 across tennis tournament sport_keys) into one canonical entity, aliases
+    repointed. Census-gated (cross-family homonyms left apart), additive-first,
+    idempotent. 900s soft limit keeps the overrun catchable above the 300s cap.
+    """
+    from app.tasks.entity_seed import canonicalize_entities_impl
+    return run_async(canonicalize_entities_impl(dry_run))
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=900,
+    time_limit=960,
     name="app.tasks.backfill_polymarket_matchups",
 )
 def backfill_polymarket_matchups(self, all_groups: bool = False):
@@ -1585,6 +1603,14 @@ def merge_duplicate_events_task(self, dry_run: bool = True):
     """Find and merge duplicate events (StatPal + Odds API race condition)."""
     from app.tasks.sports import _merge_duplicate_events_impl
     return run_async(_merge_duplicate_events_impl(dry_run=dry_run))
+
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.merge_degenerate_combat_events")
+def merge_degenerate_combat_events_task(self, dry_run: bool = True, limit: int = 500):
+    """#175 Item 3 — merge degenerate home==away fight events into their real
+    odds-registry event so orphaned Kalshi fight markets assemble multi-source."""
+    from app.tasks.sports import _merge_degenerate_combat_events_impl
+    return run_async(_merge_degenerate_combat_events_impl(dry_run=dry_run, limit=limit))
 
 
 # --- Cleanup ---

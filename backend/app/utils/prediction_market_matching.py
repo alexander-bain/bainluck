@@ -1259,6 +1259,43 @@ def extract_ticker_fragments(external_id: str) -> Optional[tuple[str, str, str]]
     return None
 
 
+def combat_fighter_abbrevs(external_id: Optional[str]) -> Optional[tuple[str, str]]:
+    """The two fighter abbreviations from a combat FIGHT-winner ticker.
+
+    A UFC/boxing bout ticker encodes both fighters as a concatenated trailing
+    token, e.g. ``KXUFCFIGHT-26JUL11SAIPIM`` -> ``("sai", "pim")``. This is the
+    ONLY reliable in-ticker signal of the opponent when a fight-winner market's
+    name degenerates to a single competitor (each per-fighter sub-market names
+    just its own fighter). Lowercased; None when the ticker isn't a combat fight
+    ticker or the token can't be split into two abbreviations.
+
+    Honest-unknown by construction: it returns the raw abbrevs, never a guessed
+    name — resolving abbrev -> fighter is the registry's job (see
+    ``_resolve_combat_opponent`` in the matching task), which refuses to guess.
+    """
+    if not is_combat_fight_ticker(external_id):
+        return None
+    # Parse the trailing concat-abbrev token directly. NOTE: we can't route
+    # through extract_ticker_fragments() — its is_kalshi_game_ticker() gate
+    # rejects kxboxing (a pre-existing quirk), even though is_combat_fight_ticker
+    # accepts it. _TICKER_FRAGMENT_RE matches both combat prefixes fine.
+    m = _TICKER_FRAGMENT_RE.match(external_id)
+    if not m:
+        return None
+    token = m.group(3).lower()
+    if len(token) < 4:  # need at least 2+2
+        return None
+    # Prefer a 3+rest split (both fighter abbrevs are 3 chars in practice), then
+    # 2+rest, matching extract_ticker_fragments' length bounds.
+    for split_at in (3, 2):
+        if split_at >= len(token):
+            continue
+        a, b = token[:split_at], token[split_at:]
+        if 2 <= len(b) <= 4:
+            return (a, b)
+    return None
+
+
 def _score_fragment_match(
     abbrev_a: str, abbrev_b: str,
     home_team: str, away_team: str,

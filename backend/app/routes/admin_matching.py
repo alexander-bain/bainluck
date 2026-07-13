@@ -2313,6 +2313,65 @@ async def trigger_entity_registry_seed(
     }
 
 
+@router.post("/entity-registry/canonicalize")
+async def trigger_entity_registry_canonicalize(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    dry_run: bool = Query(
+        False,
+        description="Count what WOULD merge without writing (census-only)",
+    ),
+):
+    """#175 Item 1 — collapse same-family duplicate entities as a background task.
+
+    Merges edition-multiplied person/team dups (e.g. "Alexandra Eala" ×15 across
+    tennis tournament sport_keys) into one canonical entity, aliases repointed.
+    Census-gated (cross-family homonyms left apart), additive-first, idempotent.
+    Counts land in the task result AND in a ``seed_diag:canonicalize`` marker row.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import canonicalize_entities_task
+    task = canonicalize_entities_task.delay(dry_run)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "dry_run": dry_run,
+        "message": (
+            "Entity canonicalization queued. Poll /api/admin/audit/task/{task_id}; "
+            "counts also land in seed_diag:canonicalize (db-query)."
+        ),
+    }
+
+
+@router.post("/events/merge-degenerate-combat")
+async def trigger_merge_degenerate_combat_events(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    dry_run: bool = Query(True, description="Count pairs without writing (verify-first)"),
+    limit: int = Query(500, description="Max degenerate events to scan per run"),
+):
+    """#175 Item 3 — merge degenerate home==away fight events into their real event.
+
+    The "15132461 class": pre-Item-2, a fight-winner market that parsed to a
+    single competitor auto-created a degenerate event and orphaned its Kalshi
+    markets there. This repoints those markets/snapshots onto the real
+    odds-registry event and deletes the degenerate. Verify-first (``dry_run=True``
+    default). Counts land in the task result.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import merge_degenerate_combat_events_task
+    task = merge_degenerate_combat_events_task.delay(dry_run, limit)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "dry_run": dry_run,
+        "limit": limit,
+        "message": "Degenerate combat-event merge queued. Poll /api/admin/audit/task/{task_id}.",
+    }
+
+
 @router.post("/polymarket/backfill-matchups")
 async def trigger_polymarket_backfill_matchups(
     request: Request,

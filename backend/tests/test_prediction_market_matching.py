@@ -40,7 +40,11 @@ from app.tasks.kalshi import (
     _is_kalshi_game_ticker as kalshi_is_game_ticker,
     _build_game_market_name,
 )
-from app.tasks.prediction_market_matching import _score_candidates
+from app.utils.prediction_market_matching import combat_fighter_abbrevs
+from app.tasks.prediction_market_matching import (
+    _score_candidates,
+    _resolve_combat_opponent,
+)
 
 
 # =============================================================================
@@ -1309,6 +1313,110 @@ class TestGameLevelWithExternalId:
             "Professional Football: Eagles at Chiefs",
             "championship",
         )
+
+
+# =============================================================================
+# Combat fighter-abbrev resolution (#175 Item 2 — the SAIPIM grammar fix)
+# =============================================================================
+
+
+class TestCombatFighterAbbrevs:
+    """Pure ticker → (abbrevA, abbrevB) split for combat fight-winner tickers."""
+
+    def test_ufc_fight_ticker_splits_saipim(self):
+        assert combat_fighter_abbrevs("KXUFCFIGHT-26JUL11SAIPIM") == ("sai", "pim")
+
+    def test_boxing_fight_ticker_splits(self):
+        # Boxing bout ticker follows the same YYMMMDD + concat-abbrev grammar.
+        result = combat_fighter_abbrevs("KXBOXING-26JUL11CANALV")
+        assert result is not None
+        assert len(result) == 2 and all(result)
+
+    def test_non_combat_ticker_is_none(self):
+        # A team game ticker is NOT a combat fight ticker → no fighter abbrevs.
+        assert combat_fighter_abbrevs("KXNBAGAME-26FEB19BOSGSW") is None
+
+    def test_none_and_prop_ticker(self):
+        assert combat_fighter_abbrevs(None) is None
+        # A prop ticker on the same card is not the fight-winner line.
+        assert combat_fighter_abbrevs("KXUFCROUNDS-26JUL11SAIPIM") is None
+
+
+class TestResolveCombatOpponent:
+    """#175 Item 2 — the honest-unknown opponent recovery. Session is mocked so
+    these pin the DECISION logic: which side is the opponent, and the never-guess
+    contract (0 / >1 / ambiguous → None, never the known fighter again)."""
+
+    @staticmethod
+    def _session(names):
+        """AsyncMock session whose one query returns `names` (distinct canon names)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = list(names)
+        session.execute.return_value = result
+        return session
+
+    @pytest.mark.asyncio
+    async def test_resolves_pim_to_pimblett(self):
+        session = self._session(["Paddy Pimblett"])
+        opp = await _resolve_combat_opponent(
+            session, "KXUFCFIGHT-26JUL11SAIPIM",
+            "Benoit Saint-Denis", "mma_mixed_martial_arts",
+        )
+        assert opp == "Paddy Pimblett"
+
+    @pytest.mark.asyncio
+    async def test_unresolved_abbrev_returns_none(self):
+        # Registry has no combat person whose surname starts with "pim".
+        session = self._session([])
+        opp = await _resolve_combat_opponent(
+            session, "KXUFCFIGHT-26JUL11SAIPIM",
+            "Benoit Saint-Denis", "mma_mixed_martial_arts",
+        )
+        assert opp is None
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_multiple_matches_returns_none(self):
+        # Two distinct fighters' surnames start with the abbrev → never guess.
+        session = self._session(["Paddy Pimblett", "Alex Pimenta"])
+        opp = await _resolve_combat_opponent(
+            session, "KXUFCFIGHT-26JUL11SAIPIM",
+            "Benoit Saint-Denis", "mma_mixed_martial_arts",
+        )
+        assert opp is None
+
+    @pytest.mark.asyncio
+    async def test_never_returns_the_known_fighter(self):
+        # Even if the query surfaces the known fighter, it is filtered out → None.
+        session = self._session(["Benoit Saint-Denis"])
+        opp = await _resolve_combat_opponent(
+            session, "KXUFCFIGHT-26JUL11SAIPIM",
+            "Benoit Saint-Denis", "mma_mixed_martial_arts",
+        )
+        assert opp is None
+
+    @pytest.mark.asyncio
+    async def test_non_combat_ticker_returns_none_without_query(self):
+        session = self._session(["Should Not Be Used"])
+        opp = await _resolve_combat_opponent(
+            session, "KXNBAGAME-26FEB19BOSGSW", "Boston", "basketball_nba",
+        )
+        assert opp is None
+        session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_known_fighter_matches_neither_abbrev_is_ambiguous(self):
+        # If the known fighter's surname prefixes NEITHER abbrev, we can't tell
+        # which side is the opponent → honest None (no query).
+        session = self._session(["Whoever"])
+        opp = await _resolve_combat_opponent(
+            session, "KXUFCFIGHT-26JUL11SAIPIM", "Conor McGregor",
+            "mma_mixed_martial_arts",
+        )
+        assert opp is None
+        session.execute.assert_not_called()
 
 
 # =============================================================================

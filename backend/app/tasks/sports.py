@@ -748,3 +748,105 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             "skipped": skipped_count,
             "deleted": len(delete_ids) if not dry_run else 0,
         }
+
+
+# FK tables whose event_id must repoint from an orphan event to the survivor
+# before the orphan is deleted (shared with _merge_duplicate_events_impl).
+_EVENT_FK_TABLES = (
+    "odds_snapshots", "win_prob_snapshots", "score_snapshots",
+    "espn_snapshots", "scoring_plays", "odds_aggregated",
+    "line_movement_analyses", "futures_markets",
+)
+
+
+async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int = 500):
+    """Merge degenerate ``home==away`` fight events into their real odds event.
+
+    #175 Item 3 — the "15132461 class" cleanup. Before the Item 2 grammar fix, a
+    UFC/boxing fight-winner market whose matchup parsed to a single competitor
+    auto-created a degenerate event ("Benoit Saint-Denis vs Benoit Saint-Denis")
+    and linked its Kalshi markets there — orphaning them from the real
+    odds-registry event ("Saint-Denis vs Pimblett", carrying the betting line).
+    The standard ``_merge_duplicate_events_impl`` never catches these: it requires
+    BOTH team names to match, and a degenerate shares only ONE.
+
+    The matcher here is degenerate-aware: for each ``home==away`` event it finds
+    the ONE non-degenerate event in the same sport + ±28h window whose home OR
+    away matches the degenerate's (single) fighter — the May-2026 merge lessons
+    apply, so it checks BOTH orientations via normalized ``names_match``. The real
+    (odds-registry) event SURVIVES; the degenerate's markets/snapshots repoint to
+    it and the degenerate is deleted. Verify-first: ``dry_run`` counts the pairs
+    without writing. Skips any degenerate with 0 or >1 real matches (never guesses
+    which fight it belongs to). A degenerate with no real counterpart is left
+    alone (nothing to unify into).
+    """
+    from sqlalchemy import text as sa_text
+    from app.tasks.base import get_task_session
+
+    _WINDOW_SEC = 28 * 3600  # matches the event-registry structured-match window
+
+    async with get_task_session() as session:
+        degen_rows = (await session.execute(sa_text(
+            "SELECT id, sport_id, home_team_name, commence_time "
+            "FROM events "
+            "WHERE lower(home_team_name) = lower(away_team_name) "
+            "  AND sport_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT :lim"
+        ), {"lim": limit})).all()
+
+        merged = 0
+        skipped_no_match = 0
+        skipped_ambiguous = 0
+        merged_pairs = []
+
+        for d in degen_rows:
+            fighter = d.home_team_name
+            candidates = (await session.execute(sa_text(
+                "SELECT id, home_team_name, away_team_name FROM events "
+                "WHERE sport_id = :sid AND id <> :did "
+                "  AND lower(home_team_name) <> lower(away_team_name) "
+                "  AND ABS(EXTRACT(EPOCH FROM (commence_time - :ct))) < :win"
+            ), {"sid": d.sport_id, "did": d.id, "ct": d.commence_time,
+                "win": _WINDOW_SEC})).all()
+
+            # A real event matches iff the degenerate's single fighter is one of
+            # its two competitors (either orientation).
+            reals = [
+                c.id for c in candidates
+                if _canonical_names_match(fighter, c.home_team_name)
+                or _canonical_names_match(fighter, c.away_team_name)
+            ]
+            if not reals:
+                skipped_no_match += 1
+                continue
+            if len(set(reals)) > 1:
+                skipped_ambiguous += 1
+                continue
+
+            keep_id, orphan_id = reals[0], d.id
+            merged_pairs.append({"orphan": orphan_id, "keep": keep_id, "fighter": fighter})
+
+            if not dry_run:
+                for table in _EVENT_FK_TABLES:
+                    await session.execute(
+                        sa_text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :orphan"),
+                        {"keep": keep_id, "orphan": orphan_id},
+                    )
+                await session.execute(
+                    sa_text("DELETE FROM events WHERE id = :orphan"),
+                    {"orphan": orphan_id},
+                )
+                await session.commit()
+            merged += 1
+
+        if not dry_run and merged:
+            logger.info("Merged %d degenerate combat events into real events", merged)
+
+        return {
+            "dry_run": dry_run,
+            "degenerate_scanned": len(degen_rows),
+            "merged": merged,
+            "skipped_no_match": skipped_no_match,
+            "skipped_ambiguous": skipped_ambiguous,
+            "sample": merged_pairs[:15],
+        }

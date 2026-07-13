@@ -75,6 +75,7 @@ async def seed_entity_registry_impl(persons_only: bool = True) -> dict:
     always True here (never one huge transaction that can OOM/time out a worker),
     so partial progress persists across a soft-time-limit overrun."""
     from app.services.entity_registry import (
+        canonicalize_entities,
         registry_counts,
         seed_competitions_from_sports,
         seed_from_teams,
@@ -96,6 +97,11 @@ async def seed_entity_registry_impl(persons_only: bool = True) -> dict:
                 session, commit_each=True
             )
             await session.commit()
+            # The seed re-creates one entity per sport_key by design (homonym
+            # safety), so it re-inflates the same-family dups every run. Collapse
+            # them right after so the registry stays canonical (idempotent — a
+            # clean registry yields 0 merges). #175 Item 1.
+            result["canonicalize"] = await canonicalize_entities(session)
             result["after"] = await registry_counts(session)
             result["ok"] = True
         except Exception:
@@ -108,6 +114,34 @@ async def seed_entity_registry_impl(persons_only: bool = True) -> dict:
             await _write_seed_marker(session, "seed_diag:persons", result)
             raise
         await _write_seed_marker(session, "seed_diag:persons", result)
+        return result
+
+
+async def canonicalize_entities_impl(dry_run: bool = False) -> dict:
+    """Collapse same-family duplicate entities (#175 Item 1) in-worker.
+
+    Wraps :func:`entity_registry.canonicalize_entities` so the merge can run
+    on-demand without a full re-seed (the seed also calls it at the end). Additive
+    + census-gated + idempotent — see the service docstring. Writes a
+    ``seed_diag:canonicalize`` marker for durable proof of counts."""
+    from app.services.entity_registry import canonicalize_entities, registry_counts
+
+    async with get_task_session() as session:
+        before = await registry_counts(session)
+        result: dict = {"before": before, "dry_run": dry_run}
+        try:
+            result["canonicalize"] = await canonicalize_entities(
+                session, dry_run=dry_run
+            )
+            result["after"] = await registry_counts(session)
+            result["ok"] = True
+        except Exception:
+            await session.rollback()
+            result["ok"] = False
+            result["error"] = traceback.format_exc()[-4000:]
+            await _write_seed_marker(session, "seed_diag:canonicalize", result)
+            raise
+        await _write_seed_marker(session, "seed_diag:canonicalize", result)
         return result
 
 

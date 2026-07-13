@@ -1541,6 +1541,77 @@ _SPORT_KEY_NAMES: dict[str, tuple[str, str]] = {
 }
 
 
+async def _resolve_combat_opponent(session, external_id, known_fighter, sport_key):
+    """Recover a combat bout's OPPONENT from the entity registry via the ticker.
+
+    #175 Item 2 — the fighter-abbrev grammar fix. A UFC/boxing fight-winner
+    market names only ONE competitor, so a matchup parsed from it degenerates to
+    "Saint-Denis vs Saint-Denis". The ticker (``KXUFCFIGHT-26JUL11SAIPIM``)
+    carries BOTH fighter abbrevs; given the one fighter we already know
+    ("Benoit Saint-Denis"), the OTHER abbrev ("pim") resolves to the opponent
+    ("Paddy Pimblett") against the seeded person registry (18.6K persons, surname
+    aliases).
+
+    Honest-unknown contract — the crux of the fix: it NEVER guesses and NEVER
+    returns the known fighter again. It returns a name only when
+      1. exactly one ticker abbrev is a surname-prefix of the known fighter (so we
+         know which side is the opponent), AND
+      2. the OTHER abbrev resolves to EXACTLY ONE distinct combat person whose
+         surname it prefixes, who isn't the known fighter.
+    Any ambiguity (0 or >1 matches, can't tell which side is known) -> None, so
+    the caller creates no event rather than a duplicate-person degenerate.
+    """
+    from app.utils.prediction_market_matching import combat_fighter_abbrevs
+    from app.utils.event_matcher import player_key
+
+    abbrevs = combat_fighter_abbrevs(external_id)
+    if not abbrevs:
+        return None
+    known_key = player_key(known_fighter)
+    if not known_key:
+        return None
+
+    # Which abbrev is the known fighter, which is the opponent? Exactly one must
+    # prefix the known surname — otherwise we can't tell the sides apart.
+    a, b = abbrevs
+    a_is_known = known_key.startswith(a)
+    b_is_known = known_key.startswith(b)
+    if a_is_known and not b_is_known:
+        opp_abbrev = b
+    elif b_is_known and not a_is_known:
+        opp_abbrev = a
+    else:
+        return None  # ambiguous (neither or both prefix the known fighter)
+    if len(opp_abbrev) < 2:
+        return None
+
+    # Resolve the opponent abbrev against the registry: a combat-sport person
+    # whose surname starts with the abbrev, distinct from the known fighter.
+    from sqlalchemy import func, select
+    from app.models.models import Entity, EntityAlias
+    from app.services.entity_registry import KIND_PERSON
+
+    family = (sport_key or "").split("_")[0].lower()
+    stmt = (
+        select(func.distinct(Entity.canonical_name))
+        .join(EntityAlias, EntityAlias.entity_id == Entity.id)
+        .where(
+            Entity.kind == KIND_PERSON,
+            EntityAlias.alias_type == "common_name",  # the surname alias
+            EntityAlias.alias_norm.like(f"{_escape_like(opp_abbrev)}%", escape="\\"),
+        )
+    )
+    if family:
+        stmt = stmt.where(func.lower(Entity.sport_key).like(f"{_escape_like(family)}%", escape="\\"))
+    names = [
+        n for n in (await session.execute(stmt.limit(5))).scalars().all()
+        if player_key(n) != known_key
+    ]
+    if len(names) == 1:
+        return names[0]
+    return None  # 0 or ambiguous — honest unknown, no guess
+
+
 async def _create_event_from_prediction_market(session, matchup, market, now):
     """
     Auto-create an Event when a game-level prediction market has no matching Event.
@@ -1562,11 +1633,31 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # and championship suffixes that may leak through ("Canada Medal" → "Canada")
     team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
     team_b = _strip_championship_suffix(_strip_sport_name_prefix((matchup.team_b or "").strip())).strip()
-    if not team_a or not team_b:
-        return None
 
     # Determine sport key from ticker or category
     sport_key = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+
+    # #175 Item 2 — combat degenerate guard. A fight-winner market names only ONE
+    # competitor, so a matchup parsed from it degenerates to "Saint-Denis vs
+    # Saint-Denis". Recover the real opponent from the ticker+registry; if we
+    # can't (honest unknown), create NO event rather than a duplicate-person one.
+    from app.utils.name_normalization import names_match as _names_match
+    if team_a and (not team_b or _names_match(team_a, team_b)):
+        opponent = await _resolve_combat_opponent(
+            session, market.external_id, team_a, sport_key
+        )
+        if opponent and not _names_match(team_a, opponent):
+            team_b = opponent
+        else:
+            logger.debug(
+                "Skipping auto-create for '%s' — degenerate combat matchup "
+                "(one fighter, opponent unresolved): %s",
+                market.name, team_a,
+            )
+            return None
+
+    if not team_a or not team_b:
+        return None
     if not sport_key and market.llm_sport_category:
         cat_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
         if cat_prefix:

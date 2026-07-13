@@ -182,3 +182,89 @@ class TestPersonFoldIn:
 
         assert inspect.iscoroutinefunction(er.seed_persons_from_events)
         assert inspect.iscoroutinefunction(er.seed_persons_from_futures_fields)
+
+
+class TestCanonicalizeEntities:
+    """#175 Item 1 — same-family duplicate merge (the fix the census enables).
+
+    The CI harness mocks the async session, so these pin the correctness spine
+    that does NOT need a live DB: the census-safety gate, idempotency guarantees,
+    and family-key parity with the census script. Functional proof (surplus rows
+    dropping) is the production run recorded in the seed_diag:canonicalize marker.
+    """
+
+    def test_exists_and_is_coroutine(self):
+        import inspect
+
+        from app.services import entity_registry as er
+
+        assert inspect.iscoroutinefunction(er.canonicalize_entities)
+
+    def test_only_merges_same_family_groups(self):
+        # The whole safety argument is: NEVER merge a group whose copies span more
+        # than one sport family (cross-sport homonyms). The gate must skip them.
+        import inspect
+
+        from app.services import entity_registry as er
+
+        src = inspect.getsource(er.canonicalize_entities)
+        assert "families > 1" in src
+        assert "risky_skipped" in src
+
+    def test_family_key_matches_census_script(self):
+        # The merge's family definition MUST equal the census tool's, or the fix
+        # would target a different population than the measurement reports.
+        from app.services.entity_registry import _FAMILY_SQL
+
+        # scripts/ isn't an importable package; read the census family expr text.
+        import pathlib
+
+        census = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "audit_entity_dups.py"
+        text = census.read_text()
+        # Both use split_part(lower(coalesce(<col>,'')),'_',1) on the sport_key.
+        assert "split_part(lower(coalesce(sport_key, '')), '_', 1)" in _FAMILY_SQL
+        assert "split_part(lower(coalesce(" in text and "'_', 1)" in text
+
+    def test_additive_first_repoint_before_delete(self):
+        # Aliases must REPOINT (idempotent insert) before any entity is deleted,
+        # and only the non-survivor dups are ever deleted.
+        import inspect
+
+        from app.services import entity_registry as er
+
+        src = inspect.getsource(er.canonicalize_entities)
+        insert_at = src.index("INSERT INTO entity_aliases")
+        delete_at = src.index("delete(Entity)")
+        assert insert_at < delete_at, "must repoint aliases before deleting dups"
+        assert "ON CONFLICT ON CONSTRAINT uq_entity_alias_norm_type_source DO NOTHING" in src
+        # survivor is the lowest id; dups are the rest.
+        assert "survivor, dups = ids[0], ids[1:]" in src
+
+    def test_dry_run_writes_nothing(self):
+        import inspect
+
+        from app.services import entity_registry as er
+
+        src = inspect.getsource(er.canonicalize_entities)
+        # In dry_run the loop counts and `continue`s before any INSERT/UPDATE/DELETE.
+        assert "if dry_run:" in src
+
+    def test_preserves_edition_scoping_in_metadata(self):
+        import inspect
+
+        from app.services import entity_registry as er
+
+        src = inspect.getsource(er.canonicalize_entities)
+        assert "canonical_sport_keys" in src
+
+    def test_task_and_endpoint_wired(self):
+        import inspect
+
+        from app.tasks.entity_seed import (
+            canonicalize_entities_impl,
+            seed_entity_registry_impl,
+        )
+
+        assert inspect.iscoroutinefunction(canonicalize_entities_impl)
+        # The seed calls canonicalize at the end so it stays durable across re-seeds.
+        assert "canonicalize_entities" in inspect.getsource(seed_entity_registry_impl)
