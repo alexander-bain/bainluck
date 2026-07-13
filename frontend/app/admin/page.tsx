@@ -9,6 +9,7 @@ import {
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import AdminCockpit from "@/components/admin/AdminCockpit";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import DiagnosisCard from "@/components/admin/DiagnosisCard";
@@ -1318,6 +1319,11 @@ export default function AdminDashboard() {
           </span>
         )}
       </div>
+
+      {/* Alex Cockpit (L2-102): quick site-health view, what's waiting on Alex,
+          and the quick human-eval queue. Renders above the full ops dashboard;
+          all existing sub-pages stay reachable via the sidebar. */}
+      <AdminCockpit />
 
       {error && (
         <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-lg">{error.message}</div>
