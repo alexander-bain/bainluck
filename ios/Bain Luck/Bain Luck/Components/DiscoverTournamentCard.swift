@@ -105,7 +105,7 @@ struct NativeTournamentDiscoverCard: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))
