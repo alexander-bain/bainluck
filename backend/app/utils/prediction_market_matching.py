@@ -185,8 +185,16 @@ def _strip_category_prefix(market_name: str) -> str:
     return _CATEGORY_PREFIX_RE.sub("", market_name).strip()
 
 
-# Polymarket " - More Markets" suffix on related markets
-_MORE_MARKETS_RE = re.compile(r'\s*-\s*More Markets\s*$', re.IGNORECASE)
+# Polymarket container suffixes appended to a game's event title on the
+# decomposed sub-market rows (gotcha #18). "A vs. B - More Markets" and
+# "A vs. B - Player Props" both bury the second team in the suffix
+# ("Chicago White Sox - Player Props") so extract_matchup mis-reads team_b and
+# the participant grammar can't resolve it to the event's team entity. Strip the
+# container label BEFORE matchup extraction so the recovered matchup_title (and
+# thus the resolution-engine participants) is the clean "A vs. B" (#1021).
+_MORE_MARKETS_RE = re.compile(
+    r'\s*-\s*(?:More Markets|Player Props)\s*$', re.IGNORECASE
+)
 
 # "Game N:" prefix on playoff series markets (e.g., "Game 2: Minnesota at Dallas: Total Points")
 _GAME_NUMBER_PREFIX_RE = re.compile(r'^Game\s+\d+\s*:\s*', re.IGNORECASE)
@@ -211,9 +219,11 @@ _CHAMPIONSHIP_SUFFIX_RE = re.compile(
 
 
 def _strip_more_markets(name: str) -> str:
-    """Strip Polymarket ' - More Markets' suffix.
+    """Strip Polymarket container suffixes (' - More Markets' / ' - Player Props').
 
-    Example: "CF Estrela da Amadora vs. FC Porto - More Markets" → "CF Estrela da Amadora vs. FC Porto"
+    Examples:
+        "CF Estrela da Amadora vs. FC Porto - More Markets" → "CF Estrela da Amadora vs. FC Porto"
+        "Athletics vs. Chicago White Sox - Player Props" → "Athletics vs. Chicago White Sox"
     """
     return _MORE_MARKETS_RE.sub("", name).strip()
 

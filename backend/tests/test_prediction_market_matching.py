@@ -2626,6 +2626,20 @@ class TestMoreMarketsSuffix:
         assert matchup is not None
         assert matchup.team_b == "Celtics"
 
+    def test_polymarket_player_props_stripped(self):
+        # #1021: the poly player-props container title buried team_b in the
+        # suffix ("Chicago White Sox - Player Props"), so the second team never
+        # resolved to the event's entity. The suffix must be stripped so the
+        # recovered matchup is the clean "A vs. B".
+        matchup = extract_matchup("Athletics vs. Chicago White Sox - Player Props")
+        assert matchup is not None
+        assert matchup.team_a == "Athletics"
+        assert matchup.team_b == "Chicago White Sox"
+        assert "Player Props" not in matchup.team_b
+
+    def test_polymarket_player_props_is_game_level(self):
+        assert is_game_level_market("Houston Astros vs. Texas Rangers - Player Props")
+
 
 # =============================================================================
 # _SPORT_ABBREV_SUFFIX coverage

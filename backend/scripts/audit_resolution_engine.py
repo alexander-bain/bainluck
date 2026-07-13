@@ -38,6 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import sys
@@ -98,13 +99,25 @@ def db_query(sql: str, limit: int = 1000) -> list[dict]:
 
 
 def _md(value: Any) -> dict:
-    """market_metadata may come back as a dict or a JSON string."""
+    """market_metadata may come back as a dict, a JSON string, or — from the
+    admin ``db-query`` endpoint — a Python ``repr`` of the JSONB (single-quoted,
+    e.g. ``{'matchup_title': 'A vs. B'}``). The repr form fails ``json.loads``, so
+    without the ``ast.literal_eval`` fallback the audit silently read ``{}`` for
+    EVERY row and could never see ``matchup_title`` — making the #1021 derivative
+    coverage metric a constant 0/N and falsely failing every title-backfilled
+    derivative row as ``no_two_participants``."""
     if isinstance(value, dict):
         return value
     if isinstance(value, str):
         try:
-            return json.loads(value)
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
         except (ValueError, TypeError):
+            pass
+        try:
+            parsed = ast.literal_eval(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, SyntaxError, TypeError):
             return {}
     return {}
 
