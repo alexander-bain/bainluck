@@ -926,6 +926,13 @@ class KalshiAPIService(BaseAPIClient):
             "KXPGATOUR", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20",
             "KXPGAMAKECUT", "KXPGAR1LEAD", "KXPGAR2LEAD", "KXPGAR3LEAD",
             "KXPGAHOLEINONE",
+            # #171: KXPGAPLAYOFF was the single golf series missing from the
+            # rescue net — the main scan carried its playoff market for 19
+            # prior events but The Open (KXPGAPLAYOFF-THOC26, active on Kalshi
+            # with 1 market) was never ingested. It carries no _HEAVY_TOKEN and
+            # each event holds a single market (tiny nested payload), so it fits
+            # the guaranteed rescue exactly like the other KXPGA* golf futures.
+            "KXPGAPLAYOFF",
             "KXLPGATOUR", "KXLIVTOUR", "KXDPWORLDTOUR",
         ]
         supplemented = 0
