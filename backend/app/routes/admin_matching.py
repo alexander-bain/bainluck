@@ -3969,9 +3969,11 @@ async def backfill_win_probability_sources(
     """
     _check_admin_secret(secret, request=request)
 
+    import re as _re
+
     from app.utils.prediction_market_matching import (
         find_moneyline_outcome,
-        extract_matchup,
+        extract_matchup_with_ticker_fallback,
         feeds_win_prob_blend,
     )
 
@@ -4021,7 +4023,15 @@ async def backfill_win_probability_sources(
                 continue
 
         try:
-            matchup = extract_matchup(market.name, market.external_id)
+            # Combat fight-winner names carry a leading sport_id prefix
+            # ("329: Saint-Denis vs Pimblett") that breaks the anchored matchup
+            # regex — strip it. Use the ticker-fallback extractor so this path
+            # matches the live Phase-2 matching task (recovers the matchup from
+            # the Kalshi ticker when the name alone is insufficient).
+            clean_name = _re.sub(r"^\s*\d+:\s*", "", market.name or "")
+            matchup = extract_matchup_with_ticker_fallback(
+                clean_name, external_id=market.external_id,
+            )
             if not matchup:
                 stats["skipped"] += 1
                 continue
