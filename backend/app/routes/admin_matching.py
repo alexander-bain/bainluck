@@ -2372,6 +2372,35 @@ async def trigger_merge_degenerate_combat_events(
     }
 
 
+@router.post("/prediction-markets/backfill-combat-wps")
+async def trigger_backfill_combat_wps(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    dry_run: bool = Query(True, description="Count blends without writing (verify-first)"),
+    limit: int = Query(500, description="Max settled combat events to scan per run"),
+):
+    """#178 follow-up — oldest-first combat WPS backfill for the settled-fight tail.
+
+    The newest-first `/prediction-markets/backfill-wps` endpoint cannot reach the
+    ~178 older settled combat fights whose Kalshi line was linked but never folded
+    into the event blend. This queues the oldest-first, combat-filtered task
+    (`KXUFCFIGHT*`/`KXBOXING*` on completed/closed/resolved events missing the
+    kalshi blend). Verify-first (``dry_run=True`` default); counts land in the task
+    result. Also runs daily on the beat.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import backfill_combat_wps
+    task = backfill_combat_wps.delay(limit, dry_run)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "dry_run": dry_run,
+        "limit": limit,
+        "message": "Combat WPS backfill queued. Poll /api/admin/audit/task/{task_id}.",
+    }
+
+
 @router.post("/polymarket/backfill-matchups")
 async def trigger_polymarket_backfill_matchups(
     request: Request,

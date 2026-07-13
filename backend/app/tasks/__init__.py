@@ -1735,6 +1735,20 @@ def precompute_backfill_winners_status(self):
     return _tracked_run("precompute_backfill_winners_status", _precompute_backfill_winners_status())
 
 
+@celery_app.task(bind=True, soft_time_limit=280, time_limit=300, name="app.tasks.precompute_backfill_progress")
+def precompute_backfill_progress(self):
+    """Precompute backfill-progress heavy census (density + June ledger) — #179/#1052."""
+    from app.tasks.precompute_backfill_progress import _precompute_backfill_progress
+    return _tracked_run("precompute_backfill_progress", _precompute_backfill_progress())
+
+
+@celery_app.task(bind=True, soft_time_limit=280, time_limit=300, name="app.tasks.backfill_combat_wps")
+def backfill_combat_wps(self, limit: int = 500, dry_run: bool = False):
+    """Combat-targeted oldest-first WPS backfill — reaches the settled-fight tail (#178)."""
+    from app.tasks.backfill_combat_wps import _backfill_combat_wps
+    return _tracked_run("backfill_combat_wps", _backfill_combat_wps(limit=limit, dry_run=dry_run))
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -2069,6 +2083,16 @@ celery_app.conf.beat_schedule = {
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",
         "schedule": crontab(minute=35),  # Every hour at :35 — cache expensive backfill status queries
+        "options": {"queue": "background"},
+    },
+    "precompute-backfill-progress": {
+        "task": "app.tasks.precompute_backfill_progress",
+        "schedule": crontab(minute="*/15"),  # Every 15 min — #179/#1052 progress census (density + June ledger)
+        "options": {"queue": "background"},
+    },
+    "backfill-combat-wps": {
+        "task": "app.tasks.backfill_combat_wps",
+        "schedule": crontab(minute=50, hour=9),  # Daily 09:50 UTC — self-heal the settled-fight blend tail (#178)
         "options": {"queue": "background"},
     },
     "check-aggregation-quality": {

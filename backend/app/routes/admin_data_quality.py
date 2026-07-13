@@ -3422,6 +3422,100 @@ async def backfill_winners_status(
     )
 
 
+@router.get("/backfill-progress")
+async def backfill_progress(
+    request: Request, secret: str = Query(None),
+    bust: bool = Query(False, description="Trigger an immediate async census recompute"),
+):
+    """Unified backfill/calibration progress — the answer to "#1052 unmeasurable".
+
+    Combines four tiles (Queue #179):
+      - phase_throughput: backfill_winners last-run per-phase timing + which phase
+        the budget guard stopped before, and the dedicated calibration_prices task.
+      - worker_load: realtime/background/celery queue depths + heartbeat age.
+      - census: the heavy sampled DENSITY + JUNE-GAP ledger, served from the Redis
+        cache written every 15 min by precompute_backfill_progress (pass bust=true
+        to trigger an immediate recompute).
+      - cal_coverage: global + recent-cohort calibration_probability coverage from
+        the backfill-winners/status cache.
+
+    Phase throughput and worker load are read live (near-instant); the census is
+    cached because its per-outcome snapshot probes exceed the request timeout.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+    from app.tasks.redis_state import get_redis_client, get_task_metrics
+
+    result: dict = {"tiles": ["phase_throughput", "worker_load", "census", "cal_coverage"]}
+
+    if bust:
+        from app.tasks import celery_app
+        celery_app.send_task("app.tasks.precompute_backfill_progress", queue="background")
+
+    rc = None
+    try:
+        rc = get_redis_client()
+    except Exception as e:
+        result["redis_error"] = str(e)[:200]
+
+    # ── phase throughput (live) ─────────────────────────────────────────────
+    phase: dict = {}
+    try:
+        if rc is not None:
+            raw = rc.get("bainluck:backfill_phase_timing")
+            phase["phase_timing"] = _json.loads(raw) if raw else None
+        for tname in ("backfill_winners", "calibration_prices", "precompute_backfill_progress"):
+            try:
+                phase[tname] = get_task_metrics(tname)
+            except Exception as e:
+                phase[tname] = {"error": str(e)[:150]}
+    except Exception as e:
+        phase["error"] = str(e)[:200]
+    result["phase_throughput"] = phase
+
+    # ── worker load (live) ──────────────────────────────────────────────────
+    worker: dict = {}
+    try:
+        if rc is not None:
+            worker["queue_depths"] = {
+                q: int(rc.llen(q) or 0) for q in ("realtime", "background", "celery")
+            }
+            hb = rc.get("bainluck:heartbeat")
+            worker["heartbeat"] = hb.decode() if isinstance(hb, bytes) else hb
+    except Exception as e:
+        worker["error"] = str(e)[:200]
+    result["worker_load"] = worker
+
+    # ── census (cached heavy census: density + June ledger) ─────────────────
+    try:
+        if rc is not None:
+            raw = rc.get("bainluck:backfill_progress")
+            if raw:
+                result["census"] = _json.loads(raw)
+            else:
+                result["census"] = {
+                    "status": "pending",
+                    "detail": "No cached census yet. precompute_backfill_progress "
+                              "runs every 15 min, or pass bust=true.",
+                }
+    except Exception as e:
+        result["census"] = {"error": str(e)[:200]}
+
+    # ── cal coverage (from the sibling status cache) ────────────────────────
+    try:
+        if rc is not None:
+            raw = rc.get("bainluck:backfill_winners_status")
+            if raw:
+                st = _json.loads(raw)
+                result["cal_coverage"] = st.get("calibration_probability_coverage")
+                result["cal_coverage_computed_at"] = st.get("computed_at")
+    except Exception as e:
+        result["cal_coverage"] = {"error": str(e)[:200]}
+
+    return result
+
+
 @router.get("/calibration/mce")
 async def calibration_mce_summary(
     request: Request,

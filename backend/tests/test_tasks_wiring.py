@@ -263,6 +263,8 @@ class TestBeatScheduleCompleteness:
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
         "precompute-backfill-winners-status",
+        "precompute-backfill-progress",
+        "backfill-combat-wps",
         "data-quality-watchdog",
         "calibration-sentinel-weekly",
         "backfill-kalshi-settled-events",
