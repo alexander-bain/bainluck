@@ -8,13 +8,23 @@ import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 
 // --- Types (matches GET /api/admin/cockpit) ---
 
+interface TileContext {
+  label: string;
+  value: string;
+  kind: "tracked" | "artifact" | "untracked";
+  note: string | null;
+  ref: string | null;
+  url: string | null;
+}
+
 interface HealthTile {
   key: string;
   label: string;
   value: string;
   numeric: number | null;
   status: "green" | "amber" | "red" | "unknown";
-  detail?: string;
+  detail?: string | null;
+  context?: TileContext[];
   href: string;
 }
 
@@ -66,6 +76,42 @@ function statusBg(status: string): string {
     case "red": return "bg-accent-danger/10 border-accent-danger/20";
     default: return "bg-surface-card border-surface-border";
   }
+}
+
+// L2-104 honesty pass: a RED sub-signal reads as one of three things. Tracked =
+// there's an open issue (link it). Artifact = a known/expected zero (label it,
+// muted). Untracked = neither → the ONLY true four-alarm state, made visually
+// distinct (danger ring + ⚠) so it can't hide among explained REDs.
+function ContextBadge({ c }: { c: TileContext }) {
+  if (c.kind === "tracked") {
+    return (
+      <a
+        href={c.url ?? "#"}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={c.note ?? undefined}
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro font-medium bg-yellow-500/10 text-yellow-600 hover:bg-yellow-500/20"
+      >
+        {c.label} {c.value} — tracked {c.ref}
+      </a>
+    );
+  }
+  if (c.kind === "artifact") {
+    return (
+      <span
+        title={c.note ?? undefined}
+        className="inline-flex items-center rounded-md px-1.5 py-0.5 text-micro font-medium bg-surface-elevated text-text-muted"
+      >
+        {c.label} {c.value} — {c.note ?? "expected"}
+      </span>
+    );
+  }
+  // untracked — the true four-alarm state
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro font-bold bg-accent-danger/15 text-accent-danger ring-1 ring-accent-danger/40">
+      ⚠ {c.label} {c.value} — untracked
+    </span>
+  );
 }
 
 export default function AdminCockpit() {
@@ -125,15 +171,22 @@ export default function AdminCockpit() {
       {/* Top strip: health tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {data.health.map((t) => (
-          <Link
-            key={t.key}
-            href={t.href}
-            className={"rounded-xl border p-4 block transition-colors hover:brightness-105 " + statusBg(t.status)}
-          >
-            <div className="text-micro text-text-muted uppercase tracking-wider">{t.label}</div>
-            <div className={"text-2xl font-bold mt-1 " + statusText(t.status)}>{t.value}</div>
-            {t.detail && <div className="text-micro text-text-muted mt-1 leading-relaxed">{t.detail}</div>}
-          </Link>
+          <div key={t.key} className={"rounded-xl border p-4 " + statusBg(t.status)}>
+            {/* Card headline navigates to the drill-in; context badges below are
+                their own links, so the card is NOT a single anchor (nested <a>). */}
+            <Link href={t.href} className="block transition-colors hover:brightness-105">
+              <div className="text-micro text-text-muted uppercase tracking-wider">{t.label}</div>
+              <div className={"text-2xl font-bold mt-1 " + statusText(t.status)}>{t.value}</div>
+              {t.detail && <div className="text-micro text-text-muted mt-1 leading-relaxed">{t.detail}</div>}
+            </Link>
+            {t.context && t.context.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {t.context.map((c) => (
+                  <ContextBadge key={c.label} c={c} />
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </div>
 

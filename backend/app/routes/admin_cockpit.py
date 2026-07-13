@@ -69,6 +69,24 @@ _WAITING_FALLBACK = [
 ]
 
 
+# L2-104 honesty pass: known context for RED health sub-signals, so a tracked or
+# expected RED never reads as a fresh four-alarm fire. Keyed by (tile_key,
+# sub_label). Anything RED and ABSENT here is a genuine untracked alarm — the
+# frontend renders that state distinctly.
+_RED_CONTEXT: dict[tuple[str, str], dict] = {
+    ("grid_health", "nba"): {
+        "kind": "tracked",
+        "ref": "#1059",
+        "note": "NBA-Kalshi degenerate mapping",
+        "url": "https://github.com/alexander-bain/bainluck/issues/1059",
+    },
+    ("grid_health", "golf"): {
+        "kind": "artifact",
+        "note": "pre-tournament illiquidity, expected",
+    },
+}
+
+
 def _status_from_pct(pct: float | None, *, green: float, amber: float) -> str:
     """Green/amber/red band for a higher-is-better percentage."""
     if pct is None:
@@ -78,6 +96,32 @@ def _status_from_pct(pct: float | None, *, green: float, amber: float) -> str:
     if pct >= amber:
         return "amber"
     return "red"
+
+
+def _red_sub_context(tile_key: str, label: str, value: str) -> dict:
+    """Annotate a RED sub-signal as tracked / known-artifact / untracked.
+
+    A RED that is neither tracked (an open issue) nor a known artifact is the
+    only genuine four-alarm state; the frontend surfaces ``untracked`` distinctly.
+    """
+    ctx = _RED_CONTEXT.get((tile_key, label))
+    if ctx is None:
+        return {
+            "label": label,
+            "value": value,
+            "kind": "untracked",
+            "note": None,
+            "ref": None,
+            "url": None,
+        }
+    return {
+        "label": label,
+        "value": value,
+        "kind": ctx["kind"],
+        "note": ctx.get("note"),
+        "ref": ctx.get("ref"),
+        "url": ctx.get("url"),
+    }
 
 
 def _hours_since(dt: datetime | None) -> float | None:
@@ -119,20 +163,32 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     tiles: list[dict] = []
 
     # --- Link rate (warm cache from precompute_admin_link_rate) ---
+    # L2-104 honesty pass: the HEADLINE is the open-markets rate (the CLAUDE.md
+    # metric, ~99.6%). The all-status rate (~90.3%) is real but capped by aged-out
+    # settled markets that stay status='open' in our DB (gotcha #35) — demote it
+    # to a subtitle so it never reads as a fixable gap.
     link = _read_redis_json("bainluck:admin:link_rate")
     if link and isinstance(link.get("overall"), dict):
-        pct = link["overall"].get("link_rate_all_pct")
+        overall = link["overall"]
+        open_pct = overall.get("link_rate_pct")
+        all_pct = overall.get("link_rate_all_pct")
+        open_linked = overall.get("open_linked")
+        open_total = overall.get("open_total")
+        detail_bits = []
+        if open_linked is not None and open_total is not None:
+            detail_bits.append(f"{open_linked}/{open_total} open game markets linked")
+        if all_pct is not None:
+            detail_bits.append(
+                f"{all_pct}% all-status — capped by aged-out settled markets (gotcha #35)"
+            )
         tiles.append(
             {
                 "key": "link_rate",
                 "label": "Market link rate",
-                "value": f"{pct}%" if pct is not None else "—",
-                "numeric": pct,
-                "status": _status_from_pct(pct, green=99, amber=90),
-                "detail": (
-                    f"{link['overall'].get('linked', 0)}/"
-                    f"{link['overall'].get('total_game_markets', 0)} game markets linked"
-                ),
+                "value": f"{open_pct}%" if open_pct is not None else "—",
+                "numeric": open_pct,
+                "status": _status_from_pct(open_pct, green=99, amber=90),
+                "detail": " · ".join(detail_bits) if detail_bits else None,
                 "href": "/admin/matching",
             }
         )
@@ -154,6 +210,16 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     if audit and audit.get("avg_score") is not None:
         avg = audit["avg_score"]
         scores = audit.get("scores") or {}
+        # L2-104: annotate each RED grid (below the amber band) so a tracked or
+        # expected RED reads as context, not a fresh alarm; untracked REDs stay
+        # four-alarm and sort to the front for the frontend to surface distinctly.
+        grid_context = [
+            _red_sub_context("grid_health", g, f"{s}/100")
+            for g, s in scores.items()
+            if isinstance(s, (int, float))
+            and _status_from_pct(s, green=99, amber=90) == "red"
+        ]
+        grid_context.sort(key=lambda c: 0 if c["kind"] == "untracked" else 1)
         tiles.append(
             {
                 "key": "grid_health",
@@ -162,6 +228,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
                 "numeric": avg,
                 "status": _status_from_pct(avg, green=99, amber=90),
                 "detail": ", ".join(f"{g}:{s}" for g, s in scores.items()) or "no grids",
+                "context": grid_context,
                 "href": "/admin/matching",
             }
         )

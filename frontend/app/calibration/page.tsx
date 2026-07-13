@@ -335,6 +335,18 @@ export default function CalibrationPage() {
     label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
+  // L2-104 Item 3: count how many populated buckets fall UNDER the 1,000-outcome
+  // floor in the current view, so the skeptic knows exactly what's being hidden
+  // rather than silently dropped from the chart.
+  const sourceHiddenBuckets = (activeSource ? [activeSource] : sources).reduce((sum, src) =>
+    sum + aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)))
+      .filter(b => b.n > 0 && b.n < MIN_CHART_BUCKET_N).length, 0);
+  const catHiddenBuckets = (activeCat ? [activeCat] : categories.slice(0, 5)).reduce((sum, cat) =>
+    sum + aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)))
+      .filter(b => b.n > 0 && b.n < MIN_CHART_BUCKET_N).length, 0);
+  const hiddenNote = (n: number) =>
+    n > 0 ? ` ${n} ${n === 1 ? "bucket is" : "buckets are"} hidden under the ${MIN_CHART_BUCKET_N.toLocaleString()}-outcome floor in this view.` : "";
+
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
@@ -607,7 +619,7 @@ export default function CalibrationPage() {
         <p className="text-xs text-text-muted mb-4">
           Every source gets the same treatment: error bars are the 95% CI (wider = less
           certain), and buckets under {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are
-          hidden &mdash; a single point built from a small sample misleads. Select a source
+          hidden &mdash; a single point built from a small sample misleads.{hiddenNote(sourceHiddenBuckets)} Select a source
           tab to see per-bucket sample counts{activeSource ? " and click a point for examples" : ""}.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -635,7 +647,7 @@ export default function CalibrationPage() {
         <h2 className="text-title-3 text-text-primary mb-1">By Category</h2>
         <p className="text-xs text-text-muted mb-4">
           Same treatment as By Source: 95% CI error bars, and buckets under{" "}
-          {MIN_CHART_BUCKET_N.toLocaleString()} outcomes hidden. Select a category tab to see
+          {MIN_CHART_BUCKET_N.toLocaleString()} outcomes hidden.{hiddenNote(catHiddenBuckets)} Select a category tab to see
           per-bucket sample counts.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
