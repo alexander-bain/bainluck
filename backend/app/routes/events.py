@@ -213,6 +213,74 @@ def _apply_search_synonyms(
     ]
 
 
+# #1063: golf MAJORS are first-class event concepts, surfaced DIRECTLY from the
+# query. Each major's concept page (`event:golf:<slug>`) resolves to the latest
+# edition and is guaranteed never-dead (verified against prod /api/event —
+# the-open-championship / the-masters / u-s-open / pga-championship all 200, even
+# out of season). So a user reaches the tournament even for phrasings and current
+# host-venues that appear in NO market name ("british open", "royal birkdale") —
+# which the market-name-derived concept path (below, scoped to matched markets)
+# structurally cannot cover. Query-tuned + word-boundary anchored so a person query
+# like "masterson" cannot false-fire the Masters (the golf route's own
+# `_normalize_tournament` matches on substring, which is unsafe over ALL queries).
+#
+# US OPEN is intentionally EXCLUDED from phrase detection: bare "us open" is
+# ambiguous with the far-more-searched tennis US Open, and the issue is scoped to
+# The Open. It IS reachable via its unambiguous golf venue below.
+_GOLF_MAJOR_QUERY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(?:the\s+open(?:\s+championship)?|open\s+championship|british\s+open)\b", re.I), "the_open"),
+    (re.compile(r"\b(?:the\s+)?masters(?:\s+tournament)?\b", re.I), "masters"),
+    (re.compile(r"\bpga\s+championship\b", re.I), "pga_championship"),
+]
+# Current-season major host courses (verified against prod /api/event 2026-07-13).
+# Venue queries are golf-unambiguous, so all four majors — including US Open — map
+# here. The Open / US Open / PGA Championship rotate courses annually (only the
+# Masters is permanently at Augusta), so REFRESH the rotating three each season;
+# a stale entry lands on the correct tournament's latest edition, never a dead link.
+_GOLF_MAJOR_VENUE_ALIASES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\broyal\s+birkdale\b", re.I), "the_open"),          # The Open 2026
+    (re.compile(r"\baugusta(?:\s+national)?\b", re.I), "masters"),    # Masters (permanent)
+    (re.compile(r"\bshinnecock(?:\s+hills)?\b", re.I), "us_open"),    # U.S. Open
+    (re.compile(r"\baronimink\b", re.I), "pga_championship"),         # PGA Championship
+]
+
+
+def _detect_query_golf_major_concept(q: str | None) -> dict | None:
+    """Resolve a raw search query to a golf-major event concept, or None. #1063
+
+    Returns `{key, name, domain, market_id}` (market_id None — the concept resolves
+    by key, and the frontend does not use it). Pure + word-boundary anchored, so it
+    is safe to unit-test and cannot false-fire on unrelated queries."""
+    if not q:
+        return None
+    key = None
+    for pat, k in _GOLF_MAJOR_QUERY_PATTERNS:
+        if pat.search(q):
+            key = k
+            break
+    if key is None:
+        for pat, k in _GOLF_MAJOR_VENUE_ALIASES:
+            if pat.search(q):
+                key = k
+                break
+    if key is None:
+        return None
+    try:
+        from app.routes.golf import MAJOR_TOURNAMENTS, TOURNAMENT_DISPLAY_NAMES
+        from app.utils.name_normalization import clean_slug
+    except Exception:
+        return None
+    if key not in MAJOR_TOURNAMENTS:
+        return None
+    display = TOURNAMENT_DISPLAY_NAMES.get(key)
+    if not display:
+        return None
+    slug = clean_slug(display)
+    if not slug:
+        return None
+    return {"key": f"event:golf:{slug}", "name": display, "domain": "golf", "market_id": None}
+
+
 def _market_volume(m) -> float:
     try:
         return float(m.volume or 0)
@@ -1589,6 +1657,19 @@ async def search_events(
         if len(event_concepts) >= 5:
             break
 
+    # #1063: prepend the golf-major concept when the QUERY names a major (by phrase
+    # or current host-venue). Prepended so the major outranks a cross-sport "open"
+    # winner-field market surfaced above (e.g. the tennis US Open, which matches
+    # "open championship" via the championship→winner synonym) — the golf major is
+    # the intended target for "the open"/"british open"/"royal birkdale". The
+    # concept page is never-dead (resolves to the latest edition), so this is honest
+    # even when no in-result market name contains the phrase.
+    _golf_major_concept = _detect_query_golf_major_concept(q)
+    if _golf_major_concept and _golf_major_concept["key"] not in _seen_concept_keys:
+        _seen_concept_keys.add(_golf_major_concept["key"])
+        event_concepts.insert(0, _golf_major_concept)
+        event_concepts = event_concepts[:5]
+
     # Search teams (ILIKE with expansion — table is small, no FTS needed)
     team_ilike_parts = []
     for term, exp in expanded:
@@ -2004,6 +2085,21 @@ async def typeahead_search(
             "event_key": _ta_key,
             "sport_key": "tennis",
         })
+
+    # #1063: golf majors are query-derived concepts here too (same never-dead keys
+    # as /search). Prepended so "the open"/"british open"/"royal birkdale" surface
+    # the golf major in the single event_concept slot the dropdown shows (line ~2097
+    # takes event_concept_pool[:1]) rather than a cross-sport "open" tennis concept.
+    _ta_golf_major = _detect_query_golf_major_concept(q)
+    if _ta_golf_major and _ta_golf_major["key"] not in _ta_seen_concept_keys:
+        _ta_seen_concept_keys.add(_ta_golf_major["key"])
+        event_concept_pool.insert(0, {
+            "type": "event_concept",
+            "text": _ta_golf_major["name"],
+            "event_key": _ta_golf_major["key"],
+            "sport_key": "golf",
+        })
+        event_concept_pool = event_concept_pool[:3]
 
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
     did_you_mean: str | None = None

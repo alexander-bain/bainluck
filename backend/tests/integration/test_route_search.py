@@ -10,11 +10,64 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
 from app.routes.events import (
+    _detect_query_golf_major_concept,
     _event_search_vector,
     _futures_search_vector,
     _search_rank,
     _team_search_vector,
 )
+
+
+# ============================================================================
+# #1063 — Golf-major event-concept detection (pure, query-level)
+# ============================================================================
+
+
+class TestGolfMajorConceptDetection:
+    """`_detect_query_golf_major_concept` must surface each golf major's never-dead
+    concept for phrasing + current-venue queries, rank golf-unambiguous, and never
+    false-fire on unrelated queries. Regression for #1063 (The Open search miss)."""
+
+    @pytest.mark.parametrize(
+        "query,expected_key",
+        [
+            # The Open — phrasing (issue's failing queries) + 2026 host venue
+            ("the open", "event:golf:the-open-championship"),
+            ("the open championship", "event:golf:the-open-championship"),
+            ("open championship", "event:golf:the-open-championship"),
+            ("British Open", "event:golf:the-open-championship"),
+            ("Royal Birkdale", "event:golf:the-open-championship"),
+            # Other majors — phrasing + venue (venue is golf-unambiguous)
+            ("the masters", "event:golf:the-masters"),
+            ("augusta national", "event:golf:the-masters"),
+            ("pga championship", "event:golf:pga-championship"),
+            ("shinnecock hills", "event:golf:u-s-open"),  # US Open via venue only
+        ],
+    )
+    def test_surfaces_golf_major(self, query, expected_key):
+        result = _detect_query_golf_major_concept(query)
+        assert result is not None, f"{query!r} should surface a golf major"
+        assert result["key"] == expected_key
+        assert result["domain"] == "golf"
+        assert result["name"]
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "masterson",          # substring of "masters" — must NOT false-fire
+            "us open",            # ambiguous with tennis US Open — excluded by design
+            "the players championship",
+            "wells fargo",
+            "lebron james",
+            "open",               # bare, too ambiguous
+        ],
+    )
+    def test_does_not_false_fire(self, query):
+        assert _detect_query_golf_major_concept(query) is None
+
+    def test_none_and_empty_are_safe(self):
+        assert _detect_query_golf_major_concept(None) is None
+        assert _detect_query_golf_major_concept("") is None
 
 
 # ============================================================================
