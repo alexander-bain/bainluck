@@ -33,11 +33,16 @@ export const TOURNAMENT_DISPLAY_NAMES: Record<string, string> = {
   other: "Other Tournaments",
 };
 
+// Static fallback venues. These are only used when the API does not supply a
+// venue for a tournament (the golf route now carries the authoritative venue
+// per season). Majors other than the Masters rotate venues yearly, so treat
+// this map as a last resort and prefer the API `venue` field. Values reflect
+// the 2026 season.
 export const TOURNAMENT_VENUES: Record<string, string> = {
   masters: "Augusta National Golf Club",
   pga_championship: "Quail Hollow Club",
   us_open: "Shinnecock Hills Golf Club",
-  the_open: "Royal Portrush Golf Club",
+  the_open: "Royal Birkdale Golf Club",
 };
 
 export const TOURNAMENT_EMOJI: Record<string, string> = {

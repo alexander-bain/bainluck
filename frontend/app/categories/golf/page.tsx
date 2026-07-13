@@ -313,10 +313,10 @@ export default function GolfPage() {
             <div className="mt-4">
               <p className="text-xs text-[#006747] font-medium uppercase tracking-wider mb-1">
                 Next Major: {nextMajor.name}
-                {TOURNAMENT_VENUES[nextMajor.key] && (
+                {(nextMajor.venue || TOURNAMENT_VENUES[nextMajor.key]) && (
                   <span className="text-text-muted">
                     {" "}
-                    &mdash; {TOURNAMENT_VENUES[nextMajor.key]}
+                    &mdash; {nextMajor.venue || TOURNAMENT_VENUES[nextMajor.key]}
                   </span>
                 )}
               </p>
