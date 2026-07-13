@@ -188,6 +188,31 @@ export function hubPath(slug: string): string {
   return `/hub/${slug}`;
 }
 
+// L2-94: themed section-page labels (mirrors backend concept_links._CATEGORY_PAGE).
+// The mesh fallback below the hub: a politics/economics/weather/entertainment market
+// with no specific concept and no competition hub up-links to its /<slug> page.
+const CATEGORY_PAGE_LABELS: Record<string, string> = {
+  politics: "Politics",
+  economics: "Economics",
+  weather: "Weather",
+  entertainment: "Entertainment",
+};
+
+/** Display label for a themed section-page slug ("Politics"), or null if unknown. */
+export function categoryPageLabel(slug: string | null | undefined): string | null {
+  return slug ? CATEGORY_PAGE_LABELS[slug] || null : null;
+}
+
+/** Build the app path for a themed section-page slug ("/politics"). */
+export function categoryPagePath(slug: string): string {
+  return `/${slug}`;
+}
+
+/** Build the app path for a hub-less sport's sport page ("/sports/soccer_epl"). */
+export function sportPagePath(key: string): string {
+  return `/sports/${key}`;
+}
+
 /** Human breadcrumb label for an event-concept key + its market name. Awards read
  *  as the ceremony ("The Oscars"); combat cards read as the card; winner fields drop
  *  the "Winner/Champion" suffix ("… British Grand Prix"). */

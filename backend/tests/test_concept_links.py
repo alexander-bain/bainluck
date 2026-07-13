@@ -2,8 +2,10 @@
 resolver (`app/utils/concept_links.py`) that the futures-detail response attaches."""
 
 from app.utils.concept_links import (
+    derive_market_category_page,
     derive_market_concept_key,
     derive_market_hub_slug,
+    derive_market_sport_page_key,
 )
 
 
@@ -190,3 +192,53 @@ class TestHubSlug:
         assert derive_market_hub_slug("nba") is None
         assert derive_market_hub_slug("economics") is None
         assert derive_market_hub_slug(None) is None
+
+
+class TestCategoryPage:
+    # L2-94: the mesh fallback below the hub — themed-category futures markets with no
+    # concept + no hub up-link to their /<slug> section page.
+    def test_mapped_categories(self):
+        assert derive_market_category_page("politics") == "politics"
+        assert derive_market_category_page("economics") == "economics"
+        assert derive_market_category_page("weather") == "weather"
+        assert derive_market_category_page("entertainment") == "entertainment"
+
+    def test_case_insensitive(self):
+        assert derive_market_category_page("Politics") == "politics"
+
+    def test_no_page_for_unmapped(self):
+        # Categories without a themed page get no category up-link (honest gap).
+        assert derive_market_category_page("culture") is None
+        assert derive_market_category_page("geopolitics") is None
+        assert derive_market_category_page("tech") is None
+        assert derive_market_category_page("crypto") is None
+        assert derive_market_category_page("soccer") is None
+        assert derive_market_category_page("mma") is None
+        assert derive_market_category_page(None) is None
+
+
+class TestSportPage:
+    # L2-94: the last-resort up-link — a hub-less sport futures market (e.g. soccer
+    # league/season winner) breadcrumbs to its /sports/<key> sport page.
+    def test_hubless_sport_gets_sport_page(self):
+        assert (
+            derive_market_sport_page_key("soccer_epl", "soccer") == "soccer_epl"
+        )
+        assert (
+            derive_market_sport_page_key("cricket_ipl", "cricket") == "cricket_ipl"
+        )
+
+    def test_hub_sport_gets_no_sport_page(self):
+        # Golf/tennis/mma resolve at their hub, not the sport page.
+        assert derive_market_sport_page_key("golf_pga", "golf") is None
+        assert derive_market_sport_page_key("tennis_atp", "tennis") is None
+
+    def test_themed_category_gets_no_sport_page(self):
+        # A themed-category market resolves at its category page, not a sport page.
+        assert derive_market_sport_page_key("", "politics") is None
+        assert derive_market_sport_page_key(None, "economics") is None
+
+    def test_no_sport_key_gets_no_link(self):
+        assert derive_market_sport_page_key(None, "soccer") is None
+        assert derive_market_sport_page_key("", None) is None
+        assert derive_market_sport_page_key("   ", "soccer") is None

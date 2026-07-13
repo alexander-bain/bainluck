@@ -3044,10 +3044,14 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     # must never 500 the detail page (honest degrade to no breadcrumb).
     event_concept_key = None
     hub_slug = None
+    category_page = None
+    sport_page_key = None
     try:
         from app.utils.concept_links import (
+            derive_market_category_page,
             derive_market_concept_key,
             derive_market_hub_slug,
+            derive_market_sport_page_key,
         )
 
         event_concept_key = derive_market_concept_key(
@@ -3057,6 +3061,13 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
             len(outcomes),
         )
         hub_slug = derive_market_hub_slug(market.llm_sport_category)
+        # L2-94: fallbacks below the hub — themed section page then hub-less sport
+        # page. The frontend picks the first of concept/hub/category/sport that's set.
+        category_page = derive_market_category_page(market.llm_sport_category)
+        sport_page_key = derive_market_sport_page_key(
+            market.sport.key if market.sport else None,
+            market.llm_sport_category,
+        )
     except Exception:
         pass
 
@@ -3087,6 +3098,9 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         # B7 (L2-91): up-link mesh — concept page + competition hub (null where none).
         "event_concept_key": event_concept_key,
         "hub_slug": hub_slug,
+        # L2-94: mesh fallbacks — themed section page then hub-less sport page.
+        "category_page": category_page,
+        "sport_page_key": sport_page_key,
     }
 
 

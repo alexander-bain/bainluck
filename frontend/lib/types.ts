@@ -394,6 +394,10 @@ export interface FuturesMarket {
   // market belongs to (null where no mapping exists). Server-derived so links resolve.
   event_concept_key?: string | null;
   hub_slug?: string | null;
+  // L2-94: mesh fallbacks below the hub — themed section page (politics/economics/
+  // weather/entertainment) then a hub-less sport's sport page (soccer, …).
+  category_page?: string | null;
+  sport_page_key?: string | null;
 }
 
 // ---------------------------------------------------------------------------

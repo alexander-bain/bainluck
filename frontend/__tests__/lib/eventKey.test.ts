@@ -9,6 +9,9 @@ import {
   eventPath,
   hubLabel,
   hubPath,
+  categoryPageLabel,
+  categoryPagePath,
+  sportPagePath,
   conceptDisplayLabel,
   awardsEventKey,
   awardsCeremonyName,
@@ -93,6 +96,21 @@ describe("hub helpers + conceptDisplayLabel (L2-91)", () => {
     expect(conceptDisplayLabel("event:ufc:26jul11", "McGregor vs Holloway")).toBe("the full fight card");
     expect(conceptDisplayLabel("event:f1:british-grand-prix-winner", "British Grand Prix Winner")).toBe("British Grand Prix");
     expect(conceptDisplayLabel(null, "Whatever")).toBeNull();
+  });
+});
+
+describe("category-page + sport-page helpers (L2-94)", () => {
+  test("categoryPageLabel / categoryPagePath", () => {
+    expect(categoryPageLabel("politics")).toBe("Politics");
+    expect(categoryPageLabel("economics")).toBe("Economics");
+    expect(categoryPageLabel("weather")).toBe("Weather");
+    expect(categoryPageLabel("entertainment")).toBe("Entertainment");
+    expect(categoryPageLabel("culture")).toBeNull();
+    expect(categoryPageLabel(null)).toBeNull();
+    expect(categoryPagePath("politics")).toBe("/politics");
+  });
+  test("sportPagePath", () => {
+    expect(sportPagePath("soccer_epl")).toBe("/sports/soccer_epl");
   });
 });
 

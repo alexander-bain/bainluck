@@ -218,6 +218,8 @@ class TestFuturesMarketDetail:
             "image_url",
             "event_concept_key",
             "hub_slug",
+            "category_page",
+            "sport_page_key",
             "source_breakdown",
         }
         assert set(body) == expected_keys

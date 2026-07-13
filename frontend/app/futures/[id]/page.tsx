@@ -19,6 +19,9 @@ import {
   conceptDisplayLabel,
   hubLabel,
   hubPath,
+  categoryPageLabel,
+  categoryPagePath,
+  sportPagePath,
 } from "@/lib/eventKey";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -400,6 +403,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const conceptLabel = conceptDisplayLabel(conceptKey, market.name);
   const hubSlug = !conceptKey ? market.hub_slug || null : null;
   const hubLinkLabel = hubLabel(hubSlug);
+  // L2-94: fallbacks below the hub — a themed-category market (politics/economics/
+  // weather/entertainment) up-links to its section page; a hub-less sport futures
+  // market (soccer, …) up-links to its sport page. First of concept/hub/category/
+  // sport that resolves wins; no link where none does (honest).
+  const categorySlug = !conceptKey && !hubSlug ? market.category_page || null : null;
+  const categoryLinkLabel = categoryPageLabel(categorySlug);
+  const sportPageKey =
+    !conceptKey && !hubSlug && !categorySlug ? market.sport_page_key || null : null;
+  const sportLinkLabel = sportPageKey ? market.sport_name || null : null;
 
   return (
     <div className="space-y-6">
@@ -468,6 +480,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
         >
           Part of: {hubLinkLabel}
+          <span aria-hidden="true">→</span>
+        </Link>
+      ) : categorySlug && categoryLinkLabel ? (
+        <Link
+          href={categoryPagePath(categorySlug)}
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
+        >
+          Part of: {categoryLinkLabel}
+          <span aria-hidden="true">→</span>
+        </Link>
+      ) : sportPageKey && sportLinkLabel ? (
+        <Link
+          href={sportPagePath(sportPageKey)}
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
+        >
+          Part of: {sportLinkLabel}
           <span aria-hidden="true">→</span>
         </Link>
       ) : null}

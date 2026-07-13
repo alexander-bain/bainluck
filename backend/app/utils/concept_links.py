@@ -57,6 +57,49 @@ def derive_market_hub_slug(llm_sport_category: str | None) -> str | None:
     return _CATEGORY_HUB.get((llm_sport_category or "").lower())
 
 
+# L2-94: themed top-level section pages (frontend /politics, /economics, /weather,
+# /entertainment). A themed-category futures market with no specific event concept
+# and no competition hub up-links to its section page — the fallback below the hub in
+# the mesh's chain. Only categories with a real page appear here; other categories
+# (culture / geopolitics / tech / health / crypto) have no themed page yet, so they
+# get no category up-link (honest gap, not a dead link).
+_CATEGORY_PAGE: dict[str, str] = {
+    "politics": "politics",
+    "economics": "economics",
+    "weather": "weather",
+    "entertainment": "entertainment",
+}
+
+
+def derive_market_category_page(llm_sport_category: str | None) -> str | None:
+    """Themed section-page slug (frontend `/<slug>`) for a market's category, or None.
+
+    The up-link fallback below the competition hub: politics/economics/weather/
+    entertainment markets breadcrumb to their themed page. These are top-level
+    dynamic-free routes that always render (never 404)."""
+    return _CATEGORY_PAGE.get((llm_sport_category or "").lower())
+
+
+def derive_market_sport_page_key(
+    sport_key: str | None, llm_sport_category: str | None = None
+) -> str | None:
+    """Sport-page key (frontend `/sports/<key>`) for a hub-less sport futures market.
+
+    The last resort in the up-link chain: a league/season futures market in a sport
+    that has NO competition hub (soccer, cricket, …) breadcrumbs to its sport page.
+    Returns None for hub sports (they resolve at the hub) and for themed non-sport
+    categories (they resolve at the category page), and None when there's no sport_key
+    so a market with no sport gets no link (honest). `/sports/<key>` is a dynamic route
+    that always renders, so this never dead-links."""
+    key = (sport_key or "").strip()
+    if not key:
+        return None
+    cat = (llm_sport_category or "").lower()
+    if cat in _CATEGORY_HUB or cat in _CATEGORY_PAGE:
+        return None
+    return key
+
+
 def _golf_major_concept_key(name: str | None) -> str | None:
     """`event:golf:<slug>` for a golf MAJOR winner/prop market, else None.
 
