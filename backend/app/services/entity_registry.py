@@ -29,7 +29,17 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Entity, EntityAlias, Sport, Team, TeamIdentityMapping
+from app.models.models import (
+    Entity,
+    EntityAlias,
+    Event,
+    FuturesMarket,
+    FuturesOutcome,
+    Sport,
+    Team,
+    TeamIdentityMapping,
+)
+from app.utils.event_matcher import player_key
 from app.utils.name_normalization import strip_diacritics
 
 logger = logging.getLogger(__name__)
@@ -354,6 +364,214 @@ async def seed_from_teams(
         ):
             stats["aliases"] += 1
 
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# Person fold-in seed — fighters / players / golfers / drivers (A1 "person" kind)
+# ---------------------------------------------------------------------------
+# Individual (non-team) sports: the two "teams" on an event ARE the two people,
+# and a futures field's outcomes ARE the competitors. Matched loosely (prefix or
+# substring) because sport keys vary (mma_mixed_martial_arts, tennis_atp, golf_*).
+_PERSON_SPORT_PREFIXES = (
+    "mma", "boxing", "tennis", "golf", "motorsport", "formula", "nascar",
+    "cycling", "ufc", "atp", "wta", "pga", "liv",
+)
+
+# Field placeholders that are not people — never seed these as person entities.
+_NON_PERSON_FIELD_NAMES = frozenset({
+    "yes", "no", "the field", "field", "other", "none", "no winner", "draw",
+    "tie", "over", "under", "any other", "no other", "another player",
+})
+
+
+def _is_person_sport_key(key: Optional[str]) -> bool:
+    k = (key or "").lower()
+    return any(k.startswith(p) or p in k for p in _PERSON_SPORT_PREFIXES)
+
+
+def _person_ref(sport_key: Optional[str], norm: str) -> str:
+    """Stable dedup anchor for a person entity: ``person:<sport_key>:<norm>``.
+
+    Bucketed by sport_key so a golfer and a footballer named "John Smith" stay
+    distinct, and a re-run skips already-seeded persons idempotently.
+    """
+    return f"person:{(sport_key or '').lower()}:{norm}"[:200]
+
+
+async def _upsert_person(
+    session: AsyncSession,
+    *,
+    name: str,
+    sport_id: Optional[int],
+    sport_key: Optional[str],
+    existing_refs: set[str],
+    source: str,
+) -> tuple[int, int]:
+    """Create one ``person`` entity + canonical & surname aliases if new.
+
+    Returns ``(entities_created, aliases_created)``. Idempotent via
+    ``existing_refs`` (the set of person ``external_ref``s seen so far — mutated
+    in place). The surname alias (``player_key`` — the SAME key the engine's
+    entrant-set / signature machinery uses) is what bridges a market that names a
+    competitor by surname only ("Abdullayev") to an event that carries the full
+    name ("Tahir Abdullayev"). It is deliberately lower-confidence than the
+    canonical alias so a full-name match always outranks a bare-surname collision.
+    """
+    norm = normalize_alias(name)
+    if not norm or norm in _NON_PERSON_FIELD_NAMES or len(norm) < 3:
+        return (0, 0)
+    ref = _person_ref(sport_key, norm)
+    if ref in existing_refs:
+        return (0, 0)
+    existing_refs.add(ref)
+
+    entity = Entity(
+        kind=KIND_PERSON,
+        canonical_name=name.strip()[:300],
+        sport_id=sport_id,
+        sport_key=sport_key,
+        external_ref=ref,
+        confidence=0.9,
+        entity_metadata={"seed_source": source},
+    )
+    session.add(entity)
+    await session.flush()
+
+    aliases = 0
+    if await add_alias(
+        session, entity.id, name, ALIAS_CANONICAL, source=source, confidence=1.0
+    ):
+        aliases += 1
+    surname = player_key(name)
+    if surname and surname != norm and await add_alias(
+        session, entity.id, surname, ALIAS_COMMON_NAME, source=source, confidence=0.6
+    ):
+        aliases += 1
+    return (1, aliases)
+
+
+async def _existing_person_refs(session: AsyncSession) -> set[str]:
+    return set(
+        (
+            await session.execute(
+                select(Entity.external_ref).where(
+                    Entity.kind == KIND_PERSON, Entity.external_ref.isnot(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def seed_persons_from_events(
+    session: AsyncSession, *, batch_size: int = 1000
+) -> dict[str, int]:
+    """Fold individual-sport EVENTS into the registry as ``person`` entities.
+
+    For an event in an individual sport (MMA/boxing/tennis/motorsport), the
+    ``home_team_name`` / ``away_team_name`` ARE the two competitors (people), not
+    teams. Create a person entity + canonical & surname aliases per distinct
+    ``(sport_key, name)``. Additive & idempotent (persons matched by
+    ``external_ref``); reads ``events`` / ``sports`` only — never writes them, so
+    existing team/event matching cannot regress.
+    """
+    stats = {"created": 0, "aliases": 0, "events_scanned": 0}
+    existing_refs = await _existing_person_refs(session)
+
+    person_sports = {
+        sid: skey
+        for sid, skey in await session.execute(select(Sport.id, Sport.key))
+        if _is_person_sport_key(skey)
+    }
+    if not person_sports:
+        return stats
+    sport_ids = list(person_sports.keys())
+
+    offset = 0
+    while True:
+        rows = (
+            await session.execute(
+                select(
+                    Event.sport_id, Event.home_team_name, Event.away_team_name
+                )
+                .where(Event.sport_id.in_(sport_ids))
+                .order_by(Event.id)
+                .offset(offset)
+                .limit(batch_size)
+            )
+        ).all()
+        if not rows:
+            break
+        offset += batch_size
+        for sport_id, home, away in rows:
+            stats["events_scanned"] += 1
+            skey = person_sports.get(sport_id)
+            for name in (home, away):
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                c, a = await _upsert_person(
+                    session,
+                    name=name,
+                    sport_id=sport_id,
+                    sport_key=skey,
+                    existing_refs=existing_refs,
+                    source="seed_persons_events",
+                )
+                stats["created"] += c
+                stats["aliases"] += a
+        await session.flush()
+    return stats
+
+
+async def seed_persons_from_futures_fields(
+    session: AsyncSession,
+    *,
+    batch_size: int = 2000,
+    categories: tuple[str, ...] = ("golf", "motorsports"),
+) -> dict[str, int]:
+    """Fold person entrant-FIELDS from futures outcomes into ``person`` entities.
+
+    Scoped to categories whose outcomes are unambiguously people: golf winner /
+    make-cut / matchup fields and motorsport driver fields. (Tennis persons come
+    from ``seed_persons_from_events``; award nominees are intentionally deferred —
+    a Best-Actor nominee vs a Best-Picture title needs per-market typing, not a
+    blanket fold-in.) Additive & idempotent; reads ``futures_*`` only.
+    """
+    stats = {"created": 0, "aliases": 0, "outcomes_scanned": 0}
+    existing_refs = await _existing_person_refs(session)
+
+    offset = 0
+    while True:
+        rows = (
+            await session.execute(
+                select(FuturesOutcome.name, FuturesMarket.llm_sport_category)
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .where(FuturesMarket.llm_sport_category.in_(list(categories)))
+                .order_by(FuturesOutcome.id)
+                .offset(offset)
+                .limit(batch_size)
+            )
+        ).all()
+        if not rows:
+            break
+        offset += batch_size
+        for name, category in rows:
+            stats["outcomes_scanned"] += 1
+            if not isinstance(name, str) or not name.strip():
+                continue
+            c, a = await _upsert_person(
+                session,
+                name=name,
+                sport_id=None,
+                sport_key=category,
+                existing_refs=existing_refs,
+                source="seed_persons_futures",
+            )
+            stats["created"] += c
+            stats["aliases"] += a
+        await session.flush()
     return stats
 
 

@@ -127,3 +127,58 @@ class TestModelShape:
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
+
+
+class TestPersonFoldIn:
+    """Queue #170 — A1 person fold-in helpers (seed persons from events/futures)."""
+
+    def test_person_kind_and_alias_constants(self):
+        from app.services import entity_registry as er
+
+        assert er.KIND_PERSON == "person"
+        assert er.ALIAS_COMMON_NAME == "common_name"
+        assert er.ALIAS_CANONICAL == "canonical"
+
+    def test_is_person_sport_key(self):
+        from app.services.entity_registry import _is_person_sport_key
+
+        for k in ("mma_mixed_martial_arts", "boxing_boxing", "tennis_atp",
+                  "golf_pga", "motorsport_other", "tennis_wta_wimbledon"):
+            assert _is_person_sport_key(k), k
+        for k in ("basketball_nba", "baseball_mlb", "americanfootball_nfl", None):
+            assert not _is_person_sport_key(k), k
+
+    def test_person_ref_is_sport_bucketed_and_stable(self):
+        from app.services.entity_registry import _person_ref
+
+        a = _person_ref("mma_mixed_martial_arts", "khamzat chimaev")
+        b = _person_ref("mma_mixed_martial_arts", "khamzat chimaev")
+        c = _person_ref("golf", "khamzat chimaev")
+        assert a == b            # stable → idempotent seed
+        assert a != c            # bucketed by sport → no cross-sport collision
+        assert a.startswith("person:")
+
+    def test_surname_alias_matches_engine_player_key(self):
+        """The surname alias the seed writes MUST equal the key the engine derives
+        (player_key) — else a market naming a fighter by surname would never
+        resolve to the seeded full-name entity."""
+        from app.services.entity_registry import normalize_alias
+        from app.utils.event_matcher import player_key
+
+        for full in ("Tahir Abdullayev", "Khamzat Chimaev", "Iga Swiatek"):
+            surname = player_key(full)
+            assert surname == normalize_alias(full).split()[-1]
+
+    def test_non_person_field_names_are_excluded(self):
+        from app.services.entity_registry import _NON_PERSON_FIELD_NAMES
+
+        for junk in ("the field", "no winner", "other", "yes", "no"):
+            assert junk in _NON_PERSON_FIELD_NAMES
+
+    def test_seed_functions_exist_and_are_coroutines(self):
+        import inspect
+
+        from app.services import entity_registry as er
+
+        assert inspect.iscoroutinefunction(er.seed_persons_from_events)
+        assert inspect.iscoroutinefunction(er.seed_persons_from_futures_fields)

@@ -392,3 +392,82 @@ def test_acceptance_market_type_and_line_coverage():
     stats = coverage(anns)
     assert stats["with_market_type"] == stats["total"]  # every market gets a type
     assert stats["with_line"] >= 3  # spreads/totals/thresholds captured lines
+
+
+# ---------------------------------------------------------------------------
+# Queue #170 — MMA combat-ticker grammar hardening + poly matchup title backfill
+# ---------------------------------------------------------------------------
+def test_kalshi_ufc_fight_night_prefix_yields_exactly_two_fighters():
+    """A stored UFC fight name carries an event-title PREFIX and surname-only
+    fighters ("Fight Night: Abdullayev vs Nascimento"). The grammar must strip
+    the prefix and emit EXACTLY two person participants — the date-token ticker
+    ("KXUFCFIGHT-26JUN27ABDNAS") must NOT fragment into junk 'ABD'/'NAS'
+    participants that push the market past the engine's is_game two-participant
+    gate."""
+    from app.services.resolution_engine import build_signature
+
+    ann = annotate_stored_market(
+        source="kalshi",
+        external_id="KXUFCFIGHT-26JUN27ABDNAS",
+        name="Fight Night: Abdullayev vs Nascimento",
+        market_metadata={"kalshi_event_ticker": "KXUFCFIGHT-26JUN27ABDNAS"},
+    )
+    participants = {m.norm for m in ann.mentions if m.role == ROLE_PARTICIPANT}
+    assert participants == {"abdullayev", "nascimento"}, participants
+    assert all(
+        m.kind == KIND_PERSON for m in ann.mentions if m.role == ROLE_PARTICIPANT
+    )
+    sig = build_signature(ann, external_id="KXUFCFIGHT-26JUN27ABDNAS")
+    assert sig.is_game  # exactly two participants
+    assert sig.surnames == {"abdullayev", "nascimento"}
+
+
+def test_kalshi_ufc_fight_night_full_prefix_variant():
+    ann = annotate_stored_market(
+        source="kalshi",
+        external_id="KXUFCFIGHT-26JUN06SOUCAR",
+        name="UFC Fight Night: Souza vs Carnelossi",
+        market_metadata={"kalshi_event_ticker": "KXUFCFIGHT-26JUN06SOUCAR"},
+    )
+    participants = {m.norm for m in ann.mentions if m.role == ROLE_PARTICIPANT}
+    assert participants == {"souza", "carnelossi"}, participants
+
+
+def test_poly_stored_market_uses_backfilled_matchup_title():
+    """A decomposed poly spread row names only one team; with a backfilled
+    ``matchup_title`` the grammar recovers BOTH participants so the engine can
+    reproduce the event link."""
+    from app.services.resolution_engine import build_signature
+
+    ann = annotate_stored_market(
+        source="polymarket",
+        external_id="0xspread",
+        name="Spread: San Diego Padres (-2.5)",
+        market_metadata={"matchup_title": "Toronto Blue Jays vs. San Diego Padres"},
+    )
+    sig = build_signature(ann, external_id="0xspread")
+    assert sig.is_game
+    assert sig.participants == {"n:toronto blue jays", "n:san diego padres"}
+
+
+def test_poly_stored_market_without_matchup_title_unchanged():
+    """Additive: absent a matchup_title, a spread row still yields no participants
+    (behaviour is unchanged for un-backfilled rows)."""
+    from app.services.resolution_engine import build_signature
+
+    ann = annotate_stored_market(
+        source="polymarket",
+        external_id="0xspread",
+        name="Spread: San Diego Padres (-2.5)",
+        market_metadata={},
+    )
+    sig = build_signature(ann, external_id="0xspread")
+    assert not sig.is_game
+
+
+def test_split_vs_strips_event_prefix_but_keeps_plain_matchups():
+    from app.services.grammar_adapters import _split_vs
+
+    assert _split_vs("Fight Night: Abdullayev vs Nascimento") == ("Abdullayev", "Nascimento")
+    assert _split_vs("Oliveira vs. Holloway") == ("Oliveira", "Holloway")
+    assert _split_vs("USA at Canada") == ("USA", "Canada")

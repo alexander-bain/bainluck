@@ -24,18 +24,27 @@ from app.services.entity_registry import (  # noqa: E402
     registry_counts,
     seed_competitions_from_sports,
     seed_from_teams,
+    seed_persons_from_events,
+    seed_persons_from_futures_fields,
 )
 
 
-async def _run(dry_run: bool) -> None:
+async def _run(dry_run: bool, persons_only: bool) -> None:
     async with async_session_maker() as session:
         before = await registry_counts(session)
         print(f"Before: {before}")
 
-        comp = await seed_competitions_from_sports(session)
-        print(f"Competitions: {comp}")
-        teams = await seed_from_teams(session)
-        print(f"Teams: {teams}")
+        if not persons_only:
+            comp = await seed_competitions_from_sports(session)
+            print(f"Competitions: {comp}")
+            teams = await seed_from_teams(session)
+            print(f"Teams: {teams}")
+
+        # A1 person fold-in — fighters/players (events) + golf/driver fields (futures).
+        persons_ev = await seed_persons_from_events(session)
+        print(f"Persons (events):  {persons_ev}")
+        persons_fx = await seed_persons_from_futures_fields(session)
+        print(f"Persons (futures): {persons_fx}")
 
         if dry_run:
             await session.rollback()
@@ -54,8 +63,13 @@ def main() -> None:
         action="store_true",
         help="Seed then roll back — print projected counts without committing.",
     )
+    parser.add_argument(
+        "--persons-only",
+        action="store_true",
+        help="Only run the person fold-in (skip the already-seeded teams/competitions).",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args.dry_run))
+    asyncio.run(_run(args.dry_run, args.persons_only))
 
 
 if __name__ == "__main__":

@@ -252,13 +252,22 @@ _VS_SPLIT_RE = re.compile(r"\s+(?:vs\.?|v\.?|versus|@|at)\s+", re.I)
 
 
 def _split_vs(title: str) -> Optional[tuple[str, str]]:
-    """Split "Oliveira vs. Holloway" / "USA at Canada" into two participants."""
+    """Split "Oliveira vs. Holloway" / "USA at Canada" into two participants.
+
+    Strips an event-title prefix from the first participant so a Kalshi fight
+    name like "Fight Night: Abdullayev vs Nascimento" or "UFC Fight Night: Souza
+    vs Carnelossi" yields the two FIGHTERS ("Abdullayev", "Nascimento"), not
+    "Fight Night: Abdullayev". A person/team name never contains ": ", so any
+    leading "…: " segment on side A is a card/promotion label, not a competitor.
+    """
     if not title:
         return None
     parts = _VS_SPLIT_RE.split(title, maxsplit=1)
     if len(parts) == 2:
         a = _clean_person_name(parts[0])
         b = _clean_person_name(parts[1].split(":")[0])  # drop trailing ": Method"
+        if ":" in a:  # "Fight Night: Abdullayev" -> "Abdullayev"
+            a = a.rsplit(":", 1)[1].strip()
         if a and b:
             return a, b
     return None
@@ -304,8 +313,30 @@ def annotate_kalshi(
                         confidence=0.9,
                     )
                 )
-        else:
-            # 1b) College/other with no abbrev map: raw ticker fragments (low conf).
+        # 2) Fights/tennis (and any ticker with no abbrev map) carry the two
+        #    participants in the TITLE, not the ticker. Prefer this over raw
+        #    ticker fragments — for a person-sport ticker the fragment is a date +
+        #    fighter initials ("26JUN27ABDNAS"), which fragments into junk keys
+        #    ("abd"/"nas") and pushes a 2-competitor market past is_game's
+        #    exactly-two-participants gate.
+        vs = _split_vs(title) if not teams else None
+        if vs:
+            pkind = KIND_PERSON if kind in (KIND_PERSON, KIND_UNKNOWN) else kind
+            for name in vs:
+                mentions.append(
+                    EntityMention.make(
+                        name,
+                        kind=pkind,
+                        role=ROLE_PARTICIPANT,
+                        source="kalshi",
+                        alias_type=ALIAS_SOURCE_NAME,
+                        confidence=0.8,
+                    )
+                )
+        # 3) Last resort — raw ticker fragments — ONLY for team/unknown sports with
+        #    no abbrev map AND no title matchup (e.g. some college games). A
+        #    person-sport ticker never carries team codes, so never fragment it.
+        if not teams and not vs and kind != KIND_PERSON:
             frags = extract_ticker_fragments(event_ticker)
             if frags:
                 for token in frags[:2]:
@@ -317,22 +348,6 @@ def annotate_kalshi(
                             source="kalshi",
                             alias_type=ALIAS_TICKER_TOKEN,
                             confidence=0.5,
-                        )
-                    )
-        # 2) UFC/tennis fights carry participants in the TITLE, not the ticker.
-        if not teams:
-            vs = _split_vs(title)
-            if vs:
-                pkind = KIND_PERSON if kind in (KIND_PERSON, KIND_UNKNOWN) else kind
-                for name in vs:
-                    mentions.append(
-                        EntityMention.make(
-                            name,
-                            kind=pkind,
-                            role=ROLE_PARTICIPANT,
-                            source="kalshi",
-                            alias_type=ALIAS_SOURCE_NAME,
-                            confidence=0.8,
                         )
                     )
         # 3) Sub-market outcome labels (yes/no sub_title) — round/method/distance
@@ -716,8 +731,20 @@ def annotate_stored_market(
         event_id = md.get("polymarket_event_id") or external_id
         neg = bool(md.get("neg_risk"))
         markets = [{"group_item_title": oc} for oc in ocs]
+        # A Polymarket game event is stored as decomposed sub-market rows
+        # (gotcha #18): the moneyline / O-U rows carry "A vs. B" in their name,
+        # but the spread ("Spread: San Diego Padres (-2.5)") and prop rows do not,
+        # so the participant grammar can't recover both teams from those rows'
+        # names alone. ``matchup_title`` is the group-native matchup backfilled
+        # onto those rows (see ``utils/polymarket_matchup_backfill``); prefer it as
+        # the title so the two participants resolve. Absent it, behaviour is
+        # unchanged (the row's own name is used).
+        matchup_title = md.get("matchup_title")
         return annotate_polymarket(
-            event_id=event_id, title=name, neg_risk=neg, markets=markets
+            event_id=event_id,
+            title=matchup_title or name,
+            neg_risk=neg,
+            markets=markets,
         )
     if src == "odds_api":
         return annotate_odds_api(
