@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
+import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
@@ -539,7 +540,7 @@ export default function DiscoverPage() {
     };
   }, [showSwipeHint]);
 
-  const { data, isLoading, error: feedError } = useSWR(
+  const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
     "discover-feed",
     () => fetchFeed({ limit: 200, event_pct: 0.15 }),
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
@@ -590,6 +591,19 @@ export default function DiscoverPage() {
     } catch { }
     setLoadingMore(false);
   }, [allItems, data, loadingMore, hasMore]);
+
+  // Graceful end-of-feed refresh: reset paging state, scroll to top, revalidate
+  // page 1. This is the web reload affordance (web has no pull-to-refresh).
+  const handleRefreshFeed = useCallback(() => {
+    trackEvent("feed_refresh", { trigger: "manual", new_items_count: 0 });
+    setAllItems([]);
+    setVisibleCount(PAGE_SIZE);
+    setHasMore(true);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    mutateFeed();
+  }, [mutateFeed]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -801,13 +815,8 @@ export default function DiscoverPage() {
         )}
 
         {!isLoading && !feedError && visibleItems.length === 0 && (
-          <div className="text-center py-20 text-text-muted">
-            <p className="text-lg font-medium">
-              All caught up!
-            </p>
-            <p className="text-sm mt-1">
-              New markets open throughout the day — check back soon
-            </p>
+          <div className="py-16 flex justify-center">
+            <EndOfFeedCard count={0} onRefresh={handleRefreshFeed} />
           </div>
         )}
 
@@ -877,8 +886,8 @@ export default function DiscoverPage() {
         )}
 
         {visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
-          <div className="text-center py-8 text-text-muted text-sm">
-            {processedItems.length} markets explored
+          <div className="mt-6 mb-2 flex justify-center">
+            <EndOfFeedCard count={processedItems.length} onRefresh={handleRefreshFeed} />
           </div>
         )}
       </main>
