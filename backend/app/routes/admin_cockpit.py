@@ -154,7 +154,7 @@ _AUTOPILOT_BEATS = [
     {
         "label": "calibration_prices",  # metric label from _tracked_run (NOT the beat name)
         "display": "Cal-price beat",
-        "schedule": "every 6h (02/08/14/20:15 UTC)",
+        "schedule": "every 6h (02/08/14/20:10 UTC)",
         "expected_24h": 4,
         "stale_hours": 8,  # 6h cadence → >8h means a scheduled slot was missed
         "rescued_field": "rescued",
@@ -266,6 +266,86 @@ def _feed_quality_empty_detail(eval_row) -> str:
         f"Last eval ran {age_str} but scored 0 human labels — grade markets in "
         "Discover Quality to populate boring-rate."
     )
+
+
+_GH_ISSUE_URL = "https://github.com/alexander-bain/bainluck/issues/{}"
+
+
+def _flow_sentinel_group() -> dict:
+    """Per-flow pass/fail from the last Flow Sentinel run (#1078 / Queue #185).
+
+    Reads the scorecard the sentinel persists at ``bainluck:flow_sentinel:last``
+    (14d TTL, ``GET /api/admin/flow-sentinel/run`` also writes it) and shapes it
+    for the cockpit: an overall banded status plus one row per flow, each linked
+    to the issue the sentinel filed for it (if any). Pure display — it never
+    re-runs the flows. RED if any flow failed; AMBER if none failed but one was
+    skipped (e.g. event_completeness idles in the summer offseason); GREEN when
+    every flow that ran passed; UNKNOWN before the first run is cached.
+    """
+    raw = _read_redis_json("bainluck:flow_sentinel:last")
+    if not raw or raw.get("status") == "no_run_cached" or "scorecard" not in raw:
+        return {
+            "status": "unknown",
+            "detail": (
+                "No Flow Sentinel run cached yet — it runs daily (07:10 UTC) or "
+                "on POST /api/admin/flow-sentinel/run."
+            ),
+            "per_flow": [],
+        }
+
+    scorecard = raw.get("scorecard") or {}
+    per_flow = scorecard.get("per_flow") or []
+
+    # flow → the issue this run filed/commented on (so a failing tile links out).
+    filed_by_flow: dict[str, int] = {}
+    for f in raw.get("filed") or []:
+        if isinstance(f, dict) and f.get("issue") and f.get("flow"):
+            try:
+                filed_by_flow[str(f["flow"])] = int(f["issue"])
+            except (TypeError, ValueError):
+                continue
+
+    rows: list[dict] = []
+    for pf in per_flow:
+        if not isinstance(pf, dict):
+            continue
+        flow = str(pf.get("flow") or "?")
+        passed = bool(pf.get("passed"))
+        skipped = bool(pf.get("skipped"))
+        flow_status = "amber" if skipped else ("green" if passed else "red")
+        issue = filed_by_flow.get(flow)
+        rows.append(
+            {
+                "flow": flow,
+                "passed": passed,
+                "skipped": skipped,
+                "checked": pf.get("checked"),
+                "failing": pf.get("failing"),
+                "status": flow_status,
+                "issue": issue,
+                "issue_url": _GH_ISSUE_URL.format(issue) if issue else None,
+            }
+        )
+
+    failed = scorecard.get("flows_failed") or 0
+    if failed:
+        overall = "red"
+    elif any(r["skipped"] for r in rows):
+        overall = "amber"
+    elif rows:
+        overall = "green"
+    else:
+        overall = "unknown"
+
+    return {
+        "status": overall,
+        "mode": raw.get("mode"),
+        "flows_total": scorecard.get("flows_total"),
+        "flows_passed": scorecard.get("flows_passed"),
+        "flows_failed": failed,
+        "duration_seconds": raw.get("duration_seconds"),
+        "per_flow": rows,
+    }
 
 
 def _read_redis_json(key: str) -> dict | None:
@@ -658,6 +738,7 @@ async def cockpit(
         "health": await _health_group(db),
         "waiting_on_you": _waiting_on_you(),
         "eval_queue": await _eval_queue(db),
+        "flow_sentinel": _flow_sentinel_group(),
     }
 
     try:

@@ -17,6 +17,7 @@ from app.routes.admin_cockpit import (
     _WAITING_FALLBACK,
     _autopilot_tile,
     _feed_quality_empty_detail,
+    _flow_sentinel_group,
     _hours_since,
     _red_sub_context,
     _status_from_pct,
@@ -174,6 +175,127 @@ class TestAutopilotTile:
         assert tile["status"] == "green"
 
 
+class TestFlowSentinelGroup:
+    """L2-108 Item 3: cockpit consumes the persisted Flow Sentinel scorecard."""
+
+    @staticmethod
+    def _patch_redis(payload):
+        r = MagicMock()
+        r.get.return_value = json.dumps(payload) if payload is not None else None
+        return patch("app.tasks.redis_state.get_redis_client", return_value=r)
+
+    def test_no_run_cached_is_unknown(self):
+        with self._patch_redis(None):
+            group = _flow_sentinel_group()
+        assert group["status"] == "unknown"
+        assert group["per_flow"] == []
+        assert "flow-sentinel" in group["detail"].lower() or "Flow Sentinel" in group["detail"]
+
+    def test_scores_per_flow_and_links_filed_issue(self):
+        stats = {
+            "mode": "live",
+            "duration_seconds": 12.3,
+            "filed": [
+                {"flow": "duplicate_events", "issue": 1085, "action": "filed", "severity": "P2"},
+                {"flow": "search_gold_set", "action": "skipped_no_token"},  # no issue → no link
+            ],
+            "scorecard": {
+                "flows_total": 3,
+                "flows_passed": 1,
+                "flows_failed": 1,
+                "per_flow": [
+                    {"flow": "search_gold_set", "passed": True, "checked": 26, "failing": 0, "skipped": False},
+                    {"flow": "duplicate_events", "passed": False, "checked": 386, "failing": 21, "skipped": False},
+                    {"flow": "event_completeness", "passed": True, "checked": 0, "failing": 0, "skipped": True},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _flow_sentinel_group()
+
+        # A real failure dominates → overall RED.
+        assert group["status"] == "red"
+        assert group["flows_total"] == 3
+        assert group["flows_passed"] == 1
+        rows = {r["flow"]: r for r in group["per_flow"]}
+        assert rows["search_gold_set"]["status"] == "green"
+        assert rows["duplicate_events"]["status"] == "red"
+        assert rows["duplicate_events"]["issue"] == 1085
+        assert rows["duplicate_events"]["issue_url"].endswith("/1085")
+        assert rows["event_completeness"]["status"] == "amber"  # skipped
+        assert rows["search_gold_set"]["issue_url"] is None
+
+    def test_skip_only_is_amber_not_red(self):
+        stats = {
+            "scorecard": {
+                "flows_total": 2,
+                "flows_passed": 1,
+                "flows_failed": 0,
+                "per_flow": [
+                    {"flow": "resolved_state", "passed": True, "checked": 10, "failing": 0, "skipped": False},
+                    {"flow": "event_completeness", "passed": True, "checked": 0, "failing": 0, "skipped": True},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _flow_sentinel_group()
+        assert group["status"] == "amber"
+
+    def test_all_pass_is_green(self):
+        stats = {
+            "scorecard": {
+                "flows_total": 1,
+                "flows_passed": 1,
+                "flows_failed": 0,
+                "per_flow": [
+                    {"flow": "category_discover", "passed": True, "checked": 5, "failing": 0, "skipped": False},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _flow_sentinel_group()
+        assert group["status"] == "green"
+
+
+class TestScheduleTextMatchesCrontab:
+    """Guard the autopilot tile schedule strings against the REAL Celery crontab.
+
+    L2-108 Item 1: the cal-price tile drifted to ":15 UTC" while the beat had
+    moved to minute=10 (#183 de-contention), so the 02:10Z verdict reader was
+    misled. These tests cross-check each tile's human schedule string against the
+    actual `beat_schedule` crontab so a schedule move can never silently desync
+    the tile again.
+    """
+
+    @staticmethod
+    def _crontab_for(task_name: str):
+        from app.tasks import celery_app
+
+        for entry in celery_app.conf.beat_schedule.values():
+            if entry["task"] == task_name:
+                return entry["schedule"]
+        raise AssertionError(f"no beat schedule entry for {task_name}")
+
+    def test_cal_price_schedule_string_matches_beat(self):
+        cron = self._crontab_for("app.tasks.compute_calibration_prices")
+        # crontab.minute / .hour are sets of ints; the beat fires at :10 in the
+        # 2,8,14,20 windows.
+        assert cron.minute == {10}
+        assert cron.hour == {2, 8, 14, 20}
+        text = _CAL_BEAT["schedule"]
+        assert ":10 UTC" in text, f"tile schedule text out of sync: {text!r}"
+        assert ":15" not in text
+        for hr in cron.hour:
+            assert f"{hr:02d}" in text, f"missing hour {hr:02d} in {text!r}"
+
+    def test_combat_wps_schedule_string_matches_beat(self):
+        cron = self._crontab_for("app.tasks.backfill_combat_wps")
+        assert cron.minute == {50}
+        assert cron.hour == {9}
+        text = _COMBAT_BEAT["schedule"]
+        assert "09:50 UTC" in text, f"tile schedule text out of sync: {text!r}"
+
+
 # ---------------------------------------------------------------------------
 # Endpoint contract
 # ---------------------------------------------------------------------------
@@ -198,6 +320,10 @@ class TestCockpitEndpoint:
         assert "pending_eval_count" in data["eval_queue"]
         assert "new_bug_reports" in data["eval_queue"]
         assert data["eval_queue"]["verdict_endpoint"] == "/api/admin/label-pass/verdict"
+        # L2-108 Item 3: flow-sentinel group present (unknown when Redis cold).
+        assert "flow_sentinel" in data
+        assert data["flow_sentinel"]["status"] == "unknown"
+        assert data["flow_sentinel"]["per_flow"] == []
 
         # Health tiles carry the fields the frontend renders
         keys = {t["key"] for t in data["health"]}

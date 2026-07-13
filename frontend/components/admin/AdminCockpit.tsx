@@ -43,6 +43,28 @@ interface EvalSample {
   created_at: string | null;
 }
 
+interface FlowSentinelFlow {
+  flow: string;
+  passed: boolean;
+  skipped: boolean;
+  checked: number | null;
+  failing: number | null;
+  status: "green" | "amber" | "red";
+  issue: number | null;
+  issue_url: string | null;
+}
+
+interface FlowSentinelData {
+  status: "green" | "amber" | "red" | "unknown";
+  mode?: string | null;
+  flows_total?: number | null;
+  flows_passed?: number | null;
+  flows_failed?: number | null;
+  duration_seconds?: number | null;
+  detail?: string | null;
+  per_flow: FlowSentinelFlow[];
+}
+
 interface CockpitData {
   generated_at: string;
   cached: boolean;
@@ -56,6 +78,7 @@ interface CockpitData {
     eval_href: string;
     bug_reports_href: string;
   };
+  flow_sentinel?: FlowSentinelData;
 }
 
 // --- Status → design-system colors ---
@@ -75,6 +98,15 @@ function statusBg(status: string): string {
     case "amber": return "bg-yellow-500/10 border-yellow-500/20";
     case "red": return "bg-accent-danger/10 border-accent-danger/20";
     default: return "bg-surface-card border-surface-border";
+  }
+}
+
+function dotBg(status: string): string {
+  switch (status) {
+    case "green": return "bg-green-500";
+    case "amber": return "bg-yellow-500";
+    case "red": return "bg-accent-danger";
+    default: return "bg-text-muted";
   }
 }
 
@@ -158,6 +190,7 @@ export default function AdminCockpit() {
   }
 
   const evalQ = data.eval_queue;
+  const fs = data.flow_sentinel;
 
   return (
     <div className="space-y-4">
@@ -282,6 +315,54 @@ export default function AdminCockpit() {
           </ul>
         )}
       </div>
+
+      {/* Flow Sentinel scorecard (per-flow pass/fail; click → filed issue) */}
+      {fs && (
+        <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-text-primary">Flow Sentinel</h3>
+            <span className={"text-micro font-medium " + statusText(fs.status)}>
+              {fs.flows_total != null
+                ? `${fs.flows_passed ?? 0}/${fs.flows_total} flows passing`
+                : "no run cached"}
+            </span>
+          </div>
+          {fs.per_flow.length === 0 ? (
+            <div className="text-sm text-text-muted">
+              {fs.detail || "No Flow Sentinel run cached yet."}
+            </div>
+          ) : (
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+              {fs.per_flow.map((f) => (
+                <li key={f.flow} className="flex items-center gap-2 text-sm py-0.5">
+                  <span className={"h-2 w-2 rounded-full shrink-0 " + dotBg(f.status)} />
+                  <span className="text-text-secondary flex-1 truncate">
+                    {f.flow.replace(/_/g, " ")}
+                    {f.skipped ? " (skipped)" : ""}
+                  </span>
+                  <span className="text-micro text-text-muted shrink-0">
+                    {f.failing
+                      ? `${f.failing} failing`
+                      : f.checked != null
+                      ? `${f.checked} ok`
+                      : ""}
+                  </span>
+                  {f.issue_url && (
+                    <a
+                      href={f.issue_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-brand hover:underline shrink-0"
+                    >
+                      #{f.issue}
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

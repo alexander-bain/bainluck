@@ -751,6 +751,37 @@ async def create_judgment(
     return {"status": "ok", "id": judgment.id, "label": judgment.label}
 
 
+@router.delete("/{judgment_id}")
+async def delete_judgment(
+    judgment_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_rw),
+    secret: str | None = Query(None),
+):
+    """Delete a single ranking judgment — the Rapid-mode "undo last" safety net.
+
+    Additive, admin-authenticated, read-your-writes: the row is removed and the
+    transaction committed before returning, so an immediate re-list/summary no
+    longer counts it. This backs the ReviewTab "undo last" (``u``) shortcut so
+    fast one-tap grading is fearless — a mis-tap is one keypress to reverse
+    instead of a permanent bad row polluting Alex's gold-set batches.
+    """
+    _check_admin_secret(secret, request=request)
+
+    judgment = (
+        await db.execute(
+            select(RankingJudgment).where(RankingJudgment.id == judgment_id)
+        )
+    ).scalar_one_or_none()
+    if judgment is None:
+        raise HTTPException(status_code=404, detail="Judgment not found")
+
+    deleted_label = judgment.label
+    await db.delete(judgment)
+    await db.commit()
+    return {"status": "deleted", "id": judgment_id, "label": deleted_label}
+
+
 @router.get("/candidates")
 async def list_labeling_candidates(
     request: Request,

@@ -239,6 +239,71 @@ def test_create_judgment_nests_metadata_fixable_interest(monkeypatch):
     }
 
 
+class _DeleteDB:
+    """Mock DB for the DELETE endpoint: a single-row lookup + delete + commit."""
+
+    def __init__(self, judgment):
+        self._judgment = judgment
+        self.deleted = None
+        self.committed = False
+
+    async def execute(self, statement):
+        judgment = self._judgment
+        return SimpleNamespace(scalar_one_or_none=lambda: judgment)
+
+    async def delete(self, row):
+        self.deleted = row
+
+    async def commit(self):
+        self.committed = True
+
+
+def test_delete_judgment_removes_row_and_commits(monkeypatch):
+    # L2-108 Item 2: Rapid-mode "undo last" — deleting a judgment removes the
+    # row and commits (read-your-writes) so a mis-tap never lingers in the set.
+    judgment = _judgment(id=99, label="kill")
+    db = _DeleteDB(judgment)
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: True
+    )
+
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99?secret=ok")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "id": 99, "label": "kill"}
+    assert db.deleted is judgment
+    assert db.committed is True
+
+
+def test_delete_judgment_missing_returns_404(monkeypatch):
+    db = _DeleteDB(None)
+    monkeypatch.setattr(
+        admin_judgments, "_check_admin_secret", lambda secret, **kw: True
+    )
+
+    response = _client_with_db(db).delete("/admin/ranking-judgments/12345?secret=ok")
+
+    assert response.status_code == 404
+    assert db.deleted is None
+    assert db.committed is False
+
+
+def test_delete_judgment_requires_auth(monkeypatch):
+    from fastapi import HTTPException
+
+    def _reject(*_args, **_kwargs):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    db = _DeleteDB(_judgment(id=99))
+    monkeypatch.setattr(admin_judgments, "_check_admin_secret", _reject)
+
+    response = _client_with_db(db).delete("/admin/ranking-judgments/99?secret=wrong")
+
+    assert response.status_code == 403
+    assert db.deleted is None
+    assert db.committed is False
+
+
 def test_labeling_candidate_strata_parser_ignores_unknown_values():
     assert admin_judgments._parse_candidate_strata("weather,nope,finance_ladder") == [
         "weather",

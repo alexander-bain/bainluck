@@ -180,6 +180,10 @@ export default function ReviewTab() {
   const [submitting, setSubmitting] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const [sessionLabels, setSessionLabels] = useState<Record<string, number>>({});
+  // Undo stack for "undo last" (u): each submit records the created judgment id
+  // and the card index it was on, so a mis-tap in rapid mode can be reversed —
+  // the server row is DELETEd and the card restored for re-grading.
+  const [history, setHistory] = useState<Array<{ id: number; idx: number; label: string }>>([]);
   const [batchId] = useState(createBatchId);
   // Rapid mode: a single label keypress (1-4) submits immediately for a true
   // one-tap pass. Off by default so the safe flow (select -> optionally tag ->
@@ -356,7 +360,7 @@ export default function ReviewTab() {
         Object.entries(taxonomyMetadata).filter(([, value]) => value !== null)
       );
 
-      await adminFetch(`/api/admin/ranking-judgments?${params}`, secret, {
+      const res = await adminFetch(`/api/admin/ranking-judgments?${params}`, secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -371,6 +375,19 @@ export default function ReviewTab() {
             : {}),
         }),
       });
+      // Record the created judgment id so "undo last" can DELETE it and restore
+      // this card. If the id can't be read, undo simply won't offer this entry.
+      let judgmentId: number | null = null;
+      try {
+        const created = await res.json();
+        judgmentId = typeof created?.id === "number" ? created.id : null;
+      } catch {
+        judgmentId = null;
+      }
+      const submittedIdx = currentIdx;
+      if (judgmentId !== null) {
+        setHistory((h) => [...h, { id: judgmentId as number, idx: submittedIdx, label }]);
+      }
       setSessionCount((c) => c + 1);
       setSessionLabels((prev) => ({ ...prev, [label]: (prev[label] || 0) + 1 }));
       resetForm();
@@ -380,6 +397,7 @@ export default function ReviewTab() {
     }
   }, [
     current,
+    currentIdx,
     selectedLabel,
     selectedTags,
     betterThanPrev,
@@ -407,6 +425,34 @@ export default function ReviewTab() {
     resetForm,
   ]);
 
+  // Undo last: DELETE the most recent judgment server-side (read-your-writes)
+  // and step back to that card so it can be re-graded. Parity with label-pass'
+  // "u" shortcut, but a true delete since each judgment is a persisted row.
+  const undoLast = useCallback(async () => {
+    if (submitting) return;
+    const last = history[history.length - 1];
+    if (!last) return;
+    setSubmitting(true);
+    try {
+      await adminFetch(`/api/admin/ranking-judgments/${last.id}`, secret, {
+        method: "DELETE",
+      });
+      setHistory((h) => h.slice(0, -1));
+      setSessionCount((c) => Math.max(0, c - 1));
+      setSessionLabels((prev) => {
+        const next = { ...prev };
+        const remaining = (next[last.label] || 0) - 1;
+        if (remaining > 0) next[last.label] = remaining;
+        else delete next[last.label];
+        return next;
+      });
+      resetForm();
+      setCurrentIdx(last.idx);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [submitting, history, secret, resetForm]);
+
   // Keyboard shortcuts mirror PairwiseTab / label-pass: 1-4 pick a verdict, s
   // skips, Enter submits once a label is chosen. In rapid mode 1-4 submit on the
   // spot (true one-tap). Guarded so typing in notes/taxonomy inputs never fires.
@@ -422,9 +468,16 @@ export default function ReviewTab() {
       ) {
         return;
       }
+      const key = event.key.toLowerCase();
+      // Undo works even at the end-of-list state (current is undefined once the
+      // last card is graded), so handle it before the !current guard.
+      if (key === "u") {
+        event.preventDefault();
+        if (!submitting) undoLast();
+        return;
+      }
       if (!current || submitting) return;
 
-      const key = event.key.toLowerCase();
       const labelForKey =
         key === "1" ? "love" :
         key === "2" ? "fine" :
@@ -451,7 +504,7 @@ export default function ReviewTab() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [current, submitting, rapidMode, selectedLabel, submit, resetForm]);
+  }, [current, submitting, rapidMode, selectedLabel, submit, resetForm, undoLast]);
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => {
@@ -486,8 +539,17 @@ export default function ReviewTab() {
         )}
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden sm:inline text-[11px] text-text-muted">
-            <kbd className="font-mono">1</kbd> love · <kbd className="font-mono">2</kbd> fine · <kbd className="font-mono">3</kbd> bad · <kbd className="font-mono">4</kbd> kill · <kbd className="font-mono">s</kbd> skip{rapidMode ? "" : " · ⏎ submit"}
+            <kbd className="font-mono">1</kbd> love · <kbd className="font-mono">2</kbd> fine · <kbd className="font-mono">3</kbd> bad · <kbd className="font-mono">4</kbd> kill · <kbd className="font-mono">s</kbd> skip{rapidMode ? "" : " · ⏎ submit"} · <kbd className="font-mono">u</kbd> undo
           </span>
+          <button
+            type="button"
+            onClick={undoLast}
+            disabled={submitting || history.length === 0}
+            title="Undo last: delete the most recent judgment and re-grade that card (u)."
+            className="inline-flex items-center gap-1.5 rounded-full border border-surface-border bg-surface-elevated px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-text-muted disabled:opacity-40 disabled:hover:border-surface-border"
+          >
+            ↺ Undo {history.length > 0 ? `(${history.length})` : ""}
+          </button>
           <button
             type="button"
             onClick={toggleRapidMode}
