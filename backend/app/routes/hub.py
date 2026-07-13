@@ -165,6 +165,55 @@ _UPCOMING_LISTERS: dict[str, Callable[..., Awaitable[list[dict]]]] = {
 }
 
 
+# Upcoming-rail horizon (L2-101 Item 2). Combat cards get a far-future cap: a
+# numbered main event ~1yr out (e.g. a 2027 UFC card) sorts marquee-first in the
+# combat lister and floats to the top of the rail, padding it and pushing soon
+# cards off. Cap the horizon at the route level (disjoint from the combat parse
+# engine) so soonest-first ordering is preserved but noise is dropped. Golf/tennis
+# are intentionally exempt — their majors are legitimately scheduled many months
+# ahead, so hiding them would be a regression.
+_UPCOMING_LIMIT = 20
+_UPCOMING_FETCH_LIMIT = 60  # over-fetch so the horizon cap doesn't shrink the rail
+_HORIZON_CAPPED_DOMAINS = {"ufc", "boxing"}
+_UPCOMING_HORIZON_DAYS = 90
+
+
+def _within_horizon(concepts: list[dict], horizon_days: int) -> list[dict]:
+    """Drop far-future ``upcoming`` concepts more than ``horizon_days`` ahead.
+
+    Only ``status == "upcoming"`` cards are capped — live/in-progress/settled cards
+    keep their near-now times. A concept with no parseable date is kept (fail-open:
+    never hide a real card because its date field was missing). Prefers the
+    ``latest_commence`` datetime, falling back to the serialized ``start_date`` ISO
+    string.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=horizon_days)
+    kept: list[dict] = []
+    for c in concepts:
+        if (c.get("status") or "") != "upcoming":
+            kept.append(c)
+            continue
+        raw = c.get("latest_commence") or c.get("start_date")
+        dt: "datetime | None" = None
+        if isinstance(raw, datetime):
+            dt = raw
+        elif isinstance(raw, str):
+            try:
+                dt = datetime.fromisoformat(raw)
+            except ValueError:
+                dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt > cutoff:
+                continue  # beyond the horizon — drop
+        kept.append(c)
+    return kept
+
+
 def _serialize_concept(c: dict) -> dict:
     """Drop non-JSON-safe / internal fields from a concept descriptor."""
     return {
@@ -211,7 +260,14 @@ async def get_competition_hub(
         lister = _UPCOMING_LISTERS.get(cfg.concept_domain)
         if lister is not None:
             try:
-                concepts = await lister(db, limit=20)
+                if cfg.concept_domain in _HORIZON_CAPPED_DOMAINS:
+                    # Over-fetch, drop far-future upcoming cards, then trim — so
+                    # dropping a year-out marquee card doesn't shrink the rail.
+                    concepts = await lister(db, limit=_UPCOMING_FETCH_LIMIT)
+                    concepts = _within_horizon(concepts, _UPCOMING_HORIZON_DAYS)
+                    concepts = concepts[:_UPCOMING_LIMIT]
+                else:
+                    concepts = await lister(db, limit=_UPCOMING_LIMIT)
                 upcoming = [_serialize_concept(c) for c in concepts]
             except Exception:
                 logger.exception("hub upcoming lister failed for %s", cfg.slug)

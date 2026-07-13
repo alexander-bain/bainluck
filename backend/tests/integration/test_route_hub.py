@@ -236,6 +236,69 @@ class TestHubUpcoming:
         assert "main_event_id" not in card
         assert "latest_commence" not in card
 
+    async def test_far_future_upcoming_card_capped(self, client, monkeypatch):
+        """L2-101 Item 2: a combat card ~1yr out is dropped from the rail (it sorts
+        marquee-first and otherwise pads /hub/mma), while a soon card survives."""
+        import app.routes.hub as hub
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        soon = (now + timedelta(days=5)).isoformat()
+        far = (now + timedelta(days=365)).isoformat()  # ~1yr out (e.g. McGregor)
+
+        async def _fake_lister(db, *, limit=20):
+            return [
+                {  # a numbered major ~1yr out — is_major floats it first
+                    "key": "event:ufc:27jul11",
+                    "name": "UFC 350: Pimblett vs. McGregor",
+                    "domain": "ufc",
+                    "status": "upcoming",
+                    "start_date": far,
+                    "is_major": True,
+                    "fight_count": 12,
+                    "latest_commence": far,
+                },
+                {  # this Saturday's card
+                    "key": "event:ufc:26jul18",
+                    "name": "Ricci vs. Kline",
+                    "domain": "ufc",
+                    "status": "upcoming",
+                    "start_date": soon,
+                    "is_major": False,
+                    "fight_count": 10,
+                    "latest_commence": soon,
+                },
+            ]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "ufc", _fake_lister)
+        body = (await client.get("/api/hub/mma")).json()
+        keys = {c["key"] for c in body["upcoming"]}
+        assert "event:ufc:26jul18" in keys  # soon card survives
+        assert "event:ufc:27jul11" not in keys  # far-future card dropped
+
+    async def test_live_card_never_capped(self, client, monkeypatch):
+        """The horizon only caps `upcoming` — a live card is kept regardless."""
+        import app.routes.hub as hub
+        from datetime import datetime, timedelta, timezone
+
+        far = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+
+        async def _fake_lister(db, *, limit=20):
+            return [{
+                "key": "event:ufc:live",
+                "name": "Live Card",
+                "domain": "ufc",
+                "status": "live",  # not "upcoming" → never dropped
+                "start_date": far,
+                "is_major": False,
+                "fight_count": 8,
+                "latest_commence": far,
+            }]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "ufc", _fake_lister)
+        body = (await client.get("/api/hub/mma")).json()
+        assert {c["key"] for c in body["upcoming"]} == {"event:ufc:live"}
+
 
 # ============================================================================
 # Props reclassification (fights vs props out of league_futures "matches")
