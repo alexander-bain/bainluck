@@ -1377,7 +1377,9 @@ def compute_matching_metrics(self):
     return run_async(_compute_matching_metrics_impl())
 
 
-# --- Entity Registry Seeds (#171 execution rails; on-demand only, no beat entry) ---
+# --- Entity Registry Seeds (#171 execution rails; seed is on-demand only. The
+# poly matchup backfill now ALSO has a 6h catch-up beat — #173/#1024 — since the
+# ingest write-hook needs a net for the historical backlog + any missed rows) ---
 
 @celery_app.task(
     bind=True,
@@ -2148,6 +2150,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_settled_gap_creation",
         "schedule": crontab(minute=30, hour="5,11,17,23"),
         "kwargs": {"limit": 1500},
+        "options": {"queue": "background"},
+    },
+    "backfill-polymarket-matchups": {
+        # #173/#1024: catch-up net for matchup_title. The ingest write-hook now
+        # stamps fresh poly game sub-markets at birth, but the historical backlog
+        # (rows ingested before the hook) still needs the one-shot logic, and any
+        # row that slips through (e.g. a sibling that named the matchup was absent
+        # in the ingested batch) converges here. Idempotent (writes only where
+        # missing); runs 45min after the gap-creation pass so newly-created rows
+        # get a title the same cycle. Previously on-demand only (no beat).
+        "task": "app.tasks.backfill_polymarket_matchups",
+        "schedule": crontab(minute=45, hour="5,11,17,23"),
+        "kwargs": {"all_groups": True},
         "options": {"queue": "background"},
     },
     "recover-datagolf-participation": {

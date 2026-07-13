@@ -648,6 +648,29 @@ async def _process_event_batch(
                 if len(event.markets) > 1:
                     poly_metadata["market_count"] = len(event.markets)
 
+                # #173/#1024: matchup-title write-hook AT INGEST. A game event's
+                # decomposed sub-markets (spread/prop rows) don't name both
+                # participants in their own `name` (gotcha #18), so the grammar
+                # adapter yields ZERO participants and the poly market_event
+                # shadow link can't be reproduced. The one-shot backfill stamped
+                # `market_metadata['matchup_title']` after the fact, but new rows
+                # ingested since got NOTHING until a manual re-run — the 0%-on-
+                # new-rows gap. Recover the group matchup from the sibling names
+                # (source-native, non-circular — a moneyline/O-U sibling names
+                # "A vs. B") and stamp it here so fresh rows carry it at birth.
+                # None for non-game groups (no "vs" sibling), so it's a no-op for
+                # awards/negrisk questions.
+                _group_matchup_title = None
+                if len(event.markets) > 1:
+                    from app.utils.polymarket_matchup_backfill import (
+                        group_matchup as _group_matchup,
+                    )
+                    _group_matchup_title = _group_matchup(
+                        [event.title or ""] + [m.question or "" for m in event.markets]
+                    )
+                    if _group_matchup_title:
+                        poly_metadata["matchup_title"] = _group_matchup_title
+
                 # Aggregate volume/liquidity from event + markets
                 poly_volume = int(event.volume) if event.volume else None
                 poly_liquidity = float(event.liquidity) if event.liquidity else None
@@ -765,6 +788,33 @@ async def _process_event_batch(
                         sub_name = market.question or event.title
                         sub_tier = compute_market_tier(sub_name, category, sport_category=llm_sport_category)
 
+                        # #173/#1024: stamp the group matchup title onto every
+                        # sub-market of a game group at ingest. On conflict, MERGE
+                        # into existing metadata (never clobber) with the same
+                        # COALESCE(md,'{}') || jsonb_build_object idiom the backfill
+                        # uses, so re-ingests and prior backfills stay idempotent.
+                        sub_meta_insert = (
+                            {"matchup_title": _group_matchup_title}
+                            if _group_matchup_title
+                            else None
+                        )
+                        sub_set = {
+                            "name": sub_name,
+                            "market_tier": sub_tier,
+                            "status": "open" if event.active else "resolved",
+                            "event_id": parent_event_id,
+                            "updated_at": func.now(),
+                        }
+                        if _group_matchup_title:
+                            from sqlalchemy import cast as _sa_cast, literal as _sa_literal
+                            from sqlalchemy.dialects.postgresql import JSONB as _PG_JSONB
+                            sub_set["market_metadata"] = func.coalesce(
+                                FuturesMarket.market_metadata,
+                                _sa_cast(_sa_literal("{}"), _PG_JSONB),
+                            ).op("||")(
+                                func.jsonb_build_object("matchup_title", _group_matchup_title)
+                            )
+
                         sub_stmt = pg_insert(FuturesMarket).values(
                             source="polymarket",
                             external_id=market.condition_id,
@@ -780,15 +830,10 @@ async def _process_event_batch(
                             group_id=poly_group_id,
                             group_type="polymarket_sub_market",
                             event_id=parent_event_id,
+                            market_metadata=sub_meta_insert,
                         ).on_conflict_do_update(
                             index_elements=["source", "external_id"],
-                            set_={
-                                "name": sub_name,
-                                "market_tier": sub_tier,
-                                "status": "open" if event.active else "resolved",
-                                "event_id": parent_event_id,
-                                "updated_at": func.now(),
-                            },
+                            set_=sub_set,
                         ).returning(FuturesMarket.id)
 
                         sub_result = await session.execute(sub_stmt)

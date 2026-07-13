@@ -919,6 +919,39 @@ class TestPolymarketVolumeBackfill:
         src = inspect.getsource(_process_event_batch)
         assert "sub_vol" in src and "volume" in src
 
+    def test_ingest_stamps_matchup_title_on_sub_markets(self):
+        """#173/#1024: game sub-markets (spread/prop rows) don't name both
+        participants (gotcha #18), so they got ZERO matchup_title until a manual
+        backfill — the 0%-on-new-rows gap. The ingest path MUST now stamp the
+        group matchup title at birth (merged, never clobbering existing metadata)."""
+        import inspect
+        from app.tasks.polymarket import _process_event_batch
+        src = inspect.getsource(_process_event_batch)
+        # computes the group matchup from sibling names at ingest
+        assert "_group_matchup_title" in src
+        assert "group_matchup" in src
+        # stamps it onto the sub-market row (insert + on-conflict merge)
+        assert "sub_meta_insert" in src
+        assert '"matchup_title"' in src
+        # merge idiom mirrors the backfill (COALESCE(md,'{}') || jsonb_build_object)
+        assert "jsonb_build_object" in src and "coalesce" in src.lower()
+
+    def test_ingest_group_matchup_recovers_title_from_siblings(self):
+        """The exact computation the ingest hook performs: recover 'A vs. B' from
+        the event's own sibling market names, and no-op for non-game groups."""
+        from app.utils.polymarket_matchup_backfill import group_matchup
+        # game group — spread/prop rows lack the matchup, moneyline sibling has it
+        game_names = [
+            "Padres vs. Dodgers",  # event title
+            "San Diego Padres vs. Los Angeles Dodgers",  # moneyline sibling
+            "Spread: San Diego Padres (-1.5)",  # spread row (no matchup)
+            "Will the game go to extra innings?",  # prop row (no matchup)
+        ]
+        title = group_matchup(game_names)
+        assert title and " vs. " in title
+        # non-game group (awards) — no sibling names a matchup → None (no stamp)
+        assert group_matchup(["Best Picture 2026", "Will Oppenheimer win?"]) is None
+
     def test_poll_has_time_budget_guard_and_cursor(self):
         """#984: poll_polymarket scanned ~210 pages with no time guard and busted
         the 540s soft limit (consec=13, sole driver of critical health). It MUST
