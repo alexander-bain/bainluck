@@ -69,6 +69,19 @@ L2-102 ships v1: health tiles / "Waiting on you" with exact actions / quick-eval
 - **Protocol:** same brief format as a queue; Codex works a branch; compare on spec adherence, gotcha compliance, first-try CI green, review burden. Gotcha #30 (Codex push policy) applies.
 - **Decision rule:** if review burden < the time saved, Codex becomes a second execution lane for file-safe, well-specified issues (LANE-MAP split); otherwise review-only or drop. Evidence in a `#887` comment.
 
+### P7 — Secondary Apple surfaces (watch/iPad/Mac; post-iPhone-bar)
+Folded from `.claude/handoff/plan-addendum-apple-surfaces.md` (Alex MC interview, 2026-07-13). **Timing: AFTER iPhone hits the flow-sentinel + Kalshi-free bar (weeks 2–3).** Standing rules (probabilities-only, blend-is-the-product, no smoothing) apply on every surface.
+
+Alex's rulings (verbatim-critical):
+- **The Apple Watch app EXISTS today** and is his TOP-priority secondary surface (CLAUDE.md was stale — platform line corrected in Queue #184). Watch purpose: "glanceable info about teams/events I'm following, and also a mini-discover feed for a few items that are highly likely to be interesting and can serve as **cocktail banter**."
+- Mac/iPad: "parity in the near-term, without anything that makes it *feel* like a second-class citizen" + a roadmap to make each **truly great**, not just non-embarrassing.
+
+- **Step 0 (cheap, do first):** audit the existing watch/iPad/Mac surfaces — what each shows, does it build, does it share payload-v2; per-device defect/greatness list. Issue: [#1080](https://github.com/alexander-bain/bainluck/issues/1080). (CLAUDE.md platform line → iOS/iPadOS/macOS/watchOS: done in Queue #184.)
+- **Watch (priority):** W1 followed glances (complication + Smart Stack, 2–3 followed team/event probabilities, reuses My Stuff follows); W2 banter feed (3 cards/day from the Discover interestingness pipeline — same selection the morning digest uses, one content brain two surfaces; prefetch alongside the digest push); W3 live wrist win-prob (Live Activity/Smart Stack, gated on W1/W2).
+- **iPad (truly-great):** parity + per-release smoke now; then multi-column live view (chart + markets + play-by-play — the Open second-screen scenario), Discover-as-grid, Stage-Manager-safe (gotcha #27), pointer/keyboard affordances.
+- **Mac (truly-great):** parity + smoke now; then menu-bar glance, keyboard-first nav/search (Instant Answers as a global shortcut), admin cockpit as a first-class Mac surface.
+- **Quality machinery:** extend the flow sentinel per-form-factor once iPhone is green; the watch gets a data-freshness/glance-staleness check (its embarrassing-chart equivalent).
+
 ## 3. This week (Fable's last: through Sat 2026-07-19)
 
 | Day | Event | Owner |

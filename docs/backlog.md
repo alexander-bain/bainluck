@@ -21,6 +21,21 @@ Vision: for major events, auto-generate a beautifully formatted dashboard that g
 - [ready] **D:** Binary yes/no golf props (albatross, hole-in-one, playoff, first-time winner, record-low round) dropped before surfacing (`golf.py:1345`). Surface as single-probability props. Pairs with C. Issue: [#952](https://github.com/alexander-bain/bainluck/issues/952). `area:event-details` `type:bug` `priority:p2`.
 - [idea] **Auto major-event dashboard** (strategic): reusable generator extending the C/D typed layout to Oscars/Super Bowl/etc. Unblocked once A-D land.
 
+## Opus-era Execution Plan (2026-07-13 → early August)
+
+Plan of record: [`docs/execution-plan-2026-07-13.md`](execution-plan-2026-07-13.md) (Fable + Alex, 2026-07-13). The unifying goal is RELIABILITY, not aesthetics — the design program is a trust program. Success = **flow sentinel green** + **Kalshi-free fortnight**. Surface priority: iPhone first. See plan §1 for the six failure classes → owning workstreams.
+
+- [ready] **P1 — Calibration done + backfill on autopilot** (plan §2 P1). Two-tier SLA: calibration grading floor (≥95% of post-Jul-2 resolved outcomes carry cal_prob) + no-embarrassing-charts (≥1 pt/open-hour, `chart_density` tile #180 Item 5). Gate: Alex's D5 walk. Sentinel: #1054.
+- [active] **P2 — App Store re-submission** (plan §2 P2). Path: D5 walk → xcodebuild → TestFlight → dogfood → resubmit. Held on cal credibility. Issue: [#678](https://github.com/alexander-bain/bainluck/issues/678).
+- [ready] **P3 — Reliability/design program** (plan §1 table, §2 P3). Continuous lane hill-climb on user flows. **Measurement = the flow sentinel; build it first.** Issue: [#1078](https://github.com/alexander-bain/bainluck/issues/1078) — flow-sentinel v1 (top of Opus-era work).
+- [ready] **P4 — Discover always-interesting + morning digest** (plan §2 P4). Notifications v1 = MORNING DIGEST ONLY (Alex's ruling). Content reuses feed ranking; build scheduling + prefs + send path on the push foundation. Issue: [#1079](https://github.com/alexander-bain/bainluck/issues/1079).
+- [active] **P5 — Admin cockpit** (plan §2 P5). Alex's leverage surface: health tiles / "Waiting on you" / quick-eval queue. (L2-102 v1.)
+- [ready] **P6 — Codex trial** (plan §2 P6). Decide by 2026-07-18: db-query JSONB fix + combat ticker grammar adapter as trial packets.
+- [idea] **P7 — Secondary Apple surfaces (watch/iPad/Mac)** (plan §2 P7, folded from plan-addendum-apple-surfaces.md). Post-iPhone-bar. Watch app EXISTS today = top-priority secondary surface (glances + banter feed). Step-0 device audit: [#1080](https://github.com/alexander-bain/bainluck/issues/1080).
+- [ready] **Football/motorsports misclassification sweep** (plan §1 class 2/data-quality; #181 forensics). Motorsports filter should surface positively (race tickers), not just exclude. Issue: [#1081](https://github.com/alexander-bain/bainluck/issues/1081).
+- [ready] **Tech calibration census** — genuine ~10pp on 1,534 outcomes (distinct from #182 weather liquidity artifact). Per-bucket forensic before any fix. Issue: [#1082](https://github.com/alexander-bain/bainluck/issues/1082).
+- [shipped] **iOS build fix** — duplicate FlowLayout redeclaration (dogfood blocker), fixed e512bed4 (Queue #184 Item 1). Issue: [#1083](https://github.com/alexander-bain/bainluck/issues/1083) (closed; Alex re-runs xcodebuild to confirm).
+
 ## Active GitHub Execution Queue
 
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)

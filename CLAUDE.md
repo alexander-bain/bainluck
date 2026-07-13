@@ -57,7 +57,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS/macOS App | SwiftUI (shared codebase, 108 Swift files) | TestFlight / direct |
+| iOS / iPadOS / macOS / watchOS App | SwiftUI (shared codebase, 108 Swift files). The Apple Watch app exists today and is the top-priority secondary surface (P7). | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -115,7 +115,7 @@ bainluck/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
 │   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 108 Swift files)
+├── ios/Bain Luck/               # iOS / iPadOS / macOS / watchOS app (SwiftUI, 108 Swift files)
 └── docs/                        # Documentation
 ```
 
