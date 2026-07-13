@@ -239,6 +239,8 @@ class TestBeatScheduleCompleteness:
         "enrich-market-images",
         "enrich-tmdb-images",
         "merge-duplicate-events",
+        "merge-degenerate-combat-events",
+        "canonicalize-entities-daily",
         "precompute-interestingness",
         "check-aggregation-quality",
         "check-tier1-coverage",

@@ -3953,9 +3953,20 @@ async def sawtooth_fix(
 async def backfill_win_probability_sources(
     request: Request, secret: str = Query(None),
     limit: int = Query(500),
+    event_id: int = Query(
+        None,
+        description="Restrict the backfill to a single event (targeted repair, "
+        "e.g. after a degenerate-combat merge repoints a Kalshi market).",
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Backfill win_probability_sources for linked moneyline game markets."""
+    """Backfill win_probability_sources for linked moneyline game markets.
+
+    Orders newest-first so a bounded run reaches the most recently linked
+    markets (post-merge repoints land at the top). Pass ``event_id`` to blend
+    exactly one event — the reliable path to verify a freshly merged fight
+    (e.g. the 15132461→14627580 SAIPIM fold-in) carries kalshi into the blend.
+    """
     _check_admin_secret(secret, request=request)
 
     from app.utils.prediction_market_matching import (
@@ -3967,7 +3978,7 @@ async def backfill_win_probability_sources(
     stats = {"processed": 0, "written": 0, "skipped": 0, "errors": 0}
 
     # Only fetch GAME (moneyline) markets — much smaller than ALL linked markets
-    result = await db.execute(
+    query = (
         select(FuturesMarket, Event)
         .join(Event, FuturesMarket.event_id == Event.id)
         .options(selectinload(FuturesMarket.outcomes))
@@ -3980,8 +3991,13 @@ async def backfill_win_probability_sources(
                 FuturesMarket.name.ilike("% vs %"),
             ),
         )
-        .limit(limit)
     )
+    if event_id is not None:
+        query = query.where(FuturesMarket.event_id == event_id)
+    # Newest markets first: a limited run then covers recent links/merges
+    # instead of an arbitrary slice of the 170K+ candidate pool.
+    query = query.order_by(FuturesMarket.id.desc()).limit(limit)
+    result = await db.execute(query)
     rows = result.unique().all()
 
     by_event_source = {}

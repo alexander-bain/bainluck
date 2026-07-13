@@ -1885,6 +1885,28 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/30"),  # Every 30 min (was 10)
         "kwargs": {"dry_run": False},
     },
+    "merge-degenerate-combat-events": {
+        # #175 Item 3 — self-heal the "15132461 class": degenerate home==away
+        # fight events (a combat market whose matchup parsed to one competitor)
+        # get folded into their real odds-registry event so the page unifies and
+        # the Kalshi market repoints. Every 6h catches weekend fight-night events
+        # same-day. Idempotent (skips 0/>1 real matches; never guesses).
+        "task": "app.tasks.merge_degenerate_combat_events",
+        "schedule": crontab(minute=25, hour="*/6"),
+        "kwargs": {"dry_run": False, "limit": 500},
+        "options": {"queue": "background"},
+    },
+    "canonicalize-entities-daily": {
+        # #175 Item 1 — self-heal same-family duplicate person/team entities
+        # (edition-multiplied across sport_keys). Idempotent: a clean registry
+        # yields 0 merges. Census-gated so cross-family homonyms are left apart.
+        # Also runs post-seed inside seed_entity_registry_impl; the two paths are
+        # safe to overlap because each merge is a no-op once collapsed.
+        "task": "app.tasks.canonicalize_entities",
+        "schedule": crontab(minute=15, hour=8),  # Daily 08:15 UTC
+        "kwargs": {"dry_run": False},
+        "options": {"queue": "background"},
+    },
     "sync-rosters-daily": {
         "task": "app.tasks.sync_rosters",
         "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC — moved from 7 AM to avoid contention with snapshot collapse tasks
