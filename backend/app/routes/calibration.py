@@ -947,16 +947,22 @@ async def public_calibration(
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
                 (emb.market_id IS NOT NULL) AS is_esports_bundle,
-                -- Queue #167 (#941/#1054): Kalshi player-prop threshold DEGENERATE
-                -- capture exclusion (mirrors the precompute task's flag; keep in
-                -- sync so a cold-cache fallback serve isn't poisoned). Only the
-                -- no-live-bid rows (current_yes_bid = 0/NULL) are the corrupt
-                -- post-settlement "Player: N+" OVER captures (gotcha #14/#21);
-                -- real-bid rows are a genuine diagonal (verify #1054/#941) and stay.
+                -- Queue #186 (#941, corrects #167): Kalshi player-prop threshold
+                -- "Player: N+" OVER exclusion (mirrors the precompute task's flag;
+                -- keep in sync so a cold-cache fallback serve isn't poisoned).
+                -- EXCLUDED when (A) category='hockey' (NHL goal-family corrupt at
+                -- every band — illiquid degenerate capture, resolution verified
+                -- sane) or (B) the curve price COALESCE(cp, opening) is in the
+                -- degenerate settlement-collapse band (>= 0.90, resolves 0.11–0.48
+                -- across every series). The 2026-07-13 verify disproved #167's
+                -- no-bid keep — real-bid rows are corrupt too (scorer + non-scorer
+                -- both cp 0.995); curve price, not bid, is the discriminator.
+                -- Below-band liquid series stay. Read-side only (gotcha #14/#21).
                 (cv.source = 'kalshi'
                  AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$'
-                 AND (fo.current_yes_bid IS NULL
-                      OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
+                 AND (cv.category = 'hockey'
+                      OR COALESCE(fo.calibration_probability, fo.opening_probability)
+                         >= 0.90)) AS is_kalshi_prop_threshold,
                 -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
                 -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
                 -- trade has no real price discovery at its midpoint. Weather-gated

@@ -127,30 +127,32 @@ CALIBRATION_CORRECTIONS = [
                        "only, no regrade.",
     },
     {
-        "date": "2026-07-12",
-        "title": "Kalshi player-prop threshold degenerate-capture exclusion",
+        "date": "2026-07-13",
+        "title": "Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)",
         "rows": None,  # live count in payload.kalshi_prop_threshold_filter.excluded
         "description": "Kalshi player-prop 'Player: N+' OVER markets (points/"
                        "assists/goals/total-bases/hits/HR/strikeouts/rebounds/"
-                       "blocks) are polled near/after game time with Kalshi's "
-                       "commence_time ≈ resolution time (gotcha #14). When the "
-                       "last snapshot before commence_time is a settled no-bid "
-                       "quote (yes_bid=0, yes_ask≈1.00), that degenerate price is "
-                       "stamped as the closing line — '6+ total bases' at 0.96, "
-                       "physically impossible as a real OVER. The verify pass "
-                       "(#1054/#941, 2026-07-12) sub-classed the cohort by live-bid "
-                       "presence: the 69K no-bid rows are the poison (cp 0.97 vs "
-                       "winrate 0.19, MCE 0.78) while the 83K real-bid rows are a "
-                       "genuine calibration diagonal (ECE 0.023) and are KEPT. "
-                       "Excluding only the no-bid rows takes the class from "
-                       "ECE 0.123/MCE 0.779 to ECE 0.023/MCE 0.062. No Under/No "
-                       "sibling exists to flip (0 across the class) and no honest "
-                       "pre-game price to recover, so the excluded rows are never "
-                       "re-graded — dropped by structural signature (source=kalshi "
-                       "+ 'N+' name + no live bid), self-maintaining for future "
-                       "props and consistent with the writer-side capture guard. "
-                       "The Kalshi twin of the 2026-07-09 Polymarket sign-flip. "
-                       "Read-side only, no regrade (gotcha #21).",
+                       "blocks) capture a settled post-game quote as the closing "
+                       "line (Kalshi commence_time ≈ resolution time, gotcha #14) "
+                       "— '6+ total bases' at 0.96, impossible as a real OVER. "
+                       "Queue #186 (2026-07-13) corrects the Queue #167 filter: a "
+                       "snapshot-level verify over the Calibration Sentinel's "
+                       "flagged series (#1069–#1073) disproved #167's 'keep the "
+                       "real-bid rows' rule — real-bid rows are corrupt too (a "
+                       "scorer and a non-scorer in one market both carry cp 0.995 "
+                       "with a live 0.99 bid). The honest discriminator is the "
+                       "CURVE PRICE, not the bid. Now excluded: (A) rows in the "
+                       "degenerate settlement-collapse band (curve price >= 0.90, "
+                       "which resolves 0.11–0.48 across every series), and (B) the "
+                       "whole NHL goal-family (category='hockey'), corrupt at every "
+                       "band (opening 0.82→winrate 0.05) though its resolution is "
+                       "verified sane (5.24 scorers/game) — an illiquid degenerate "
+                       "capture, not a sign-flip. Below the band the liquid NBA/MLB "
+                       "series are an honest diagonal and are KEPT, bringing their "
+                       "high-band actual within ~10pp of predicted (NBAPTS -2pp, "
+                       "MLBKS -2pp). No regrade: the sign-flip premise is disproven "
+                       "and no honest price exists to recover (gotcha #21). "
+                       "Read-side only.",
     },
 ]
 
@@ -481,43 +483,45 @@ def market_is_esports_multi_bundle(
     )
 
 
-# Queue #167 (#941 / #1054): Kalshi player-prop threshold DEGENERATE-CAPTURE
-# curve exclusion.
+# Queue #186 (#941, corrects #167): Kalshi player-prop threshold curve exclusion.
 #
 # Kalshi player-prop markets are single-sided "Player: N+" OVER outcomes (points,
 # assists, goals, total bases, hits, HR, strikeouts, rebounds, blocks, ...). A
 # large slice of their captured calibration_probability is corrupt: these markets
 # are polled near/after game time (Kalshi commence_time ≈ resolution time,
-# gotcha #14), so when the *last snapshot before commence_time* is a settled,
-# no-bid quote (Kalshi pins yes_ask≈1.00 / yes_bid=0 on a resolved contract), the
-# cal-price writer stamps that degenerate quote as the "closing line" — e.g.
-# "6+ total bases" at 0.96, cal_prob == current_probability. A YES price ≥0.90 on
-# a high threshold with ZERO live YES bid is physically impossible as a real OVER
-# price; it is the settlement artifact, not a prediction.
+# gotcha #14), so a settled post-game quote (yes_ask≈1.00) gets stamped as the
+# "closing line" — e.g. "6+ total bases" at 0.96, physically impossible as a real
+# OVER. It is the settlement artifact, not a prediction.
 #
-# The mandatory verify-before pass (#1054 evidence + Queue #167 db-query trace,
-# 2026-07-12) sub-classed the whole "Player: N+" cohort by live-bid presence and
-# proved the poison is EXCLUSIVELY the no-live-bid rows:
-#   * current_yes_bid > 0  → 83,355 outcomes, a genuine calibration diagonal
-#       across every decile (cp 0.07→wr 0.09, 0.44→0.41, 0.67→0.64, 0.97→0.995;
-#       class ECE 0.023 / MCE 0.062). These are real live/pre-resolution market
-#       prices — KEEP them (gotcha #21: "SAVE all possible", never assume gone).
-#   * current_yes_bid = 0/NULL → 69,457 outcomes, cp 0.97 vs winrate 0.19
-#       (MCE 0.78). Degenerate post-settlement captures with no honest market
-#       line. Regrade is impossible: there is no Under/No sibling to flip (0
-#       across the class), the stored opening is itself often degenerate (mean
-#       0.97 for the impossible tail; still +15pp off where sane), and flipping to
-#       the complement would be dishonest post-hoc peeking. So they are EXCLUDED
-#       from the published curve, never re-graded.
-# Excluding only the no-bid rows drops the class from ECE 0.123 / MCE 0.779 to
-# ECE 0.023 / MCE 0.062 while retaining 83K honest data points. The signature is
-# structural (source=kalshi + "<subject>: N+" name + no live YES bid), so it is
-# self-maintaining: any future degenerate capture is auto-excluded, and any future
-# real-bid prop is auto-kept — consistent with the writer-side guard in
-# backfill_winners._compute_calibration_prices that refuses to stamp a no-bid
-# snapshot as the closing line for these props. Read-side only; never mutates
-# is_winner or probabilities. Overlaps #941 (the NHL slice); the Kalshi twin of
-# the 2026-07-09 Polymarket sign-flip correction.
+# Queue #167 (2026-07-12) tried to keep the "real-bid" rows, believing only the
+# no-live-bid rows were poison. The Queue #186 forensic verify (2026-07-13,
+# snapshot-level trace over the exact series the Calibration Sentinel flagged in
+# #1069–#1073) DISPROVED that: real-bid rows are corrupt too. In one market a
+# scorer and a non-scorer BOTH carry cp 0.995 with a live 0.99 bid (Kapanen 1+ did
+# not score / Caufield 1+ did — same stamped closing line). The live bid is a
+# stale settlement quote, not price discovery. The honest discriminator is the
+# CURVE PRICE, not the bid.
+#
+# The corrected diagnosis has two distinct sub-populations (verified by an
+# opening-decile trace, prod 2026-07-13):
+#   * DEGENERATE SETTLEMENT-COLLAPSE BAND (curve price >= 0.90): corrupt for EVERY
+#       series — it resolves 0.11–0.48, never near 0.90 (NBA 0.983→0.445, NHL
+#       0.979→0.117). Excluded. Below the band the liquid series are an honest
+#       diagonal (NBAPTS 0.647→0.600, 0.749→0.734; MLBTB 0.639→0.791) and are
+#       KEPT ("SAVE all possible", gotcha #21) — excluding only the band brings
+#       their high-band actual within ~10pp of predicted (NBAPTS -2pp, MLBKS -2pp).
+#   * NHL GOAL-FAMILY (llm_sport_category='hockey', KXNHLGOAL/PTS/AST): corrupt at
+#       EVERY band (opening 0.69→0.21, 0.82→0.05) while its RESOLUTION is verified
+#       SANE (5.24 scorers credited/game, min 1 max 25, 0 zero-scorer games; api
+#       and box_score agree at ~0.09 winrate). So this is an illiquid degenerate
+#       CAPTURE, not a resolution bug and NOT a sign-flip (low prices resolve low,
+#       honestly — there is no side to flip). No honest price to recover → the
+#       whole class is dropped.
+#
+# No regrade (the sign-flip premise from the Sentinel writeup is disproven; gotcha
+# #21). Read-side only; never mutates is_winner or probabilities. Consistent with
+# the writer-side guard in backfill_winners._compute_calibration_prices that
+# refuses to stamp a no-bid snapshot as the closing line for these props.
 #
 # POSIX form for the SQL ``~`` operator ([+] is a literal plus in a bracket
 # expression so no backslash escaping is needed inside the f-string).
@@ -526,21 +530,41 @@ KALSHI_PROP_THRESHOLD_NAME_RE = r"^.+:[[:space:]]*[0-9]+[+][[:space:]]*$"
 # Python mirror of the SQL regex for the unit-tested helper.
 _KALSHI_PROP_THRESHOLD_RE = re.compile(r"^.+:\s*\d+\+\s*$")
 
+# Queue #186 (#941) DEGENERATE SETTLEMENT-COLLAPSE BAND. The corrected verify
+# pass (2026-07-13, forensic snapshot trace) proved the #167 "keep the real-bid
+# rows" discriminator was itself an artifact: real-bid rows are corrupt too. Per
+# outcome, both a scorer and a non-scorer in the same market get the same
+# post-settlement quote stamped as the closing line (e.g. Kapanen 1+ ybid 0.99
+# cp 0.995 DID NOT score, next to Caufield 1+ ybid 0.99 cp 0.995 who DID). The
+# honest discriminator is the CURVE PRICE, not the bid: an opening-decile trace
+# shows opening_probability is a clean diagonal through decile 8 for the liquid
+# series (NBA points/reb/ast/3pt, MLB TB/HIT/HR/KS: e.g. NBAPTS 0.647→0.600,
+# 0.749→0.734) and ONLY the >=0.90 band is degenerate (0.983→0.445 for NBA,
+# 0.979→0.117 for NHL — it never resolves anywhere near 0.90 for ANY series).
+# Excluding that band brings every liquid series' high-band (0.6–0.9) actual to
+# within ~10pp of predicted (NBAPTS -2pp, NBAAST -4pp, MLBKS -2pp, MLBHIT -6pp).
+KALSHI_PROP_THRESHOLD_DEGENERATE_BAND = 0.90
+
 KALSHI_PROP_THRESHOLD_RULE_TEXT = (
     "Excludes the corrupt slice of Kalshi player-prop threshold outcomes "
     "(single-sided 'Player: N+' OVER markets — points/assists/goals/total-bases/"
-    "hits/HR/strikeouts/rebounds/blocks): the ones whose captured closing line is "
-    "a degenerate post-settlement quote with NO live YES bid (current_yes_bid = 0/"
-    "NULL). Polled near/after game time with Kalshi's commence_time ≈ resolution "
-    "time (gotcha #14), a settled no-bid quote (yes_ask≈1.00) gets stamped as the "
-    "line — '6+ total bases' at 0.96 is physically impossible as a real OVER, so "
-    "it is the settlement artifact, not a prediction. Verify (#1054/#941, "
-    "2026-07-12) proved the poison is exactly the no-bid rows (69K, cp 0.97 vs "
-    "winrate 0.19, MCE 0.78); the real-bid rows (83K) are a genuine diagonal "
-    "(ECE 0.023) and are KEPT. No Under/No sibling exists to flip and no honest "
-    "pre-game price to recover, so the excluded rows are never re-graded (gotcha "
-    "#21). Kalshi twin of the 2026-07-09 Polymarket sign-flip. Read-side only; "
-    "never mutates resolutions."
+    "hits/HR/strikeouts/rebounds/blocks). Two exclusions: (A) the whole NHL "
+    "goal-family (llm_sport_category='hockey'), whose prices are corrupt at every "
+    "band (opening 0.69→winrate 0.21, 0.82→0.05) though its resolution is verified "
+    "sane (5.24 scorers credited/game) — an illiquid degenerate capture (gotcha "
+    "#14), not a sign-flip or resolution bug; and (B) any row whose curve price "
+    "(closing line, else opening) sits in the degenerate settlement-collapse band "
+    "(>= 0.90), which resolves 0.11–0.48 across every series — the settled "
+    "post-game quote stamped as the line ('6+ total bases' at 0.96, physically "
+    "impossible as a real OVER). Below that band the liquid series (NBA points/reb/"
+    "ast/3pt, MLB TB/HIT/HR/KS) are an honest diagonal and are KEPT, bringing their "
+    "high-band actual within ~10pp of predicted. Queue #186 (2026-07-13) corrects "
+    "#167: its no-live-bid discriminator was itself an artifact — real-bid rows are "
+    "corrupt too (a scorer and a non-scorer in one market both carry cp 0.995 with "
+    "ybid 0.99), so the curve price, not the bid, is the honest discriminator. No "
+    "regrade: the sign-flip premise is disproven (low prices resolve low, honestly) "
+    "and there is no honest price to recover for the excluded rows (gotcha #21). "
+    "Read-side only; never mutates resolutions or probabilities."
 )
 
 # Queue #183 Item 4 (#182 historical twin): curve-side exclusion of WEATHER
@@ -613,30 +637,50 @@ def outcome_is_weather_wide_spread(
 
 
 def outcome_is_kalshi_prop_threshold(
-    source: str | None, name: str | None, current_yes_bid: float | None = None
+    source: str | None,
+    name: str | None,
+    curve_price: float | None = None,
+    category: str | None = None,
 ) -> bool:
-    """True if an outcome is a DEGENERATE Kalshi player-prop threshold capture excluded from the curve (Queue #167).
+    """True if a Kalshi player-prop threshold outcome is EXCLUDED from the curve (Queue #186/#941).
 
     Canonical, unit-tested definition mirroring the ``is_kalshi_prop_threshold``
-    flag in the main outcome scan. A row is excluded only when ALL hold:
-      1. source == 'kalshi'
-      2. name is a single-sided "<subject>: N+" OVER threshold (points/assists/
-         total-bases/... player props)
-      3. it carries NO live YES bid (``current_yes_bid`` is None or 0) — i.e. its
-         captured cal_prob is a degenerate post-settlement quote, not a real
-         market line (gotcha #14).
+    flag in the main outcome scan. A row is a "<subject>: N+" OVER threshold when
+    source == 'kalshi' and the name matches the single-sided threshold pattern
+    (points/assists/goals/total-bases/hits/HR/strikeouts/rebounds/... player
+    props). Such a row is EXCLUDED when EITHER:
 
-    Rows that satisfy (1) and (2) but have a real YES bid (``current_yes_bid`` >
-    0) are genuine live/pre-resolution predictions (a near-diagonal 83K cohort,
-    class ECE 0.023 — verify #1054/#941 2026-07-12) and are KEPT. The excluded
-    rows have no Under/No sibling to flip and no honest pre-game price, so they are
-    never re-graded (gotcha #21). Read-side only.
+      A. ``category == 'hockey'`` — the NHL goal-family (KXNHLGOAL/PTS/AST) is
+         corrupt at EVERY price band (opening 0.69→wr 0.21, 0.82→wr 0.05) while
+         its resolution is verified sane (5.24 scorers credited/game, api and
+         box_score agree). The prices are degenerate/illiquid captures (gotcha
+         #14), not a sign-flip or a resolution bug — no honest price to recover,
+         so the class is dropped wholesale.
+      B. ``curve_price`` (= COALESCE(calibration_probability, opening_probability))
+         is in the DEGENERATE SETTLEMENT-COLLAPSE BAND (>= 0.90). Across every
+         series this band resolves at 0.11–0.48, never near 0.90 — it is the
+         settled post-game quote stamped as the closing line, not a prediction.
+         Below the band the liquid series (NBA/MLB) are an honest diagonal and
+         are KEPT ("SAVE all possible", gotcha #21).
+
+    NOTE (Queue #186 correction): the earlier #167 discriminator keyed on live YES
+    bid (keep rows with ``current_yes_bid`` > 0). The 2026-07-13 forensic verify
+    disproved it — real-bid rows are corrupted too (a scorer and a non-scorer in
+    the same market both carry cp 0.995 with ybid 0.99). The curve price, not the
+    bid, is the honest discriminator. Read-side only — never mutates is_winner /
+    calibration_probability (no regrade; the sign-flip premise is disproven).
     """
     if source != "kalshi" or not name:
         return False
     if not _KALSHI_PROP_THRESHOLD_RE.match(name):
         return False
-    return current_yes_bid is None or current_yes_bid == 0
+    if category == "hockey":
+        return True
+    if curve_price is None:
+        # Unknown price → conservatively excluded (the SQL path always has a
+        # curve price via COALESCE, so this only affects defensive callers).
+        return True
+    return curve_price >= KALSHI_PROP_THRESHOLD_DEGENERATE_BAND
 
 
 def outcome_is_calibration_liquid(
@@ -952,18 +996,23 @@ async def _precompute_calibration_main():
                     (gpm.market_id IS NOT NULL
                      AND COALESCE(fo.calibration_probability, fo.opening_probability)
                          >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
-                    -- Queue #167 (#941/#1054): Kalshi player-prop threshold
-                    -- DEGENERATE captures. A "<subject>: N+" OVER outcome whose
-                    -- captured closing line is a settled no-bid quote
-                    -- (current_yes_bid = 0/NULL) is a post-settlement artifact
-                    -- (gotcha #14), not a prediction — excluded, never re-graded
-                    -- (gotcha #21). Real-bid rows are a genuine diagonal (verify
-                    -- #1054/#941) and are KEPT. Self-maintaining: any future
-                    -- degenerate capture is auto-dropped, any real-bid prop kept.
+                    -- Queue #186 (#941, corrects #167): Kalshi player-prop
+                    -- threshold "<subject>: N+" OVER captures. EXCLUDED when
+                    -- (A) category='hockey' (NHL goal-family is corrupt at every
+                    -- price band — illiquid degenerate capture, resolution sane)
+                    -- or (B) the curve price (COALESCE(cp, opening)) is in the
+                    -- degenerate settlement-collapse band (>= 0.90), which
+                    -- resolves 0.11–0.48 across every series (gotcha #14/#21).
+                    -- The 2026-07-13 verify disproved #167's no-live-bid keep:
+                    -- real-bid rows are corrupt too (scorer + non-scorer both cp
+                    -- 0.995). Curve price, not bid, is the honest discriminator;
+                    -- below-band liquid series stay (SAVE all possible). Read-side
+                    -- only, no regrade (sign-flip premise disproven).
                     (cv.source = 'kalshi'
                      AND fo.name ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'
-                     AND (fo.current_yes_bid IS NULL
-                          OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
+                     AND (cv.category = 'hockey'
+                          OR COALESCE(fo.calibration_probability, fo.opening_probability)
+                             >= {KALSHI_PROP_THRESHOLD_DEGENERATE_BAND})) AS is_kalshi_prop_threshold,
                     -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
                     -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
                     -- trade has no real price discovery at its midpoint. Weather-gated
@@ -1711,7 +1760,7 @@ async def _precompute_calibration_main():
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
-        "kalshi_prop_threshold_filter": {  # Queue #167 (#941/#1054)
+        "kalshi_prop_threshold_filter": {  # Queue #186 (#941, corrects #167)
             "applies_to": "kalshi",
             "rule": KALSHI_PROP_THRESHOLD_RULE_TEXT,
             "excluded": kalshi_prop_threshold_excluded,

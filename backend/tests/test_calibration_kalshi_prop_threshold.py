@@ -47,49 +47,64 @@ from app.tasks.precompute_calibration import (
 
 
 class TestKalshiPropThresholdPredicate:
-    def test_degenerate_no_bid_threshold_names_excluded(self):
-        # Single-sided "<subject>: N+" OVER outcomes with NO live bid are the
-        # excluded (degenerate post-settlement) cohort. current_yes_bid None or 0.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0) is True
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Colson Montgomery: 6+", None) is True
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+", 0) is True
-        # Multi-digit thresholds (unlikely but structurally valid).
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Some Player: 12+", 0) is True
+    def test_degenerate_settlement_band_excluded(self):
+        # Queue #186: the honest discriminator is the CURVE PRICE, not the bid.
+        # A "<subject>: N+" OVER outcome whose curve price sits in the degenerate
+        # settlement-collapse band (>= 0.90) is a post-game quote, not a
+        # prediction — it resolves 0.11–0.48 across every series. Excluded.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+", 0.96) is True
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Colson Montgomery: 6+", 0.99) is True
+        # Boundary: exactly 0.90 is degenerate.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Some Player: 12+", 0.90) is True
         # Tolerant of extra spacing around the colon/plus.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Nikola Jokic:  3+ ", 0) is True
-        # Default (unknown bid) is conservative → treated as degenerate/excluded.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Nikola Jokic:  3+ ", 0.98) is True
+        # Default (unknown price) is conservative → treated as degenerate/excluded.
         assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+") is True
 
-    def test_real_bid_threshold_rows_kept(self):
-        # A "Player: N+" prop that carried a REAL live YES bid is a genuine
-        # prediction (the 83K near-diagonal cohort) — it must NOT be excluded.
+    def test_below_band_liquid_rows_kept(self):
+        # Below the degenerate band the liquid NBA/MLB series are an honest
+        # diagonal (opening 0.647→wr 0.600, 0.749→0.734) — they must be KEPT
+        # ("SAVE all possible", gotcha #21). The disproven #167 rule wrongly
+        # excluded no-bid rows and kept real-bid ones; now it's purely the price.
         assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+", 0.44) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.67) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Nikola Jokic: 3+", 0.99) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Nikola Jokic: 3+", 0.67) is False
+        # Just below the band.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Some Player: 2+", 0.899) is False
+
+    def test_hockey_goal_family_excluded_at_every_band(self):
+        # The NHL goal-family (llm_sport_category='hockey', KXNHLGOAL/PTS/AST) is
+        # corrupt at EVERY price band (opening 0.82→wr 0.05) while its resolution
+        # is verified sane (5.24 scorers/game) — an illiquid degenerate capture,
+        # not a sign-flip. The whole class is dropped regardless of curve price.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.10, "hockey") is True
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.67, "hockey") is True
+        # Non-hockey below-band rows are still kept even though a category is given.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+", 0.44, "baseball") is False
+        # Category alone (non-threshold name) never matches.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Yes", 0.1, "hockey") is False
 
     def test_non_threshold_kalshi_outcomes_kept(self):
         # Genuine game/series/economic markets don't use the "N+" OVER shape.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Yes", 0) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "No", 0) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "New York Yankees", 0) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "3.0% to 3.5%", 0) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Yes", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "No", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "New York Yankees", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "3.0% to 3.5%", 0.96) is False
         # A bare "N+" with no "<subject>:" prefix is not the prop shape.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "5+", 0) is False
-        # Under/No is explicitly the wrong side — but no such rows exist in the
-        # class anyway (0 Under/No across 122,580); still, don't match them.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Under 5.5", 0) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "5+", 0.96) is False
+        # Under is explicitly the wrong side and never matches the OVER shape.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Under 5.5", 0.96) is False
 
     def test_scoped_to_kalshi_only(self):
         # Polymarket / odds_api threshold-shaped names are handled by their own
         # corrections (poly sign-flip); this filter is kalshi-scoped.
-        assert outcome_is_kalshi_prop_threshold("polymarket", "Aaron Judge: 4+", 0) is False
-        assert outcome_is_kalshi_prop_threshold("odds_api", "Aaron Judge: 4+", 0) is False
+        assert outcome_is_kalshi_prop_threshold("polymarket", "Aaron Judge: 4+", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("odds_api", "Aaron Judge: 4+", 0.96) is False
 
     def test_none_and_empty_safe(self):
-        assert outcome_is_kalshi_prop_threshold(None, "Aaron Judge: 4+", 0) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", None, 0) is False
-        assert outcome_is_kalshi_prop_threshold("kalshi", "", 0) is False
-        assert outcome_is_kalshi_prop_threshold(None, None, 0) is False
+        assert outcome_is_kalshi_prop_threshold(None, "Aaron Judge: 4+", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", None, 0.96) is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "", 0.96) is False
+        assert outcome_is_kalshi_prop_threshold(None, None, 0.96) is False
 
     def test_sql_regex_has_no_backslash_escape(self):
         # POSIX bracket [+] is a literal plus, so no backslash survives the
@@ -105,14 +120,15 @@ class TestRuleText:
         assert "kalshi" in t
         assert "player-prop" in t or "player prop" in t
         # Names the capture mechanism (gotcha #14) and the no-regrade stance.
-        assert "post-settlement" in t or "commence_time" in t
+        assert "settlement" in t or "commence_time" in t or "post-game" in t
         assert "n+" in t or "over" in t
         # Read-side guarantee (gotcha #21).
         assert "never" in t and "mutate" in t
-        # Frames it as the Kalshi twin of the poly sign-flip.
+        # Frames the disproven sign-flip premise.
         assert "sign-flip" in t or "polymarket" in t
-        # Names the refined live-bid discriminator (keeps the good cohort).
-        assert "bid" in t
+        # Names the corrected curve-price discriminator + the hockey class.
+        assert "curve price" in t or ">= 0.90" in t or "band" in t
+        assert "hockey" in t
 
 
 class TestCorrectionsLog:
@@ -130,9 +146,11 @@ class TestPrecomputeQueryEmbedsExclusion:
         assert "is_kalshi_prop_threshold" in src
         # The exclusion is applied in the deduped filter.
         assert "NOT ro.is_kalshi_prop_threshold" in src
-        # Refined signature: only the no-live-bid (degenerate) rows are excluded;
-        # the real-bid diagonal cohort is kept.
-        assert "current_yes_bid" in src
+        # Queue #186 corrected discriminator: the degenerate settlement-collapse
+        # curve-price band + the NHL goal-family (hockey) class — NOT the disproven
+        # no-live-bid rule.
+        assert "cv.category = 'hockey'" in src
+        assert "KALSHI_PROP_THRESHOLD_DEGENERATE_BAND" in src
         # Transparency count + payload surface.
         assert "kalshi_prop_threshold_excluded" in src
         assert '"kalshi_prop_threshold_filter"' in src
@@ -173,3 +191,7 @@ class TestRouteFallbackEmbedsExclusion:
         src = inspect.getsource(calibration_route)
         assert "is_kalshi_prop_threshold" in src
         assert "NOT ro.is_kalshi_prop_threshold" in src
+        # Queue #186: the route copy must carry the same corrected discriminator
+        # (curve-price band + hockey class), not the disproven no-bid rule.
+        assert "cv.category = 'hockey'" in src
+        assert ">= 0.90" in src
