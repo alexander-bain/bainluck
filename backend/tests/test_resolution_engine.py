@@ -25,6 +25,7 @@ from app.services.resolution_engine import (
     MarketSignature,
     MatchUniverse,
     ResolutionEngine,
+    TickerParticipantStrategy,
     build_signature,
     competition_agrees,
     dates_within_window,
@@ -326,3 +327,88 @@ def test_engine_emits_all_link_types_from_one_path():
     assert buckets[LINK_MARKET_CONCEPT], "expected a market→concept link"
     assert buckets[LINK_CROSS_SOURCE], "expected a cross-source pair"
     assert buckets[LINK_FAMILY], "expected a family key"
+
+
+# ---------------------------------------------------------------------------
+# Queue #170 — end-to-end proof: a stored MMA fight resolves through the ENGINE
+# once PERSON entities are seeded. Mirrors the exact resolution path of
+# scripts/audit_resolution_engine.py::audit_market_event (stored-row annotation
+# + A1 resolved{norm->entity_id} map + EventSignature keyed the same way).
+# ---------------------------------------------------------------------------
+from app.services.grammar_adapters import annotate_stored_market  # noqa: E402
+
+
+def _resolved_event_participants(names, resolver):
+    from app.services.entity_registry import normalize_alias
+    return frozenset(
+        f"e:{resolver[normalize_alias(n)]}" if normalize_alias(n) in resolver
+        else f"n:{normalize_alias(n)}"
+        for n in names if n
+    )
+
+
+def test_mma_fight_resolves_to_event_via_seeded_persons():
+    """BEFORE person seeding: the market names fighters by SURNAME
+    ("Abdullayev") while the event carries FULL names ("Tahir Abdullayev"), so
+    the name-fallback keys differ and the engine can't reproduce the link. AFTER
+    the person fold-in (canonical + surname aliases), both sides resolve to the
+    same entity id and the engine emits the market_event link."""
+    ann = annotate_stored_market(
+        source="kalshi",
+        external_id="KXUFCFIGHT-26JUN27ABDNAS",
+        name="Fight Night: Abdullayev vs Nascimento",
+        market_metadata={"kalshi_event_ticker": "KXUFCFIGHT-26JUN27ABDNAS"},
+    )
+
+    # --- without seeded persons: name-fallback keys differ -> NO link ---
+    sig0 = build_signature(ann, external_id="KXUFCFIGHT-26JUN27ABDNAS", resolved={})
+    ev0 = EventSignature(
+        event_id=42,
+        participants=_resolved_event_participants(
+            ["Tahir Abdullayev", "Jefferson Nascimento"], {}),
+    )
+    links0 = ResolutionEngine([TickerParticipantStrategy()]).resolve(
+        sig0, MatchUniverse(events=[ev0]))
+    assert not [l for l in links0 if l.link_type == LINK_MARKET_EVENT]
+
+    # --- with seeded persons (canonical full-name + surname aliases) ---
+    # resolver maps normalized ALIAS -> entity id, exactly as A1 resolve_aliases does.
+    resolver = {
+        "tahir abdullayev": 1, "abdullayev": 1,       # fighter 1: canonical + surname
+        "jefferson nascimento": 2, "nascimento": 2,   # fighter 2: canonical + surname
+    }
+    sig = build_signature(
+        ann, external_id="KXUFCFIGHT-26JUN27ABDNAS", resolved=resolver)
+    assert sig.is_game
+    assert sig.participants == {"e:1", "e:2"}   # surnames resolved to entities
+    ev = EventSignature(
+        event_id=42,
+        participants=_resolved_event_participants(
+            ["Tahir Abdullayev", "Jefferson Nascimento"], resolver),
+    )
+    assert ev.participants == {"e:1", "e:2"}
+    links = ResolutionEngine([TickerParticipantStrategy()]).resolve(
+        sig, MatchUniverse(events=[ev]))
+    ev_links = [l for l in links if l.link_type == LINK_MARKET_EVENT]
+    assert ev_links and ev_links[0].right == "42"
+
+
+def test_poly_spread_resolves_to_event_via_matchup_backfill():
+    """A decomposed poly spread row resolves to its event once matchup_title is
+    backfilled (Item 2) — the team name-fallback keys agree with the event."""
+    ann = annotate_stored_market(
+        source="polymarket",
+        external_id="0xspread",
+        name="Spread: San Diego Padres (-2.5)",
+        market_metadata={"matchup_title": "Toronto Blue Jays vs. San Diego Padres"},
+    )
+    sig = build_signature(ann, external_id="0xspread", resolved={})
+    ev = EventSignature(
+        event_id=99,
+        participants=_resolved_event_participants(
+            ["Toronto Blue Jays", "San Diego Padres"], {}),
+    )
+    links = ResolutionEngine([TickerParticipantStrategy()]).resolve(
+        sig, MatchUniverse(events=[ev]))
+    ev_links = [l for l in links if l.link_type == LINK_MARKET_EVENT]
+    assert ev_links and ev_links[0].right == "99"
