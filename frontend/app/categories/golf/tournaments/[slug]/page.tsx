@@ -410,6 +410,11 @@ export default function GolfTournamentPage() {
               <h1 className="text-xl font-bold text-gray-900">{tournament.name}</h1>
               <div className="flex items-center gap-2 text-sm text-gray-500 mt-0.5 flex-wrap">
                 {tournament.venue && <span>{tournament.venue}</span>}
+                {/* Header date is sourced from start_date/end_date (DataGolf schedule), NOT
+                    resolution_date. Kalshi resolution_date is a close-time artifact (gotcha #14)
+                    and diverges wildly across surfaces for one tournament — e.g. The Open 2026:
+                    Kalshi market Aug-2, detail-record header Aug-16, DataGolf schedule Jul-19.
+                    Never key the countdown/date display off resolution_date. See tracked issue. */}
                 {tournament.start_date && tournament.end_date && (
                   <>
                     <span className="text-gray-300">&middot;</span>

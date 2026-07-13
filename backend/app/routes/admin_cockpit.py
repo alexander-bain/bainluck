@@ -132,6 +132,111 @@ def _hours_since(dt: datetime | None) -> float | None:
     return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600.0, 1)
 
 
+def _parse_iso(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+# L2-105 autopilot visibility: scheduled beats that silently stop firing are
+# invisible until someone digs. r178 found ``calibration_prices`` had ZERO
+# scheduled fires for weeks (it kept missing its 6-hourly slot under background-
+# worker contention) while occasional manual triggers masked it — see memory
+# [[project_cal_price_beat_not_firing]]. These tiles put last-fire age, fires/24h,
+# and the rescued count on the dashboard Alex actually looks at. Task metrics have
+# NO scheduled-vs-manual flag, so successes_24h vs the beat's cadence
+# (``expected_24h``) is the honest proxy: fires/24h below cadence reads AMBER even
+# when the last fire was recent — that is exactly the r178 "only-manual" signature.
+_AUTOPILOT_BEATS = [
+    {
+        "label": "calibration_prices",  # metric label from _tracked_run (NOT the beat name)
+        "display": "Cal-price beat",
+        "schedule": "every 6h (02/08/14/20:15 UTC)",
+        "expected_24h": 4,
+        "stale_hours": 8,  # 6h cadence → >8h means a scheduled slot was missed
+        "rescued_field": "rescued",
+        "href": "/admin",
+    },
+    {
+        "label": "backfill_combat_wps",
+        "display": "Combat WPS backfill",
+        "schedule": "daily 09:50 UTC",
+        "expected_24h": 1,
+        "stale_hours": 28,  # daily → allow slack past 24h before RED
+        "rescued_field": "written",
+        "first_fire": "2026-07-14T09:50:00+00:00",
+        "href": "/admin",
+    },
+]
+
+
+def _autopilot_tile(beat: dict, metrics: dict) -> dict:
+    """Site-health tile for one scheduled beat (last-fire age, fires/24h, rescued).
+
+    Pure over ``metrics`` (a ``get_task_metrics`` dict) so it unit-tests without
+    Redis. RED = never fired, or stale past the beat's cadence. AMBER = fresh but
+    firing below cadence (the r178 "only-manual, beat not scheduled-firing"
+    signature) or inside the approaching-stale window. A beat scheduled to start
+    in the future reads "awaiting first fire" and is never RED.
+    """
+    label = beat["label"]
+    key = f"autopilot:{label}"
+    last_dt = _parse_iso(metrics.get("last_success_at"))
+    hrs = _hours_since(last_dt)
+    successes = metrics.get("successes_24h")
+    summary = metrics.get("last_result_summary")
+    rescued = summary.get(beat["rescued_field"]) if isinstance(summary, dict) else None
+    expected = beat.get("expected_24h")
+    stale = beat["stale_hours"]
+
+    # Pre-first-fire: a beat scheduled to begin later isn't broken — it's pending.
+    first_fire = _parse_iso(beat.get("first_fire"))
+    if last_dt is None and first_fire is not None and first_fire > datetime.now(timezone.utc):
+        return {
+            "key": key,
+            "label": beat["display"],
+            "value": "—",
+            "numeric": None,
+            "status": "unknown",
+            "detail": (
+                f"awaiting first fire · {beat['schedule']} · "
+                f"starts {first_fire.strftime('%b %d %H:%MZ')}"
+            ),
+            "href": beat["href"],
+        }
+
+    if hrs is None or hrs > stale:
+        status = "red"
+    elif hrs > stale * 0.75:
+        status = "amber"
+    elif expected and successes is not None and successes < expected:
+        status = "amber"
+    else:
+        status = "green"
+
+    detail_bits = [beat["schedule"]]
+    if successes is not None:
+        exp = f"/{expected}" if expected else ""
+        detail_bits.append(f"{successes}{exp} fires/24h")
+    else:
+        detail_bits.append("no fires/24h recorded")
+    if rescued is not None:
+        detail_bits.append(f"{rescued} rescued")
+
+    return {
+        "key": key,
+        "label": beat["display"],
+        "value": f"{hrs}h ago" if hrs is not None else "never fired",
+        "numeric": hrs,
+        "status": status,
+        "detail": " · ".join(detail_bits),
+        "href": beat["href"],
+    }
+
+
 def _read_redis_json(key: str) -> dict | None:
     try:
         from app.tasks.redis_state import get_redis_client
@@ -353,6 +458,22 @@ async def _health_group(db: AsyncSession) -> list[dict]:
             "href": "/admin/source-intelligence",
         }
     )
+
+    # --- Autopilot beats (L2-105): scheduled-fire visibility ---
+    # Read each beat's live task-metrics (cheap hgetall via get_task_metrics) and
+    # render a last-fire/fires-24h/rescued tile. Isolated in try/except so a Redis
+    # hiccup degrades to no autopilot tiles rather than breaking the whole payload.
+    try:
+        from app.tasks.redis_state import get_task_metrics
+
+        for beat in _AUTOPILOT_BEATS:
+            try:
+                m = get_task_metrics(beat["label"])
+            except Exception:
+                m = {}
+            tiles.append(_autopilot_tile(beat, m))
+    except Exception:
+        logger.debug("cockpit: autopilot tiles failed", exc_info=True)
 
     return tiles
 

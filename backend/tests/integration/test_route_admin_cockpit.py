@@ -7,17 +7,28 @@ set, and the pure banding helpers behave.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.routes.admin_cockpit import (
+    _AUTOPILOT_BEATS,
     _WAITING_FALLBACK,
+    _autopilot_tile,
     _hours_since,
     _red_sub_context,
     _status_from_pct,
     _waiting_on_you,
 )
+
+
+def _iso_hours_ago(hours: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+
+_CAL_BEAT = next(b for b in _AUTOPILOT_BEATS if b["label"] == "calibration_prices")
+_COMBAT_BEAT = next(b for b in _AUTOPILOT_BEATS if b["label"] == "backfill_combat_wps")
 
 
 @pytest.fixture
@@ -71,6 +82,78 @@ class TestHelpers:
         assert untracked["ref"] is None and untracked["url"] is None
 
 
+class TestAutopilotTile:
+    """L2-105: scheduled-beat visibility tiles (calibration_prices, combat WPS)."""
+
+    def test_fresh_on_cadence_is_green(self):
+        # Fired 1h ago with the full 6h cadence's worth of fires → green.
+        tile = _autopilot_tile(
+            _CAL_BEAT,
+            {"last_success_at": _iso_hours_ago(1), "successes_24h": 4, "last_result_summary": {"rescued": 12}},
+        )
+        assert tile["key"] == "autopilot:calibration_prices"
+        assert tile["status"] == "green"
+        assert "4/4 fires/24h" in tile["detail"]
+        assert "12 rescued" in tile["detail"]
+
+    def test_fresh_but_below_cadence_is_amber(self):
+        # r178 signature: last fire recent, but only 1 fire in 24h vs 4 expected —
+        # the beat is being triggered manually, not firing on schedule.
+        tile = _autopilot_tile(
+            _CAL_BEAT,
+            {"last_success_at": _iso_hours_ago(1), "successes_24h": 1, "last_result_summary": {"rescued": 3}},
+        )
+        assert tile["status"] == "amber"
+        assert "1/4 fires/24h" in tile["detail"]
+
+    def test_stale_past_cadence_is_red(self):
+        # No scheduled fire in >8h → red (the queue's explicit acceptance).
+        tile = _autopilot_tile(
+            _CAL_BEAT,
+            {"last_success_at": _iso_hours_ago(9), "successes_24h": 2},
+        )
+        assert tile["status"] == "red"
+
+    def test_never_fired_is_red(self):
+        tile = _autopilot_tile(_CAL_BEAT, {"status": "no_data"})
+        assert tile["status"] == "red"
+        assert tile["value"] == "never fired"
+
+    def test_approaching_stale_is_amber(self):
+        # 7h since last fire (> 8 * 0.75 = 6) but not yet past 8h → amber warning.
+        tile = _autopilot_tile(
+            _CAL_BEAT,
+            {"last_success_at": _iso_hours_ago(7), "successes_24h": 4},
+        )
+        assert tile["status"] == "amber"
+
+    def test_daily_beat_single_fire_is_green(self):
+        # Combat WPS is daily (expected_24h=1): one fire 3h ago is healthy, not amber.
+        tile = _autopilot_tile(
+            _COMBAT_BEAT,
+            {"last_success_at": _iso_hours_ago(3), "successes_24h": 1, "last_result_summary": {"written": 40}},
+        )
+        assert tile["status"] == "green"
+        assert "40 rescued" in tile["detail"]
+
+    def test_pre_first_fire_is_pending_not_red(self):
+        # A beat whose first scheduled fire is in the future is pending, never red.
+        beat = dict(_COMBAT_BEAT)
+        beat["first_fire"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        tile = _autopilot_tile(beat, {"status": "no_data"})
+        assert tile["status"] == "unknown"
+        assert "awaiting first fire" in tile["detail"]
+
+    def test_pre_first_fire_ignored_once_fired(self):
+        # Once a real fire is recorded, the future-first_fire guard no longer applies.
+        beat = dict(_COMBAT_BEAT)
+        beat["first_fire"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        tile = _autopilot_tile(
+            beat, {"last_success_at": _iso_hours_ago(2), "successes_24h": 1}
+        )
+        assert tile["status"] == "green"
+
+
 # ---------------------------------------------------------------------------
 # Endpoint contract
 # ---------------------------------------------------------------------------
@@ -99,6 +182,8 @@ class TestCockpitEndpoint:
         # Health tiles carry the fields the frontend renders
         keys = {t["key"] for t in data["health"]}
         assert {"link_rate", "grid_health", "queue_depth", "creation_freshness"} <= keys
+        # L2-105: autopilot beat tiles are part of the health row.
+        assert {"autopilot:calibration_prices", "autopilot:backfill_combat_wps"} <= keys
         for tile in data["health"]:
             assert {"key", "label", "value", "status", "href"} <= set(tile)
 
