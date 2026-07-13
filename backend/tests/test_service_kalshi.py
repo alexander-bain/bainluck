@@ -575,6 +575,28 @@ class TestSupplementaryRescueBudgetReservation:
         assert all(abs(d - (full - 60.0)) < 1e-6 for d in main_dls)
         assert all(abs(d - full) < 1e-6 for d in supp_dls)
 
+    async def test_combat_fight_series_in_supplementary_rescue(self, client, monkeypatch):
+        """#173/#1024: combat fight-winner series (KXUFCFIGHT / KXBOXING) had no
+        supplementary safety net — the golf-class coverage gap. UFC 329's SAIPIM
+        card (15 fights on Kalshi) surfaced with only 1 row because these series
+        depended entirely on the deadline-bounded main scan. They must now be in
+        the guaranteed rescue so they ingest live like everything else."""
+        import asyncio
+        import time
+        supp = []
+
+        async def fake_get_events(**kw):
+            st = kw.get("series_ticker")
+            if st is not None:
+                supp.append(st.upper())
+            return ([], None)
+
+        monkeypatch.setattr(client, "get_events", fake_get_events)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 1000)
+        assert "KXUFCFIGHT" in supp, "UFC fight-winner series must be in the rescue net"
+        assert "KXBOXING" in supp, "boxing fight-winner series must be in the rescue net"
+
 
 class TestPollKalshiSigkillHardening:
     """#995 attempt-4 (observability-first): poll_kalshi SIGKILLs before it can

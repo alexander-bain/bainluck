@@ -934,6 +934,24 @@ class KalshiAPIService(BaseAPIClient):
             # the guaranteed rescue exactly like the other KXPGA* golf futures.
             "KXPGAPLAYOFF",
             "KXLPGATOUR", "KXLIVTOUR", "KXDPWORLDTOUR",
+            # Combat sports (#173/#1024): KXUFCFIGHT / KXBOXING had NO
+            # supplementary safety net — the golf-class gap applied to combat.
+            # The fight-WINNER series depend entirely on the deadline-bounded
+            # main unfiltered scan reaching their expiry-DESC tail page inside
+            # the ~180s fetch budget; during the #995 create-freeze window (and
+            # any slow beat) they never surfaced. Confirmed live: UFC 329
+            # (KXUFCFIGHT-26JUL11*) had 15 fights on Kalshi but only 1 in our DB
+            # (the McGregor headliner, ingested months early) — SAIPIM
+            # (Saint-Denis vs Pimblett) and 13 siblings were never created, so
+            # A5's combat cross-source blend had no fight to feed. These are the
+            # win-prob-blend-critical markets. Each card is one event with
+            # ~15 single-market fights (2 outcomes each) → tiny nested payload,
+            # no _HEAVY_TOKEN, so they fetch WITH nested markets like the golf
+            # futures — well under the #995 monster-page threshold. Fight-prop
+            # series (KXUFCMOV/DISTANCE/VICROUND/MOF/ROUNDS, KXBOXING* props)
+            # share the same events and already reach via the main scan; the
+            # guaranteed rescue on the winner series is what fixes the class.
+            "KXUFCFIGHT", "KXBOXING",
         ]
         supplemented = 0
         _GAME_SERIES = {"KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME"}
