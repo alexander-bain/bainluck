@@ -2006,6 +2006,27 @@ async def trigger_kalshi_targeted(
     return stats
 
 
+@router.post("/backfill-winners/gap-creation")
+async def trigger_settled_gap_creation(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(1500),
+    series: str = Query(None),
+):
+    """Create Kalshi markets that opened+settled without ever being ingested.
+
+    #173/#1024: the beat runs this on a 120-series rotation every 6h. This rail
+    lets ops pin the scan to specific series (comma-separated, e.g.
+    ``?series=KXUFCFIGHT,KXBOXING``) to recover an already-settled card NOW —
+    the combat-sports fix's companion to the live rescue-net addition. Idempotent
+    (ON CONFLICT DO NOTHING); safe to re-run.
+    """
+    _check_admin_secret(secret, request=request)
+    from app.tasks.kalshi import _backfill_settled_gap_creation
+    only = [s for s in (series or "").split(",") if s.strip()] or None
+    stats = await _backfill_settled_gap_creation(limit=limit, only_series=only)
+    return stats
+
+
 @router.post("/test-ticker-linking")
 async def test_ticker_linking(
     request: Request, secret: str = Query(None),

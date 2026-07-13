@@ -2779,7 +2779,8 @@ _GAP_CREATE_START = _dt(2026, 6, 9, tzinfo=_tz.utc)
 
 
 async def _backfill_settled_gap_creation(
-    limit: int = 1500, deadline: float | None = None
+    limit: int = 1500, deadline: float | None = None,
+    only_series: list[str] | None = None,
 ):
     """Create Kalshi markets that opened+settled during the creation-freeze gap.
 
@@ -2832,12 +2833,20 @@ async def _backfill_settled_gap_creation(
     if not all_series:
         return stats
 
-    # Rotate through series across runs with a dedicated cursor.
-    _cur_key = "bainluck:gap_create_series_cursor"
-    _pos = int(_rc.get(_cur_key) or 0) % max(len(all_series), 1)
-    rotated = all_series[_pos:] + all_series[:_pos]
-    check_list = rotated[:120]
-    _rc.setex(_cur_key, 86400 * 14, str((_pos + 120) % max(len(all_series), 1)))
+    # #173/#1024: a targeted trigger can pin the scan to specific series (e.g.
+    # KXUFCFIGHT/KXBOXING) to recover an already-settled card NOW instead of
+    # waiting for the rotation to reach it. Bypasses the rotating cursor entirely
+    # (idempotent ON CONFLICT DO NOTHING makes a re-scan cheap).
+    if only_series:
+        _wanted = {s.strip().upper() for s in only_series if s and s.strip()}
+        check_list = [s for s in all_series if s.upper() in _wanted]
+    else:
+        # Rotate through series across runs with a dedicated cursor.
+        _cur_key = "bainluck:gap_create_series_cursor"
+        _pos = int(_rc.get(_cur_key) or 0) % max(len(all_series), 1)
+        rotated = all_series[_pos:] + all_series[:_pos]
+        check_list = rotated[:120]
+        _rc.setex(_cur_key, 86400 * 14, str((_pos + 120) % max(len(all_series), 1)))
 
     service = KalshiAPIService()
     try:
