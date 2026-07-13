@@ -1509,6 +1509,24 @@ def calibration_sentinel(self, file_issues=True, suppress_known=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.flow_sentinel")
+def flow_sentinel(self, file_issues=True, canary=False):
+    """Flow Sentinel (#1078): drive the six scripted user flows against
+    production (search gold-set, duplicate events, event completeness, resolved
+    state, chart density, category/Discover), assert a concrete correctness
+    condition per flow, and file ONE deduped GitHub issue per failing flow. This
+    is the reliability/design program's measurement — it removes Alex from the
+    detection loop. Read-only against production; the sentinel files work, never
+    writes data. The 840s soft limit (under the 900s hard limit, clear of the
+    global 300s) plus the run's 540s inner deadline keep it from SIGKILLing
+    untracked (#966)."""
+    from app.tasks.flow_sentinel import _run_flow_sentinel
+    return _tracked_run(
+        "flow_sentinel",
+        _run_flow_sentinel(file_issues=file_issues, canary=canary),
+    )
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -2149,6 +2167,16 @@ celery_app.conf.beat_schedule = {
         # a 50K-outcome pileup, so a weekly cadence is enough. background queue.
         "task": "app.tasks.calibration_sentinel",
         "schedule": crontab(minute=20, hour=6, day_of_week=1),  # Weekly Monday 06:20 UTC
+        "options": {"queue": "background"},
+    },
+    "flow-sentinel-daily": {
+        # #1078: scripted user-flow acceptance sentinel against production. Daily
+        # (07:10 UTC) — user-facing regressions (search break, unmerged dup,
+        # empty live game, resolved-shown-as-live, dark charts, empty category)
+        # need faster detection than the weekly calibration cadence. Files one
+        # deduped issue per failing flow. background queue.
+        "task": "app.tasks.flow_sentinel",
+        "schedule": crontab(minute=10, hour=7),  # Daily 07:10 UTC
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

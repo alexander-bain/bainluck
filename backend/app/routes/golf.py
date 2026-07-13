@@ -1278,6 +1278,15 @@ def _enrich_with_schedule(
                 t["start_date"] = sched["start_date"]
             if sched.get("end_date"):
                 t["end_date"] = sched["end_date"]
+                # #1077: normalize resolution_date to the DataGolf tournament
+                # end_date. As shipped, resolution_date carried the Kalshi
+                # close-time artifact (gotcha #14), which diverges wildly across
+                # surfaces for the same tournament (The Open 2026: Kalshi Aug-2,
+                # detail-header Aug-16, real dates Jul-16–19). Once a real
+                # schedule end_date exists it is the ground truth, so all
+                # surfaces key the same date and resolution_date stops being a
+                # latent countdown/header footgun.
+                t["resolution_date"] = sched["end_date"]
 
 
 def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[dict]:

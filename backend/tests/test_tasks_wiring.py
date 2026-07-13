@@ -267,6 +267,7 @@ class TestBeatScheduleCompleteness:
         "backfill-combat-wps",
         "data-quality-watchdog",
         "calibration-sentinel-weekly",
+        "flow-sentinel-daily",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",

@@ -51,3 +51,45 @@ def test_real_the_open_still_normalizes():
     assert _normalize_tournament("The Open Winner") == "the_open"
     assert _normalize_tournament("British Open Winner") == "the_open"
     assert _normalize_tournament("The Open - Top 10") == "the_open"
+
+
+class TestResolutionDateNormalization:
+    """#1077: golf resolution_date carried the Kalshi close-time artifact
+    (gotcha #14), which diverges wildly across surfaces for the same tournament
+    (The Open 2026: Kalshi Aug-2, detail-header Aug-16, real Jul-16–19). Once a
+    DataGolf schedule end_date exists it is the ground truth — _enrich_with_schedule
+    normalizes resolution_date to it so the field stops being a countdown footgun."""
+
+    def test_resolution_date_normalized_to_schedule_end_date(self):
+        from app.routes.golf import _enrich_with_schedule
+
+        tournaments = [{
+            "key": "the_open",
+            "name": "The Open Championship",
+            # the stale Kalshi close-time artifact (weeks after the real end)
+            "resolution_date": "2026-08-02T00:00:00+00:00",
+        }]
+        schedule_by_key = {
+            "the_open_championship": {
+                "start_date": "2026-07-16",
+                "end_date": "2026-07-19",
+                "venue": "Royal Birkdale",
+            }
+        }
+        _enrich_with_schedule(tournaments, schedule_by_key)
+        t = tournaments[0]
+        assert t["end_date"] == "2026-07-19"
+        # resolution_date now agrees with the real tournament end, not Aug-2
+        assert t["resolution_date"] == "2026-07-19"
+
+    def test_resolution_date_untouched_when_no_schedule_end_date(self):
+        from app.routes.golf import _enrich_with_schedule
+
+        tournaments = [{
+            "key": "some_event",
+            "name": "Some Event",
+            "resolution_date": "2026-08-02T00:00:00+00:00",
+        }]
+        # no schedule match → nothing to normalize against; leave the field alone
+        _enrich_with_schedule(tournaments, {})
+        assert tournaments[0]["resolution_date"] == "2026-08-02T00:00:00+00:00"

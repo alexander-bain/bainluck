@@ -5273,6 +5273,37 @@ async def _resolve_winners_only(limit: int = 2000):
     return stats
 
 
+def _clear_backfill_running_phase() -> None:
+    """Clear the ``running_phase`` latch on backfill pipeline completion (L2-105).
+
+    ``_persist_phase_timing``/``_mark`` write ``bainluck:backfill_phase_timing``
+    with ``running_phase`` set to the in-flight phase so a mid-run
+    SoftTimeLimitExceeded is observable (#898). But the maintenance tail only
+    ``_mark``s phases (no matching ``_end_phase``), so after a *successful*
+    (or partial-budget-guard) return the blob was left with ``running_phase``
+    pointing at the last marked phase — a stale latch the celery dashboard /
+    cockpit read as "backfill still mid-phase" long after the task returned,
+    which nearly triggered a phantom-run wait. On completion we rewrite the blob
+    with ``running_phase=None`` + a ``completed_at`` stamp, preserving the
+    per-phase timings. Best-effort; never breaks the task."""
+    try:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        raw = rc.get("bainluck:backfill_phase_timing")
+        if not raw:
+            return
+        blob = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        blob["running_phase"] = None
+        blob["completed_at"] = _dt.now(_tz.utc).isoformat()
+        rc.setex("bainluck:backfill_phase_timing", 86400, _json.dumps(blob))
+    except Exception:
+        pass
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     import time as _t
@@ -5385,6 +5416,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             _t.monotonic() - _pipeline_start,
             _budget_left(),
         )
+        _clear_backfill_running_phase()  # L2-105: the run has ended, drop the latch
         return {
             "status": "partial_budget_guard",
             "stopped_before": stopped_before,
@@ -6073,6 +6105,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # loser upgrade) now runs at the TOP of this function, before the
     # expensive calibration/DataGolf maintenance phases above. It used to run
     # here, last, and was starved to zero by the 840s soft time limit.
+
+    _clear_backfill_running_phase()  # L2-105: full completion — clear the stale latch
 
     return {
         "link_sports_props": link_props_stats,

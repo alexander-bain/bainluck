@@ -696,6 +696,57 @@ async def get_calibration_sentinel_last(
     return json.loads(raw)
 
 
+@router.post("/flow-sentinel/run")
+async def trigger_flow_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    canary: bool = Query(False, description="Append a synthetic missing gold entity to prove filing works"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+):
+    """#1078: on-demand run of the Flow Sentinel.
+
+    Enqueues the daily acceptance task, or (inline=True) runs it in-request and
+    returns the scorecard — handy for verification
+    (?inline=true&file_issues=false) and the canary proof
+    (?inline=true&canary=true&file_issues=false). Read-only against production;
+    the sentinel files work, it never writes data."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.flow_sentinel import _run_flow_sentinel
+
+        return await _run_flow_sentinel(file_issues=file_issues, canary=canary)
+
+    from app.tasks import celery_app
+
+    result = celery_app.send_task(
+        "app.tasks.flow_sentinel",
+        kwargs={"file_issues": file_issues, "canary": canary},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/flow-sentinel/last")
+async def get_flow_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#1078: read the last cached Flow Sentinel run (scorecard + filed issues).
+    Lets an enqueued worker run be inspected without re-running the flows, and is
+    the persisted scorecard the cockpit can tile later."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get("bainluck:flow_sentinel:last")
+    if not raw:
+        return {"status": "no_run_cached", "key": "bainluck:flow_sentinel:last"}
+    return json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Pairwise Discover Card Preference Labeling
 # ---------------------------------------------------------------------------

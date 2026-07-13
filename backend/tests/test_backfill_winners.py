@@ -2202,3 +2202,59 @@ class TestPolymarketTotalScoreResolverWiring:
             _resolve_winners_only)
         assert "_resolve_polymarket_total_from_scores(" in inspect.getsource(
             _backfill_all_winners)
+
+
+class TestClearRunningPhaseLatch:
+    """L2-105: after a successful (or partial-budget-guard) backfill run, the
+    `bainluck:backfill_phase_timing` blob was left with `running_phase` pointing
+    at the last _mark'd phase — a stale latch the dashboard/cockpit read as
+    "backfill still mid-phase" long after the task returned (nearly a phantom-run
+    wait). `_clear_backfill_running_phase()` drops the latch on completion."""
+
+    def _fake_rc(self, store):
+        class FakeRedis:
+            def get(self, k):
+                return store.get(k)
+
+            def setex(self, k, ttl, v):
+                store[k] = v
+
+        return FakeRedis()
+
+    def test_clears_running_phase_preserving_timings(self, monkeypatch):
+        import json
+        import app.tasks.redis_state as rs
+        from app.tasks.backfill_winners import _clear_backfill_running_phase
+
+        store = {
+            "bainluck:backfill_phase_timing": json.dumps({
+                "running_phase": "golf_matchups",       # stale latch
+                "completed": {"kalshi_api": 254.7, "score_resolution": 41.2},
+                "cumulative_s": 812.3,
+                "soft_time_limit_s": 840,
+            })
+        }
+        monkeypatch.setattr(rs, "get_redis_client", lambda *a, **k: self._fake_rc(store))
+        _clear_backfill_running_phase()
+
+        blob = json.loads(store["bainluck:backfill_phase_timing"])
+        assert blob["running_phase"] is None            # latch dropped
+        assert "completed_at" in blob                    # completion stamped
+        assert blob["completed"]["kalshi_api"] == 254.7  # timings preserved
+
+    def test_noop_when_no_blob(self, monkeypatch):
+        import app.tasks.redis_state as rs
+        from app.tasks.backfill_winners import _clear_backfill_running_phase
+
+        store = {}
+        monkeypatch.setattr(rs, "get_redis_client", lambda *a, **k: self._fake_rc(store))
+        _clear_backfill_running_phase()  # must not raise
+        assert store == {}
+
+    def test_wired_into_both_completion_paths(self):
+        import inspect
+        from app.tasks.backfill_winners import _backfill_all_winners
+
+        src = inspect.getsource(_backfill_all_winners)
+        # partial-budget-guard return AND full completion both drop the latch
+        assert src.count("_clear_backfill_running_phase()") >= 2
