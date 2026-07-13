@@ -145,6 +145,54 @@ def _is_generic_outcome_name(name: str) -> bool:
     return bool(_GENERIC_OUTCOME_PATTERNS.match(name.strip()))
 
 
+# Spread threshold (decimal probability) below which a two-sided Kalshi book is
+# considered TIGHT enough for its midpoint to be real price discovery. Mirrors
+# the Polymarket has_real_trading rule (gotcha #19) and the has_real_trading
+# gate later in this module (both use 0.50).
+_KALSHI_TIGHT_SPREAD_MAX = 0.50
+
+
+def _kalshi_yes_probability(
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+) -> Optional[float]:
+    """Resolve the Yes-side probability for a Kalshi outcome (0-1) or None to skip.
+
+    Spread guard (Queue #182, mirroring gotcha #19's Polymarket blowout rule): a
+    bid/ask MIDPOINT is only reliable when the book is TIGHT. A WIDE spread
+    (e.g. bid=0.05 / ask=0.95) has no real price discovery at the midpoint — it
+    is NOT a genuine 50/50, so averaging bid+ask fabricates a ~0.50 quote. On
+    illiquid weather/tech threshold markets these fabricated midpoints were
+    captured as closing lines and inflated calibration MCE (#181). Priority:
+
+      1. tight two-sided book (both > 0 AND ask-bid < 0.50) -> midpoint
+      2. else a real trade -> last_price (trade evidence beats a wide book)
+      3. else longshot ask-only cap (ask > 0 AND ask <= 0.50, no/one-sided bid)
+      4. else None -> caller skips (wide/one-sided book, no trade; don't fabricate)
+
+    All inputs are decimal probabilities (0-1), matching kalshi_api parsing.
+    """
+    if (
+        yes_bid is not None
+        and yes_bid > 0
+        and yes_ask is not None
+        and yes_ask > 0
+        and (yes_ask - yes_bid) < _KALSHI_TIGHT_SPREAD_MAX
+    ):
+        return (yes_bid + yes_ask) / 2
+    if last_price is not None and last_price > 0:
+        return last_price
+    if (
+        yes_bid is not None
+        and yes_ask is not None
+        and yes_ask > 0
+        and yes_ask <= 0.50
+    ):
+        return yes_ask
+    return None
+
+
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     """Map Kalshi category to internal category."""
     if not kalshi_category:
@@ -777,27 +825,13 @@ async def _poll_kalshi_markets():
                     outcome_data = []
                     for market in event.markets:
                         # Calculate probability from bid/ask midpoint or last price.
-                        # When yes_bid is 0 (no one bidding), prefer last_price
-                        # over the midpoint — last_price better reflects actual
-                        # market consensus for illiquid outcomes.
-                        if (
-                            market.yes_bid is not None
-                            and market.yes_bid > 0
-                            and market.yes_ask is not None
-                            and market.yes_ask > 0
-                        ):
-                            prob = (market.yes_bid + market.yes_ask) / 2
-                        elif market.last_price is not None and market.last_price > 0:
-                            prob = market.last_price
-                        elif (
-                            market.yes_bid is not None
-                            and market.yes_ask is not None
-                            and market.yes_ask > 0
-                            and market.yes_ask <= 0.50
-                        ):
-                            prob = market.yes_ask
-                        else:
-                            continue  # Skip markets without any pricing
+                        # The spread guard lives in _kalshi_yes_probability so it is
+                        # unit-testable (Queue #182 capture-rule guard test).
+                        prob = _kalshi_yes_probability(
+                            market.yes_bid, market.yes_ask, market.last_price
+                        )
+                        if prob is None:
+                            continue  # wide/one-sided book, no trade — don't fabricate
 
                         american = (
                             probability_to_american(prob) if prob and prob > 0 else None

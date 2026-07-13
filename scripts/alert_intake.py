@@ -104,8 +104,13 @@ def _search_existing_issue(
     token: str,
     api_url: str,
 ) -> dict[str, Any] | None:
+    # Search ALL states, not just open. A chronic alert whose issue was already
+    # filed and CLOSED (triaged/fixed) must be found here — otherwise a recurrence
+    # gets re-filed as a brand-new "untracked" issue, spamming the board with
+    # duplicates of something already handled. When a closed match recurs we
+    # reopen + comment (see upsert_issue) instead of creating a duplicate.
     marker = f"alert-intake:key:{key}"
-    query = f'repo:{repo} is:issue is:open "{marker}"'
+    query = f'repo:{repo} is:issue "{marker}"'
     params = urllib.parse.urlencode({"q": query, "per_page": "1"})
     result = _github_request(
         "GET",
@@ -134,12 +139,26 @@ def upsert_issue(alert: AlertIssue, *, dry_run: bool = False) -> str:
     existing = _search_existing_issue(repo, alert.key, token=token, api_url=api_url)
     if existing:
         issue_number = existing["number"]
+        was_closed = (existing.get("state") or "").lower() == "closed"
+        recurrence_note = (
+            " (previously CLOSED — reopening on recurrence)" if was_closed else ""
+        )
         comment = textwrap.dedent(f"""
-            Alert seen again at {dt.datetime.now(dt.UTC).isoformat()}.
+            Alert seen again at {dt.datetime.now(dt.UTC).isoformat()}{recurrence_note}.
 
             Latest context:
             {alert.body.strip()}
             """).strip()
+        # Reopen a closed issue before commenting so the recurrence is visible on
+        # the board — but never re-file it as a new "untracked" issue.
+        if was_closed:
+            _github_request(
+                "PATCH",
+                f"/repos/{repo}/issues/{issue_number}",
+                data={"state": "open"},
+                token=token,
+                api_url=api_url,
+            )
         _github_request(
             "POST",
             f"/repos/{repo}/issues/{issue_number}/comments",
@@ -147,7 +166,8 @@ def upsert_issue(alert: AlertIssue, *, dry_run: bool = False) -> str:
             token=token,
             api_url=api_url,
         )
-        return f"updated issue #{issue_number}: {alert.title}"
+        verb = "reopened" if was_closed else "updated"
+        return f"{verb} issue #{issue_number}: {alert.title}"
 
     created = _github_request(
         "POST",
@@ -175,6 +195,26 @@ def _sentry_request(path: str, *, params: dict[str, str]) -> Any:
         raise RuntimeError(f"Sentry API failed: {exc.code} {detail}")
 
 
+def _issue_24h_count(issue: dict[str, Any]) -> int | None:
+    """Sum a Sentry issue's last-24h event volume from its stats histogram.
+
+    Returns None when the payload carries no stats histogram (caller falls back
+    to the lifetime ``count``). The issues API returns stats as
+    ``{"24h": [[unix_ts, count], ...]}`` when statsPeriod=24h is requested.
+    """
+    stats = issue.get("stats") or {}
+    buckets = stats.get("24h")
+    if not buckets:
+        return None
+    total = 0
+    for point in buckets:
+        try:
+            total += int(point[1])
+        except (IndexError, TypeError, ValueError):
+            continue
+    return total
+
+
 def sentry_alerts() -> list[AlertIssue]:
     org = _env("SENTRY_ORG")
     project = _env("SENTRY_PROJECT")
@@ -200,7 +240,15 @@ def sentry_alerts() -> list[AlertIssue]:
 
     alerts: list[AlertIssue] = []
     for issue in issues[:limit]:
-        event_count = int(issue.get("count") or "0")
+        # Scope the threshold to the LAST 24h, not lifetime. Sentry's `count`
+        # field is the lifetime event total — a chronic error quiet for weeks can
+        # still report count>min_events and get (re-)flagged. The real recent
+        # volume is the sum of the stats["24h"] histogram (statsPeriod=24h is set
+        # on the request above). Fall back to lifetime count only if stats are
+        # absent from the payload.
+        event_count = _issue_24h_count(issue)
+        if event_count is None:
+            event_count = int(issue.get("count") or "0")
         if event_count < min_events:
             continue
 
@@ -214,6 +262,7 @@ def sentry_alerts() -> list[AlertIssue]:
         permalink = issue.get("permalink") or issue.get("url") or ""
         level = issue.get("level") or "error"
         count = issue.get("count") or "unknown"
+        count_24h = event_count  # 24h-scoped (what tripped the threshold)
         first_seen = issue.get("firstSeen") or "unknown"
         last_seen = issue.get("lastSeen") or "unknown"
         body = textwrap.dedent(f"""
@@ -221,7 +270,8 @@ def sentry_alerts() -> list[AlertIssue]:
 
             - Issue: `{short_id}`
             - Level: `{level}`
-            - Count: `{count}`
+            - Count (24h): `{count_24h}`
+            - Count (lifetime): `{count}`
             - First seen: `{first_seen}`
             - Last seen: `{last_seen}`
             - Culprit: `{culprit}`

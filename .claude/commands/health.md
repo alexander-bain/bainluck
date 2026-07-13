@@ -18,10 +18,17 @@ Group these into parallel batches. Every `curl` must be prefixed with `source /U
 #### Batch 1: Production infrastructure
 
 ```bash
-# Sentry — new/high-frequency errors (last 24h)
+# Sentry — high-frequency errors, counts scoped to the LAST 24h (not lifetime).
+# The issues API `count` field is LIFETIME; a chronic error stale for weeks can
+# still show count>100. The real 24h volume is the SUM of the stats["24h"]
+# histogram buckets — that is what the >100/24h threshold below must compare.
 source .env.claude && curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
-  "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=5&sort=date" \
-  | python3 -c "import json,sys; [print(f'  {i[\"shortId\"]:12s} {i[\"count\"]:>5s} evts  {i[\"title\"][:60]}') for i in json.load(sys.stdin)]"
+  "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=10&sort=freq&statsPeriod=24h" \
+  | python3 -c "import json,sys
+issues=json.load(sys.stdin)
+def c24(i): return int(sum(v for _,v in (i.get('stats') or {}).get('24h') or []) or 0)
+for i in sorted(issues, key=c24, reverse=True):
+    print(f'  {i[\"shortId\"]:14s} {c24(i):>6d} evts/24h  (life {str(i.get(\"count\",\"?\")):>7}) {i[\"title\"][:55]}')"
 
 # Heroku — dyno status + DB connections
 heroku apps:info -a bainluck 2>&1 | grep "Dynos:"
@@ -154,7 +161,7 @@ For each section, present:
 #### Sections (in priority order):
 
 **A. Production Stability**
-- Sentry: any issue >100 events in 24h → 🔴
+- Sentry: any issue with >100 events **in the last 24h** (sum of `stats["24h"]`, NOT the lifetime `count`) → 🔴. A high lifetime `count` on a chronic that is quiet in 24h is not a fresh fire.
 - Heroku: dyno up, DB connections reasonable (<18)
 - CI: last 3 runs passing
 - Celery: background queue >50 → 🔴, >20 → 🟡
@@ -244,9 +251,10 @@ After presenting findings, if there are any 🔴 or 🟡 items:
 
 1. Ask: "Want me to file GitHub Issues for the problems found?"
 2. If yes, for each problem:
-   - Check for an existing open issue covering the same problem (`gh issue list --search "KEYWORD" --state open`)
-   - If no existing issue: create one with appropriate labels (`area:*`, `type:*`, `priority:*`, `needs-agent` or `needs-user`)
-   - If existing issue: comment with updated status from this health check
+   - Check for an existing issue covering the same problem **including CLOSED ones** (`gh issue list --search "KEYWORD" --state all`). A recurring chronic (e.g. a Sentry class already filed and closed) must NOT be re-flagged as "untracked" — that is duplicate noise.
+   - If no existing issue (open or closed): create one with appropriate labels (`area:*`, `type:*`, `priority:*`, `needs-agent` or `needs-user`)
+   - If an OPEN issue exists: comment with updated status from this health check
+   - If a CLOSED issue exists and the problem has recurred: reopen it (`gh issue reopen N`) and comment, rather than filing a new one
    - Add all new issues to the project board (`gh project item-add 1 --owner alexander-bain`)
 3. Report what was filed/updated
 
