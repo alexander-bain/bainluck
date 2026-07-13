@@ -26,7 +26,7 @@ calibration #899/#907 starvation history).
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import text
 
@@ -56,6 +56,11 @@ async def _precompute_backfill_progress() -> dict:
     from app.tasks.redis_state import get_redis_client
 
     stats: dict = {"status": "ok", "errors": []}
+    # asyncpg requires date/datetime objects (not strings) for timestamptz binds.
+    _freeze_start = date.fromisoformat(FREEZE_START)
+    _freeze_end = date.fromisoformat(FREEZE_END)
+    _cohort_start = date.fromisoformat(SUCCESS_COHORT_START)
+    _density_since = date.fromisoformat(DENSITY_SINCE)
     response: dict = {
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "freeze_window": {"start": FREEZE_START, "end": FREEZE_END},
@@ -101,7 +106,7 @@ async def _precompute_backfill_progress() -> dict:
                     FROM os
                     GROUP BY source, mon
                     ORDER BY mon DESC, source
-                """), {"since": DENSITY_SINCE, "frac": DENSITY_SAMPLE_FRAC,
+                """), {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
                        "dense": DENSE_POINTS})
                 by_month = []
                 for r in dens.all():
@@ -158,7 +163,7 @@ async def _precompute_backfill_progress() -> dict:
                     FROM os
                     GROUP BY source
                     ORDER BY sampled DESC
-                """), {"since": SUCCESS_COHORT_START, "frac": DENSITY_SAMPLE_FRAC,
+                """), {"since": _cohort_start, "frac": DENSITY_SAMPLE_FRAC,
                        "dense": DENSE_POINTS})
                 cohort = []
                 for r in coh.all():
@@ -200,7 +205,7 @@ async def _precompute_backfill_progress() -> dict:
                     FROM futures_markets fm
                     WHERE fm.source = 'kalshi'
                       AND fm.created_at >= :s AND fm.created_at < :e
-                """), {"s": FREEZE_START, "e": FREEZE_END})
+                """), {"s": _freeze_start, "e": _freeze_end})
                 c = created.one()
 
                 settled = await session.execute(text("""
@@ -215,7 +220,7 @@ async def _precompute_backfill_progress() -> dict:
                     FROM futures_markets fm
                     WHERE fm.source = 'kalshi'
                       AND fm.resolution_date >= :s AND fm.resolution_date < :e
-                """), {"s": FREEZE_START, "e": FREEZE_END})
+                """), {"s": _freeze_start, "e": _freeze_end})
                 s = settled.one()
 
                 created_total = c.total or 0
