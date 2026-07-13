@@ -2282,6 +2282,68 @@ async def trigger_audit_related_futures(
     }
 
 
+@router.post("/entity-registry/seed")
+async def trigger_entity_registry_seed(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    persons_only: bool = Query(
+        True,
+        description="Only run the person fold-in (skip teams/competitions already seeded)",
+    ),
+):
+    """#171/#1020 — Trigger the A1 entity-registry seed as a background task.
+
+    Removes the ``heroku run`` requirement (EPERM from the sandboxed crank).
+    Idempotent: already-folded rows are skipped, so a re-trigger resumes. Counts
+    land in the task result (poll ``/api/admin/audit/task/{task_id}``) AND in a
+    ``seed_diag:persons`` marker row readable via ``/api/admin/db-query``.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import seed_entity_registry
+    task = seed_entity_registry.delay(persons_only)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "persons_only": persons_only,
+        "message": (
+            "Entity-registry seed queued. Poll /api/admin/audit/task/{task_id}; "
+            "counts also land in seed_diag:persons (db-query)."
+        ),
+    }
+
+
+@router.post("/polymarket/backfill-matchups")
+async def trigger_polymarket_backfill_matchups(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    all_groups: bool = Query(
+        False,
+        description="Also backfill unlinked poly game groups (default: linked only)",
+    ),
+):
+    """#171/#1021 — Trigger the A2 poly matchup_title backfill as a background task.
+
+    Recovers the "A vs. B" matchup onto Polymarket game sub-markets so the
+    resolution engine reads both participants (closes the poly ``market_event``
+    shadow gap). Idempotent: only writes where ``matchup_title`` is missing. Counts
+    land in the task result AND in a ``seed_diag:poly_matchups`` marker row.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks import backfill_polymarket_matchups
+    task = backfill_polymarket_matchups.delay(all_groups)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "all_groups": all_groups,
+        "message": (
+            "Poly matchup backfill queued. Poll /api/admin/audit/task/{task_id}; "
+            "counts also land in seed_diag:poly_matchups (db-query)."
+        ),
+    }
+
+
 @router.get("/audit/task/{task_id}")
 async def get_audit_task_status(
     request: Request,

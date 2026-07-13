@@ -1377,6 +1377,46 @@ def compute_matching_metrics(self):
     return run_async(_compute_matching_metrics_impl())
 
 
+# --- Entity Registry Seeds (#171 execution rails; on-demand only, no beat entry) ---
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=1500,
+    time_limit=1560,
+    name="app.tasks.seed_entity_registry",
+)
+def seed_entity_registry(self, persons_only: bool = True):
+    """#171/#1020 — Run the A1 entity-registry fold-in seed in-worker.
+
+    Removes the ``heroku run`` requirement (EPERM from the sandboxed crank). The
+    person fold-in scans all individual-sport events + golf/motorsport futures
+    outcomes, so it can exceed the GLOBAL 300s ``task_time_limit`` (a HARD limit →
+    SIGKILL); a 1500s SOFT limit under a 1560s hard limit gives it room while
+    keeping the overrun catchable. Idempotent + commits per batch, so a re-trigger
+    resumes and a soft-limit overrun leaves committed progress intact.
+    """
+    from app.tasks.entity_seed import seed_entity_registry_impl
+    return run_async(seed_entity_registry_impl(persons_only))
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=900,
+    time_limit=960,
+    name="app.tasks.backfill_polymarket_matchups",
+)
+def backfill_polymarket_matchups(self, all_groups: bool = False):
+    """#171/#1021 — Backfill ``matchup_title`` on poly game sub-markets in-worker.
+
+    Recovers the "A vs. B" matchup from a sibling row in the same Polymarket group
+    so the resolution engine reads both participants. Idempotent (only writes where
+    missing); commits every 2000 rows. 900s soft limit keeps the overrun catchable
+    above the global 300s hard cap.
+    """
+    from app.tasks.entity_seed import backfill_polymarket_matchups_impl
+    return run_async(backfill_polymarket_matchups_impl(all_groups))
+
+
 # --- Tier 1 Event Coverage Monitoring ---
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.check_tier1_coverage")
