@@ -237,6 +237,37 @@ def _autopilot_tile(beat: dict, metrics: dict) -> dict:
     }
 
 
+def _feed_quality_empty_detail(eval_row) -> str:
+    """Honest empty-state text for the feed boring-rate tile (L2-106).
+
+    The metric comes from the daily human-label gold-set eval
+    (``snapshot_discover_label_eval_run`` — the 09:55 UTC background beat), which
+    scores recent ``RankingJudgment`` labels. The tile reads "—" in two distinct
+    cases; name which one so it never looks like a broken pipeline:
+
+      - no run row at all → the beat hasn't written one yet (e.g. hasn't fired
+        since the last deploy) OR there are no human labels to score;
+      - a run exists but ``boring_rate`` is null → the beat ran but scored zero
+        graded labels in its window.
+
+    Both are fixed the same way — grade markets in Discover Quality — so the text
+    points there (the tile's ``href``). Display-shaping only; no scheduling.
+    """
+    if eval_row is None:
+        return (
+            "No gold-set eval recorded yet — the daily label-eval beat "
+            "(09:55 UTC) writes one from human labels. If it hasn't run since the "
+            "last deploy, wait a cycle; otherwise grade markets in Discover Quality "
+            "to seed it."
+        )
+    captured_age = _hours_since(getattr(eval_row, "captured_at", None))
+    age_str = f"{captured_age}h ago" if captured_age is not None else "recently"
+    return (
+        f"Last eval ran {age_str} but scored 0 human labels — grade markets in "
+        "Discover Quality to populate boring-rate."
+    )
+
+
 def _read_redis_json(key: str) -> dict | None:
     try:
         from app.tasks.redis_state import get_redis_client
@@ -421,7 +452,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
                 "value": "—",
                 "numeric": None,
                 "status": "unknown",
-                "detail": "no eval run recorded yet",
+                "detail": _feed_quality_empty_detail(eval_row),
                 "href": "/admin/discover-quality",
             }
         )

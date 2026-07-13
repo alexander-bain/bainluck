@@ -16,6 +16,7 @@ from app.routes.admin_cockpit import (
     _AUTOPILOT_BEATS,
     _WAITING_FALLBACK,
     _autopilot_tile,
+    _feed_quality_empty_detail,
     _hours_since,
     _red_sub_context,
     _status_from_pct,
@@ -63,6 +64,25 @@ class TestHelpers:
         assert result["source"] == "fallback"
         assert result["items"] == _WAITING_FALLBACK
         assert len(result["items"]) == 3
+
+    def test_feed_quality_empty_detail_no_run(self):
+        # L2-106: no run row → explain the daily beat + how to seed it, not a
+        # bare "no eval run recorded yet".
+        detail = _feed_quality_empty_detail(None)
+        assert "daily label-eval beat" in detail
+        assert "09:55 UTC" in detail
+        assert "Discover Quality" in detail
+
+    def test_feed_quality_empty_detail_run_without_labels(self):
+        # L2-106: a run exists but scored 0 human labels → say the run ran and
+        # how old it is, and that grading is the fix.
+        class _Row:
+            captured_at = datetime.now(timezone.utc) - timedelta(hours=3)
+
+        detail = _feed_quality_empty_detail(_Row())
+        assert "0 human labels" in detail
+        assert "3.0h ago" in detail
+        assert "Discover Quality" in detail
 
     def test_red_sub_context_tracked_artifact_untracked(self):
         # L2-104: a RED with an open issue is "tracked" and links it.
