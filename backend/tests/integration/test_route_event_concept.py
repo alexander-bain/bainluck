@@ -422,7 +422,12 @@ class TestUFCEventAdapter:
             103, "UFC Heavyweight Title Holder?",
             "kalshi:KXUFCHEAVYWEIGHTTITLE-26", ("A", 0.5), ("B", 0.5),
         )
-        mock_db.execute.return_value = _query_result([f1, f2, prop])
+        # 1st execute = Kalshi FuturesMarket query; 2nd = events-table schedule
+        # (no bouts seeded here — the Kalshi path is what's under test).
+        mock_db.execute.side_effect = [
+            _query_result([f1, f2, prop]),
+            _query_result([]),
+        ]
         resp = await client.get("/api/event/event:ufc:26jun20")
         assert resp.status_code == 200
         body = resp.json()
@@ -480,7 +485,10 @@ class TestUFCEventAdapter:
             [("Holloway to win by KO/TKO?", 0.5), ("O/U 1.5 Rounds", 0.5), ("Distance?", 0.3)],
         )
 
-        mock_db.execute.return_value = _query_result([fight, method, occ, bundle])
+        mock_db.execute.side_effect = [
+            _query_result([fight, method, occ, bundle]),  # Kalshi markets
+            _query_result([]),                            # events-table schedule
+        ]
         resp = await client.get("/api/event/event:ufc:26jul11")
         assert resp.status_code == 200
         body = resp.json()

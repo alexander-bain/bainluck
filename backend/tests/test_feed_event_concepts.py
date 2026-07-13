@@ -92,7 +92,7 @@ class TestConceptReason:
         assert _concept_reason({"domain": "f1", "entry_count": 0}) == "Grand Prix race winner"
 
 
-class _MockResult:
+class _MockScalars:
     def __init__(self, rows):
         self._rows = rows
 
@@ -100,12 +100,38 @@ class _MockResult:
         return self._rows
 
 
-class _MockDB:
-    def __init__(self, rows):
+class _MockResult:
+    # Kalshi FuturesMarket query reads via .all() (tuples); the events-table query
+    # reads via .scalars().all() (Event-likes).
+    def __init__(self, rows, event_rows):
         self._rows = rows
+        self._event_rows = event_rows
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return _MockScalars(self._event_rows)
+
+
+class _MockDB:
+    def __init__(self, rows, event_rows=None):
+        self._rows = rows
+        self._event_rows = event_rows or []
 
     async def execute(self, *_a, **_k):
-        return _MockResult(self._rows)
+        return _MockResult(self._rows, self._event_rows)
+
+
+class _FakeBout:
+    """Minimal Event stand-in for the events-table schedule source."""
+
+    def __init__(self, id, home, away, commence, status="scheduled"):
+        self.id = id
+        self.home_team_name = home
+        self.away_team_name = away
+        self.commence_time = commence
+        self.status = status
 
 
 @pytest.mark.asyncio
@@ -134,3 +160,40 @@ class TestListUfcCardConcepts:
     async def test_empty_when_no_fights(self):
         rows = [(1, "kalshi:KXUFCMOV-26JUL11X", "Method", None, {})]
         assert await list_ufc_card_concepts(_MockDB(rows)) == []
+
+    async def test_events_source_surfaces_ufc_card_before_kalshi(self):
+        # The events-table schedule surfaces a UFC card T-5, before Kalshi lists it.
+        from app.utils.event_combat import event_commence_token
+
+        soon = datetime.now(timezone.utc) + timedelta(days=8)
+        token = event_commence_token(soon)
+        bouts = [
+            _FakeBout(1, "Dricus Du Plessis", "Kamaru Usman", soon),
+            _FakeBout(2, "Undercard A", "Undercard B", soon - timedelta(hours=2)),
+        ]
+        concepts = await list_ufc_card_concepts(_MockDB([], event_rows=bouts))
+        assert len(concepts) == 1
+        c = concepts[0]
+        assert c["key"] == f"event:ufc:{token}"
+        assert c["fight_count"] == 2
+        assert c["main_event_id"] is None
+        assert "Du Plessis" in c["name"] and "Usman" in c["name"]
+
+    async def test_events_commence_overrides_kalshi_close_date(self):
+        # Real Du Plessis/Usman shape (gotcha #14): the Kalshi fight's commence is a
+        # far-future close date; the scheduled bout's time is authoritative.
+        from app.utils.event_combat import event_commence_token
+
+        fight_time = datetime.now(timezone.utc) + timedelta(days=5)
+        token = event_commence_token(fight_time)
+        close_date = fight_time + timedelta(days=15)
+        rows = [
+            (301, f"kalshi:KXUFCFIGHT-{token.upper()}DUPUSM",
+             "Fight Night: Du Plessis vs Usman", close_date, {}),
+        ]
+        bouts = [_FakeBout(1, "Dricus Du Plessis", "Kamaru Usman", fight_time)]
+        concepts = await list_ufc_card_concepts(_MockDB(rows, event_rows=bouts))
+        assert len(concepts) == 1
+        c = concepts[0]
+        assert c["latest_commence"] == fight_time  # not the Kalshi close date
+        assert c["main_event_id"] == 301

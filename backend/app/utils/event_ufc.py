@@ -67,6 +67,9 @@ UFC_CONFIG = make_combat_config(
     strip_re=_UFC_STRIP_RE,
     fight_night_re=_UFC_FIGHT_NIGHT_RE,
     fight_night_label="Fight Night",
+    # Schedule source: Odds API MMA events land under both sport keys (gotcha: MMA
+    # spans mma_ufc + mma_mixed_martial_arts). Surfaces + dates cards before Kalshi.
+    events_sport_keys=("mma_ufc", "mma_mixed_martial_arts"),
 )
 
 

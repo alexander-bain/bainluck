@@ -70,6 +70,12 @@ class CombatSportConfig:
     strip_re: re.Pattern | None = None  # leading card-prefix to strip from a subtitle
     fight_night_re: re.Pattern | None = None  # "Fight Night" detection (MMA); None = off
     fight_night_label: str = "Fight Night"
+    # Sports.key(s) of the schedule (events table) source: scheduled bouts (Odds API/
+    # ESPN/StatPal) that surface a card BEFORE Kalshi lists it, and whose fight-start
+    # time is authoritative over Kalshi's resolution/close date (gotcha #14). Empty
+    # disables the events-table source. MMA spans two keys (mma_ufc +
+    # mma_mixed_martial_arts); boxing is ("boxing_boxing",).
+    events_sport_keys: tuple[str, ...] = ()
 
 
 def make_combat_config(
@@ -84,6 +90,7 @@ def make_combat_config(
     strip_re: re.Pattern | None = None,
     fight_night_re: re.Pattern | None = None,
     fight_night_label: str = "Fight Night",
+    events_sport_keys: tuple[str, ...] = (),
 ) -> CombatSportConfig:
     """Build a config, compiling the `<PREFIX>-<YYMONDD>` date-token regexes.
 
@@ -106,12 +113,38 @@ def make_combat_config(
         strip_re=strip_re,
         fight_night_re=fight_night_re,
         fight_night_label=fight_night_label,
+        events_sport_keys=events_sport_keys,
     )
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers (per-domain via cfg) — unit-tested.
 # ---------------------------------------------------------------------------
+
+
+# Lowercase 3-letter month abbreviations — locale-independent (strftime("%b") is
+# locale-dependent). Used to build a card date-token from an events-table bout's
+# commence_time that ALIGNS with the Kalshi ticker token (`YYMONDD`, e.g. 26JUL18).
+_MONTHS = (
+    "jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec",
+)
+
+
+def event_commence_token(commence) -> str | None:
+    """Card date-token from an events-table bout's commence_time, matching the
+    Kalshi fight-ticker token format (`YYMONDD` lowercased), so an events-sourced
+    card and a Kalshi-sourced card for the same date UNIFY on one key rather than
+    duplicating. e.g. 2026-07-18T22:00Z -> "26jul18". None if no time.
+
+    Uses the stored (UTC) date components — validated against live data (the
+    Du Plessis/Usman card: commence 2026-07-18T22:00Z, Kalshi ticker KX…-26JUL18)."""
+    if commence is None:
+        return None
+    try:
+        return f"{commence.year % 100:02d}{_MONTHS[commence.month - 1]}{commence.day:02d}"
+    except (AttributeError, IndexError, TypeError):
+        return None
 
 
 def card_token(cfg: CombatSportConfig, external_id: str | None) -> str | None:
@@ -283,6 +316,66 @@ def derive_concept(
     }
 
 
+async def _list_event_bouts(
+    cfg: CombatSportConfig, db: AsyncSession, now, *, since_hours: int = 36
+):
+    """Betting-odds-first schedule source: scheduled/live bouts from the EVENTS
+    table for this combat sport, grouped by card date-token (aligned with the
+    Kalshi ticker token via :func:`event_commence_token`). Returns
+    ``{token: [Event, ...]}`` (each list sorted by commence_time). Empty when the
+    sport has no ``events_sport_key``.
+
+    This is the T-5 source: the Odds API schedules a card (and prices the fights)
+    days before Kalshi lists it, and the events-table ``commence_time`` is the real
+    fight-start signal — unlike Kalshi's ``commence_time`` (resolution/close date,
+    gotcha #14). Only bouts commencing within ``[now - since_hours, ∞)`` so a card
+    that finished last night still resolves while genuinely old cards defer to the
+    Kalshi path. Read-only, best-effort."""
+    if not cfg.events_sport_keys:
+        return {}
+
+    from datetime import timedelta
+
+    from app.models import Event, Sport
+
+    floor = now - timedelta(hours=since_hours)
+    events = list(
+        (
+            await db.execute(
+                select(Event)
+                .join(Sport, Event.sport_id == Sport.id)
+                .where(
+                    Sport.key.in_(cfg.events_sport_keys),
+                    Event.commence_time.isnot(None),
+                    Event.commence_time >= floor,
+                )
+                .order_by(Event.commence_time)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    bouts: dict[str, list] = {}
+    for ev in events:
+        # Degenerate single-fighter rows (home == away) aren't a real bout — the
+        # merge task folds them into the two-sided event (gotcha: combat merge).
+        home = (ev.home_team_name or "").strip()
+        away = (ev.away_team_name or "").strip()
+        if not home or not away or home.lower() == away.lower():
+            continue
+        token = event_commence_token(ev.commence_time)
+        if token is None:
+            continue
+        bouts.setdefault(token, []).append(ev)
+
+    # Sort each card's bouts ascending by commence — the main event (latest) caps
+    # the night. Self-contained (not reliant on the query's ORDER BY).
+    for group in bouts.values():
+        group.sort(key=lambda e: e.commence_time)
+    return bouts
+
+
 async def list_card_concepts(
     cfg: CombatSportConfig,
     db: AsyncSession,
@@ -333,32 +426,62 @@ async def list_card_concepts(
         if evt_title:
             c["titles"].append(evt_title)
 
+    # Betting-odds-first schedule source: scheduled bouts from the events table.
+    # It surfaces a card days before Kalshi lists it, and its commence_time is the
+    # authoritative fight-start — Kalshi's is the resolution/close date (gotcha #14),
+    # which otherwise leaves a live card reading "upcoming" long after it ends.
+    event_bouts = await _list_event_bouts(cfg, db, now)
+
+    def _ct(f):
+        return f["commence"] or datetime.min.replace(tzinfo=timezone.utc)
+
     concepts: list[dict] = []
-    for token, c in cards.items():
-        fights = c["fights"]
-        if not fights:
+    for token in set(cards) | set(event_bouts):
+        kalshi = cards.get(token)
+        bouts = event_bouts.get(token) or []
+
+        # Authoritative schedule: prefer the events-table fight time; fall back to
+        # the Kalshi main-event commence only when no scheduled bout exists.
+        if bouts:
+            latest = bouts[-1].commence_time  # _list_event_bouts sorts ascending
+        elif kalshi and kalshi["fights"]:
+            kalshi["fights"].sort(key=_ct)
+            latest = kalshi["fights"][-1]["commence"]
+        else:
             continue
 
-        def _ct(f):
-            return f["commence"] or datetime.min.replace(tzinfo=timezone.utc)
-
-        fights.sort(key=_ct)
-        main = fights[-1]
-        latest = main["commence"]
         status = combat_status(latest, now)
         if status not in statuses:
             continue
-        label, is_major = card_label(cfg, main["name"], tuple(c["titles"]))
+
+        # Name/numbering: Kalshi carries the numbered-card label ("UFC 329") and
+        # event_titles; events rows only carry fighter names, so an events-only card
+        # falls through to its headline bout ("Du Plessis vs Usman", is_major=False).
+        if kalshi and kalshi["fights"]:
+            kalshi["fights"].sort(key=_ct)
+            main = kalshi["fights"][-1]
+            label, is_major = card_label(cfg, main["name"], tuple(kalshi["titles"]))
+            main_id = main["id"]
+            fight_count = len(kalshi["fights"])
+            name = label or main["name"]
+        else:
+            main_bout = bouts[-1]
+            headline = f"{main_bout.home_team_name} vs {main_bout.away_team_name}"
+            label, is_major = card_label(cfg, headline, ())
+            main_id = None
+            fight_count = len(bouts)
+            name = label or headline
+
         concepts.append(
             {
                 "key": f"event:{cfg.domain}:{token}",
-                "name": label or main["name"],
+                "name": name,
                 "domain": cfg.domain,
                 "status": status,
                 "start_date": latest.isoformat() if latest is not None else None,
                 "is_major": is_major,
-                "fight_count": len(fights),
-                "main_event_id": main["id"],
+                "fight_count": fight_count,
+                "main_event_id": main_id,
                 "latest_commence": latest,
             }
         )
@@ -402,10 +525,8 @@ class CombatEventAdapter:
             )
         )
         markets = list((await db.execute(q)).scalars().unique().all())
-        if not markets:
-            return None
 
-        # Collect this card's FIGHTS: ticker date-token == slug AND two-sided.
+        # Collect this card's Kalshi FIGHTS: ticker date-token == slug AND two-sided.
         fights = []
         for m in markets:
             if card_token(cfg, m.external_id) != target:
@@ -413,7 +534,16 @@ class CombatEventAdapter:
             if len(m.outcomes or []) != 2:  # a real fight is two-sided
                 continue
             fights.append(m)
+
+        # Betting-odds-first schedule (events table): the authoritative fight-start
+        # time (overrides Kalshi's close date, gotcha #14) and the sole source for a
+        # card that Kalshi hasn't listed yet (T-5, before it floods).
+        bouts = (await _list_event_bouts(cfg, db, now)).get(target) or []
+
         if not fights:
+            # No Kalshi markets for this card — resolve from the schedule alone.
+            if bouts:
+                return self._build_events_envelope(target, bouts, now)
             return None
 
         # Headline fight = latest commence_time (the main event caps the night).
@@ -423,6 +553,11 @@ class CombatEventAdapter:
         fights.sort(key=_ct)
         main_event = fights[-1]
         latest_commence = main_event.commence_time
+
+        # Prefer the events-table fight time for the card's schedule + status — a
+        # Kalshi-only commence is the resolution/close date and would leave a card
+        # that already fought reading "upcoming" for days (gotcha #14).
+        authoritative_commence = bouts[-1].commence_time if bouts else latest_commence
 
         def _fight_outcomes(m):
             outs = sorted(
@@ -531,9 +666,11 @@ class CombatEventAdapter:
                 "key": f"event:{cfg.domain}:{target}",
                 "domain": cfg.domain,
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
-                "status": combat_status(latest_commence, now),
+                "status": combat_status(authoritative_commence, now),
                 "start_date": (
-                    latest_commence.isoformat() if latest_commence is not None else None
+                    authoritative_commence.isoformat()
+                    if authoritative_commence is not None
+                    else None
                 ),
                 "end_date": None,
                 "venue": None,
@@ -547,6 +684,90 @@ class CombatEventAdapter:
                 "evolution_market_id": main_event.id,
             },
             "sections": sections,
+            "children": children,
+            "movers": [],
+        }
+
+    def _build_events_envelope(self, target: str, bouts: list, now) -> dict:
+        """Pre-Kalshi envelope for a card that exists only in the events table
+        (betting-odds-first). Same co_equal_list shape as the Kalshi path, but
+        probabilities come from the aggregated event win-prob (Odds API/ESPN) and
+        there is no futures market to chart — so `evolution_market_id` is None and
+        the frontend renders the two-sided split bar without a history timeline.
+
+        `bouts` are Event ORM rows for this card (sorted ascending by commence),
+        home/away_team_name = the two fighters. `market_id` on children carries the
+        Event PK purely as a stable render key — NOT a FuturesMarket id."""
+        from app.utils.aggregation import compute_aggregate_probability
+
+        cfg = self.cfg
+
+        def _competitors(ev):
+            home_prob = compute_aggregate_probability(ev, ev.status)
+            if home_prob is not None:
+                home_prob = max(0.0, min(1.0, float(home_prob)))
+                pair = [
+                    {"name": ev.home_team_name, "probability": round(home_prob, 4)},
+                    {"name": ev.away_team_name, "probability": round(1.0 - home_prob, 4)},
+                ]
+            else:
+                pair = [
+                    {"name": ev.home_team_name, "probability": None},
+                    {"name": ev.away_team_name, "probability": None},
+                ]
+            return sorted(
+                pair,
+                key=lambda o: o["probability"] if o["probability"] is not None else -1.0,
+                reverse=True,
+            )
+
+        main_bout = bouts[-1]  # latest commence caps the night
+        latest_commence = main_bout.commence_time
+
+        def _child(ev):
+            outs = _competitors(ev)
+            lead_prob = outs[0]["probability"] if outs else None
+            return {
+                "market_id": ev.id,  # Event PK — render key only, not a futures id
+                "market_name": f"{ev.home_team_name} vs {ev.away_team_name}",
+                "source": "events",  # data-only (audit); not rendered
+                "kind": "fight",
+                "settled": ev.status in ("completed", "closed"),
+                "probability": lead_prob,
+                "outcomes": outs,
+            }
+
+        children = [_child(ev) for ev in bouts]
+        headline = f"{main_bout.home_team_name} vs {main_bout.away_team_name}"
+        card_name, is_major = card_label(cfg, headline, ())
+
+        return {
+            "event": {
+                "key": f"event:{cfg.domain}:{target}",
+                "domain": cfg.domain,
+                "name": card_name or headline,
+                "status": combat_status(latest_commence, now),
+                "start_date": (
+                    latest_commence.isoformat() if latest_commence is not None else None
+                ),
+                "end_date": None,
+                "venue": None,
+                "location": None,
+                "is_major": is_major,
+            },
+            "primary": {
+                "kind": "co_equal_list",
+                "label": "Main event",
+                "competitors": _competitors(main_bout),
+                "evolution_market_id": None,  # no futures market yet → no timeline
+            },
+            "sections": [
+                {
+                    "type": "matchup",
+                    "label": "Fights",
+                    "market_ids": [ev.id for ev in bouts],
+                }
+            ],
             "children": children,
             "movers": [],
         }

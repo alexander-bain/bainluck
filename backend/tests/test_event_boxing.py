@@ -100,7 +100,7 @@ class TestCombatStatusSharedByBoxing:
         assert combat_status(NOW - timedelta(hours=10), NOW) == "settled"
 
 
-class _MockResult:
+class _MockScalars:
     def __init__(self, rows):
         self._rows = rows
 
@@ -108,12 +108,38 @@ class _MockResult:
         return self._rows
 
 
-class _MockDB:
-    def __init__(self, rows):
+class _MockResult:
+    # Kalshi FuturesMarket query reads via .all() (tuples); the events-table query
+    # reads via .scalars().all() (Event-likes) — the two access paths keep them apart.
+    def __init__(self, rows, event_rows):
         self._rows = rows
+        self._event_rows = event_rows
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return _MockScalars(self._event_rows)
+
+
+class _MockDB:
+    def __init__(self, rows, event_rows=None):
+        self._rows = rows
+        self._event_rows = event_rows or []
 
     async def execute(self, *_a, **_k):
-        return _MockResult(self._rows)
+        return _MockResult(self._rows, self._event_rows)
+
+
+class _FakeBout:
+    """Minimal Event stand-in for the events-table schedule source."""
+
+    def __init__(self, id, home, away, commence, status="scheduled"):
+        self.id = id
+        self.home_team_name = home
+        self.away_team_name = away
+        self.commence_time = commence
+        self.status = status
 
 
 @pytest.mark.asyncio
@@ -140,3 +166,47 @@ class TestListBoxingCardConcepts:
     async def test_empty_when_no_fights(self):
         rows = [(1, "KXBOXINGMOV-26JUL04X", "Method", None, {})]
         assert await list_boxing_card_concepts(_MockDB(rows)) == []
+
+    async def test_events_source_surfaces_card_before_kalshi(self):
+        # No Kalshi markets yet — the events-table schedule alone must surface the
+        # card (the T-5 "before Kalshi floods" gap), keyed by the bout's commence
+        # date-token so it later UNIFIES with the Kalshi-derived card.
+        from app.utils.event_combat import event_commence_token
+
+        soon = datetime.now(timezone.utc) + timedelta(days=10)
+        token = event_commence_token(soon)
+        bouts = [
+            _FakeBout(1, "Abdullah Mason", "Albert Bell", soon),
+            _FakeBout(2, "Deric Davis", "Carlos Ramos", soon - timedelta(hours=1)),
+        ]
+        concepts = await list_boxing_card_concepts(_MockDB([], event_rows=bouts))
+        assert len(concepts) == 1
+        c = concepts[0]
+        assert c["key"] == f"event:boxing:{token}"
+        assert c["fight_count"] == 2
+        assert c["main_event_id"] is None  # no futures market yet
+        # Headline = latest-commence bout (Mason vs Bell caps the night).
+        assert "Mason" in c["name"] and "Bell" in c["name"]
+
+    async def test_events_commence_overrides_kalshi_close_date(self):
+        # Kalshi's commence is often the resolution/close date (gotcha #14). When a
+        # scheduled bout shares the card token, its fight-start time is authoritative.
+        from app.utils.event_combat import event_commence_token
+
+        fight_time = datetime.now(timezone.utc) + timedelta(days=5)
+        token = event_commence_token(fight_time)
+        close_date = fight_time + timedelta(days=15)  # bogus Kalshi close date
+        rows = [
+            (1, f"KXBOXING-{token.upper()}MASONBELL", "Abdullah Mason vs Albert Bell",
+             close_date, {}),
+        ]
+        bouts = [_FakeBout(9, "Abdullah Mason", "Albert Bell", fight_time)]
+        concepts = await list_boxing_card_concepts(
+            _MockDB(rows, event_rows=bouts)
+        )
+        assert len(concepts) == 1
+        c = concepts[0]
+        assert c["key"] == f"event:boxing:{token}"
+        # Authoritative start = the real fight time, NOT the Kalshi close date.
+        assert c["latest_commence"] == fight_time
+        assert c["main_event_id"] == 1  # Kalshi still supplies the fight market

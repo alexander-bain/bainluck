@@ -48,6 +48,8 @@ BOXING_CONFIG = make_combat_config(
     fight_prefix="KXBOXING",  # KXBOXING-<YYMONDD><FIGHTERS>; props are KXBOXING<TYPE>-…
     any_prefix="KXBOXING",    # any boxing ticker shares the card date-token
     prop_ticker_types=_BOXING_PROP_TICKER_TYPES,
+    # Schedule source (events table): surfaces + dates cards before Kalshi lists them.
+    events_sport_keys=("boxing_boxing",),
 )
 
 
