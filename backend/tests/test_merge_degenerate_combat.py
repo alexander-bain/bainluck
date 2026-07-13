@@ -106,6 +106,25 @@ async def test_ambiguous_two_reals_is_skipped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_domain_agnostic_non_combat_merges(monkeypatch):
+    """#180 Item 2 — the matcher is NOT combat-gated. A non-combat degenerate
+    (e.g. an esports/baseball ``Team A vs Team A``) merges into its unique real
+    ``Team A vs Team B`` counterpart exactly like a fight event. This pins the
+    domain-agnostic contract so a future 'combat-only' regression is caught."""
+    degen = [SimpleNamespace(id=15024173, sport_id=52108,
+                             home_team_name="El Feky", commence_time=None)]
+    candidates = [[SimpleNamespace(id=77, home_team_name="El Feky",
+                                   away_team_name="Al Ahly")]]
+    session = _mock_session(degen, candidates)
+    _patch_session(monkeypatch, session)
+
+    out = await _merge_degenerate_combat_events_impl(dry_run=True)
+    assert out["merged"] == 1
+    assert out["sample"][0] == {"orphan": 15024173, "keep": 77,
+                                "fighter": "El Feky"}
+
+
+@pytest.mark.asyncio
 async def test_dry_run_does_not_write(monkeypatch):
     degen = [SimpleNamespace(id=1, sport_id=42,
                              home_team_name="Benoit Saint-Denis", commence_time=None)]

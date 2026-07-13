@@ -779,6 +779,18 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
     without writing. Skips any degenerate with 0 or >1 real matches (never guesses
     which fight it belongs to). A degenerate with no real counterpart is left
     alone (nothing to unify into).
+
+    #180 Item 2 — DOMAIN-AGNOSTIC by construction. Despite the "combat" name (kept
+    to avoid a beat-key/task-name/admin-route rename blast radius), the SELECT is
+    NOT combat-gated: it scans EVERY ``home==away`` event in any sport with a
+    ``sport_id`` and heals whatever has a unique counterpart. Production proof
+    (2026-07-13 dry-run): 219 degenerates scanned across esports/baseball_other/
+    NCAA Baseball/MMA/soccer_other/Boxing/Tennis/WNBA → merged the 1 with a unique
+    real counterpart. The residual is IRREDUCIBLE VIA SAFE MERGE, not a bug here:
+    ~195 have NO real counterpart in the DB (esports single-name events whose real
+    matchup was never ingested — an upstream esports event-creation issue, its own
+    work item) and ~23 are ambiguous (>1 candidate in the window — never guess).
+    Census→0 is therefore gated on the upstream fix, not on this matcher.
     """
     from sqlalchemy import text as sa_text
     from app.tasks.base import get_task_session
