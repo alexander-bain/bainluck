@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
+import { eventPath } from "@/lib/eventKey";
+import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 
 const RECENT_SEARCHES_KEY = "bainluck_recent_searches";
 
@@ -60,12 +62,20 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
       return;
     }
     setLoading(true);
+    // L2-96: curated concept hubs (e.g. "midterms") not derivable from market names.
+    const curated = matchCuratedConcepts(q);
     try {
       const data = await fetchTypeahead(q);
-      setSuggestions(data.suggestions);
+      const backendKeys = new Set(
+        data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
+      );
+      setSuggestions([
+        ...curated.filter((c) => !backendKeys.has(c.event_key)),
+        ...data.suggestions,
+      ]);
       setDidYouMean(data.did_you_mean ?? null);
     } catch {
-      setSuggestions([]);
+      setSuggestions(curated);
     } finally {
       setLoading(false);
     }
@@ -97,6 +107,15 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
         break;
       case "futures":
         if (s.market_id) router.push(`/futures/${s.market_id}`);
+        break;
+      case "event_concept":
+        // L2-96: event-concept hub page (/event/[key]) — was previously a no-op
+        // on mobile, so concept suggestions (tournaments, elections) dead-clicked.
+        if (s.event_key) router.push(eventPath(s.event_key));
+        break;
+      case "hub":
+        // L2-88 parity with desktop: competition-hub landing shortcut.
+        router.push(s.href || `/hub/${s.competition ?? ""}`);
         break;
     }
   };
@@ -182,6 +201,8 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
               {s.type === "team" && (s.logo ? <img src={s.logo} alt="" className="w-6 h-6 rounded-sm" /> : "\u{1F3C0}")}
               {s.type === "event" && (s.status === "live" ? <span className="text-red-500">{"\u{1F534}"}</span> : "\u{1F4C5}")}
               {s.type === "futures" && "\u{1F4C8}"}
+              {s.type === "event_concept" && "\u{1F3C6}"}
+              {s.type === "hub" && (s.emoji || "\u{1F3DF}")}
             </span>
             <div className="flex-1 min-w-0">
               <div className="text-base text-text-primary truncate">{s.text}</div>
@@ -195,7 +216,15 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
               )}
             </div>
             <span className="text-xs text-text-muted flex-shrink-0">
-              {s.type === "team" ? "Team" : s.type === "event" ? "Game" : "Futures"}
+              {s.type === "team"
+                ? "Team"
+                : s.type === "event"
+                ? "Game"
+                : s.type === "event_concept"
+                ? "Event"
+                : s.type === "hub"
+                ? "Hub"
+                : "Futures"}
             </span>
           </button>
         ))}

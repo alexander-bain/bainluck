@@ -18,6 +18,7 @@ import type {
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
+import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1114,6 +1115,19 @@ export default function PoliticsPage() {
               Probabilities for races, policy, and power across U.S. and global
               politics.
             </p>
+            {/* L2-96: front door to the 2026 midterms event hub (375 races). */}
+            <Link
+              href={eventPath("event:election:2026-midterms")}
+              className="text-accent-brand"
+              style={{
+                display: "inline-block",
+                marginTop: 10,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              2026 Midterms hub →
+            </Link>
           </div>
           <div className={s.pageMeta}>
             <span>

@@ -7,6 +7,7 @@ import type { TypeaheadSuggestion } from "@/lib/api";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
+import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 
 const RECENT_SEARCHES_KEY = "bainluck_recent_searches";
 const MAX_RECENT = 5;
@@ -100,11 +101,21 @@ export default function SearchBar({
 
     setLoading(true);
     setShowRecent(false);
+    // L2-96: curated concept hubs (e.g. "midterms" → the 2026 elections page)
+    // whose phrase no market NAME contains, so the backend won't derive them.
+    const curated = matchCuratedConcepts(q);
     try {
       const data = await fetchTypeahead(q);
-      setSuggestions(data.suggestions);
+      const backendKeys = new Set(
+        data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
+      );
+      const merged = [
+        ...curated.filter((c) => !backendKeys.has(c.event_key)),
+        ...data.suggestions,
+      ];
+      setSuggestions(merged);
       setDidYouMean(data.did_you_mean ?? null);
-      setIsOpen(data.suggestions.length > 0);
+      setIsOpen(merged.length > 0);
       // #993 Slice A: measure real exposure of the answer-in-typeahead so the
       // Alex-test interviews can be cross-checked against it.
       const withAnswer = data.suggestions.filter(
@@ -114,7 +125,9 @@ export default function SearchBar({
         track("answer_visible_typeahead", { query: q, answers_shown: withAnswer });
       }
     } catch {
-      setSuggestions([]);
+      // Backend down/slow: still surface curated hubs so discovery survives.
+      setSuggestions(curated);
+      setIsOpen(curated.length > 0);
     } finally {
       setLoading(false);
     }
