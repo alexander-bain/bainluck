@@ -466,7 +466,7 @@ async def _existing_person_refs(session: AsyncSession) -> set[str]:
 
 
 async def seed_persons_from_events(
-    session: AsyncSession, *, batch_size: int = 1000
+    session: AsyncSession, *, batch_size: int = 1000, commit_each: bool = False
 ) -> dict[str, int]:
     """Fold individual-sport EVENTS into the registry as ``person`` entities.
 
@@ -476,6 +476,11 @@ async def seed_persons_from_events(
     ``(sport_key, name)``. Additive & idempotent (persons matched by
     ``external_ref``); reads ``events`` / ``sports`` only — never writes them, so
     existing team/event matching cannot regress.
+
+    ``commit_each`` commits per batch so a very large fold-in persists
+    incrementally (never one multi-hundred-thousand-row transaction that can time
+    out or OOM a dyno) and a re-run resumes via the idempotency guard. Left False
+    for the dry-run path, which rolls the whole session back.
     """
     stats = {"created": 0, "aliases": 0, "events_scanned": 0}
     existing_refs = await _existing_person_refs(session)
@@ -521,7 +526,7 @@ async def seed_persons_from_events(
                 )
                 stats["created"] += c
                 stats["aliases"] += a
-        await session.flush()
+        await (session.commit() if commit_each else session.flush())
     return stats
 
 
@@ -530,6 +535,7 @@ async def seed_persons_from_futures_fields(
     *,
     batch_size: int = 2000,
     categories: tuple[str, ...] = ("golf", "motorsports"),
+    commit_each: bool = False,
 ) -> dict[str, int]:
     """Fold person entrant-FIELDS from futures outcomes into ``person`` entities.
 
@@ -538,6 +544,7 @@ async def seed_persons_from_futures_fields(
     from ``seed_persons_from_events``; award nominees are intentionally deferred —
     a Best-Actor nominee vs a Best-Picture title needs per-market typing, not a
     blanket fold-in.) Additive & idempotent; reads ``futures_*`` only.
+    ``commit_each`` commits per batch (see :func:`seed_persons_from_events`).
     """
     stats = {"created": 0, "aliases": 0, "outcomes_scanned": 0}
     existing_refs = await _existing_person_refs(session)
@@ -571,7 +578,7 @@ async def seed_persons_from_futures_fields(
             )
             stats["created"] += c
             stats["aliases"] += a
-        await session.flush()
+        await (session.commit() if commit_each else session.flush())
     return stats
 
 
