@@ -1081,6 +1081,32 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
         return None
 
 
+# Combat fight-winner market names carry a leading CARD prefix that defeats the
+# anchored matchup regexes, so "A vs B" never parses out. Three observed shapes:
+#   "329: Saint-Denis vs Pimblett"            (bare sport_id number)
+#   "UFC 329: McGregor vs Holloway"           (numbered card)
+#   "Fight Night: Ricci vs Kline"             ("UFC "? + "Fight Night")
+# Stripping the prefix leaves the bare "A vs B" that _BARE_MATCHUP_RE handles.
+# Applied ONLY when the ticker is a combat fight ticker, so blast radius is nil
+# for team-sport markets.
+_COMBAT_CARD_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"\d+"                              # bare sport_id number ("329:")
+    r"|UFC\s*#?\s*\d{2,4}"             # numbered UFC card ("UFC 329")
+    r"|(?:UFC\s*)?Fight\s*Night"      # "Fight Night" / "UFC Fight Night"
+    r")\s*:\s*",
+    re.IGNORECASE,
+)
+
+
+def strip_combat_card_prefix(market_name: Optional[str]) -> str:
+    """Drop a leading combat CARD prefix ("329:", "UFC 329:", "Fight Night:")
+    so the residual is the bare "A vs B" matchup. No-op when absent."""
+    if not market_name:
+        return ""
+    return _COMBAT_CARD_PREFIX_RE.sub("", market_name).strip()
+
+
 def extract_matchup_with_ticker_fallback(
     market_name: str,
     external_id: Optional[str] = None,
@@ -1113,6 +1139,19 @@ def extract_matchup_with_ticker_fallback(
 
     if matchup:
         return matchup
+
+    # Combat fallback: a fight-winner name like "329: A vs B" or
+    # "Fight Night: A vs B" fails the anchored name regexes AND has no team
+    # abbrevs in the ticker map. Strip the card prefix and retry so both the
+    # live blend paths (match/poll) AND the backfill carry kalshi into the
+    # fight's win_probability_sources (the [[blend_gate_vs_link]] pattern —
+    # the market links fine, but the blend needs the matchup too).
+    if is_combat_fight_ticker(external_id) and market_name:
+        stripped = strip_combat_card_prefix(market_name)
+        if stripped and stripped != market_name:
+            matchup = extract_matchup(stripped, external_id=external_id)
+            if matchup:
+                return matchup
 
     # Fallback: parse team abbreviations from Kalshi ticker
     if external_id:

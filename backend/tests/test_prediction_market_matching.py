@@ -1977,6 +1977,73 @@ class TestExtractMatchupWithTickerFallback:
         assert _fuzzy_team_match(result.team_b, "Chicago Bulls")
 
 
+class TestCombatCardPrefixFallback:
+    """Queue #177 Item 2 — combat fight-winner names carry a CARD prefix
+    ("329:", "UFC 329:", "Fight Night:") that defeats the anchored matchup
+    regexes. Without the strip the blend paths (match/poll/backfill) never
+    extract the fighters, so a linked Kalshi fight market blends betting-only
+    (the [[blend_gate_vs_link]] pattern). The fallback strips the prefix and
+    retries — but ONLY for combat fight tickers, so team sports are untouched.
+    """
+
+    def test_fight_night_prefix_recovers_matchup(self):
+        # The live-prod gap: "Fight Night: A vs B" + KXUFCFIGHT ticker returned
+        # None before the fix (numeric-only strip missed "Fight Night:").
+        result = extract_matchup_with_ticker_fallback(
+            "Fight Night: Ricci vs Kline",
+            external_id="KXUFCFIGHT-26JUL18RICKLI",
+        )
+        assert result is not None
+        assert result.team_a == "Ricci"
+        assert result.team_b == "Kline"
+
+    def test_numbered_ufc_card_prefix_recovers_matchup(self):
+        result = extract_matchup_with_ticker_fallback(
+            "UFC 329: McGregor vs Holloway",
+            external_id="KXUFCFIGHT-26JUL11MCGHOL",
+        )
+        assert result is not None
+        assert result.team_a == "McGregor"
+        assert result.team_b == "Holloway"
+
+    def test_bare_sportid_number_prefix_recovers_matchup(self):
+        # The SAIPIM class ("329: A vs B") — previously only fixed inside the
+        # backfill endpoint; now handled centrally so the LIVE paths work too.
+        result = extract_matchup_with_ticker_fallback(
+            "329: Saint-Denis vs Pimblett",
+            external_id="KXUFCFIGHT-26JUL11SAIPIM",
+        )
+        assert result is not None
+        assert result.team_a == "Saint-Denis"
+        assert result.team_b == "Pimblett"
+
+    def test_boxing_fight_ticker_also_covered(self):
+        result = extract_matchup_with_ticker_fallback(
+            "329: Canelo vs Alvarez",
+            external_id="KXBOXING-26JUL11CANALV",
+        )
+        assert result is not None
+        assert result.team_a == "Canelo"
+        assert result.team_b == "Alvarez"
+
+    def test_non_combat_ticker_prefix_not_stripped(self):
+        # A non-combat ticker must NOT trigger the combat strip — a name that
+        # only parses after stripping "Fight Night:" stays unparsed here,
+        # proving the strip is gated on is_combat_fight_ticker().
+        result = extract_matchup_with_ticker_fallback(
+            "Fight Night: Ricci vs Kline",
+            external_id="KXNBA-CHAMP-2026",
+        )
+        assert result is None
+
+    def test_strip_helper_is_noop_without_prefix(self):
+        from app.utils.prediction_market_matching import strip_combat_card_prefix
+
+        assert strip_combat_card_prefix("Ricci vs Kline") == "Ricci vs Kline"
+        assert strip_combat_card_prefix("") == ""
+        assert strip_combat_card_prefix(None) == ""
+
+
 # =============================================================================
 # extract_game_date_from_ticker
 # =============================================================================
