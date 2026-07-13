@@ -1614,7 +1614,14 @@ def _find_current_event(
     2. DataGolf schedule: nearest upcoming event (start_date > now, within 7 days, prefer most important)
     3. Fallback: tour event closest to now, weighted by importance + activity
     """
-    tour_events = [t for t in tournaments if t.get("is_tour_event")]
+    # Majors are NOT flagged is_tour_event (they sit in TOURNAMENT_ORDER), yet they
+    # must be eligible for the marquee slot so an imminent/in-progress major wins the
+    # current_event over minor qualifiers (e.g. The Open Championship over "The Open
+    # Last Chance Qualifier"). Schedule-date priority (Phase 1) and the >6-days-ago
+    # commence filter (Phase 2) still keep a finished major from displacing the true
+    # current event, and _tournament_importance ranks a live major above any tour
+    # event when both qualify. (#1075)
+    tour_events = [t for t in tournaments if t.get("is_tour_event") or t.get("is_major")]
     if not tour_events:
         return None
 

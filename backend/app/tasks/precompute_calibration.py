@@ -543,6 +543,74 @@ KALSHI_PROP_THRESHOLD_RULE_TEXT = (
     "never mutates resolutions."
 )
 
+# Queue #183 Item 4 (#182 historical twin): curve-side exclusion of WEATHER
+# WIDE-SPREAD FABRICATED MIDPOINTS. #182 proved a WIDE Kalshi book
+# (yes_ask - yes_bid >= 0.50) with no trade has NO real price discovery at its
+# midpoint — the captured cal_prob is a fabricated number, not a market line. #182
+# fixed this FORWARD (_kalshi_yes_probability now skips wide/one-sided no-trade
+# books, _KALSHI_TIGHT_SPREAD_MAX = 0.50); this is the read-side HISTORICAL twin
+# for the rows captured before that guard shipped. WEATHER-GATED ONLY: #182's
+# census confirmed weather's ~65 wide-spread rows are the disease, while tech's
+# miscalibration is genuine (NOT wide-book noise, ~10pp is real), so tech is
+# deliberately left in (its census is parked — do NOT extend this to tech). These
+# rows carry a live bid (bid > 0), so the #940 liquidity filter KEEPS them — the
+# SPREAD is the discriminator the liquidity filter misses. Read-side only (gotcha
+# #21) — never mutates is_winner / calibration_probability.
+WEATHER_WIDE_SPREAD_MIN = 0.50  # mirrors kalshi.py _KALSHI_TIGHT_SPREAD_MAX
+
+WEATHER_WIDE_SPREAD_EXCLUDE = (
+    "(vm.source = 'kalshi'\n"
+    "     AND cv.category = 'weather'\n"
+    "     AND fo.current_yes_bid IS NOT NULL AND fo.current_yes_ask IS NOT NULL\n"
+    f"     AND (fo.current_yes_ask - fo.current_yes_bid) >= {WEATHER_WIDE_SPREAD_MIN}\n"
+    "     AND NOT EXISTS (\n"
+    "        SELECT 1 FROM futures_odds_snapshots fos\n"
+    "        WHERE fos.outcome_id = fo.id AND fos.last_price > 0))"
+)
+
+WEATHER_WIDE_SPREAD_RULE_TEXT = (
+    "Excludes Kalshi WEATHER outcomes whose captured price is a fabricated wide-book "
+    "midpoint: a book with yes_ask - yes_bid >= 0.50 and NO trade in any snapshot has "
+    "no real price discovery at its midpoint (#182). These rows carry a live bid so "
+    "the #940 liquidity filter keeps them — the wide spread is the discriminator. "
+    "WEATHER ONLY: #182's census showed tech's miscalibration is genuine, not "
+    "wide-book noise, so tech is left in. Read-side only; never mutates resolutions."
+)
+
+
+def outcome_is_weather_wide_spread(
+    source: str | None,
+    category: str | None,
+    current_yes_bid: float | None,
+    current_yes_ask: float | None,
+    ever_last_price: float | None = None,
+) -> bool:
+    """True if a Kalshi WEATHER outcome is a fabricated wide-book midpoint (Queue #183 Item 4).
+
+    Canonical, unit-tested definition mirroring the ``WEATHER_WIDE_SPREAD_EXCLUDE``
+    SQL flag. Excluded only when ALL hold:
+      1. source == 'kalshi' AND category == 'weather' (weather-gated — tech's
+         miscalibration is genuine per #182's census and is NOT excluded here)
+      2. a two-sided book is present with a WIDE spread
+         (yes_ask - yes_bid >= WEATHER_WIDE_SPREAD_MIN, i.e. 0.50)
+      3. no trade evidence (``ever_last_price`` is None or 0) — a wide book that
+         actually traded has real evidence and is KEPT (#182 uses last_price then)
+
+    Read-side only (gotcha #21) — never mutates resolutions.
+    """
+    if source != "kalshi" or category != "weather":
+        return False
+    if current_yes_bid is None or current_yes_ask is None:
+        return False
+    # Bid/ask live in Numeric(5,4) columns, so Postgres computes the spread in
+    # EXACT decimal arithmetic. Round to 4 dp here so the Python mirror agrees
+    # with the SQL flag at the 0.50 boundary (binary float would make e.g.
+    # 0.70 - 0.20 = 0.4999… and silently disagree with the DB).
+    spread = round(float(current_yes_ask) - float(current_yes_bid), 4)
+    if spread < WEATHER_WIDE_SPREAD_MIN:
+        return False
+    return (ever_last_price or 0) <= 0
+
 
 def outcome_is_kalshi_prop_threshold(
     source: str | None, name: str | None, current_yes_bid: float | None = None
@@ -896,6 +964,11 @@ async def _precompute_calibration_main():
                      AND fo.name ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'
                      AND (fo.current_yes_bid IS NULL
                           OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
+                    -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
+                    -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
+                    -- trade has no real price discovery at its midpoint. Weather-gated
+                    -- (tech miscalibration is genuine per #182 census — kept).
+                    {WEATHER_WIDE_SPREAD_EXCLUDE} AS is_weather_wide_spread,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
                         ORDER BY ABS(fo.opening_probability - 0.5)
@@ -931,7 +1004,8 @@ async def _precompute_calibration_main():
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle
                     AND NOT ro.is_golf_placeholder
-                    AND NOT ro.is_kalshi_prop_threshold AND
+                    AND NOT ro.is_kalshi_prop_threshold
+                    AND NOT ro.is_weather_wide_spread AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -961,7 +1035,9 @@ async def _precompute_calibration_main():
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
                     -- Queue #167 (#941/#1054): Kalshi player-prop threshold count.
-                    COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded
+                    COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded,
+                    -- Queue #183 Item 4: weather wide-spread exclusion count.
+                    COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded
                 FROM ranked_outcomes
             ),
             bucketed AS (
@@ -983,7 +1059,8 @@ async def _precompute_calibration_main():
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
                 MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
-                MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded
+                MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
+                MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded
             FROM bucketed
             CROSS JOIN liq_summary ls
             GROUP BY bucket_idx, source, category, price_moved
@@ -1048,6 +1125,12 @@ async def _precompute_calibration_main():
         kalshi_prop_threshold_excluded = (
             int(rows[0].kalshi_prop_threshold_excluded)
             if rows and rows[0].kalshi_prop_threshold_excluded is not None
+            else 0
+        )
+        # Queue #183 Item 4 (#182 twin): weather wide-spread exclusion count.
+        weather_wide_spread_excluded = (
+            int(rows[0].weather_wide_spread_excluded)
+            if rows and rows[0].weather_wide_spread_excluded is not None
             else 0
         )
 
@@ -1632,6 +1715,11 @@ async def _precompute_calibration_main():
             "applies_to": "kalshi",
             "rule": KALSHI_PROP_THRESHOLD_RULE_TEXT,
             "excluded": kalshi_prop_threshold_excluded,
+        },
+        "weather_wide_spread_filter": {  # Queue #183 Item 4 (#182 twin)
+            "applies_to": "kalshi (weather only)",
+            "rule": WEATHER_WIDE_SPREAD_RULE_TEXT,
+            "excluded": weather_wide_spread_excluded,
         },
         "void_filter": {
             "applies_to": "datagolf",

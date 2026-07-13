@@ -2295,8 +2295,21 @@ celery_app.conf.beat_schedule = {
         # windows (clear of backfill_winners :45@3,9,15,21 and the :40-:58@5,11,17,23
         # integrity beats) so it prices the freshly-resolved/nulled rows those beats
         # leave behind. 10-min soft-limit (600s) matches the task def.
+        #
+        # #183 Item 3 de-contention (r178: zero SCHEDULED fires observed): the
+        # background worker is Standard-1X concurrency=2 (only two slots). The
+        # original :15 minute collided EVERY slot with a pile-up of ~9 background
+        # beats — critically `precompute-calibration-main` (minute=15 HOURLY, also a
+        # 600s calibration grinder) AND `mark-resolved-futures` (:15 @ 2,8,14,20) —
+        # so calibration_prices routinely arrived as the 3rd+ task at :15 and lost
+        # the 2-slot race, never getting to run (gotcha #12/#39 discipline: a long
+        # co-scheduled task can starve a beat on a shared worker). Moved to :10,
+        # which fires only three fast */10 Redis cache-warmers (freshness-watchdog,
+        # max-movement, admin-link-rate) in these hours — no 600s contender — so the
+        # task now gets a free slot at dispatch. Still clear of backfill_winners and
+        # the integrity beats; ordering vs the resolution beats is preserved.
         "task": "app.tasks.compute_calibration_prices",
-        "schedule": crontab(minute=15, hour="2,8,14,20"),
+        "schedule": crontab(minute=10, hour="2,8,14,20"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

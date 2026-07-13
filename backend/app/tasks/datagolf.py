@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func as sa_func, select, and_, update
+from sqlalchemy import func as sa_func, select, and_, or_, update
 
 from app.tasks.base import get_task_session
 
@@ -86,6 +86,35 @@ async def _poll_datagolf_markets() -> dict:
 
     try:
         async with get_task_session() as session:
+            # #1076: self-healing restore. DataGolf's schedule STATUS string is
+            # unreliable (see the in-play window note below) — a bad "completed"
+            # flag (or a colliding event_id prefix) can mark an UPCOMING
+            # tournament's markets resolved days before tee-off, which drops the
+            # DataGolf model from the live field/blend. Any datagolf market whose
+            # resolution_date is still in the future must never be resolved, so
+            # flip such rows back to 'open' at the top of each poll. This rescued
+            # The Open + NV5 fields (resolution_date 2026-07-19 / -07-26 marked
+            # resolved before tee-off). Distinct from #994 (past-market DNP).
+            restore_now = datetime.now(timezone.utc)
+            restore_result = await session.execute(
+                update(FuturesMarket)
+                .where(
+                    FuturesMarket.source == "datagolf",
+                    FuturesMarket.status == "resolved",
+                    FuturesMarket.resolution_date.isnot(None),
+                    FuturesMarket.resolution_date > restore_now,
+                )
+                .values(status="open")
+            )
+            if restore_result.rowcount:
+                await session.commit()
+                logger.warning(
+                    "DataGolf: restored %d prematurely-resolved future-dated markets "
+                    "to open (#1076)",
+                    restore_result.rowcount,
+                )
+                stats["markets_restored"] = restore_result.rowcount
+
             for tour in POLL_TOURS:
                 try:
                     # 1. Fetch schedule
@@ -334,6 +363,10 @@ async def _poll_datagolf_markets() -> dict:
                     ]
                     if completed_event_ids:
                         resolved_count = 0
+                        # #1076 class guard: never resolve a market dated to end in
+                        # the future — DataGolf's status string is unreliable, so a
+                        # bad "completed" flag must not resolve an upcoming event.
+                        resolve_now = datetime.now(timezone.utc)
                         for eid in completed_event_ids:
                             prefix = f"datagolf:{tour}:{eid}:"
                             resolve_result = await session.execute(
@@ -342,6 +375,10 @@ async def _poll_datagolf_markets() -> dict:
                                     FuturesMarket.source == "datagolf",
                                     FuturesMarket.external_id.like(f"{prefix}%"),
                                     FuturesMarket.status.in_(["open", "closed"]),
+                                    or_(
+                                        FuturesMarket.resolution_date.is_(None),
+                                        FuturesMarket.resolution_date <= resolve_now,
+                                    ),
                                 )
                                 .values(status="resolved")
                             )
@@ -399,6 +436,8 @@ async def _poll_datagolf_live() -> dict:
                                 if t.status == "completed" and t.event_id
                             ]
                             if completed_ids:
+                                # #1076 class guard: never resolve a future-dated market.
+                                resolve_now = datetime.now(timezone.utc)
                                 for eid in completed_ids:
                                     prefix = f"datagolf:{tour}:{eid}:"
                                     resolve_result = await session.execute(
@@ -407,6 +446,10 @@ async def _poll_datagolf_live() -> dict:
                                             FuturesMarket.source == "datagolf",
                                             FuturesMarket.external_id.like(f"{prefix}%"),
                                             FuturesMarket.status.in_(["open", "closed"]),
+                                            or_(
+                                                FuturesMarket.resolution_date.is_(None),
+                                                FuturesMarket.resolution_date <= resolve_now,
+                                            ),
                                         )
                                         .values(status="resolved")
                                     )
@@ -659,10 +702,25 @@ async def _poll_datagolf_live() -> dict:
                     ]
                     if win_probs and all(p in (0.0, 1.0) for p in win_probs):
                         resolved = 0
+                        skipped_future = 0
                         for market in markets:
                             if market.status == "open":
+                                # #1076 class guard: a market dated to end in the
+                                # future must never be resolved even if the live
+                                # field looks settled (guards against a stale/next
+                                # event's all-0/1 field bleeding onto upcoming
+                                # markets). Log + skip.
+                                if market.resolution_date and market.resolution_date > now:
+                                    skipped_future += 1
+                                    continue
                                 market.status = "resolved"
                                 resolved += 1
+                        if skipped_future:
+                            logger.warning(
+                                "DataGolf live: skipped resolving %d future-dated markets "
+                                "on tour=%s (#1076)",
+                                skipped_future, tour,
+                            )
                         if resolved:
                             logger.info(
                                 "DataGolf live: tournament completed on tour=%s, resolved %d markets",

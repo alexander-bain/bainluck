@@ -957,6 +957,19 @@ async def public_calibration(
                  AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$'
                  AND (fo.current_yes_bid IS NULL
                       OR fo.current_yes_bid = 0)) AS is_kalshi_prop_threshold,
+                -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
+                -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
+                -- trade has no real price discovery at its midpoint. Weather-gated
+                -- (tech miscalibration is genuine per #182 census — kept). Mirrors
+                -- the precompute task's WEATHER_WIDE_SPREAD_EXCLUDE flag; keep in
+                -- sync so a cold-cache fallback serve isn't poisoned. Read-side only.
+                (cv.source = 'kalshi'
+                 AND cv.category = 'weather'
+                 AND fo.current_yes_bid IS NOT NULL AND fo.current_yes_ask IS NOT NULL
+                 AND (fo.current_yes_ask - fo.current_yes_bid) >= 0.50
+                 AND NOT EXISTS (
+                    SELECT 1 FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id AND fos.last_price > 0)) AS is_weather_wide_spread,
                 ROW_NUMBER() OVER (
                     PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
@@ -989,7 +1002,8 @@ async def public_calibration(
             LEFT JOIN mode_prices mp
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
             WHERE NOT ro.is_esports_bundle
-                AND NOT ro.is_kalshi_prop_threshold AND
+                AND NOT ro.is_kalshi_prop_threshold
+                AND NOT ro.is_weather_wide_spread AND
                 CASE
                     -- Multi-outcome: exclude default-priced + extreme tails
                     WHEN ro.is_multi
