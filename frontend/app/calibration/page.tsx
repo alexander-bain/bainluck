@@ -5,11 +5,37 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchCalibration, CalibrationBucket } from "@/lib/api";
+import { fetchCalibration, fetchCalibrationExamples, CalibrationBucket, CalibrationExample } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 import { ece, mce, monthYear } from "@/lib/calibrationMath";
+import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
+
+// L2-103 Item 1: buckets below this sample size are hidden from the By Source /
+// By Category comparison charts — a single point built from <1,000 outcomes is
+// noise, not a calibration signal, and its wide error bar reads as an anomaly.
+const MIN_CHART_BUCKET_N = 1000;
+
+// L2-103 Item 3b (Alex D5): a thin sub-league (e.g. icehockey_sweden_hockey_league,
+// ~730 outcomes) must NOT collapse to its parent sport's display name ("Hockey"),
+// because the parent sport is already graded in the Category Breakdown above — that
+// made a niche chip read as "Hockey is still coming soon". Prefer the specific
+// league label; only fall back to a prettified raw key for bare single-word
+// categories (chess, commodities, health).
+function nicheCatLabel(raw: string): string {
+  if (raw.includes("_") || LEAGUE_DISPLAY[raw]) {
+    // getLeagueDisplay returns proper-cased mapped names (SHL, NCAA Lacrosse) and
+    // an ALL-CAPS generated fallback for unmapped keys — title-case the latter
+    // while preserving short acronyms (NBA, UFL, NRL, AFL).
+    return getLeagueDisplay(raw).replace(/\w\S*/g, (w) =>
+      w.length <= 4 && w === w.toUpperCase()
+        ? w
+        : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    );
+  }
+  return raw.replace(/_/g, " ");
+}
 
 const SPORT_KEY_MAP: Record<string, string> = {
   basketball_nba: "basketball", basketball_ncaab: "basketball",
@@ -68,6 +94,16 @@ function normalizeCat(cat: string): string {
   if (base === "americanfootball") return "football";
   if (base === "icehockey") return "hockey";
   return DISPLAY_NAMES[base] ? base : cat;
+}
+
+interface DrillInState {
+  source: string;
+  bucketLabel: string;
+  bucketIdx: number;
+  loading: boolean;
+  error: boolean;
+  examples: CalibrationExample[];
+  note?: string | null;
 }
 
 interface AggBucket {
@@ -151,6 +187,23 @@ export default function CalibrationPage() {
   // L2-74 §C (#940): default to the WELL-TRADED view; a visible toggle layers in
   // thin/untraded markets. The toggle never hides — counts are shown in both states.
   const [includeThin, setIncludeThin] = useState(false);
+
+  // L2-103 Item 2: per-bucket drill-in — click a point on the By Source chart to
+  // sample the real outcomes inside it (reader-trust: verify any bucket yourself).
+  const [drillIn, setDrillIn] = useState<DrillInState | null>(null);
+  const openDrillIn = async (source: string, bucketLabel: string, bucketIdx: number) => {
+    setDrillIn({ source, bucketLabel, bucketIdx, loading: true, error: false, examples: [] });
+    try {
+      const res = await fetchCalibrationExamples(source, bucketIdx, !includeThin);
+      setDrillIn({
+        source, bucketLabel, bucketIdx,
+        loading: false, error: false,
+        examples: res.examples, note: res.note ?? null,
+      });
+    } catch {
+      setDrillIn({ source, bucketLabel, bucketIdx, loading: false, error: true, examples: [] });
+    }
+  };
 
   const normalized = useMemo(() => {
     if (!data) return null;
@@ -263,14 +316,21 @@ export default function CalibrationPage() {
     `${DISPLAY_NAMES[c] || c} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
   ).join(", ");
 
+  // L2-103 Item 1: hide buckets below MIN_CHART_BUCKET_N from the comparison
+  // charts so every source/category gets the SAME treatment — no anomalous
+  // wide-error-bar points built from a handful of outcomes. The label count
+  // stays the full source/category total (not the post-filter sum) so the tab
+  // still shows how much data each source carries.
   const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
-    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
+    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)))
+      .filter(b => b.n >= MIN_CHART_BUCKET_N),
     color: SOURCE_COLORS[src] || COLORS[i % COLORS.length],
     label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
-    data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
+    data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)))
+      .filter(b => b.n >= MIN_CHART_BUCKET_N),
     color: COLORS[i % COLORS.length],
     label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
@@ -282,7 +342,8 @@ export default function CalibrationPage() {
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
         <p className="text-text-secondary max-w-2xl mx-auto">
-          We analyzed {data.total_outcomes.toLocaleString()} resolved predictions across
+          We analyzed {cohortN.toLocaleString()}{includeThin ? "" : " well-traded"} resolved
+          predictions{includeThin ? "" : ` (${fullN.toLocaleString()} including thinly-traded)`} across
           Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
@@ -300,8 +361,9 @@ export default function CalibrationPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
-          detail={priceCohort === "all" ? `${data.total_markets.toLocaleString()} markets` :
-            priceCohort === "closing" ? "Closing line prices" : "Opening prices only"} />
+          detail={includeThin
+            ? `all incl. thinly-traded · ${fullN.toLocaleString()} total`
+            : `well-traded (default) · ${fullN.toLocaleString()} total incl. thin`} />
         <StatCard label="Calibration Error (ECE)"
           value={`${cohortECE.toFixed(1)}pp`}
           detail={`n-weighted · worst-bucket (MCE) ${cohortMCE.toFixed(1)}pp`}
@@ -541,26 +603,48 @@ export default function CalibrationPage() {
 
       {/* By Source */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-3">By Source</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
+        <p className="text-xs text-text-muted mb-4">
+          Every source gets the same treatment: error bars are the 95% CI (wider = less
+          certain), and buckets under {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are
+          hidden &mdash; a single point built from a small sample misleads. Select a source
+          tab to see per-bucket sample counts{activeSource ? " and click a point for examples" : ""}.
+        </p>
         <div className="flex flex-wrap gap-2 mb-4">
-          <TabButton label="All" active={!activeSource} onClick={() => setActiveSource(null)} />
+          <TabButton label="All" active={!activeSource} onClick={() => { setActiveSource(null); setDrillIn(null); }} />
           {sources.map(s => (
-            <TabButton key={s} label={sourceLabel(s)} active={activeSource === s} onClick={() => setActiveSource(s)} />
+            <TabButton key={s} label={sourceLabel(s)} active={activeSource === s} onClick={() => { setActiveSource(s); setDrillIn(null); }} />
           ))}
         </div>
-        <CalibrationChart series={sourceChartData} width={700} height={340} />
+        <CalibrationChart
+          series={sourceChartData}
+          width={700}
+          height={340}
+          showAllN
+          onPointClick={activeSource ? (_, pt) => openDrillIn(activeSource, pt.bucket, Math.floor(pt.midpoint / 10)) : undefined}
+        />
+        <BucketExamples
+          state={drillIn}
+          onClose={() => setDrillIn(null)}
+          sourceLabel={sourceLabel}
+        />
       </section>
 
       {/* By Category */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-3">By Category</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">By Category</h2>
+        <p className="text-xs text-text-muted mb-4">
+          Same treatment as By Source: 95% CI error bars, and buckets under{" "}
+          {MIN_CHART_BUCKET_N.toLocaleString()} outcomes hidden. Select a category tab to see
+          per-bucket sample counts.
+        </p>
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="Top 5" active={!activeCat} onClick={() => setActiveCat(null)} />
           {categories.map(c => (
             <TabButton key={c} label={DISPLAY_NAMES[c] || c} active={activeCat === c} onClick={() => setActiveCat(c)} />
           ))}
         </div>
-        <CalibrationChart series={catChartData} width={700} height={340} />
+        <CalibrationChart series={catChartData} width={700} height={340} showAllN />
       </section>
 
       {/* L2-80 Item 1: the standalone per-category chart grid was removed — the
@@ -615,13 +699,13 @@ export default function CalibrationPage() {
         const thin = [...data.small_sample_categories].sort((a, b) => b.outcomes - a.outcomes);
         const thinTotal = thin.reduce((s, c) => s + c.outcomes, 0);
         const examples = thin.slice(0, 8);
-        const catLabel = (raw: string) => DISPLAY_NAMES[normalizeCat(raw)] || raw.replace(/_/g, " ");
+        const catLabel = nicheCatLabel;
         return (
           <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
             <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?</h2>
             <p className="text-sm text-text-secondary mb-3">
-              Fair question &mdash; what about the offbeat ones (crypto, one-off culture bets, minor
-              leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
+              Fair question &mdash; what about the offbeat ones (one-off culture bets, novelty props,
+              minor leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
               we don&rsquo;t publish one for any category below{" "}
               {minCategoryOutcomes.toLocaleString()} resolved outcomes &mdash; under that bar it&rsquo;s
               statistical noise, not a signal. Right now{" "}
@@ -724,7 +808,7 @@ export default function CalibrationPage() {
           <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
           <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ bookmakers. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
-          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes from 2026 across Kalshi, Polymarket, and sportsbook odds (via The Odds API). We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
+          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
           {data.liquidity_filter && (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded > 0) && (
             <li>
               <strong className="text-text-primary">Liquidity filter (Kalshi).</strong>{" "}
@@ -739,6 +823,30 @@ export default function CalibrationPage() {
               ({(100 * data.liquidity_filter.kalshi_excluded / (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded)).toFixed(0)}% of the Kalshi set). A skeptical auditor can re-include them &mdash; we publish both counts so the filter is never silent.
             </li>
           )}
+          {/* L2-103 Item 4: the other read-side exclusions that pull the raw count
+              down to the published total — surfaced so the drop is never silent. */}
+          {data.esports_multi_bundle_filter && data.esports_multi_bundle_filter.excluded > 0 && (
+            <li>
+              <strong className="text-text-primary">Esports match-bundle filter.</strong>{" "}
+              {data.esports_multi_bundle_filter.rule}{" "}
+              <span className="text-text-muted">{data.esports_multi_bundle_filter.excluded.toLocaleString()} excluded.</span>
+            </li>
+          )}
+          {data.soccer_2way_filter && data.soccer_2way_filter.excluded > 0 && (
+            <li>
+              <strong className="text-text-primary">Soccer 2-way (draw-omission) filter.</strong>{" "}
+              {data.soccer_2way_filter.rule}{" "}
+              <span className="text-text-muted">{data.soccer_2way_filter.excluded.toLocaleString()} excluded.</span>
+            </li>
+          )}
+          {data.void_filter && data.void_filter.excluded > 0 && (
+            <li>
+              <strong className="text-text-primary">Void filter (did-not-play / withdrew).</strong>{" "}
+              {data.void_filter.rule}{" "}
+              <span className="text-text-muted">{data.void_filter.excluded.toLocaleString()} excluded.</span>
+            </li>
+          )}
+          <li><strong className="text-text-primary">When did we start publishing this?</strong> We began publicly publishing and documenting these calibration metrics in July 2026. The underlying work &mdash; closing-line capture, resolution, devigging, and the exclusion rules above &mdash; long predates that date. July 2026 is when we started showing our work, not when the measurement began.</li>
         </ul>
       </section>
 
@@ -765,6 +873,76 @@ function StatCard({ label, value, detail, valueClass }: {
       <div className="text-[10px] text-text-muted uppercase tracking-wide">{label}</div>
       <div className={`text-xl font-bold ${valueClass || "text-text-primary"}`}>{value}</div>
       <div className="text-[11px] text-text-muted mt-0.5 leading-tight">{detail}</div>
+    </div>
+  );
+}
+
+// L2-103 Item 2: unobtrusive per-bucket drill-in panel — shows 3-5 real sample
+// outcomes so a skeptic can verify what any bucket is made of.
+function BucketExamples({ state, onClose, sourceLabel }: {
+  state: DrillInState | null;
+  onClose: () => void;
+  sourceLabel: (s: string) => string;
+}) {
+  if (!state) return null;
+  const fmtDate = (d: string | null) => {
+    if (!d) return "—";
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+  return (
+    <div className="mt-4 rounded-lg border border-surface-border bg-surface-deep p-4">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <div className="text-sm font-medium text-text-primary">
+          Sample outcomes &mdash; {sourceLabel(state.source)}, {state.bucketLabel} bucket
+        </div>
+        <button
+          onClick={onClose}
+          className="text-xs text-text-muted hover:text-text-primary shrink-0"
+          aria-label="Close examples"
+        >
+          Close &times;
+        </button>
+      </div>
+      {state.loading ? (
+        <div className="text-xs text-text-muted py-2">Loading examples&hellip;</div>
+      ) : state.error ? (
+        <div className="text-xs text-accent-danger py-2">Couldn&rsquo;t load examples. Try again.</div>
+      ) : state.examples.length === 0 ? (
+        <div className="text-xs text-text-muted py-2">
+          {state.note || "No individual examples available for this source/bucket."}
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-text-muted uppercase tracking-wide">
+                  <th className="pb-1.5 pr-3">Market</th>
+                  <th className="pb-1.5 pr-3">Outcome</th>
+                  <th className="pb-1.5 pr-3 text-right">Predicted</th>
+                  <th className="pb-1.5 pr-3 text-right">Result</th>
+                  <th className="pb-1.5 text-right">Settled</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.examples.map((ex, i) => (
+                  <tr key={i} className="border-t border-surface-border align-top">
+                    <td className="py-1.5 pr-3 text-text-secondary max-w-[260px] truncate" title={ex.market_name}>{ex.market_name}</td>
+                    <td className="py-1.5 pr-3 text-text-secondary max-w-[160px] truncate" title={ex.outcome_name}>{ex.outcome_name}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-text-primary">{(ex.price * 100).toFixed(1)}%</td>
+                    <td className={`py-1.5 pr-3 text-right font-medium ${
+                      /^(yes|won|true)$/i.test(ex.result) ? "text-green-600" : "text-red-600"
+                    }`}>{ex.result}</td>
+                    <td className="py-1.5 text-right tabular-nums text-text-muted whitespace-nowrap">{fmtDate(ex.settle_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-text-muted mt-2">A representative sample &mdash; not the full bucket.</p>
+        </>
+      )}
     </div>
   );
 }

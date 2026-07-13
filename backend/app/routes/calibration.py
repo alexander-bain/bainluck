@@ -1456,6 +1456,219 @@ async def public_calibration(
 
 
 # ---------------------------------------------------------------------------
+# L2-103 Item 2: per-bucket examples drill-in
+# ---------------------------------------------------------------------------
+
+_examples_cache: dict = {}
+_EXAMPLES_TTL = 3600
+_FUTURES_EXAMPLE_SOURCES = {"kalshi", "polymarket"}
+
+
+@router.get("/calibration/examples")
+async def calibration_examples(
+    db: AsyncSession = Depends(get_db),
+    source: str = Query(...),
+    bucket: int = Query(..., ge=0, le=9),
+    well_traded: int = Query(1),
+    limit: int = Query(5, ge=1, le=10),
+):
+    """A representative sample of the real outcomes inside one calibration bucket.
+
+    Reader-trust feature: the /calibration By Source chart lets a skeptic click any
+    point (source × 10-pt probability bucket) and see 3-5 concrete outcomes —
+    market name, outcome, predicted price, settled result, settle date — so the
+    bucket is verifiable, not a black box. Read-only; mirrors the published curve's
+    core exclusions so the sample reflects what the bucket is actually built from.
+    Cached in-process for 1h. Never mutates anything.
+    """
+    source = (source or "").strip()
+    wt = str(well_traded) not in ("0", "false", "False", "")
+    cache_key = f"{source}|{bucket}|{int(wt)}|{limit}"
+    now = time.time()
+    hit = _examples_cache.get(cache_key)
+    if hit and (now - hit[1]) < _EXAMPLES_TTL:
+        return hit[0]
+
+    examples: list[dict] = []
+    note: str | None = None
+
+    def _fmt_dt(dt) -> str | None:
+        return dt.isoformat() if dt is not None else None
+
+    if source in _FUTURES_EXAMPLE_SOURCES:
+        # Well-traded cohort for futures = the price actually moved off its open
+        # (matches the page's price_moved !== false default).
+        wt_clause = (
+            "AND fo.calibration_probability IS NOT NULL "
+            "AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability"
+        ) if wt else ""
+        # Exclude the degenerate Kalshi player-prop threshold captures (gotcha
+        # #17/#21) exactly as the published curve does.
+        kalshi_prop_clause = (
+            "AND NOT (fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$' "
+            "AND (fo.current_yes_bid IS NULL OR fo.current_yes_bid = 0))"
+        ) if source == "kalshi" else ""
+        sql = text(f"""
+            SELECT fm.name AS market_name, fo.name AS outcome_name,
+                COALESCE(fo.calibration_probability, fo.opening_probability) AS price,
+                fo.is_winner AS is_winner,
+                COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at) AS settle_date
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = :source
+              AND fm.status = 'resolved'
+              AND fo.is_winner IS NOT NULL
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) = :bucket
+              AND (fo.resolution_source IS NULL
+                   OR fo.resolution_source NOT IN ('pass2_guess','pass3_threshold',
+                                                   'did_not_play','withdrew','no_pregame_trading'))
+              AND COALESCE(fo.volume, -1) != 0
+              {wt_clause}
+              {kalshi_prop_clause}
+            ORDER BY RANDOM()
+            LIMIT :limit
+        """)
+        rows = (await db.execute(sql, {"source": source, "bucket": bucket, "limit": limit})).all()
+        examples = [
+            {
+                "market_name": r.market_name or "—",
+                "outcome_name": r.outcome_name or "—",
+                "price": round(float(r.price), 4),
+                "result": "Yes" if r.is_winner else "No",
+                "settle_date": _fmt_dt(r.settle_date),
+            }
+            for r in rows
+        ]
+
+    elif source in ("odds_api", "odds_api_spreads", "odds_api_totals"):
+        # Event-sourced markets: reconstruct the same outcome rows the curve buckets.
+        if source == "odds_api":
+            sql = text("""
+                SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
+                    SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
+                        home_team_name AS outcome_name,
+                        COALESCE(closing_home_probability, opening_home_probability) AS price,
+                        (home_score > away_score) AS won,
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                    FROM events
+                    WHERE status IN ('completed','closed')
+                      AND COALESCE(closing_home_probability, opening_home_probability) > 0
+                      AND COALESCE(closing_home_probability, opening_home_probability) < 1
+                      AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score
+                    UNION ALL
+                    SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
+                        away_team_name AS outcome_name,
+                        COALESCE(closing_away_probability, opening_away_probability) AS price,
+                        (away_score > home_score) AS won,
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                    FROM events
+                    WHERE status IN ('completed','closed')
+                      AND COALESCE(closing_away_probability, opening_away_probability) > 0
+                      AND COALESCE(closing_away_probability, opening_away_probability) < 1
+                      AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score
+                ) o
+                JOIN sports s ON s.id = o.sport_id
+                WHERE s.key NOT LIKE 'soccer_%'
+                  AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
+                ORDER BY RANDOM()
+                LIMIT :limit
+            """)
+        elif source == "odds_api_spreads":
+            sql = text("""
+                SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
+                    SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
+                        (home_team_name || ' ' ||
+                         CASE WHEN closing_home_spread > 0 THEN '+' ELSE '' END ||
+                         closing_home_spread::text) AS outcome_name,
+                        (CASE WHEN closing_home_spread_odds < 0
+                              THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                              ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                        /
+                        ((CASE WHEN closing_home_spread_odds < 0
+                               THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                               ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                         +
+                         (CASE WHEN closing_away_spread_odds < 0
+                               THEN ABS(closing_away_spread_odds)::numeric / (ABS(closing_away_spread_odds) + 100.0)
+                               ELSE 100.0 / (closing_away_spread_odds + 100.0) END)) AS price,
+                        ((home_score - away_score) + closing_home_spread > 0) AS won,
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                    FROM events
+                    WHERE status IN ('completed','closed')
+                      AND closing_home_spread IS NOT NULL
+                      AND closing_home_spread_odds IS NOT NULL AND closing_away_spread_odds IS NOT NULL
+                      AND home_score IS NOT NULL AND away_score IS NOT NULL
+                      AND (home_score - away_score) + closing_home_spread != 0
+                ) o
+                JOIN sports s ON s.id = o.sport_id
+                WHERE price > 0 AND price < 1
+                  AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
+                ORDER BY RANDOM()
+                LIMIT :limit
+            """)
+        else:  # odds_api_totals
+            sql = text("""
+                SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
+                    SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
+                        ('Over ' || closing_over_under::text) AS outcome_name,
+                        (CASE WHEN closing_over_odds < 0
+                              THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                              ELSE 100.0 / (closing_over_odds + 100.0) END)
+                        /
+                        ((CASE WHEN closing_over_odds < 0
+                               THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                               ELSE 100.0 / (closing_over_odds + 100.0) END)
+                         +
+                         (CASE WHEN closing_under_odds < 0
+                               THEN ABS(closing_under_odds)::numeric / (ABS(closing_under_odds) + 100.0)
+                               ELSE 100.0 / (closing_under_odds + 100.0) END)) AS price,
+                        ((home_score + away_score) > closing_over_under) AS won,
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                    FROM events
+                    WHERE status IN ('completed','closed')
+                      AND closing_over_under IS NOT NULL
+                      AND closing_over_odds IS NOT NULL AND closing_under_odds IS NOT NULL
+                      AND home_score IS NOT NULL AND away_score IS NOT NULL
+                      AND (home_score + away_score) != closing_over_under
+                ) o
+                JOIN sports s ON s.id = o.sport_id
+                WHERE price > 0 AND price < 1
+                  AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
+                ORDER BY RANDOM()
+                LIMIT :limit
+            """)
+        rows = (await db.execute(sql, {"bucket": bucket, "limit": limit})).all()
+        examples = [
+            {
+                "market_name": r.market_name or "—",
+                "outcome_name": r.outcome_name or "—",
+                "price": round(float(r.price), 4),
+                "result": "Yes" if r.is_winner else "No",
+                "settle_date": _fmt_dt(r.settle_date),
+            }
+            for r in rows
+        ]
+
+    elif source == "odds_api_bookmaker":
+        note = (
+            "Per-bookmaker closing lines are aggregated from odds snapshots — "
+            "individual rows aren't sampled here. See the moneyline (Odds API) "
+            "examples for representative games."
+        )
+    else:
+        note = "No examples available for this source."
+
+    if not examples and note is None:
+        note = "No examples matched this bucket for the current view."
+
+    result = {"source": source, "bucket_idx": bucket, "examples": examples, "note": note}
+    _examples_cache[cache_key] = (result, now)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Time-horizon calibration for non-event markets
 # ---------------------------------------------------------------------------
 

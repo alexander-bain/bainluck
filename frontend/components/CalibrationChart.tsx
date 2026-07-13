@@ -26,6 +26,12 @@ interface CalibrationChartProps {
   /** L2-75 §B: buckets with n below this render faded + dashed + show their n, so
    *  thin samples are honest without shouting. */
   thinFloor?: number;
+  /** L2-103 Item 1: when a single series is shown, print each bucket's sample
+   *  count below its point — consistent per-bucket n-counts on every source, not
+   *  just the low-volume ones where a thin bucket happened to surface. */
+  showAllN?: boolean;
+  /** L2-103 Item 2: click a point to drill into the bucket's sample outcomes. */
+  onPointClick?: (seriesIndex: number, point: CalPoint) => void;
 }
 
 export default function CalibrationChart({
@@ -34,6 +40,8 @@ export default function CalibrationChart({
   height = 360,
   showLegend = true,
   thinFloor = 30,
+  showAllN = false,
+  onPointClick,
 }: CalibrationChartProps) {
   const padL = 55, padR = 20, padT = 25, padB = 50;
   const plotW = width - padL - padR;
@@ -118,8 +126,20 @@ export default function CalibrationChart({
               const ciStr = d.ciLower != null && d.ciUpper != null
                 ? `, 95% CI: ${d.ciLower.toFixed(1)}%-${d.ciUpper.toFixed(1)}%`
                 : "";
+              // L2-103 Item 1: on single-series views, print every bucket's n
+              // below the point (consistent treatment across all sources). On the
+              // multi-series "All" view this would collide, so it stays off there.
+              const singleSeries = series.length === 1;
+              const clickable = !!onPointClick;
               return (
-                <g key={di}>
+                <g
+                  key={di}
+                  onClick={clickable ? () => onPointClick!(si, d) : undefined}
+                  style={clickable ? { cursor: "pointer" } : undefined}
+                >
+                  {clickable && (
+                    <circle cx={px(d.midpoint)} cy={py(d.actual)} r={r + 6} fill="transparent" />
+                  )}
                   <circle
                     cx={px(d.midpoint)} cy={py(d.actual)} r={r}
                     fill={s.color}
@@ -128,12 +148,20 @@ export default function CalibrationChart({
                     strokeWidth={thin ? 1.5 : 0}
                     strokeDasharray={thin ? "2,2" : undefined}
                   />
-                  {thin && (
+                  {thin && !(showAllN && singleSeries) && (
                     <text
                       x={px(d.midpoint)} y={py(d.actual) - r - 3}
                       textAnchor="middle" fill="#a8a29e" fontSize="9"
                     >
                       n={d.n}
+                    </text>
+                  )}
+                  {showAllN && singleSeries && (
+                    <text
+                      x={px(d.midpoint)} y={py(d.actual) + r + 11}
+                      textAnchor="middle" fill="#a8a29e" fontSize="9"
+                    >
+                      {d.n.toLocaleString()}
                     </text>
                   )}
                   <title>

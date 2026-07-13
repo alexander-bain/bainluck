@@ -1580,6 +1580,10 @@ export interface CalibrationData {
   by_source?: CalibrationSourceMetric[];
   by_category?: CalibrationCategoryMetric[];
   corrections?: CalibrationCorrection[];
+  // L2-103 Item 4: read-side exclusion counts (raw → published reconciliation).
+  void_filter?: CalibrationExclusionFilter | null;
+  soccer_2way_filter?: CalibrationExclusionFilter | null;
+  esports_multi_bundle_filter?: CalibrationExclusionFilter | null;
   generated_at: string;
 }
 
@@ -1616,8 +1620,49 @@ export interface CalibrationLiquidityFilter {
   kalshi_excluded: number;
 }
 
+/** L2-103 Item 4: read-side exclusion transparency counts (already in the payload
+ *  from the precompute task). Surfacing them reconciles the raw resolved-outcome
+ *  count with the published curve count so the headline drop is fully explained. */
+export interface CalibrationExclusionFilter {
+  applies_to: string;
+  rule: string;
+  excluded: number;
+  events_excluded?: number;
+  bookmaker_excluded?: number;
+}
+
 export async function fetchCalibration(): Promise<CalibrationData> {
   return apiFetch<CalibrationData>("/api/calibration");
+}
+
+/** L2-103 Item 2: a real sample of the outcomes inside one calibration bucket,
+ *  so a skeptic can click any point and verify what it's made of. */
+export interface CalibrationExample {
+  market_name: string;
+  outcome_name: string;
+  price: number; // predicted probability, 0-1
+  result: string; // "Yes" / "No" (settled outcome)
+  settle_date: string | null;
+}
+
+export interface CalibrationExamplesResponse {
+  source: string;
+  bucket_idx: number;
+  examples: CalibrationExample[];
+  note?: string | null;
+}
+
+export async function fetchCalibrationExamples(
+  source: string,
+  bucketIdx: number,
+  wellTraded: boolean,
+): Promise<CalibrationExamplesResponse> {
+  const params = new URLSearchParams({
+    source,
+    bucket: String(bucketIdx),
+    well_traded: wellTraded ? "1" : "0",
+  });
+  return apiFetch<CalibrationExamplesResponse>(`/api/calibration/examples?${params.toString()}`);
 }
 
 export interface SourceCoverageSport {

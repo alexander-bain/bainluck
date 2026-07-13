@@ -20,11 +20,13 @@ def clear_calibration_cache():
     calibration._cache["timestamp"] = 0
     calibration._th_cache["data"] = None
     calibration._th_cache["timestamp"] = 0
+    calibration._examples_cache.clear()
     yield
     calibration._cache["data"] = None
     calibration._cache["timestamp"] = 0
     calibration._th_cache["data"] = None
     calibration._th_cache["timestamp"] = 0
+    calibration._examples_cache.clear()
 
 
 def _mock_result(*, rows=(), scalar=None, one=None):
@@ -877,3 +879,71 @@ class TestTimeHorizonEndpoint:
         """category parameter should be accepted without error."""
         resp = await client.get("/api/calibration/time-horizon?category=politics")
         assert resp.status_code == 200
+
+
+class TestCalibrationExamplesEndpoint:
+    """GET /api/calibration/examples — L2-103 Item 2 per-bucket drill-in.
+
+    Reader-trust feature: sample the real outcomes inside a source×bucket cell.
+    With the empty mock DB, futures/event sources return an empty sample with an
+    explanatory note; the response contract must hold regardless.
+    """
+
+    async def test_returns_200_futures_source(self, client):
+        resp = await client.get("/api/calibration/examples?source=kalshi&bucket=5")
+        assert resp.status_code == 200
+
+    async def test_no_auth_required(self, client):
+        resp = await client.get("/api/calibration/examples?source=polymarket&bucket=3")
+        assert resp.status_code == 200
+        assert "error" not in resp.json()
+
+    async def test_response_contract(self, client):
+        resp = await client.get("/api/calibration/examples?source=kalshi&bucket=5")
+        body = resp.json()
+        assert set(body) >= {"source", "bucket_idx", "examples", "note"}
+        assert body["source"] == "kalshi"
+        assert body["bucket_idx"] == 5
+        assert isinstance(body["examples"], list)
+
+    async def test_empty_db_returns_note_not_error(self, client):
+        # Empty mock DB → no rows → explanatory note, never a 500.
+        resp = await client.get("/api/calibration/examples?source=kalshi&bucket=0")
+        body = resp.json()
+        assert body["examples"] == []
+        assert body["note"]
+
+    async def test_event_sources_accepted(self, client):
+        for src in ("odds_api", "odds_api_spreads", "odds_api_totals"):
+            resp = await client.get(f"/api/calibration/examples?source={src}&bucket=5")
+            assert resp.status_code == 200, src
+            assert resp.json()["source"] == src
+
+    async def test_bookmaker_source_returns_note(self, client):
+        # Aggregated source: no per-row sampling, but a helpful note (no DB hit).
+        resp = await client.get("/api/calibration/examples?source=odds_api_bookmaker&bucket=5")
+        body = resp.json()
+        assert body["examples"] == []
+        assert "aggregated" in body["note"].lower()
+
+    async def test_unknown_source_returns_note(self, client):
+        resp = await client.get("/api/calibration/examples?source=made_up&bucket=5")
+        assert resp.status_code == 200
+        assert resp.json()["examples"] == []
+
+    async def test_missing_source_returns_422(self, client):
+        resp = await client.get("/api/calibration/examples?bucket=5")
+        assert resp.status_code == 422
+
+    async def test_bucket_out_of_range_returns_422(self, client):
+        assert (await client.get("/api/calibration/examples?source=kalshi&bucket=15")).status_code == 422
+        assert (await client.get("/api/calibration/examples?source=kalshi&bucket=-1")).status_code == 422
+
+    async def test_bucket_non_integer_returns_422(self, client):
+        resp = await client.get("/api/calibration/examples?source=kalshi&bucket=abc")
+        assert resp.status_code == 422
+
+    async def test_well_traded_param_accepted(self, client):
+        for wt in ("0", "1"):
+            resp = await client.get(f"/api/calibration/examples?source=kalshi&bucket=5&well_traded={wt}")
+            assert resp.status_code == 200
