@@ -181,6 +181,26 @@ export default function ReviewTab() {
   const [sessionCount, setSessionCount] = useState(0);
   const [sessionLabels, setSessionLabels] = useState<Record<string, number>>({});
   const [batchId] = useState(createBatchId);
+  // Rapid mode: a single label keypress (1-4) submits immediately for a true
+  // one-tap pass. Off by default so the safe flow (select -> optionally tag ->
+  // Enter) stays the default and mis-selections stay recoverable. Persisted so
+  // Alex's preference survives reloads between batches.
+  const [rapidMode, setRapidMode] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setRapidMode(window.localStorage.getItem("discoverReviewRapidMode") === "1");
+  }, []);
+
+  const toggleRapidMode = useCallback(() => {
+    setRapidMode((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("discoverReviewRapidMode", next ? "1" : "0");
+      }
+      return next;
+    });
+  }, []);
 
   const { data, isLoading } = useSWR<FeedDebugResponse>(
     ["review-feed", secret],
@@ -219,7 +239,7 @@ export default function ReviewTab() {
   const prevItem = currentIdx > 0 ? items[currentIdx - 1] : null;
   const nextItem = currentIdx < items.length - 1 ? items[currentIdx + 1] : null;
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setSelectedLabel(null);
     setSelectedTags(new Set());
     setTapworthyScore("");
@@ -239,7 +259,7 @@ export default function ReviewTab() {
     setDesiredEntityOrVariant("");
     setCurrentEntityOrVariant("");
     setCreateIssueCandidate(false);
-  };
+  }, []);
 
   const taxonomyValue = (key: TaxonomySelectKey) => {
     switch (key) {
@@ -286,8 +306,9 @@ export default function ReviewTab() {
     }
   };
 
-  const submit = useCallback(async () => {
-    if (!current || !selectedLabel) return;
+  const submit = useCallback(async (labelOverride?: string) => {
+    const label = labelOverride ?? selectedLabel;
+    if (!current || !label) return;
     setSubmitting(true);
     try {
       const params = new URLSearchParams({
@@ -295,7 +316,7 @@ export default function ReviewTab() {
         rank_seen: String(current.rank),
         item_type: current.type || "futures",
         market_name: current.name,
-        label: selectedLabel,
+        label,
         reason_tags: Array.from(selectedTags).join(","),
         score_at_review: String(current.score),
         category_at_review: current.category || "",
@@ -351,7 +372,7 @@ export default function ReviewTab() {
         }),
       });
       setSessionCount((c) => c + 1);
-      setSessionLabels((prev) => ({ ...prev, [selectedLabel]: (prev[selectedLabel] || 0) + 1 }));
+      setSessionLabels((prev) => ({ ...prev, [label]: (prev[label] || 0) + 1 }));
       resetForm();
       setCurrentIdx((i) => i + 1);
     } finally {
@@ -383,7 +404,54 @@ export default function ReviewTab() {
     duplicateSeverity,
     storyRelationship,
     batchId,
+    resetForm,
   ]);
+
+  // Keyboard shortcuts mirror PairwiseTab / label-pass: 1-4 pick a verdict, s
+  // skips, Enter submits once a label is chosen. In rapid mode 1-4 submit on the
+  // spot (true one-tap). Guarded so typing in notes/taxonomy inputs never fires.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName.toLowerCase();
+      if (
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (!current || submitting) return;
+
+      const key = event.key.toLowerCase();
+      const labelForKey =
+        key === "1" ? "love" :
+        key === "2" ? "fine" :
+        key === "3" ? "bad" :
+        key === "4" ? "kill" :
+        null;
+
+      if (labelForKey) {
+        event.preventDefault();
+        if (rapidMode) {
+          submit(labelForKey);
+        } else {
+          setSelectedLabel(labelForKey);
+        }
+      } else if (key === "enter" && selectedLabel) {
+        event.preventDefault();
+        submit();
+      } else if (key === "s" || event.key === "ArrowRight") {
+        event.preventDefault();
+        resetForm();
+        setCurrentIdx((i) => i + 1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [current, submitting, rapidMode, selectedLabel, submit, resetForm]);
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => {
@@ -416,6 +484,25 @@ export default function ReviewTab() {
             ))}
           </div>
         )}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden sm:inline text-[11px] text-text-muted">
+            <kbd className="font-mono">1</kbd> love · <kbd className="font-mono">2</kbd> fine · <kbd className="font-mono">3</kbd> bad · <kbd className="font-mono">4</kbd> kill · <kbd className="font-mono">s</kbd> skip{rapidMode ? "" : " · ⏎ submit"}
+          </span>
+          <button
+            type="button"
+            onClick={toggleRapidMode}
+            aria-pressed={rapidMode}
+            title="Rapid mode: a single 1-4 keypress submits instantly (one-tap). Off keeps the select → optionally tag → Enter flow."
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+              rapidMode
+                ? "bg-accent-brand/10 text-accent-brand border-accent-brand/30"
+                : "bg-surface-elevated text-text-muted border-surface-border hover:border-text-muted"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${rapidMode ? "bg-accent-brand" : "bg-text-muted"}`} />
+            Rapid {rapidMode ? "on" : "off"}
+          </button>
+        </div>
         {summary && summary.total > 0 && (
           <span className="text-xs text-text-muted">
             {summary.total} total judgments
@@ -471,17 +558,18 @@ export default function ReviewTab() {
 
           {/* Label buttons */}
           <div className="grid grid-cols-4 gap-2 mb-4">
-            {LABELS.map((l) => (
+            {LABELS.map((l, i) => (
               <button
                 key={l.key}
-                onClick={() => setSelectedLabel(l.key)}
-                className={`rounded-xl py-3 text-sm font-semibold transition-all ${
+                onClick={() => (rapidMode ? submit(l.key) : setSelectedLabel(l.key))}
+                disabled={submitting}
+                className={`rounded-xl py-3 text-sm font-semibold transition-all disabled:opacity-50 ${
                   selectedLabel === l.key
                     ? `${l.color} ring-2 ring-offset-2 ring-offset-surface-card ring-current scale-105`
                     : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
                 }`}
               >
-                {l.label}
+                {l.label} <span className="opacity-60 font-mono text-xs">{i + 1}</span>
               </button>
             ))}
           </div>
@@ -640,11 +728,12 @@ export default function ReviewTab() {
 
               {/* Submit */}
               <button
-                onClick={submit}
+                onClick={() => submit()}
                 disabled={submitting}
                 className="w-full rounded-xl bg-text-primary text-text-inverse py-3 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 {submitting ? "Saving..." : "Submit & Next"}
+                <span className="opacity-60 font-mono text-xs ml-1.5">⏎</span>
               </button>
             </>
           )}
@@ -655,7 +744,7 @@ export default function ReviewTab() {
               onClick={() => { resetForm(); setCurrentIdx((i) => i + 1); }}
               className="w-full text-center text-xs text-text-muted hover:text-text-secondary py-2"
             >
-              Skip →
+              Skip <span className="opacity-60 font-mono">s</span> →
             </button>
           )}
         </div>
