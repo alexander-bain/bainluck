@@ -277,6 +277,7 @@ class TestBeatScheduleCompleteness:
         "unresolve-datagolf-premature",
         "null-impossible-both-sides-openings",
         "correct-both-winner-guess-side",
+        "compute-calibration-prices",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
         "backfill-polymarket-winners",

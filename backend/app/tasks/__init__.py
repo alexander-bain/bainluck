@@ -2280,6 +2280,25 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=58, hour="5,11,17,23"),
         "options": {"queue": "background"},
     },
+    "compute-calibration-prices": {
+        # #180 Item 1 — THE autopilot fix. `_compute_calibration_prices` was ONLY
+        # a backfill_winners phase, but that pipeline budget-guards out at
+        # `stopped_before: calibration_prices` on EVERY run (the 840s guard is spent
+        # on resolution before it reaches the pricing step), so the pricing step
+        # NEVER ran in production. Result: recent-cohort cal_prob coverage collapsed
+        # (kalshi 24.2%→4.2%, poly 80.2%→9.2%, June→July 2026). Extracted to its own
+        # dedicated task (same pattern as the #145/#146 integrity siblings above) so
+        # it drains autonomously. Monotonic + resumable by construction: every part
+        # selects `calibration_probability IS NULL` and commits per 100K batch, so a
+        # soft-limit kill just resumes from the remaining NULL rows next run — it
+        # NEVER restarts from scratch (gotcha #34). Runs in the empty 2/8/14/20 hour
+        # windows (clear of backfill_winners :45@3,9,15,21 and the :40-:58@5,11,17,23
+        # integrity beats) so it prices the freshly-resolved/nulled rows those beats
+        # leave behind. 10-min soft-limit (600s) matches the task def.
+        "task": "app.tasks.compute_calibration_prices",
+        "schedule": crontab(minute=15, hour="2,8,14,20"),
+        "options": {"queue": "background"},
+    },
     "sync-polymarket-resolved-status": {
         "task": "app.tasks.sync_polymarket_resolved",
         "schedule": crontab(minute=30, hour="5,11,17,23"),  # Every 6h, 30min after Kalshi settled
