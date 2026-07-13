@@ -265,11 +265,20 @@ export default function GolfPage() {
     return sections;
   }, [data]);
 
-  // Next Major countdown
+  // Next Major countdown. Prefer the authoritative DataGolf schedule start_date
+  // (real tee-off) over commence_time: for Kalshi-sourced majors commence_time
+  // is the market resolution/close date, not the first tee (The Open 2026:
+  // start_date Jul 16 vs commence_time Jul 30), which would render a countdown
+  // ~2 weeks too long during the tournament's own week. (L2-98; sibling of the
+  // L2-97 stale-venue fix — same "trust the authoritative field for The Open".)
   const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
-  const nextMajor = majors.find(
-    (t) => t.commence_time && new Date(t.commence_time) > new Date()
-  );
+  const nextMajor = majors.find((t) => {
+    const teeOff = t.start_date || t.commence_time;
+    return teeOff && new Date(teeOff) > new Date();
+  });
+  const nextMajorTeeOff = nextMajor
+    ? nextMajor.start_date || nextMajor.commence_time
+    : null;
 
   // Per-tour follow state (localStorage)
   const [followedTours, setFollowedTours] = useState<Set<string>>(new Set(["pga"]));
@@ -309,7 +318,7 @@ export default function GolfPage() {
             Tournament odds from Polymarket, Kalshi, sportsbooks &amp; DataGolf
           </p>
 
-          {nextMajor && nextMajor.commence_time && (
+          {nextMajor && nextMajorTeeOff && (
             <div className="mt-4">
               <p className="text-xs text-[#006747] font-medium uppercase tracking-wider mb-1">
                 Next Major: {nextMajor.name}
@@ -320,7 +329,7 @@ export default function GolfPage() {
                   </span>
                 )}
               </p>
-              <Countdown targetDate={nextMajor.commence_time} />
+              <Countdown targetDate={nextMajorTeeOff} />
             </div>
           )}
 
