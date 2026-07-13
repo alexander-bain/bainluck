@@ -952,6 +952,16 @@ class TestPolymarketVolumeBackfill:
         # non-game group (awards) — no sibling names a matchup → None (no stamp)
         assert group_matchup(["Best Picture 2026", "Will Oppenheimer win?"]) is None
 
+    def test_settled_sports_pass_includes_combat(self):
+        """#173/#1024: the poly settled-sports supplementary pass excluded mma/boxing,
+        so a fight event the main scan missed while open could never be recovered —
+        the poly half of A5's combat blend. Both must be in the tag list now."""
+        import inspect
+        from app.tasks.polymarket import _poll_polymarket_markets
+        src = inspect.getsource(_poll_polymarket_markets)
+        assert '"mma"' in src, "poly settled-sports pass must include mma"
+        assert '"boxing"' in src, "poly settled-sports pass must include boxing"
+
     def test_poll_has_time_budget_guard_and_cursor(self):
         """#984: poll_polymarket scanned ~210 pages with no time guard and busted
         the 540s soft limit (consec=13, sole driver of critical health). It MUST

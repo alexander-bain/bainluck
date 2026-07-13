@@ -454,7 +454,15 @@ async def _poll_polymarket_markets():
         # Supplementary pass: fetch settled sports game events by tag.
         # The main scan (active=True, closed=False) only gets open events.
         # Settled game events are needed for source coverage + calibration.
-        _SPORTS_TAG_SLUGS = ["baseball", "basketball", "hockey", "football"]
+        # #173/#1024: mma/boxing were absent, so a poly fight event the main scan
+        # missed while open (e.g. a budget-truncated cycle) could NEVER be
+        # recovered — the poly half of A5's combat cross-source blend. Confirmed
+        # live: gamma tag_slug=mma / =boxing return settled UFC/boxing events.
+        # The pass is budget-guarded (per-tag + per-page `_MAX_SECONDS` breaks),
+        # so extending the tag list can't push the task past the 540s wall.
+        _SPORTS_TAG_SLUGS = [
+            "baseball", "basketball", "hockey", "football", "mma", "boxing",
+        ]
         supplemented = 0
         for tag_slug in _SPORTS_TAG_SLUGS:
             # #984: skip the settled-sports pass entirely if the main scan already
