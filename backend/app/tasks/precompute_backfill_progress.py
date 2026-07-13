@@ -48,6 +48,12 @@ DENSITY_SINCE = "2026-06-01"
 DENSITY_SAMPLE_FRAC = 0.05
 # Minimum history points for a resolved outcome to count as "densely captured".
 DENSE_POINTS = 15
+# #180 Item 5 — the USER-FACING "no embarrassing charts" bar. The >=15-point
+# DENSE_POINTS threshold above is the calibration floor; this is the separate,
+# stricter product bar Alex ratified: every chart a user can open must render at
+# least this many history points per hour it was open (so a chart is never a flat
+# line or two lonely dots). Measured as snapshots / open-hours per outcome.
+BAR_POINTS_PER_HOUR = 1.0
 
 
 async def _precompute_backfill_progress() -> dict:
@@ -186,6 +192,91 @@ async def _precompute_backfill_progress() -> dict:
             except Exception as e:
                 response["success_cohort"] = {"error": str(e)[:300]}
                 stats["errors"].append("cohort: " + str(e)[:200])
+
+            # ── (a'') CHART DENSITY — the "no embarrassing charts" scoreboard ─
+            # #180 Item 5. The user-facing success bar (distinct from the >=15pt
+            # calibration floor): across markets a user can actually OPEN a chart
+            # on — event-linked game markets + feed-shaped (categorized) futures —
+            # what fraction render fewer than BAR_POINTS_PER_HOUR points per hour
+            # the market was open? A chart open for 40 hours with 3 points (0.075
+            # pt/hr) is an embarrassing flat line; this counts it. Density is
+            # snapshots / elapsed-open-hours per outcome (elapsed = resolution_date
+            # for resolved, now() for still-open), floored at 1h so a just-opened
+            # market isn't unfairly failed. Sampled + per-outcome index probe, same
+            # bounded pattern as the density tile. NOTE: the queue also asked to
+            # split by whether provider-native history (Kalshi candlesticks / poly
+            # CLOB) was backfilled — deferred to #181 because futures_odds_snapshots
+            # has NO snapshot-level source column to attribute a point to native-
+            # backfill vs live-poll (only poly outcomes carry opening_source=
+            # 'clob_history'; Kalshi candlestick writes are unmarked). That split
+            # needs either a snapshots.source column or a per-outcome native flag.
+            try:
+                cd = await session.execute(text("""
+                    WITH uv AS (
+                        SELECT fo.id AS oid, fm.source AS source,
+                               fo.opening_captured_at AS opened,
+                               CASE WHEN fm.status = 'resolved'
+                                    THEN COALESCE(fm.resolution_date, fm.commence_time, now())
+                                    ELSE now() END AS ended
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status IN ('open', 'resolved')
+                          AND (fm.event_id IS NOT NULL OR fm.llm_sport_category IS NOT NULL)
+                          AND fo.opening_captured_at IS NOT NULL
+                          AND (fm.resolution_date IS NULL OR fm.resolution_date >= :since)
+                          AND random() < :frac
+                    ),
+                    d AS (
+                        SELECT uv.source,
+                               GREATEST(EXTRACT(EPOCH FROM (uv.ended - uv.opened)) / 3600.0, 1.0) AS open_hours,
+                               (SELECT COUNT(*) FROM futures_odds_snapshots s
+                                WHERE s.outcome_id = uv.oid) AS snaps
+                        FROM uv
+                        WHERE uv.ended > uv.opened
+                    )
+                    SELECT source,
+                           COUNT(*) AS sampled,
+                           COUNT(*) FILTER (WHERE snaps / open_hours < :bar) AS below_bar,
+                           ROUND(AVG(snaps / open_hours)::numeric, 3) AS avg_pts_per_hr,
+                           ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (
+                                ORDER BY snaps / open_hours))::numeric, 3) AS median_pts_per_hr
+                    FROM d
+                    GROUP BY source
+                    ORDER BY sampled DESC
+                """), {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
+                       "bar": BAR_POINTS_PER_HOUR})
+                by_source = []
+                total_sampled = 0
+                total_below = 0
+                for r in cd.all():
+                    sampled = r.sampled or 0
+                    below = r.below_bar or 0
+                    total_sampled += sampled
+                    total_below += below
+                    by_source.append({
+                        "source": r.source,
+                        "sampled": sampled,
+                        "below_bar_pct": round(100.0 * below / max(sampled, 1), 1),
+                        "avg_pts_per_hr": float(r.avg_pts_per_hr) if r.avg_pts_per_hr is not None else 0.0,
+                        "median_pts_per_hr": float(r.median_pts_per_hr) if r.median_pts_per_hr is not None else 0.0,
+                    })
+                response["chart_density"] = {
+                    "since": DENSITY_SINCE,
+                    "sampled": True,
+                    "sample_frac": DENSITY_SAMPLE_FRAC,
+                    "bar_points_per_hour": BAR_POINTS_PER_HOUR,
+                    "definition": (
+                        "user-visible = event-linked game markets + categorized "
+                        "(feed-shaped) futures; density = snapshots / elapsed-open-"
+                        "hours per outcome; below_bar = density < bar_points_per_hour"
+                    ),
+                    "overall_below_bar_pct": round(100.0 * total_below / max(total_sampled, 1), 1),
+                    "by_source": by_source,
+                    "provider_native_split": "deferred to #181 — no snapshot-level source column",
+                }
+            except Exception as e:  # degrade this tile only
+                response["chart_density"] = {"error": str(e)[:300]}
+                stats["errors"].append("chart_density: " + str(e)[:200])
 
             # ── (b) JUNE-GAP recovery ledger (Kalshi, freeze window) ────────
             # Two honest cuts:
