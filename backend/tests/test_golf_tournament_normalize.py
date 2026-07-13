@@ -37,6 +37,14 @@ def test_senior_open_does_not_fold_into_the_open():
     assert _normalize_tournament("The Senior Open Championship - Winner") != "the_open"
 
 
+def test_last_chance_qualifier_does_not_fold_into_the_open():
+    # L2-93: The Open's DISTINCT Final Qualifying event ("The Open: Last-Chance
+    # Qualifier Winner", KXPGATOUR-THOLCQ26) is a separate field competing for entry,
+    # not the championship — it must not surface on the championship's page.
+    assert _normalize_tournament("The Open: Last-Chance Qualifier Winner") != "the_open"
+    assert _normalize_tournament("The Open Championship Final Qualifying Winner") != "the_open"
+
+
 def test_real_the_open_still_normalizes():
     # Regression guard: the genuine major must still merge onto one the_open card.
     assert _normalize_tournament("The Open Championship Winner") == "the_open"

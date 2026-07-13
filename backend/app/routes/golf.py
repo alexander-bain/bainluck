@@ -141,8 +141,14 @@ def _is_golf_market(market) -> bool:
 # and The Senior Open Championship — Champions/senior-tour majors whose names
 # contain "Open Championship" and would otherwise fold into The (British) Open's
 # family, contaminating its winner group with a different field (L2-90 render gap).
+# "last-chance qualifier"/"final qualifying" catch The Open's DISTINCT pre-tournament
+# Final Qualifying event (KXPGATOUR-THOLCQ26, "The Open: Last-Chance Qualifier
+# Winner") — a separate field of hopefuls competing for entry, not the championship
+# itself; it name-matches "the open" and would otherwise surface on the championship
+# page (L2-93 render gap, caught on the Open debut-eve pass).
 _NOT_THE_OPEN_RE = re.compile(
-    r"south\s+african\s+open|joburg\s+open|kenya\s+open|senior\s+open",
+    r"south\s+african\s+open|joburg\s+open|kenya\s+open|senior\s+open"
+    r"|last[-\s]?chance\s+qualifier|final\s+qualifying",
     re.I,
 )
 

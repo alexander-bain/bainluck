@@ -118,6 +118,58 @@ class TestConceptKey:
     def test_non_concept_category(self):
         assert derive_market_concept_key(None, "Fed Rate Decision", "economics", 3) is None
 
+    # L2-93 (B6): elections — the civic §6 sibling up-link. Genuine general-election
+    # races breadcrumb to the election-night concept; novelties/primaries/other editions
+    # do not (mirrors the awards up-link + the ElectionEventAdapter's own classification).
+    def test_election_governor_race_to_concept(self):
+        assert (
+            derive_market_concept_key("KXGOVCA-26", "California Governor winner?", "politics", 25)
+            == "event:election:2026-midterms"
+        )
+
+    def test_election_governor_party_race_to_concept(self):
+        assert (
+            derive_market_concept_key(
+                "KXGOVPARTYAK-26", "Alaska Governor winner? (Party)", "politics", 2
+            )
+            == "event:election:2026-midterms"
+        )
+
+    def test_election_margin_of_victory_gets_no_concept(self):
+        # KXMIDTERM* isn't an election-race stem AND MOV is a novelty by name.
+        assert (
+            derive_market_concept_key(
+                "KXMIDTERMMOV-MO05D", "Missouri's 5th District margin of victory", "politics", 5
+            )
+            is None
+        )
+
+    def test_election_other_edition_gets_no_concept(self):
+        # 2028 Senate is a different edition than the 2026 midterms concept.
+        assert (
+            derive_market_concept_key("SENATEOR-28", "Oregon Senate winner? (2028)", "politics", 5)
+            is None
+        )
+
+    def test_election_govt_shutdown_false_friend_gets_no_concept(self):
+        # KXGOVT* (shutdown) shares the "kxgov" stem but is a novelty, not a race.
+        assert (
+            derive_market_concept_key(
+                "KXGOVTSHUTDOWN-26", "Government shutdown before 2027?", "politics", 2
+            )
+            is None
+        )
+
+    def test_election_primary_gets_no_concept_up_link(self):
+        # Primaries live ON the concept page but are ticker-name ambiguous, so the
+        # up-link stays race-only (honest gap) — a "nominee -26" market never mis-links.
+        assert (
+            derive_market_concept_key(
+                "KXSENATEPRIMARYOH-26", "Republican Senate nominee (Ohio)?", "politics", 4
+            )
+            is None
+        )
+
 
 class TestHubSlug:
     def test_mapped_categories(self):
