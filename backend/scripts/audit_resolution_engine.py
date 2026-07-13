@@ -180,6 +180,41 @@ def resolve_norms(norms: set[str]) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Market-shape classifier (why the headline market_event % is batch-biased)
+# ---------------------------------------------------------------------------
+# The market_event sample is ``ORDER BY fm.id DESC`` — the newest INGESTION
+# BATCH, which clusters by shape (right now a wave of MLB spread/total sub-
+# markets). Splitting agreement by shape stops that batch bias from moving the
+# headline number: the ``derivative`` bucket is STRUCTURALLY unreproducible by a
+# name-based strategy (a "Spread: TEAM (-2.5)" / "A vs B: O/U 3.5" row names 0-1
+# teams), so a poly cutover must be scoped to the ``game`` bucket. See
+# ``project_poly_cutover_blockers`` for the full diagnosis.
+_DERIVATIVE_MARKERS = ("spread:", "o/u", "over ", "under ", "moneyline:")
+
+
+def _market_shape(name: str) -> str:
+    """Coarse shape of a stored market NAME, independent of resolution.
+
+    * ``derivative`` — spread/total/moneyline-prefixed sub-market rows whose name
+      names 0-1 teams; the participant grammar can only recover both teams from
+      these when ``matchup_title`` was backfilled (#1021).
+    * ``game``       — a "A vs. B" / "A @ B" head-to-head that names both sides.
+    * ``prop``       — a yes/no question ("Will ... ?") that may still name teams.
+    * ``other``      — everything else (single-entity futures, etc.).
+    """
+    low = (name or "").strip().lower()
+    if not low:
+        return "other"
+    if any(m in low for m in _DERIVATIVE_MARKERS):
+        return "derivative"
+    if low.startswith("will ") or "?" in low:
+        return "prop"
+    if " vs" in low or " @ " in low:
+        return "game"
+    return "other"
+
+
+# ---------------------------------------------------------------------------
 # Link-type 1: market → event
 # ---------------------------------------------------------------------------
 def audit_market_event(limit: int, show: int) -> dict:
@@ -222,9 +257,23 @@ def audit_market_event(limit: int, show: int) -> dict:
     classes: Counter = Counter()
     per_source_total: Counter = Counter()
     per_source_agree: Counter = Counter()
+    # Per-shape agreement stops the id-DESC batch from biasing the headline %,
+    # and separates the STRUCTURALLY-unreproducible derivative rows from the
+    # game rows a scoped cutover would actually own.
+    shape_total: Counter = Counter()
+    shape_agree: Counter = Counter()
+    # matchup_title backfill (#1021) coverage on poly derivative rows: without it
+    # a spread/total row yields 0 participants and can never reproduce its link.
+    poly_deriv_total = 0
+    poly_deriv_with_matchup = 0
     disagreements = []
 
     for r, ann, home_n, away_n in prepared:
+        shape = _market_shape(r.get("name") or "")
+        if r["source"] == "polymarket" and shape == "derivative":
+            poly_deriv_total += 1
+            if _md(r.get("market_metadata")).get("matchup_title"):
+                poly_deriv_with_matchup += 1
         sig = build_signature(
             ann,
             external_id=r["external_id"],
@@ -245,9 +294,11 @@ def audit_market_event(limit: int, show: int) -> dict:
         links = engine.resolve(sig, MatchUniverse(events=[event]))
         proposed = {l.right for l in links if l.link_type == LINK_MARKET_EVENT}
         per_source_total[r["source"]] += 1
+        shape_total[shape] += 1
         if str(r["event_id"]) in proposed:
             agree += 1
             per_source_agree[r["source"]] += 1
+            shape_agree[shape] += 1
         else:
             # Classify why the engine did NOT reproduce the stored link.
             if not sig.is_game:
@@ -284,12 +335,28 @@ def audit_market_event(limit: int, show: int) -> dict:
         }
         for src in per_source_total
     }
+    per_shape = {
+        shp: {
+            "total": shape_total[shp],
+            "agree": shape_agree[shp],
+            "rate": shape_agree[shp] / shape_total[shp] if shape_total[shp] else 0.0,
+        }
+        for shp in shape_total
+    }
     return {
         "link_type": LINK_MARKET_EVENT,
         "total": total,
         "agree": agree,
         "rate": (agree / total) if total else 0.0,
         "per_source": per_source,
+        "per_shape": per_shape,
+        "poly_derivative_matchup_coverage": {
+            "total": poly_deriv_total,
+            "with_matchup_title": poly_deriv_with_matchup,
+            "rate": (poly_deriv_with_matchup / poly_deriv_total)
+            if poly_deriv_total
+            else 0.0,
+        },
         "disagreement_classes": dict(classes),
         "samples": disagreements,
     }
@@ -489,8 +556,17 @@ def main() -> int:
     me = audit_market_event(args.limit, args.show_disagreements)
     print(f"\n[{me['link_type']}]  agreement {me['agree']}/{me['total']} "
           f"= {me['rate']*100:.1f}%")
+    print("  NOTE: headline % is batch-biased (sample is ORDER BY id DESC = newest "
+          "ingest batch). Read the per-shape split below, not the headline.")
     for src, st in sorted(me["per_source"].items()):
         print(f"  by source: {src:11} {st['agree']}/{st['total']} = {st['rate']*100:.1f}%")
+    for shp, st in sorted(me.get("per_shape", {}).items(), key=lambda x: -x[1]["total"]):
+        print(f"  by shape:  {shp:11} {st['agree']}/{st['total']} = {st['rate']*100:.1f}%")
+    mc = me.get("poly_derivative_matchup_coverage", {})
+    if mc.get("total"):
+        print(f"  poly derivative matchup_title coverage (#1021): "
+              f"{mc['with_matchup_title']}/{mc['total']} = {mc['rate']*100:.1f}%  "
+              f"(rows without it yield 0 participants -> unreproducible)")
     if me["disagreement_classes"]:
         print("  disagreement classes:")
         for cls, n in sorted(me["disagreement_classes"].items(), key=lambda x: -x[1]):

@@ -412,3 +412,26 @@ def test_poly_spread_resolves_to_event_via_matchup_backfill():
         sig, MatchUniverse(events=[ev]))
     ev_links = [l for l in links if l.link_type == LINK_MARKET_EVENT]
     assert ev_links and ev_links[0].right == "99"
+
+
+# ---------------------------------------------------------------------------
+# scripts/audit_resolution_engine.py::_market_shape — keeps the id-DESC batch
+# from biasing the headline market_event % (Queue #172 diagnosis). Derivative
+# rows are structurally unreproducible by a name strategy and must be split out.
+# ---------------------------------------------------------------------------
+def test_market_shape_classifier():
+    import os
+    import sys
+
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts")
+    )
+    from audit_resolution_engine import _market_shape
+
+    assert _market_shape("Spread: San Francisco Giants (-2.5)") == "derivative"
+    assert _market_shape("Colorado Rockies vs. San Francisco Giants: O/U 3.5") == "derivative"
+    assert _market_shape("Colorado Rockies vs. San Francisco Giants") == "game"
+    assert _market_shape("Lakers @ Celtics") == "game"
+    assert _market_shape("Will the game go to extra innings?: A vs. B") == "prop"
+    assert _market_shape("Democratic nominee 2028") == "other"
+    assert _market_shape("") == "other"
