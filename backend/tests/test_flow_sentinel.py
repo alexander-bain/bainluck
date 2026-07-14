@@ -13,6 +13,7 @@ from app.tasks.flow_sentinel import (
     build_flow_issue_title,
     chart_density_verdict,
     event_dup_key,
+    feed_event_card_count,
     feed_quality_failures,
     find_duplicate_events,
     flow_fingerprint,
@@ -154,6 +155,25 @@ class TestGameMarketsEmpty:
 
     def test_any_section_populated_is_not_empty(self):
         assert game_markets_empty({"spreads": [{"threshold": -1.5}]}) is False
+
+
+class TestFeedEventCardCount:
+    def test_counts_only_event_cards(self):
+        items = [
+            {"type": "event"}, {"type": "futures"}, {"type": "event"},
+            {"type": "tournament"}, {"type": "concept"},
+        ]
+        assert feed_event_card_count(items) == 2
+
+    def test_empty_feed_is_zero(self):
+        # The #1091 shape: futures/tournaments/concepts present, zero events.
+        assert feed_event_card_count(
+            [{"type": "futures"}, {"type": "tournament"}, {"type": "concept"}]
+        ) == 0
+
+    def test_non_list_is_zero(self):
+        assert feed_event_card_count(None) == 0
+        assert feed_event_card_count({"items": []}) == 0
 
 
 class TestChartDensityVerdict:

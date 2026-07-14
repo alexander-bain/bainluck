@@ -287,6 +287,15 @@ def game_markets_empty(gm: dict) -> bool:
     return not any(gm.get(s) for s in sections)
 
 
+def feed_event_card_count(feed_items: Any) -> int:
+    """Number of game/event cards in a /api/feed items list. The Sports tab is
+    built from these — zero of them while live games exist is the #1091 empty-tab
+    regression."""
+    if not isinstance(feed_items, list):
+        return 0
+    return sum(1 for i in feed_items if isinstance(i, dict) and i.get("type") == "event")
+
+
 def chart_density_verdict(tile: dict, threshold: float) -> tuple[bool, dict]:
     """(passed, evidence) for the chart_density tile. Fails when the overall
     below-bar fraction exceeds the (tunable) threshold. Missing/errored tile is a
@@ -450,6 +459,57 @@ async def _run_event_completeness(client: httpx.AsyncClient) -> dict:
         "passed": len(failures) == 0,
         "failures": failures,
         "evidence": {"live_tier1_sampled": checked, "no_live_tier1": checked == 0},
+    }
+
+
+async def _run_sports_feed_events(client: httpx.AsyncClient) -> dict:
+    # The Sports tab (iOS FeedViewModel) backfills game cards from
+    # /api/feed?include_futures=false and filters client-side to type=="event".
+    # If live games exist but the feed returns ZERO event cards, the Sports tab is
+    # empty — the #1091 regression, where one malformed event raised mid-loop and
+    # wiped the entire event feed. This is the flow that would have caught it
+    # (r189 recommendation). We only assert when there is a live slate to compare
+    # against, so an upstream-quiet window is not a false failure.
+    live = await _sample_events(client, "live", 200)
+    live_count = len(live)
+    if live_count == 0:
+        return {
+            "flow": "sports_feed_events",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {"live_sampled": 0, "reason": "no live games to assert against"},
+        }
+    try:
+        feed = await _get_json(
+            client, "/api/feed", {"limit": "200", "include_futures": "false"}
+        )
+        items = feed.get("items", []) if isinstance(feed, dict) else []
+        event_cards = feed_event_card_count(items)
+    except Exception as exc:
+        return {
+            "flow": "sports_feed_events",
+            "checked": 1,
+            "passed": False,
+            "failures": [{"detail": f"/api/feed?include_futures=false errored: {str(exc)[:120]}"}],
+            "evidence": {"live_sampled": live_count, "error": str(exc)[:200]},
+        }
+    passed = event_cards > 0
+    failures = (
+        []
+        if passed
+        else [{
+            "detail": f"{live_count} live games exist but /api/feed?include_futures=false "
+                      f"returned 0 event cards — the Sports tab is empty (#1091 regression)",
+        }]
+    )
+    return {
+        "flow": "sports_feed_events",
+        "checked": 1,
+        "passed": passed,
+        "failures": failures,
+        "evidence": {"live_sampled": live_count, "feed_event_cards": event_cards},
     }
 
 
@@ -700,7 +760,7 @@ async def _run_flow_sentinel(
     canary: bool = False,
     deadline_seconds: float = 540.0,
 ) -> dict[str, Any]:
-    """Run the six flows against production, build a scorecard, and (in a live
+    """Run the seven flows against production, build a scorecard, and (in a live
     run) file ONE deduped issue per failing flow.
 
     * canary=True appends a synthetic missing gold-set entity so the search flow
@@ -726,6 +786,7 @@ async def _run_flow_sentinel(
         ("search_gold_set", lambda c: _run_search_gold_set(c, canary)),
         ("duplicate_events", _run_duplicate_events),
         ("event_completeness", _run_event_completeness),
+        ("sports_feed_events", _run_sports_feed_events),
         ("resolved_state", _run_resolved_state),
         ("chart_density", _run_chart_density),
         ("category_discover", _run_category_discover),
