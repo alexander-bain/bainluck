@@ -165,11 +165,18 @@ class TestListUfcCardConcepts:
         # The events-table schedule surfaces a UFC card T-5, before Kalshi lists it.
         from app.utils.event_combat import event_commence_token
 
-        soon = datetime.now(timezone.utc) + timedelta(days=8)
-        token = event_commence_token(soon)
+        # Anchor both bouts to the SAME UTC calendar day (a real card shares one
+        # Kalshi ticker date). Normalizing to mid-day makes the prelim (main -2h)
+        # land on the same date no matter when the suite runs — otherwise a run
+        # near 00:00 UTC splits the two bouts across midnight into two card tokens
+        # and the assertion fails (the #1093 midnight combat-test flake).
+        card_day = (datetime.now(timezone.utc) + timedelta(days=8)).replace(
+            hour=22, minute=0, second=0, microsecond=0
+        )
+        token = event_commence_token(card_day)
         bouts = [
-            _FakeBout(1, "Dricus Du Plessis", "Kamaru Usman", soon),
-            _FakeBout(2, "Undercard A", "Undercard B", soon - timedelta(hours=2)),
+            _FakeBout(1, "Dricus Du Plessis", "Kamaru Usman", card_day),
+            _FakeBout(2, "Undercard A", "Undercard B", card_day - timedelta(hours=2)),
         ]
         concepts = await list_ufc_card_concepts(_MockDB([], event_rows=bouts))
         assert len(concepts) == 1

@@ -3757,317 +3757,327 @@ async def _score_events(
     from app.tasks.odds_polling import get_statpal_end_time
 
     for event in events:
-        if not my_teams_only:
-            if event.id in ctx.recent_dismissed_event_ids:
-                continue
-            if event.id in ctx.recent_seen_event_ids and event.status != "live":
+        try:
+            if not my_teams_only:
+                if event.id in ctx.recent_dismissed_event_ids:
+                    continue
+                if event.id in ctx.recent_seen_event_ids and event.status != "live":
+                    continue
+                if (
+                    event.status == "live"
+                    and event.commence_time
+                    and event.commence_time < now - timedelta(hours=8)
+                ):
+                    continue
+
+            # my_teams_only: skip events that don't involve the user's teams
+            if my_teams_only:
+                # Try team_id matching first (fast, when IDs are linked)
+                event_team_ids = {event.home_team_id, event.away_team_id} - {None}
+                matched_by_id = bool(event_team_ids & user_team_ids)
+
+                # Fall back to name matching (handles events without team_id links)
+                matched_by_name = False
+                if not matched_by_id and my_team_names:
+                    home_name = event.home_team_name or ""
+                    away_name = event.away_team_name or ""
+                    for team_name in my_team_names or []:
+                        if _team_name_matches(team_name, home_name):
+                            matched_by_name = True
+                            break
+                        if _team_name_matches(team_name, away_name):
+                            matched_by_name = True
+                            break
+
+                if not matched_by_id and not matched_by_name:
+                    continue
+
+            opening_home_prob = (
+                float(event.opening_home_probability)
+                if event.opening_home_probability
+                else None
+            )
+            opening_away_prob = (
+                float(event.opening_away_probability)
+                if event.opening_away_probability
+                else None
+            )
+
+            # Always compute aggregate from all available sources (ESPN, stat model,
+            # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
+            current_home_prob = _compute_aggregate_probability(event)
+            if current_home_prob is None and event.id in snapshot_fallbacks:
+                current_home_prob = snapshot_fallbacks[event.id]
+            current_away_prob = (
+                round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
+            )
+
+            # Skip events without any probability data:
+            # - Scheduled: StatPal-created events not yet matched to Odds API
+            # - Completed/closed with no scores: no odds movement, no final score
+            #   = terrible UX (empty chart, no data). These are typically niche
+            #   sports where only StatPal has schedules but no odds coverage.
+            if current_home_prob is None and event.status == "scheduled":
                 continue
             if (
-                event.status == "live"
-                and event.commence_time
-                and event.commence_time < now - timedelta(hours=8)
+                current_home_prob is None
+                and event.status in ("completed", "closed")
+                and not event.home_score
+                and not event.away_score
             ):
                 continue
 
-        # my_teams_only: skip events that don't involve the user's teams
-        if my_teams_only:
-            # Try team_id matching first (fast, when IDs are linked)
-            event_team_ids = {event.home_team_id, event.away_team_id} - {None}
-            matched_by_id = bool(event_team_ids & user_team_ids)
-
-            # Fall back to name matching (handles events without team_id links)
-            matched_by_name = False
-            if not matched_by_id and my_team_names:
-                home_name = event.home_team_name or ""
-                away_name = event.away_team_name or ""
-                for team_name in my_team_names or []:
-                    if _team_name_matches(team_name, home_name):
-                        matched_by_name = True
-                        break
-                    if _team_name_matches(team_name, away_name):
-                        matched_by_name = True
-                        break
-
-            if not matched_by_id and not matched_by_name:
-                continue
-
-        opening_home_prob = (
-            float(event.opening_home_probability)
-            if event.opening_home_probability
-            else None
-        )
-        opening_away_prob = (
-            float(event.opening_away_probability)
-            if event.opening_away_probability
-            else None
-        )
-
-        # Always compute aggregate from all available sources (ESPN, stat model,
-        # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
-        current_home_prob = _compute_aggregate_probability(event)
-        if current_home_prob is None and event.id in snapshot_fallbacks:
-            current_home_prob = snapshot_fallbacks[event.id]
-        current_away_prob = (
-            round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
-        )
-
-        # Skip events without any probability data:
-        # - Scheduled: StatPal-created events not yet matched to Odds API
-        # - Completed/closed with no scores: no odds movement, no final score
-        #   = terrible UX (empty chart, no data). These are typically niche
-        #   sports where only StatPal has schedules but no odds coverage.
-        if current_home_prob is None and event.status == "scheduled":
-            continue
-        if (
-            current_home_prob is None
-            and event.status in ("completed", "closed")
-            and not event.home_score
-            and not event.away_score
-        ):
-            continue
-
-        # Track whether we have sportsbook-specific data or only aggregate
-        has_sportsbook_odds = opening_home_prob is not None
-        prob_source = (
-            None
-            if has_sportsbook_odds
-            else ("aggregate" if current_home_prob is not None else None)
-        )
-
-        # Auto-detect preseason as exhibition from sport key when
-        # llm_importance isn't set (ESPN doesn't sync preseason sport keys)
-        importance = event.llm_importance
-        if not importance or importance == "unknown":
-            sport_key_str = event.sport.key if event.sport else ""
-            if "preseason" in sport_key_str:
-                importance = "exhibition"
-
-        highlight_result = compute_highlight(
-            status=event.status,
-            commence_time=event.commence_time,
-            sport_key=event.sport.key if event.sport else None,
-            current_home_prob=current_home_prob,
-            current_away_prob=current_away_prob,
-            current_home_spread=(
-                float(event.opening_home_spread) if event.opening_home_spread else None
-            ),
-            current_over_under=(
-                float(event.opening_over_under) if event.opening_over_under else None
-            ),
-            opening_home_prob=opening_home_prob,
-            opening_away_prob=opening_away_prob,
-            opening_home_spread=(
-                float(event.opening_home_spread) if event.opening_home_spread else None
-            ),
-            opening_over_under=(
-                float(event.opening_over_under) if event.opening_over_under else None
-            ),
-            opening_favorite=event.opening_favorite,
-            now=now,
-            home_team_name=event.home_team_name,
-            away_team_name=event.away_team_name,
-            importance=importance,
-            end_time=event.statpal_end_time,
-            period=event.period,
-        )
-
-        sport_key = event.sport.key if event.sport else None
-        _event_tags = event.event_tags or []
-
-        _source_count = (
-            len(event.win_probability_sources) if event.win_probability_sources else 0
-        )
-        _game_progress, _ = parse_game_progress(event.period, sport_key)
-
-        base_score, extra_reasons = compute_base_score(
-            highlight_score=highlight_result.score,
-            highlight_reasons=highlight_result.reasons,
-            home_champ_prob=(
-                champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0
-            ),
-            away_champ_prob=(
-                champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0
-            ),
-            sport_key=sport_key,
-            now=now,
-            event_tags=_event_tags,
-            event_status=event.status,
-            raw_ei=float(event.raw_ei) if event.raw_ei else None,
-            get_season_multiplier_fn=get_season_multiplier,
-            get_league_tier_fn=get_league_tier,
-            home_score=event.home_score,
-            away_score=event.away_score,
-            source_count=_source_count,
-            game_progress=_game_progress,
-            ei_metadata=event.ei_metadata,
-        )
-        highlight_result.reasons = extra_reasons
-
-        # Apply personalization multiplier
-        p_result = compute_event_multiplier(
-            ctx=ctx,
-            home_team_id=event.home_team_id,
-            away_team_id=event.away_team_id,
-            sport_key=event.sport.key if event.sport else None,
-            event_id=event.id,
-            home_score=event.home_score,
-            away_score=event.away_score,
-            feature_tokens=list(
-                _discover_feature_tokens(
-                    item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                    category=_personalization_category_from_sport_key(sport_key),
-                    item_type="event",
-                )
+            # Track whether we have sportsbook-specific data or only aggregate
+            has_sportsbook_odds = opening_home_prob is not None
+            prob_source = (
+                None
+                if has_sportsbook_odds
+                else ("aggregate" if current_home_prob is not None else None)
             )
-            + list(
-                _discover_semantic_tokens(
-                    item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                    category=_personalization_category_from_sport_key(sport_key),
-                    item_type="event",
+
+            # Auto-detect preseason as exhibition from sport key when
+            # llm_importance isn't set (ESPN doesn't sync preseason sport keys)
+            importance = event.llm_importance
+            if not importance or importance == "unknown":
+                sport_key_str = event.sport.key if event.sport else ""
+                if "preseason" in sport_key_str:
+                    importance = "exhibition"
+
+            highlight_result = compute_highlight(
+                status=event.status,
+                commence_time=event.commence_time,
+                sport_key=event.sport.key if event.sport else None,
+                current_home_prob=current_home_prob,
+                current_away_prob=current_away_prob,
+                current_home_spread=(
+                    float(event.opening_home_spread) if event.opening_home_spread else None
+                ),
+                current_over_under=(
+                    float(event.opening_over_under) if event.opening_over_under else None
+                ),
+                opening_home_prob=opening_home_prob,
+                opening_away_prob=opening_away_prob,
+                opening_home_spread=(
+                    float(event.opening_home_spread) if event.opening_home_spread else None
+                ),
+                opening_over_under=(
+                    float(event.opening_over_under) if event.opening_over_under else None
+                ),
+                opening_favorite=event.opening_favorite,
+                now=now,
+                home_team_name=event.home_team_name,
+                away_team_name=event.away_team_name,
+                importance=importance,
+                end_time=event.statpal_end_time,
+                period=event.period,
+            )
+
+            sport_key = event.sport.key if event.sport else None
+            _event_tags = event.event_tags or []
+
+            _source_count = (
+                len(event.win_probability_sources) if event.win_probability_sources else 0
+            )
+            _game_progress, _ = parse_game_progress(event.period, sport_key)
+
+            base_score, extra_reasons = compute_base_score(
+                highlight_score=highlight_result.score,
+                highlight_reasons=highlight_result.reasons,
+                home_champ_prob=(
+                    champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0
+                ),
+                away_champ_prob=(
+                    champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0
+                ),
+                sport_key=sport_key,
+                now=now,
+                event_tags=_event_tags,
+                event_status=event.status,
+                raw_ei=float(event.raw_ei) if event.raw_ei else None,
+                get_season_multiplier_fn=get_season_multiplier,
+                get_league_tier_fn=get_league_tier,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                source_count=_source_count,
+                game_progress=_game_progress,
+                ei_metadata=event.ei_metadata,
+            )
+            highlight_result.reasons = extra_reasons
+
+            # Apply personalization multiplier
+            p_result = compute_event_multiplier(
+                ctx=ctx,
+                home_team_id=event.home_team_id,
+                away_team_id=event.away_team_id,
+                sport_key=event.sport.key if event.sport else None,
+                event_id=event.id,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                feature_tokens=list(
+                    _discover_feature_tokens(
+                        item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                        category=_personalization_category_from_sport_key(sport_key),
+                        item_type="event",
+                    )
                 )
-            ),
-        )
-        personalized_score = min(98, int(base_score * p_result.multiplier))
+                + list(
+                    _discover_semantic_tokens(
+                        item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                        category=_personalization_category_from_sport_key(sport_key),
+                        item_type="event",
+                    )
+                ),
+            )
+            personalized_score = min(98, int(base_score * p_result.multiplier))
 
-        # --- "Nah" sport hard filter ---
-        # If the user explicitly said "Nah" to this sport, don't show it
-        # UNLESS it's a championship or playoff game.  A user who said "Nah"
-        # to soccer shouldn't see Champions League regular matches, but a
-        # World Cup Final is a genuine cultural event worth surfacing.
-        is_nah = any("sport_nah" in r for r in p_result.reasons)
-        if is_nah and not my_teams_only:
-            if importance not in ("championship", "playoff"):
+            # --- "Nah" sport hard filter ---
+            # If the user explicitly said "Nah" to this sport, don't show it
+            # UNLESS it's a championship or playoff game.  A user who said "Nah"
+            # to soccer shouldn't see Champions League regular matches, but a
+            # World Cup Final is a genuine cultural event worth surfacing.
+            is_nah = any("sport_nah" in r for r in p_result.reasons)
+            if is_nah and not my_teams_only:
+                if importance not in ("championship", "playoff"):
+                    continue
+                # Championship/playoff in a "Nah" sport: override but explain
+                personalized_score = max(personalized_score, 35)
+
+            # --- "If it's wild" sport — higher bar ---
+            # The user said "If it's wild" (affinity 0.1) — only show if something
+            # genuinely unusual is happening (upset, lead change, big swing, playoff).
+            # A live close game alone isn't enough.
+            is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
+            if is_low_affinity and not my_teams_only:
+                # Require a genuinely notable game — live+close+tier1 = 75 * 0.7 = 52
+                # isn't enough. Need upset(+20), lead change(+8), big swing(+15),
+                # or playoff(+15) to clear the bar.
+                min_score = 55
+            elif my_teams_only:
+                min_score = 0
+            elif p_result.is_personalized and p_result.multiplier >= 1.0:
+                min_score = 10
+            else:
+                min_score = 30
+            if personalized_score < min_score:
                 continue
-            # Championship/playoff in a "Nah" sport: override but explain
-            personalized_score = max(personalized_score, 35)
 
-        # --- "If it's wild" sport — higher bar ---
-        # The user said "If it's wild" (affinity 0.1) — only show if something
-        # genuinely unusual is happening (upset, lead change, big swing, playoff).
-        # A live close game alone isn't enough.
-        is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-        if is_low_affinity and not my_teams_only:
-            # Require a genuinely notable game — live+close+tier1 = 75 * 0.7 = 52
-            # isn't enough. Need upset(+20), lead change(+8), big swing(+15),
-            # or playoff(+15) to clear the bar.
-            min_score = 55
-        elif my_teams_only:
-            min_score = 0
-        elif p_result.is_personalized and p_result.multiplier >= 1.0:
-            min_score = 10
-        else:
-            min_score = 30
-        if personalized_score < min_score:
+            # Generate reason text
+            reason = generate_event_reason(
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+                status=event.status,
+                highlight_reasons=highlight_result.reasons,
+                home_probability=current_home_prob,
+                away_probability=current_away_prob,
+                opening_home_prob=opening_home_prob,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                event_tags=_event_tags,
+            )
+
+            # Compute event_tags on-the-fly (fresh, not stale persisted)
+            inline_tags = compute_event_tags(
+                sport_key=event.sport.key if event.sport else "",
+                status=event.status,
+                commence_time=event.commence_time,
+                llm_importance=importance,
+                llm_gender=getattr(event, "llm_gender", None),
+                llm_level=getattr(event, "llm_level", None),
+                llm_league=getattr(event, "llm_league", None),
+                raw_ei=float(event.raw_ei) if event.raw_ei else None,
+                broadcast_info=getattr(event, "broadcast_info", None),
+                highlight_result=highlight_result,
+            )
+
+            if tag_filter:
+                if not all(t in inline_tags for t in tag_filter):
+                    continue
+
+            ended_at = (
+                get_statpal_end_time(event)
+                if event.status in ("completed", "closed")
+                else None
+            )
+            event_data = format_event_data(
+                event_id=event.id,
+                external_id=event.external_id,
+                sport_key=sport_key,
+                sport_name=event.sport.name if event.sport else None,
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+                commence_time=event.commence_time,
+                status=event.status,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                current_home_prob=current_home_prob,
+                current_away_prob=current_away_prob,
+                opening_home_prob=opening_home_prob,
+                opening_away_prob=opening_away_prob,
+                opening_favorite=event.opening_favorite,
+                win_probability_sources=event.win_probability_sources,
+                prob_source=prob_source,
+                game_clock=getattr(event, "game_clock", None),
+                period=event.period,
+                broadcast_info=getattr(event, "broadcast_info", None),
+                highlight_label=get_highlight_label(highlight_result),
+                raw_ei=float(event.raw_ei) if event.raw_ei else None,
+                inline_tags=inline_tags,
+                ended_at=ended_at,
+            )
+            event_data["temporal_badge"] = _compute_temporal_badge(
+                status=event.status,
+                now=now,
+            )
+            event_data["sport_label"] = _get_sport_label(sport_key)
+
+            sort_time = event.commence_time.timestamp()
+            if event.status == "live":
+                sort_time = now.timestamp() + 86400
+
+            item = {
+                "type": "event",
+                "score": personalized_score,
+                # De-saturated ORDERING score (#141/Item 1): use the uncapped
+                # base*multiplier so events share one sort scale with de-saturated
+                # futures, but never below the display floor (respects the "Nah"
+                # championship override at 35). compute_base_score does not clamp at
+                # 98, so this genuinely de-saturates line-move / high-EI events too.
+                "_rank_score": max(
+                    float(personalized_score), base_score * p_result.multiplier
+                ),
+                "reason": reason,
+                "headline": get_highlight_label(highlight_result),
+                "data": event_data,
+                "_sort_time": sort_time,
+            }
+            personalization_trace = _build_personalization_trace(
+                ctx=ctx,
+                item_type="event",
+                category=_personalization_category_from_sport_key(sport_key),
+                base_score=base_score,
+                final_score=personalized_score,
+                p_result=p_result,
+            )
+            if personalization_trace:
+                item["personalization_trace"] = personalization_trace
+
+            # Include personalization debug info when score was boosted/suppressed
+            if p_result.is_personalized:
+                item["personalized"] = True
+                item["base_score"] = base_score
+                item["multiplier"] = round(p_result.multiplier, 2)
+                item["personalization_reasons"] = p_result.reasons
+
+            scored_items.append(item)
+        except Exception as _score_err:
+            # One malformed event (e.g. a dup row with bad data) must never
+            # wipe the entire event feed — skip it and keep the rest (#1091).
+            logger.warning(
+                "Feed: skipping event %s — scoring error: %s",
+                getattr(event, "id", "?"),
+                _score_err,
+            )
             continue
-
-        # Generate reason text
-        reason = generate_event_reason(
-            home_team=event.home_team_name,
-            away_team=event.away_team_name,
-            status=event.status,
-            highlight_reasons=highlight_result.reasons,
-            home_probability=current_home_prob,
-            away_probability=current_away_prob,
-            opening_home_prob=opening_home_prob,
-            home_score=event.home_score,
-            away_score=event.away_score,
-            event_tags=_event_tags,
-        )
-
-        # Compute event_tags on-the-fly (fresh, not stale persisted)
-        inline_tags = compute_event_tags(
-            sport_key=event.sport.key if event.sport else "",
-            status=event.status,
-            commence_time=event.commence_time,
-            llm_importance=importance,
-            llm_gender=getattr(event, "llm_gender", None),
-            llm_level=getattr(event, "llm_level", None),
-            llm_league=getattr(event, "llm_league", None),
-            raw_ei=float(event.raw_ei) if event.raw_ei else None,
-            broadcast_info=getattr(event, "broadcast_info", None),
-            highlight_result=highlight_result,
-        )
-
-        if tag_filter:
-            if not all(t in inline_tags for t in tag_filter):
-                continue
-
-        ended_at = (
-            get_statpal_end_time(event)
-            if event.status in ("completed", "closed")
-            else None
-        )
-        event_data = format_event_data(
-            event_id=event.id,
-            external_id=event.external_id,
-            sport_key=sport_key,
-            sport_name=event.sport.name if event.sport else None,
-            home_team=event.home_team_name,
-            away_team=event.away_team_name,
-            commence_time=event.commence_time,
-            status=event.status,
-            home_score=event.home_score,
-            away_score=event.away_score,
-            current_home_prob=current_home_prob,
-            current_away_prob=current_away_prob,
-            opening_home_prob=opening_home_prob,
-            opening_away_prob=opening_away_prob,
-            opening_favorite=event.opening_favorite,
-            win_probability_sources=event.win_probability_sources,
-            prob_source=prob_source,
-            game_clock=getattr(event, "game_clock", None),
-            period=event.period,
-            broadcast_info=getattr(event, "broadcast_info", None),
-            highlight_label=get_highlight_label(highlight_result),
-            raw_ei=float(event.raw_ei) if event.raw_ei else None,
-            inline_tags=inline_tags,
-            ended_at=ended_at,
-        )
-        event_data["temporal_badge"] = _compute_temporal_badge(
-            status=event.status,
-            now=now,
-        )
-        event_data["sport_label"] = _get_sport_label(sport_key)
-
-        sort_time = event.commence_time.timestamp()
-        if event.status == "live":
-            sort_time = now.timestamp() + 86400
-
-        item = {
-            "type": "event",
-            "score": personalized_score,
-            # De-saturated ORDERING score (#141/Item 1): use the uncapped
-            # base*multiplier so events share one sort scale with de-saturated
-            # futures, but never below the display floor (respects the "Nah"
-            # championship override at 35). compute_base_score does not clamp at
-            # 98, so this genuinely de-saturates line-move / high-EI events too.
-            "_rank_score": max(
-                float(personalized_score), base_score * p_result.multiplier
-            ),
-            "reason": reason,
-            "headline": get_highlight_label(highlight_result),
-            "data": event_data,
-            "_sort_time": sort_time,
-        }
-        personalization_trace = _build_personalization_trace(
-            ctx=ctx,
-            item_type="event",
-            category=_personalization_category_from_sport_key(sport_key),
-            base_score=base_score,
-            final_score=personalized_score,
-            p_result=p_result,
-        )
-        if personalization_trace:
-            item["personalization_trace"] = personalization_trace
-
-        # Include personalization debug info when score was boosted/suppressed
-        if p_result.is_personalized:
-            item["personalized"] = True
-            item["base_score"] = base_score
-            item["multiplier"] = round(p_result.multiplier, 2)
-            item["personalization_reasons"] = p_result.reasons
-
-        scored_items.append(item)
 
     return scored_items
 
