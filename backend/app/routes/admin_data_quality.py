@@ -2919,13 +2919,23 @@ async def trigger_correct_both_winner_guess_side(
 
 
 @router.post("/fix-commence-times")
-async def fix_commence_times(request: Request, secret: str = Query(None)):
-    """Run golf + hockey commence_time fixes synchronously (no Celery)."""
+async def fix_commence_times(
+    request: Request,
+    secret: str = Query(None),
+    dry_run: bool = Query(True),
+):
+    """Run golf + hockey commence_time fixes synchronously (no Celery).
+
+    Golf defaults to dry_run=True (Queue #189 verify-before-enable, gotcha #21):
+    it logs the blast radius / sample without writing. Pass ?dry_run=false to
+    actually apply (or set Redis golf_commence_fix:enabled=1 for the scheduled
+    callers). Hockey is unaffected by the flag.
+    """
     _check_admin_secret(secret, request=request)
     from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
-    golf = await _fix_golf_commence_times()
+    golf = await _fix_golf_commence_times(dry_run=dry_run)
     hockey = await _fix_hockey_commence_times()
-    return {"golf_fixed": golf, "hockey_fixed": hockey}
+    return {"golf_fixed": golf, "golf_dry_run": dry_run, "hockey_fixed": hockey}
 
 
 @router.get("/backfill-winners/kalshi-probe")

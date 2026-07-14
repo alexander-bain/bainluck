@@ -1109,7 +1109,27 @@ async def _poll_kalshi_markets():
     return stats
 
 
-async def _fix_golf_commence_times() -> int:
+def _golf_commence_fix_enabled() -> bool:
+    """Runtime kill switch for the golf commence_time fix (Queue #189).
+
+    Default OFF. The fix moves commence_time off Kalshi's close date and NULLs the
+    affected calibration_probability rows; the Tier-3 heuristic alone can rewrite
+    ~every resolved golf market (~1.7K markets / ~15.5K cal_prob outcomes), so it
+    must NOT blind-enable on deploy. It stays in dry-run until an operator sets
+    ``golf_commence_fix:enabled=1`` in Redis (gotcha #21, verify-before-enable).
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        val = get_redis_client().get("golf_commence_fix:enabled")
+        if isinstance(val, bytes):
+            val = val.decode()
+        return val == "1"
+    except Exception:
+        return False
+
+
+async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
     """Fix commence_time on Kalshi golf markets using DataGolf DB data.
 
     Kalshi sets commence_time = market close_time (= resolution date, typically
@@ -1128,6 +1148,12 @@ async def _fix_golf_commence_times() -> int:
 
     from app.routes.golf import _normalize_tournament
 
+    # Verify-before-enable gate (Queue #189, gotcha #21). An explicit dry_run arg
+    # (admin endpoint) always wins; otherwise the Redis flag decides, defaulting to
+    # DRY-RUN so a deploy never blind-rewrites commence_times / resets cal_probs.
+    if dry_run is None:
+        dry_run = not _golf_commence_fix_enabled()
+
     # ── Tier 1: Build lookup from DataGolf markets already in the DB ────────
     # DataGolf markets have correct commence_time set from the schedule's
     # start_date (see datagolf.py lines 135-140). We only need "win" markets
@@ -1135,14 +1161,17 @@ async def _fix_golf_commence_times() -> int:
     dg_commence_by_key: dict[str, datetime] = {}
 
     async with get_task_session() as session:
-        dg_result = await session.execute(text("""
-                SELECT name, commence_time
-                FROM futures_markets
-                WHERE source = 'datagolf'
-                  AND llm_sport_category = 'golf'
-                  AND commence_time IS NOT NULL
-                  AND external_id LIKE '%:win'
-            """))
+        # Bind the LIKE pattern — a literal ':win' inside text() is parsed as a
+        # bind parameter (asyncpg :param gotcha), which raised "value required for
+        # bind parameter 'win'" on every call, so this fix had NEVER run (#189).
+        dg_result = await session.execute(
+            text(
+                "SELECT name, commence_time FROM futures_markets "
+                "WHERE source = 'datagolf' AND llm_sport_category = 'golf' "
+                "AND commence_time IS NOT NULL AND external_id LIKE :win_suffix"
+            ),
+            {"win_suffix": "%:win"},
+        )
         for row in dg_result.fetchall():
             key = _normalize_tournament(row.name)
             if key != "other" and row.commence_time:
@@ -1192,6 +1221,7 @@ async def _fix_golf_commence_times() -> int:
 
         fixed = 0
         fixed_ids = []
+        sample: list[tuple] = []  # bounded dry-run evidence: (id, name, old, new)
         source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
         for m in markets:
             target_dt = None
@@ -1233,16 +1263,19 @@ async def _fix_golf_commence_times() -> int:
                 and m.commence_time
                 and abs((m.commence_time - target_dt).total_seconds()) > 3600
             ):
-                await session.execute(
-                    text(
-                        "UPDATE futures_markets SET commence_time = :start WHERE id = :id"
-                    ),
-                    {"start": target_dt, "id": m.id},
-                )
+                if not dry_run:
+                    await session.execute(
+                        text(
+                            "UPDATE futures_markets SET commence_time = :start WHERE id = :id"
+                        ),
+                        {"start": target_dt, "id": m.id},
+                    )
                 fixed += 1
                 fixed_ids.append(m.id)
+                if len(sample) < 20:
+                    sample.append((m.id, m.name, m.commence_time, target_dt))
 
-        if fixed_ids:
+        if fixed_ids and not dry_run:
             await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
@@ -1259,6 +1292,18 @@ async def _fix_golf_commence_times() -> int:
                 fixed,
                 source_counts,
                 len(fixed_ids),
+            )
+        elif dry_run:
+            logger.info(
+                "[DRY-RUN] golf commence fix would update %d/%d resolved markets "
+                "(sources=%s); would NULL cal_prob on their %d markets. "
+                "Set golf_commence_fix:enabled=1 in Redis to apply. "
+                "Sample (id, name, old -> new): %s",
+                fixed,
+                len(markets),
+                source_counts,
+                len(fixed_ids),
+                [(s[0], s[1], str(s[2]), str(s[3])) for s in sample],
             )
 
         return fixed
