@@ -27,6 +27,8 @@ There are 4 layers of matching, measured by `scripts/audit_event_matching.py`:
 
 Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
+**Freshness note (2026-07-14):** the table's last FULL audit is April 24 — re-measure due (docs-sweep queue owns it). Spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
+
 **Hill-climb playbook**: `docs/hill-climb-guide.md` — measure → fix biggest bucket → re-measure → repeat.
 
 **Philosophy**: Any metric below target for markets that SHOULD match is a bug, not a feature gap. Distinguish "our bug" from "upstream gap" (Kalshi liquidity, Polymarket coverage).
@@ -37,6 +39,8 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
+| `docs/PRD.md` | The product's voice: vision, reliability bar, journeys, principles (rev 2026-07-14) | When product theses change (Alex rulings) |
+| `docs/execution-plan-2026-07-13.md` | Current operating plan: programs P1–P7, week table, Opus operating model | Weekly, and when programs ship/change |
 | `docs/backlog.md` | Strategic backlog: priorities, rationale, and long-term context | When items ship, are added, or reprioritized |
 | `docs/github-workflow.md` | GitHub Issues/Project operating model and backlog sync rules | When issue labels, templates, project columns, or agent handoff rules change |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
@@ -189,14 +193,16 @@ Device-token registration, token listing, and admin send-test are covered with F
 
 ---
 
-## Product Priorities (ordered)
+## Product Priorities (ordered; re-ratified with Alex 2026-07-13/14)
 
-1. **Discover feed** — Social prediction market feed with Higher/Lower games, images, LLM hooks, category filtering, daily challenges, and prediction streaks (`/discover`)
-2. **Best aggregated event probabilities** — Probability-first event detail pages with multi-source charts, market maps, player props, and championship path
-3. **Cross-source comparison** — Compare across ALL probability sources (sportsbooks, Kalshi, Polymarket, ESPN, stat models)
-4. **Related futures** — Season futures, awards, playoff path, and series probability on every event page
-5. **Team/league-level odds** — Championship grids + league market sections (series, awards, props)
-6. **Multi-platform** — Full parity between web, iOS, and macOS (shared SwiftUI codebase)
+1. **Reliability — "the app does what it's supposed to do"** — the six failure classes (search miss, unmerged duplicates, missing/illegible event props, stale resolved-state, sub-Kalshi UX) hunted by the Flow Sentinel + Alex's dogfood loop. Success = sentinel-green nights + Alex's Kalshi-free fortnight. `docs/PRD.md` §2.
+2. **Discover feed** — guaranteed-interesting, diversity caps scoped by card type (game events are never capped into an empty tab — #1091's lesson), stale-content-free, graceful end state (`/discover`)
+3. **Event pages with props as the story** — blended win-prob hero + THE SCRIPT (pregame prop expectations) vs THE DIVERGENCE (in-game movement vs script) vs WHAT HIT (settled, graded). The secret-sauce program; success = Alex's pre-game ritual test.
+4. **Instant Answers** — search finds any entity, merged, first, faster than Kalshi (`docs/strategy-instant-answers.md`)
+5. **Event concepts + hubs** — tournaments/cards/ceremonies as unified slug-URL surfaces; entity registry + one matching engine underneath (`strategy_universal_matching_and_surfaces.md`)
+6. **Multi-platform** — iPhone first; watch = top secondary surface (glances + cocktail-banter mini-feed); iPad/Mac parity that never feels second-class; each gets a truly-great pass post-iPhone-bar (P7)
+
+**Two standing rulings that shape all of the above (Alex):** *The blend is the product* — one number per question; source divergence is a data bug to fix, not a feature to show (deliberate comparison surfaces only: category-page spotlights, playoffs source lines, My Stuff dots; this supersedes the old "cross-source comparison" priority). *Settled means settled* — one system-wide settled language: heroes show winners, cards show results, props show the script graded, charts show the completed journey.
 
 **Work tracking split**: `docs/backlog.md` is the strategic backlog; GitHub Issues are the execution queue for scoped work.
 
@@ -328,6 +334,14 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 37. **box_score_data is a wrapper dict** — `Event.box_score_data` is `{"source":"espn", "players":{...}, "scoring_plays":[...]}`. Player stats are under the `"players"` key. Iterating the top-level dict yields `"source"/"players"/"scoring_plays"` keys, not player names. This bug caused the player prop resolver to produce 4,500+ false `no_player` failures with zero resolutions.
 38. **`json.loads` (stdlib C decoder) holds the GIL for the ENTIRE parse** — wrapping a huge `response.json()` in `asyncio.to_thread` does NOT free the event loop, because the C json parser never releases the GIL. A 200-event Kalshi nested-markets page held the GIL ~67s inside the thread, freezing the loop so no `wait_for`/deadline timer could fire → the poll SIGKILLed before creating anything (the 29-day #995 creation freeze; 7 attempts). Fixes: **orjson** (`orjson.loads`, ~5-10× faster = a fraction of the GIL hold; behind an ImportError→json fallback), **smaller pages** (limit 200→50 so each decode is sub-second), and a **resumable cursor** so partial progress persists. Pure-Python work (object construction) DOES release the GIL (~5ms switch interval), so `to_thread` helps there — but never for a giant C-level decode.
 39. **A sync Redis client with no socket timeout can freeze an async task** — `redis.from_url(...)` with no `socket_timeout` blocks the calling thread forever if Redis hangs; when the caller runs inside an asyncio loop (a `setex` in a `progress_cb`, or any bare `get_redis_client()` in a task), the frozen thread IS the event loop → nothing can fire. `get_redis_client()` is now **bounded by default** (5s socket + connect timeout; pass `socket_timeout=None` to opt out only for a deliberate long blocking op). Never construct a raw sync `redis.from_url`/`redis.Redis` in `tasks/` — route through `get_redis_client()` (a CI guard in `test_redis_state.py` enforces this).
+40. **The admin `db-query` endpoint serializes JSONB as Python repr, not JSON** — any tool parsing its output with `json.loads` alone silently reads `{}` (needs an `ast.literal_eval` fallback). This poisoned the resolution-engine audit for two queue cycles (phantom 0% derivative coverage). Fix consumers, or better, the endpoint.
+41. **Bulk backfills ordered newest-first can never reach the old tail** — 450K+ newer rows starve a bounded run before it reaches what needs fixing. Old-tail work needs oldest-first ordering or an explicit filter (the combat-wps lesson).
+42. **One bad item must never wipe a whole scoring pass** — a throw inside a per-item loop (e.g. `_score_events`) emptied the entire Sports tab (#1091's real cause). Per-item try/except in every feed/scoring loop; the guard test asserts the healthy siblings survive.
+43. **Scope diversity caps by card type** — capping "category-less" cards without exempting game events emptied the Sports tab while fixing a golf flood. A cap's guard tests must assert BOTH directions: the flood stays capped AND the adjacent surface stays populated.
+44. **Never seed tests relative to `datetime.now()` across a date boundary** — near-midnight UTC runs split seeded events onto different date tokens (red-blocked two deploys). Seed at a fixed hour.
+45. **`LIKE '%:something'` inside SQLAlchemy `text()` parses as a bind param** — the query raises on every run, and if wrapped in a catch-all, the function dies silently for months (`_fix_golf_commence_times` never ran). Escape or parameterize; and never catch-all around scheduled work without alerting.
+46. **`completed_at >= commence_time` is an invariant** — its violation means an earlier game's data merged onto the wrong event (439-row incident). The audit + Flow Sentinel guard it; treat any recurrence as a matching-layer P1.
+47. **Check `git log origin/master..HEAD` BEFORE committing in a shared tree** — a sibling lane's fresh local commit will ride your push (and a crank's commits can land under yours). Explicit-path staging + linear-history discipline per the handoff README.
 
 ---
 

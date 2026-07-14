@@ -1,249 +1,180 @@
-# Bain Luck -- Product Requirements Document
+# Bain Luck — Product Requirements Document
+
+*Last full revision: 2026-07-14 (Fable + Alex). Prior revision: 2026-05-15. This document is the product's voice; `docs/execution-plan-2026-07-13.md` is the current operating plan; `docs/backlog.md` is the work ledger.*
 
 ## 1. Vision & North Star
 
-Bain Luck is a prediction market discovery platform that translates betting odds and prediction market prices into intuitive probabilities. Instead of "-150 / +130" or "0.60 CLOB price," users see "60% vs 40%." The product aggregates probabilities from sportsbooks, prediction markets (Kalshi, Polymarket), and proprietary models (ESPN, stat models, MLB Stats API, DataGolf) to present a unified view of any event's likelihood -- across sports, politics, economics, entertainment, weather, technology, geopolitics, and culture.
+Bain Luck is a prediction market discovery platform that translates betting odds and prediction market prices into intuitive probabilities. Instead of "-150 / +130" or "0.60 CLOB price," users see "60% vs 40%." The product aggregates sportsbooks, prediction markets (Kalshi, Polymarket), and models (ESPN, stat models, MLB Stats API, DataGolf) into **one blended probability** for any event — across sports, politics, economics, entertainment, weather, technology, geopolitics, and culture.
 
 **North Star:** The most engaging way to explore what the world thinks will happen.
 
-The product's success moment is immediate: a new user sees a card and thinks, "Oh, I had no idea -- that's only 23% likely?" This applies equally to a championship game, a presidential election, a Federal Reserve rate decision, or a movie's Rotten Tomatoes score. The mental model is **probability discovery**, not gambling.
+The success moment is immediate: a user sees a card and thinks, "Oh, I had no idea — that's only 23% likely?" The mental model is **probability discovery**, not gambling.
 
-**Live site:** https://bainluck.com | **Sports feed:** https://bainluck.com/sports
+**The blend is the product.** Users see one clean number per question, not a source comparison. When sources diverge, that is almost always a data-quality bug for us to fix upstream, not a feature to display. (Deliberate exceptions where comparison IS the content: category-page cross-source spotlights, playoffs source lines, My Stuff per-source dots.)
 
----
+**The anti-thesis:** the incumbent way to see "what does the world think?" is a betting app that answers the question while bombarding you with enticements to gamble. Bain Luck is the clean room: the same knowledge, zero enticement. No odds formats anywhere, ever.
 
-## 2. Target Users
-
-**Primary audience:** Curious people who follow sports, politics, or current events casually and enjoy prediction games as lightweight entertainment. They want to see "73% chance" without needing to understand American odds or order book mechanics.
-
-**What they want:**
-- Quick, visual answers to "how likely is X?"
-- Surprising discoveries they did not know to look for
-- A fun way to test their intuition via prediction games
-- Cross-source context: what do sportsbooks say vs. prediction markets vs. models?
-
-**What they do NOT want:**
-- Betting advice, picks, or trading signals
-- Volume, liquidity, or order book data
-- Dense statistical interfaces designed for professional bettors
-- Forced sign-up or notifications
-
-**Auth philosophy:** No required sign-in. The logged-out experience must feel complete. Auth exists to unlock favorites sync, cross-device preferences, prediction history, and personalized feed ranking. Auth is pull-based, never forced.
+**Live site:** https://bainluck.com | **Sports:** /sports | **Calibration:** /calibration
 
 ---
 
-## 3. User Journeys
+## 2. The Reliability Bar (definition of success)
 
-### First Visit: Discover Browser
-Opens bainluck.com. Scrolls the Discover feed. Sees a card: "Will the Fed cut rates in June? -- 62% Yes." Taps Higher or Lower to guess the next card's probability. Gets 4 right in a row -- streak badge appears. Taps a politics card to see the full probability breakdown across Kalshi and Polymarket. Shares a card with a friend via a stable UTM link.
+The product's owner-ratified quality bar (2026-07-13): **"fast and natural to use" means the app does what it's supposed to do.** The six failure classes that break trust, in the owner's words — the event you search for doesn't show up; it shows up twice because sources haven't merged; the adjacent markets/futures don't appear on the event page or aren't legible; content that has resolved still shows as live; or the interface is simply worse than a betting app's — so the user gives up and opens Kalshi.
 
-### Daily Return: Prediction Game Player
-Opens the iOS app. A daily challenge card appears: "Make 5 predictions today." Taps Higher or Lower on 5 cards. Finishes the challenge and sees accuracy stats in My Stuff: 67% correct, 12-day streak, 143 total predictions. Category tuning in Preferences ensures more sports and fewer economics cards in tomorrow's feed.
-
-### Live Sports Fan
-Navigates to the Sports tab during an NBA playoff game. Opens the event detail page. Sees a multi-source probability chart with lines from sportsbook consensus, ESPN, Kalshi, Polymarket, and the stat model. Player prop cards show live stat lines next to prop thresholds. Related futures below the chart show how this game affects each team's championship odds.
-
-### Category Explorer
-Clicks Browse and opens Politics. Sees the presidential election hero section with candidates merged across Kalshi and Polymarket. Below, a cross-source spotlight highlights markets where the two platforms disagree by more than 5 points. Scrolls to Senate control, cabinet nominations, and policy markets. Taps into a market detail page with a probability timeline chart and outcome breakdown.
-
-### Compete with Friends
-Receives a challenge link from a friend. Opens the same 5 markets the friend predicted on. Makes Higher/Lower guesses. Sees head-to-head results: who was more accurate, which predictions diverged. Returns to the Discover feed to find new markets to challenge back.
+**Measured success:**
+- **Flow Sentinel green** — a nightly scripted sentinel runs real user flows (search → event → props → state correctness → chart density → feed quality) against production and files evidence-packed issues when they fail. A healthy night files nothing.
+- **The Kalshi-free fortnight** — the owner logs 14 straight days of daily phone use in which Bain Luck answered every question he had and he never opened Kalshi.
+- **No embarrassing charts** — every chart a user can open renders ≥1 point per open hour (provider-candle granularity via candlestick/CLOB backfills). Live game charts are dense by construction (32s polling).
+- **Settled means settled** — one system-wide settled language: heroes show winners (not stale percentages), cards show results (not live-style chips), props show *the script, graded* (hit/miss, never 100% bars), charts show the completed journey.
 
 ---
 
-## 4. Feature Map
+## 3. Target Users
 
-### Discover Feed (`/`)
-The default landing page. A ranked stream of the most interesting predictions happening right now across all categories.
+**Primary:** curious people who follow sports, politics, or current events casually and enjoy probability as lightweight entertainment. They want "73% chance" without understanding American odds or order books.
 
-- **Higher/Lower game** -- guessing slots every 2nd card. Users predict whether the next market's probability is higher or lower. Results tracked per session and per user.
-- **Daily challenges** -- 5-question focused challenge with explicit Next/Finish progression, completion analytics, and streak tracking across sessions.
-- **LLM hook descriptions** -- GPT-4o-mini-generated journalist-style blurbs explaining why a market matters. Bounded to feed-shaped candidates only.
-- **Deterministic explanations** -- first-page comprehension does not depend on LLM hooks. Headlines name the mover, leader, or source disagreement from existing outcome data.
-- **Pexels images** -- stock photos on cards for visual richness.
-- **Market quality classifier** -- suppresses narrow commodity ladders, repetitive dated buckets, social-count filler. Boosts compelling public stories (politics, economics, AI/tech, entertainment, sports).
-- **Category filtering** -- chips for Sports, Politics, Entertainment, Economics, Weather, and more.
-- **Personalization** -- authenticated users get bounded category boosts from interactions, favorites, pins, sport affinities, and roster-player matching.
-- **Seen-card suppression** -- session and user interaction history reduces repeated cards across visits.
-- **Shareability** -- stable UTM share URLs, card-specific share copy, generated OG images.
+**What they want:** quick visual answers to "how likely is X?"; surprising discoveries; a fun way to test intuition; one trustworthy number (not homework across sources); something to say out loud to the room ("there's a 12% chance of extra innings").
 
-### Sports Feed (`/sports`)
-Live, upcoming, and recently completed games across all tracked sports.
+**What they do NOT want:** betting advice or picks; volume/liquidity/order-book plumbing; dense pro-bettor interfaces; forced sign-up; gambling enticements of any kind.
 
-- **Multi-source probability charts** -- renders all available sources dynamically: sportsbook consensus, ESPN, stat model, MLB Stats API, Kalshi, Polymarket, DataGolf. Color-coded and labeled.
-- **Excitement Index (EI)** -- 1-100 score based on the standard Game Excitement Index formula. Components: probability distance traveled, lead changes, comeback factor. Hall of Fame at `/ei/hall-of-fame`.
-- **Divergence badges** -- visual indicator when prediction market odds differ from sportsbook consensus by 5+ or 10+ points.
-- **Player props** -- Kalshi and Polymarket player prop markets displayed as cards with live box score stat lines.
-- **Market maps** -- spread and total markets visualized as interactive maps for 1st half, 2nd half, and full game.
-- **Related futures** -- championship odds, MVP odds, and award futures for teams in the current game.
-- **Series markets** -- playoff series winner, exact score, spread, and total games markets.
-- **Championship grids** -- league-level probability tables for 14+ leagues with monotonicity enforcement and noise filtering.
-- **League market sections** -- playoff series, awards, props, season stats below championship grids.
+**Auth philosophy:** no required sign-in. The logged-out experience must feel complete. Auth unlocks sync, history, and personalization — pull-based, never forced.
 
-### Event Detail Pages (`/sport/[sport]/[league]/[event]`)
-The deep-dive view for any individual event.
+---
 
-- Multi-source probability chart with all available sources rendered dynamically
-- Market map (spread and total visualization)
-- Player props with live stat lines
-- Game markets from Kalshi and Polymarket linked via semantic matching
-- Related futures ("Bigger Picture" section) showing championship/award implications
-- Series context for playoff games
-- Source attribution on every probability
+## 4. User Journeys
+
+### First visit: Discover browser
+Opens bainluck.com. Scrolls Discover. Sees "Will the Fed cut rates in September? — 62%." Plays Higher/Lower, hits a streak. Taps into a market, sees one blended probability and a movement explanation. Shares a card.
+
+### The pre-game ritual (the props thesis)
+Before a game he's watching, a fan opens the event page **for the props**. Pregame, the prop set is **the script**: what the world expects tonight — the pitcher's strikeout line, the total, the stars' props, what the game means for the playoff race, plus a fun prop worth saying out loud. During the game, prop **movement vs. the script** tells him how tonight is *different* from expectations — the win probability says who's winning; the props say *what kind of game this is*. After, the script is graded: what hit. This journey is the product's secret sauce and its formatting must be perfect on a phone.
+
+### Instant answers
+A user hears a name — a team, a golfer, a bill, a nominee — and types it into search. The right event or market is the first result, as one merged entity (never duplicates), faster than any betting app. Search is the front door to everything.
+
+### Live second screen
+During a tournament or game night, the event/concept page is the second screen: live blended win probability, a fused leaderboard (golf), bout cards (fight night), all state-correct to the minute, with a freshness signal.
+
+### Daily return: the digest
+One morning notification: the 3–5 most interesting probabilities today, personalized. (Notifications v1 is the digest ONLY — no movers spam, no streak nags.)
+
+### Compete with friends
+Challenge links, head-to-head accuracy, shared cards — social as a garnish on discovery, not a network.
+
+---
+
+## 5. Feature Map
+
+### Discover Feed (`/`, default)
+Ranked stream of the most interesting predictions right now. Higher/Lower game, daily challenges, streaks. LLM hooks (bounded, async) + deterministic explanations (first-page comprehension never depends on the LLM). Market-quality classifier suppresses filler and ladders; diversity caps prevent single-topic floods (scoped by card type — game events are never capped into an empty tab). Bounded personalization; soft dismiss propagation; graceful end-of-feed state. Interestingness scoring blended at capped weight.
+
+### Search / Instant Answers
+Full-text-ranked search across events, concepts, futures, and teams. The bar: the right entity, merged, first, fast. Gold-set regression protected by the Flow Sentinel.
+
+### Sports Feed (`/sports`) & Event Pages
+Live/upcoming/completed games. Event pages: blended win-probability hero + multi-source chart (prominent blend, faint sources, fixed 0–100 axis, **no smoothing — movement is the product**), market map, player props, related futures, series context, championship path. The props program (script/divergence/graded — §4) is the active build here.
+
+### Event Concepts & Hubs
+Tournament/card/ceremony pages that unify many markets into one surface: golf majors with fused live leaderboards, UFC/boxing fight cards, awards shows, elections. Slug URLs (`/event/<headliner-and-date>`), hub pages per domain, up-link mesh from every market to its concept. Powered by the entity registry + one matching engine (adapters supply grammar; the audit owns truth; the sentinel files gaps).
 
 ### Category Pages
-Five native category dashboards, all polished on web and iOS.
+Politics, Entertainment, Economics, Weather (+ Preferences): themed dashboards with cross-source spotlights (a deliberate comparison surface), threshold-group heatmaps, TMDB/poster enrichment.
 
-- **Politics** (`/politics`) -- presidential election hero merging candidates across Kalshi + Polymarket. Cross-source spotlight for platform disagreement. Senate, cabinet, policy markets.
-- **Entertainment** (`/entertainment`) -- Rotten Tomatoes, box office, Spotify, reality TV, awards. TMDB movie poster integration. Threshold market grouping for heatmap display.
-- **Economics** (`/economics`) -- Fed rate decisions, inflation, GDP, recession probability, S&P/Nasdaq targets.
-- **Weather** (`/weather`) -- city forecasts, rain probabilities, climate events, featured markets.
-- **Preferences** (`/preferences`) -- interest selector (Love/Big/Wild/Nah) by category, sport affinities, team following, account management.
-
-### Games & Social
-- **Higher/Lower prediction game** -- integrated into Discover feed. Accuracy %, total predictions, current streak, best streak tracked in My Stuff.
-- **Daily challenge** -- 5 predictions per day with streak mechanics.
-- **Friend challenges** -- backend scaffold shipped (table, model, 3 API endpoints). Challenge a friend to predict on the same set of markets, compare accuracy.
-- **Prediction stats** (`/discover/stats`) -- personal accuracy dashboard.
+### My Stuff
+Pins, follows, prediction stats, Your Teams' Odds (one card per team, seasons labeled). Settled events render settled.
 
 ### Calibration Report (`/calibration`)
-Public accuracy analysis. MCE 2.7pp across 195K+ resolved outcomes from 3 sources (Kalshi, Polymarket, Odds API). Virtual market reconstruction via `group_id`. Per-source breakdown. "Does Trading Activity Matter?" analysis section. Brier score 30% better than random baseline.
+The public trust engine: honest reliability curves across 1M+ priced resolved outcomes, per-source and per-category, with per-bucket sample counts, confidence intervals, small-bucket suppression, click-through example outcomes per bucket, a corrections log, and a well-traded default with a skeptic's toggle. Categories with known capture artifacts are excluded with on-page explanations rather than silently blended. (July 2026: headline honest MCE ≈ 1.6pp; kalshi source ECE ≈ 1.0pp; weather healed 7.0 → 1.7pp by fixing OUR capture, which is the house methodology: assume our bug, never "the market was wrong.")
 
-### Platform Coverage
-- **Web** (Next.js 14, Vercel) -- desktop and mobile-responsive. Discover | Sports | Browse | My Stuff navigation.
-- **iOS** (SwiftUI, TestFlight) -- full feature parity. Discover | Sports | Browse | Search | My Stuff tabs. Apple Sign-In + Google Sign-In with Keychain token storage. Rage shake bug reporting. 4-card welcome onboarding.
-- **macOS** (shared SwiftUI codebase) -- menu bar live scores, Cmd+K search, context menus, keyboard navigation. Same views with `#if os(macOS)` conditionals.
-- **Daily digest emails** -- morning email with top movers and resolving-soon markets.
-- **Rage shake bug reporting** -- shake phone or Cmd+Shift+F to capture screenshot + app state, submitted to admin dashboard with auto-diagnosis (severity, root cause, Claude Code prompt).
+### Games & Social
+Higher/Lower, daily challenges, friend challenges, prediction stats.
 
----
+### Platforms (P7 posture)
+- **iPhone app** — the primary consumption target; App Store re-submission gated on the owner's dogfood + calibration credibility.
+- **Web** — full experience + the debugging/admin surface.
+- **Apple Watch** — exists today; top-priority secondary surface: glanceable followed teams/events + a 3-card "cocktail banter" mini-Discover fed by the digest's selection pipeline. Complication ships when the widget target is wired.
+- **iPad / macOS** — near-term parity that never feels second-class (shared SwiftUI codebase; payload-v2 keeps display semantics server-side so all platforms heal together); each gets a truly-great pass post-iPhone-bar (iPad: multi-column second screen; Mac: menu-bar glance + keyboard-first search).
+- **Morning digest** — email today; push v1 = the same brief, opt-in.
 
-## 5. Data Architecture
-
-Full technical detail lives in `docs/architecture-reference.md`. This section covers the high-level design.
-
-### Data Sources
-
-| Source | What It Provides | Cost |
-|--------|-----------------|------|
-| The Odds API | Sports odds: moneylines, spreads, totals, futures (5-15 books) | ~$119/mo |
-| Kalshi | Prediction markets: sports, politics, economics, entertainment, weather | Free |
-| Polymarket | Prediction markets: sports, politics, entertainment | Free |
-| ESPN | Team colors, logos, live game data, win probability, rosters | Free |
-| StatPal | Schedules, rosters, injuries, play-by-play | ~$99/mo |
-| DataGolf | Golf predictions, live in-play probabilities, leaderboards | ~$30/mo |
-| MLB Stats API | Live baseball win probability | Free |
-| TMDB | Movie/TV metadata, posters | Free |
-| Pexels | Stock photos for Discover feed cards | Free |
-| OpenAI | GPT-4o-mini for LLM classification + hook descriptions | ~$10/mo |
-
-### Core Subsystems
-
-**Event Registry** -- unified `find_or_create_event()` with 4-step cascade: exact source ID, cross-source ID, structured match (sport + time + teams), create. All source tasks wired. Prevents duplicate events from different sources describing the same game.
-
-**Probability Aggregation** -- `compute_aggregate_probability()` blends all available sources with configurable weights (betting 3.0, ESPN 1.5, stat_model 1.0, Kalshi/Polymarket/MLB 0.8). Source-agnostic resilience: the system works when any single source goes dark (validated during March 2026 Odds API quota exhaustion).
-
-**Prediction Market Matching** -- hourly task links Kalshi/Polymarket game markets to events via semantic matching. Three-phase: Link (ticker scan + general scan), re-validate, snapshot writing. The #1 technical challenge in the product and the biggest leverage point.
-
-**Market Grouping** -- markets sharing the same real-world question (e.g., 10 nominee sub-markets for "Who wins Best Picture?") share a `group_id`. Powers feed dedup, cross-source matching, calibration accuracy, and related-market grouping.
-
-**Feed Ranking** -- multiple candidate pools (sports, non-sports volume, movement, enriched, soon-resolving), quality classifier, category/archetype/story mixer, deterministic explanations. LLM hook enrichment intentionally bounded.
-
-**Quota Guard** -- The Odds API quota (5M/month) circuit breaker with three modes: Normal, LIVE_ONLY (20K-50K remaining), FULL_STOP (<20K remaining). Sport-tier polling at 32s/64s/128s intervals.
-
-### Quality Measurement
-
-**Four-Layer Matching Audit** measures semantic matching accuracy:
-- L1: Event Existence -- every game exists with all sources
-- L2: Market-to-Event -- game markets linked via event_id
-- L3: Futures Surfacing -- season futures on event detail pages
-- L4: Market Completeness -- every market type showing per game
-
-All 4 layers at 100% (April 24, 2026). Grid accuracy: 51/51 (100%).
-
-**Feed Quality Audit** measures Discover feed output:
-- `boring-rate@20 = 0` (no boring cards in top 20)
-- `ladder/bucket-rate@20 = 0` (no commodity ladders in top 20)
-- `explanation-coverage@20 = 20/20` (every card has an explanation)
+### Admin (the operator's cockpit)
+`/admin` opens with health tiles (green/amber/red with tracked-issue badges), a "Waiting on you" queue of genuinely-human asks, an inline eval/grading queue (Rapid mode: 25 keystrokes per 25-item gold-set batch, with undo), autopilot beat tiles, and deep pages behind each tile. The operator's judgment is spent on ship gates and taste calls — detection belongs to sentinels.
 
 ---
 
-## 6. Metrics
+## 6. Data Architecture (summary; detail in `docs/architecture-reference.md`)
 
-### North Star Metric
-**Daily active users engaging with predictions** -- users who make at least one Higher/Lower guess, open a market detail page, or complete a daily challenge.
+Sources: The Odds API (~$119/mo), Kalshi, Polymarket, ESPN, StatPal (~$99/mo), DataGolf (~$30/mo), MLB Stats API, TMDB, Pexels, OpenAI (~$10/mo), Wikipedia (person images).
 
-### Engagement Metrics
-- **Higher/Lower guess rate** -- guesses per session (target: 3+)
-- **Daily challenge completion rate** -- % of users who finish the 5-question challenge
-- **Prediction streak retention** -- users maintaining active streaks across sessions
-- **Feed card CTR** -- open rate on Discover cards
-- **Share rate** -- cards shared per session
-- **Weekly return rate** -- % of users who return within 7 days
+Core subsystems: **Event Registry** (find-or-create cascade with structured matching incl. completed events; invariant-guarded against cross-merges); **Entity Registry + one matching engine** (canonical entities/aliases; source adapters supply grammar; shadow-mode cutovers earn production per link type); **Probability Aggregation** (weighted blend; source-agnostic resilience); **Market Grouping** (`group_id` powers dedup, cross-source, calibration); **Feed Ranking** (candidate pools + quality classifier + caps + bounded personalization + replay harness); **Quota Guard** (three-mode circuit breaker); **Backfill Autopilot** (dedicated beat-scheduled pricing/resolution tasks, budget-guarded, idempotent, with `backfill-progress` observability: per-month density, the June-gap ledger, recoverable-vs-excluded denominators).
 
-### Data Quality Metrics (current values, May 2026)
-- **Calibration MCE**: 2.7pp across 195K+ resolved outcomes (target: <5pp)
-- **Four-layer matching**: 100% on all 4 layers
-- **Grid accuracy**: 51/51 (100%)
-- **Feed boring-rate@20**: 0/20
-- **Feed explanation-coverage@20**: 20/20
+Quality machinery: four-layer matching audit (L1 existence, L2 market→event, L3 futures surfacing, L4 completeness — target 100%); grid accuracy; feed-quality audit (boring-rate@20 = 0, explanation-coverage 20/20); **Flow Sentinel** (nightly user-flow regression w/ auto-filed evidence packs); **Calibration Sentinel** (cohort mining → auto-filed issues); the dogfood loop (owner phone sessions → evidence-packed P0s, often same-day fixed).
 
 ---
 
-## 7. Product Principles
+## 7. Metrics
 
-1. **Visual over numerical** -- percentages and charts beat odds formats every time.
-2. **Discovery-first** -- the feed surfaces what is interesting and surprising. Users should find things they did not know to look for.
-3. **Probability-first** -- every piece of data is anchored to a probability. Context explains why a probability matters, not what to do about it.
-4. **Source-agnostic resilience** -- the system works when any single source goes dark. Multiple independent sources prevent single-point-of-failure blind spots.
-5. **No gambling language** -- we show what changed, not what to bet. Never show volume, trade counts, or liquidity to users.
-6. **Cross-platform parity** -- web, iOS, and macOS should each feel native.
-7. **Transparency** -- public calibration report, source attribution on every probability.
-8. **Respect attention** -- no spammy notifications, no forced auth.
+**North Star:** daily active users engaging with predictions (a guess, a detail-page open, or a challenge completion).
 
----
+**Engagement:** guesses/session (3+), challenge completion, streak retention, card CTR, share rate, weekly return, digest open rate (when push ships).
 
-## 8. Non-Goals
-
-Bain Luck is **NOT**:
-
-- **A sportsbook or betting interface** -- no wagering, no account balances, no deposit flows.
-- **A trading platform** -- no order books, no positions, no portfolio tracking.
-- **A pick-selling or tout service** -- no "best bets," no betting advice, no recommended wagers.
-- **A stats-heavy analytics tool** -- not designed for professional bettors or quantitative traders.
-- **A social network** -- predictions and challenges are social features, but the product is not a feed of user-generated content.
-
-The product displays information, not transactions. No gambling language, no calls to action to place bets, no volume or trade data shown to users. Betting is contextual information for computing probabilities, not the call to action.
+**Reliability & data quality (July 2026 values):**
+- Flow Sentinel: green nights (target: file-nothing ≥ 6/7)
+- Matching: L1–L4 at 100% on audit; duplicate events: 0 (sentinel-guarded)
+- Calibration: honest MCE ≈ 1.6pp; every source ≤ ~2.6pp; corrections logged publicly
+- Backfill SLA: ≥95% of post-Jul-2 resolved outcomes priced, vs the *recoverable* denominator; per-source density (≥15 pts poly/DataGolf; cadence-honest bar for Kalshi)
+- No-embarrassing-charts: % of user-visible charts ≥1 pt/open-hour (candlestick scoreboard)
+- The Kalshi-free fortnight: 0/14 days logged (starts when the phone build stabilizes)
 
 ---
 
-## 9. Tech Stack
+## 8. Product Principles
+
+1. **Probability-first, visual-first** — percentages and charts, never odds formats.
+2. **The blend is the product** — one number per question; divergence is our bug to fix, not the user's puzzle to solve.
+3. **Movement is the product** — no chart smoothing, ever; fixed 0–100 axis; a jagged line that's true beats a smooth one that lies. Movement explanations ship only when the *cause* is explainable.
+4. **Discovery-first** — surface what users didn't know to look for.
+5. **No gambling language, no enticements** — no volume, no liquidity, no "best bets." Ever.
+6. **Settled means settled** — resolved things look resolved everywhere, immediately.
+7. **Assume our bug** — a miscalibrated curve or diverging source is our capture/linkage/grading error until exhaustively proven otherwise.
+8. **Detection by machines, judgment by humans** — sentinels find and file; the owner's eyeball is the ship gate, never the smoke detector.
+9. **Transparency builds the brand** — public calibration, public corrections, source attribution.
+10. **Respect attention** — one good notification a day beats ten mediocre ones; no forced auth.
+
+---
+
+## 9. Non-Goals
+
+Bain Luck is **NOT**: a sportsbook or betting interface; a trading platform; a pick-selling service; a stats terminal for professionals; a social network. It displays information, never transactions. Betting markets are an *input* for computing probabilities — never a call to action.
+
+---
+
+## 10. Tech Stack
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,500+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 5,000+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
-| Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
-| Web Frontend | Next.js 14 (React) | Vercel |
-| iOS/macOS App | SwiftUI (shared codebase, 89 Swift files) | TestFlight |
-| Auth | Firebase Auth (Google + Apple Sign-In) | Google Cloud |
-| Analytics | GA4 + Firebase Analytics | Google |
-| LLM | OpenAI GPT-4o-mini | OpenAI |
-| Error Tracking | Sentry | Sentry Cloud |
+| Task Queue | Celery + Redis (realtime + background workers) | Heroku Redis |
+| Web | Next.js 14 | Vercel |
+| iOS / iPadOS / macOS / watchOS | SwiftUI shared codebase (~142 Swift files incl. watch + widget targets) | TestFlight / direct |
+| Auth | Firebase Auth (Google + Apple) | Google Cloud |
+| Analytics / Errors | GA4 + Firebase / Sentry | — |
+| LLM | GPT-4o-mini (bounded enrichment + advisory evals) | OpenAI |
 
-Both platforms auto-deploy from GitHub on push to `master`. CI runs backend pytest + frontend `npm run build` on every push.
+CI on every push: backend pytest + frontend build (ESLint gate), serialized Heroku deploy. Ops runs on a three-lane queue protocol with atomic claims, drive-mode, and headless cranks (`.claude/handoff/README.md`).
 
 ---
 
-## 10. Reference Docs
+## 11. Reference Docs
 
 | Document | Purpose |
 |----------|---------|
-| `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin |
-| `docs/feature-reference.md` | Detailed feature documentation |
-| `docs/backlog.md` | All outstanding work items (single source of truth) |
-| `docs/completed-features.md` | Shipped features log |
-| `docs/gotchas-reference.md` | Extended gotchas (62 entries) |
-| `docs/design-system.md` | Visual design system: colors, type, motion, voice, components |
-| `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook |
-| `docs/quality-audit.md` | Audit script usage, check catalog |
+| `docs/execution-plan-2026-07-13.md` | Current operating plan, programs P1–P7, Opus handoff |
+| `docs/architecture-reference.md` | System design detail |
+| `docs/backlog.md` | Strategic work ledger |
+| `docs/feature-reference.md` / `completed-features.md` | Feature detail / shipped log |
+| `docs/gotchas-reference.md` | The full hard-won gotcha catalog |
+| `docs/design-system.md` | Visual language incl. the settled-state system |
+| `docs/hill-climb-guide.md` / `quality-audit.md` | Measurement playbooks |
+| `docs/strategy-instant-answers.md` | The search program |
