@@ -1058,6 +1058,15 @@ async def _poll_kalshi_markets():
                 logger.warning("Golf commence_time fix failed: %s", e)
                 stats["golf_commence_fixed"] = 0
 
+            # #1088: per-round dates for round-leader/round-top markets (separate
+            # from the tournament-start fix above; OPEN markets only).
+            try:
+                golf_round_fixed = await _fix_golf_round_leader_dates()
+                stats["golf_round_dates_fixed"] = golf_round_fixed
+            except Exception as e:
+                logger.warning("Golf round-leader date fix failed: %s", e)
+                stats["golf_round_dates_fixed"] = 0
+
             try:
                 hockey_fixed = await _fix_hockey_commence_times()
                 stats["hockey_commence_fixed"] = hockey_fixed
@@ -1252,6 +1261,129 @@ async def _fix_golf_commence_times() -> int:
                 len(fixed_ids),
             )
 
+        return fixed
+
+
+# #1088: matches "End of Round 1 Leader", "Round 2 Top 10", etc. Round-leader and
+# round-top markets are round-SPECIFIC, so they need a per-round date rather than
+# the tournament-start date _fix_golf_commence_times computes.
+_GOLF_ROUND_RE = _re.compile(r"\bround\s+(\d+)\b", _re.I)
+
+# Strips the round-specific tail ("End of Round 2 Leader", "Round 2 Top 10 …") so
+# the remaining base name normalizes to the SAME tournament key as the DataGolf
+# "…- Winner" market. _normalize_tournament's own round-stripper is dash-anchored,
+# but Kalshi names carry no dash before the round tail, so without this strip a
+# round-leader name slugifies WITH the round suffix and never matches the winner
+# key (the reason the collapse looked tournament-specific — #1088).
+_GOLF_ROUND_STRIP_RE = _re.compile(r"\s*(?:end\s+of\s+)?round\s+\d+.*$", _re.I)
+
+
+async def _fix_golf_round_leader_dates() -> int:
+    """Give Kalshi golf round-leader/round-top markets a per-ROUND commence_time.
+
+    A still-open tournament's round markets all arrive stamped with the same
+    Kalshi list/close date (gotcha #14) — The Open's R1/R2/R3 leader markets were
+    all dated 2026-07-13 instead of Jul-16/17/18 (#1088). Kalshi encodes the round
+    only in the ticker (``KXPGAR{N}LEAD``) / name ("Round N"), never in a per-round
+    date, and DataGolf never creates round markets — so the honest per-round date
+    is: DataGolf tournament start + (round - 1) days.
+
+    Scope is OPEN markets only. RESOLVED round markets already carry distinct
+    per-round Kalshi close dates (e.g. BMW International R1/R2/R3 = Jul-2/3/4), and
+    touching them would disturb settled golf calibration (gotcha #21). This runs
+    each poll, self-healing new tournaments while they are still open.
+
+    Deliberately separate from ``_fix_golf_commence_times`` (which targets the
+    tournament start / eve-of-Round-1 for closing-line capture — the WRONG date
+    for a round-specific market).
+    """
+    from datetime import timedelta
+
+    from app.routes.golf import _normalize_tournament
+
+    async with get_task_session() as session:
+        # Tournament-start lookup from DataGolf "…:win" markets (commence_time is
+        # midnight UTC on Round 1). Bind the LIKE pattern — a literal ':win' inside
+        # text() is parsed as a bind parameter (asyncpg :param gotcha).
+        start_by_key: dict[str, datetime] = {}
+        dg_result = await session.execute(
+            text(
+                "SELECT name, commence_time FROM futures_markets "
+                "WHERE source = 'datagolf' AND llm_sport_category = 'golf' "
+                "AND commence_time IS NOT NULL AND external_id LIKE :win_suffix"
+            ),
+            {"win_suffix": "%:win"},
+        )
+        for row in dg_result.fetchall():
+            key = _normalize_tournament(row.name)
+            if key != "other" and row.commence_time:
+                existing = start_by_key.get(key)
+                if existing is None or row.commence_time > existing:
+                    start_by_key[key] = row.commence_time
+
+        # Fall back to the live DataGolf schedule for tournaments not yet in the DB.
+        try:
+            from app.routes.golf import _get_golf_schedule
+
+            schedule = await _get_golf_schedule()
+        except Exception:
+            schedule = None
+        if schedule:
+            for s in schedule:
+                key, start_date = s.get("key"), s.get("start_date")
+                if key and start_date and key not in start_by_key:
+                    try:
+                        start_by_key[key] = datetime.fromisoformat(start_date)
+                    except (ValueError, TypeError):
+                        pass
+
+        # OPEN golf markets; round-market filtering happens in Python to avoid a
+        # POSIX regex in text() (the '[:space:]' class trips the :param scanner).
+        result = await session.execute(
+            text(
+                "SELECT id, name, commence_time FROM futures_markets "
+                "WHERE source = 'kalshi' AND llm_sport_category = 'golf' "
+                "AND status = 'open'"
+            )
+        )
+        markets = result.fetchall()
+
+        fixed = 0
+        fixed_ids: list[int] = []
+        for m in markets:
+            rnd_m = _GOLF_ROUND_RE.search(m.name or "")
+            if not rnd_m:
+                continue
+            rnd = int(rnd_m.group(1))
+            # Normalize the BASE tournament name (round tail removed) so it keys
+            # to the same tournament as the DataGolf winner market.
+            base_name = _GOLF_ROUND_STRIP_RE.sub("", m.name or "").strip()
+            key = _normalize_tournament(base_name, schedule) if base_name else "other"
+            start = start_by_key.get(key) if key != "other" else None
+            if not start:
+                continue
+            # DataGolf start is midnight UTC on Round 1; round N is +(N-1) days.
+            target_dt = start + timedelta(days=rnd - 1)
+            if (
+                m.commence_time is None
+                or abs((m.commence_time - target_dt).total_seconds()) > 86400
+            ):
+                await session.execute(
+                    text(
+                        "UPDATE futures_markets SET commence_time = :ct WHERE id = :id"
+                    ),
+                    {"ct": target_dt, "id": m.id},
+                )
+                fixed += 1
+                fixed_ids.append(m.id)
+
+        if fixed_ids:
+            await session.commit()
+            logger.info(
+                "Fixed commence_time for %d Kalshi golf round markets "
+                "(round-aware, ticker/name-derived)",
+                fixed,
+            )
         return fixed
 
 
