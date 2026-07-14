@@ -162,9 +162,24 @@ export function tournamentEventKey(t: {
   return slug ? `event:golf:${slug}` : null;
 }
 
-/** Build the app path for an event key (single-encode the colons for the route). */
+/** Split an event key into (domain, slug), mirroring backend `parse_event_key`.
+ *  Canonical form `event:<domain>:<slug>`; also tolerates `<domain>:<slug>` and a
+ *  bare slug (treated as golf, the slice-1 parity domain). */
+export function parseEventKey(key: string): { domain: string; slug: string } {
+  const parts = (key || "").split(":");
+  if (parts.length >= 3 && parts[0] === "event") {
+    return { domain: parts[1], slug: parts.slice(2).join(":") };
+  }
+  if (parts.length === 2) return { domain: parts[0], slug: parts[1] };
+  return { domain: "golf", slug: key };
+}
+
+/** Build the app path for an event key (L2-113: colon-free `/event/<domain>/<slug>`,
+ *  so a shared URL reads `/event/ufc/26jul11` instead of `/event/event%3Aufc%3A…`).
+ *  The API still keys on `event:<domain>:<slug>`; only the browser URL changes. */
 export function eventPath(key: string): string {
-  return `/event/${encodeURIComponent(key)}`;
+  const { domain, slug } = parseEventKey(key);
+  return `/event/${encodeURIComponent(domain)}/${encodeURIComponent(slug)}`;
 }
 
 // L2-91: competition hub display labels (mirrors routes/hub.py HUB_CONFIGS). Used

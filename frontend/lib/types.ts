@@ -1790,6 +1790,9 @@ export interface EventConceptChild {
 export interface EventConceptResponse {
   event: {
     key: string;
+    // L2-113: pretty, self-resolving URL slug (combat: headliner + date-token; golf:
+    // the clean tournament slug). Absent on domains that haven't adopted it yet.
+    slug?: string | null;
     domain: string;
     name: string | null;
     status: "upcoming" | "live" | "settled";

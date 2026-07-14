@@ -29,10 +29,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
+from app.utils.name_normalization import clean_slug
 
 # ---------------------------------------------------------------------------
 # Shared (domain-agnostic) grammar — the same for every combat sport.
 # ---------------------------------------------------------------------------
+
+# A Kalshi card date-token (`YYMONDD`, e.g. "26jul18"), lowercased. Used to make the
+# resolver tolerant of a HUMAN slug (L2-113): a pretty URL like
+# `ufc-329-mcgregor-vs-holloway-26jul18` still resolves because the date-token — the
+# real card identity — is extracted from it (the headliner prefix is decorative).
+_DATE_TOKEN_RE = re.compile(r"\d{2}[a-z]{3}\d{2}")
+
+
+def card_slug(card_name: str | None, token: str) -> str:
+    """Human, URL-safe card slug: `<clean headliner>-<date-token>` (L2-113), so a
+    combat card URL reads `.../ufc-329-mcgregor-vs-holloway-2-26jul18` instead of the
+    cryptic bare token. Falls back to the bare token when there's no name to slug.
+    The trailing token keeps the slug self-resolving (see `_DATE_TOKEN_RE`)."""
+    base = clean_slug(card_name or "")
+    return f"{base}-{token}" if base else token
 
 # A matchup-shaped name ("A vs B", "A def. B") — used to keep the two-sided fight
 # (and its cross-source dup / negrisk bundle) OUT of the props list.
@@ -515,6 +531,12 @@ class CombatEventAdapter:
         target = re.sub(r"[^a-z0-9]", "", (slug or "").lower())
         if not target:
             return None
+        # L2-113: accept a human slug (`ufc-329-mcgregor-vs-holloway-26jul18`) by
+        # extracting the card date-token — the real identity — from it. A bare token
+        # ("26jul18") already IS the token, so this is a no-op for legacy links.
+        _tok = _DATE_TOKEN_RE.search(target)
+        if _tok:
+            target = _tok.group(0)
 
         q = (
             select(FuturesMarket)
@@ -664,6 +686,8 @@ class CombatEventAdapter:
         return {
             "event": {
                 "key": f"event:{cfg.domain}:{target}",
+                # L2-113: pretty, self-resolving URL slug (headliner + date-token).
+                "slug": card_slug(card_name or main_event.name, target),
                 "domain": cfg.domain,
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
                 "status": combat_status(authoritative_commence, now),
@@ -744,6 +768,8 @@ class CombatEventAdapter:
         return {
             "event": {
                 "key": f"event:{cfg.domain}:{target}",
+                # L2-113: pretty, self-resolving URL slug (headliner + date-token).
+                "slug": card_slug(card_name or headline, target),
                 "domain": cfg.domain,
                 "name": card_name or headline,
                 "status": combat_status(latest_commence, now),

@@ -386,6 +386,8 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     return {
         "event": {
             "key": key if key.startswith("event:") else f"event:golf:{slug}",
+            # L2-113: URL slug (golf's is already clean, e.g. "the-open-championship").
+            "slug": slug,
             "domain": "golf",
             "name": t.get("name"),
             "status": _golf_status(t),

@@ -30,8 +30,8 @@ function topOutcomes(child: EventConceptChild): { name: string; probability: num
 function PropCard({ child }: { child: EventConceptChild }) {
   const outs = topOutcomes(child);
   return (
-    <div className="flex-shrink-0 w-60 bg-surface-card rounded-card shadow-card p-3">
-      <div className="text-xs text-text-muted truncate mb-2">
+    <div className="flex-shrink-0 w-60 md:w-auto bg-surface-card rounded-card shadow-card border border-surface-border p-3.5 transition-shadow hover:shadow-card-hover">
+      <div className="text-xs text-text-muted truncate mb-2.5">
         {child.market_name || child.name || "Prop"}
       </div>
       <div className="space-y-1.5">
@@ -86,7 +86,7 @@ export default function EventProps({ items }: EventPropsProps) {
             <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
               {g.label}
             </div>
-            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0">
               {g.props.map((p) => (
                 <PropCard key={p.market_id} child={p} />
               ))}

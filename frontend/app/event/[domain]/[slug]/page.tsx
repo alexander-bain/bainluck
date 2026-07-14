@@ -1,13 +1,15 @@
 "use client";
 
-// #999 Event Concept Pages — L2-64 visual design. Generic /event/[key] rendering
-// any individual-competitor event via /api/event/{key}. Event-framed header +
-// today's movers + "race to the title" chart + winner-field leaderboard +
-// matchups rail + (settled) path-to-resolution. Co-equal domains (fights) get a
-// two-sided timeline instead of the race chart. Probability-only (no odds),
-// light-mode tokens, blend-only (no source names on rows), straight segments.
+// #999 Event Concept Pages — L2-64 visual design. L2-113: colon-free URL
+// `/event/<domain>/<slug>` (was `/event/event%3A<domain>%3A<slug>` — the "looks
+// TERRIBLE" URL Alex flagged). The API still keys on `event:<domain>:<slug>`, so
+// this route just reconstructs that key from the two path segments. When the
+// backend returns a prettier, self-resolving `event.slug` (combat headliner+date),
+// we canonicalize + client-replace up to it. Generic /event rendering of any
+// individual-competitor event via /api/event/{key}.
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEventConcept } from "@/lib/api";
@@ -30,21 +32,21 @@ const SHOW_SPARKLINE = true;
 const SHOW_MOVERS = true;
 
 export default function EventConceptPage() {
-  // Next.js 14: dynamic params for a CLIENT component come from useParams().
-  // `use(params)` on a plain object throws at render (L2-60 P1). useParams()
-  // returns the segment STILL percent-encoded, so decode ONCE here before
-  // fetchEventConcept re-encodes it for the URL — otherwise the key double-encodes
-  // (event%253A…) and the fetch 404s (L2-61). decodeURIComponent is safe/idempotent
-  // for our keys (colons aren't %-escapes). #999
   const params = useParams();
-  const rawKey = (params?.key as string) || "";
-  const decodedKey = (() => {
+  const router = useRouter();
+  // Segments arrive percent-encoded; decode once. The API key is the canonical
+  // `event:<domain>:<slug>` form (unchanged) reconstructed from the two segments.
+  const dec = (v: unknown) => {
+    const s = (v as string) || "";
     try {
-      return decodeURIComponent(rawKey);
+      return decodeURIComponent(s);
     } catch {
-      return rawKey;
+      return s;
     }
-  })();
+  };
+  const domain = dec(params?.domain);
+  const slug = dec(params?.slug);
+  const decodedKey = domain && slug ? `event:${domain}:${slug}` : "";
 
   // GA4 hooks — before any conditional return (MANDATORY).
   usePageTracking({ pageType: "event_concept", pageTitle: `Event ${decodedKey}` });
@@ -60,8 +62,7 @@ export default function EventConceptPage() {
       // (~45s) so the fused leaderboard + "as of" chip stay honestly fresh.
       // L2-91: an UPCOMING event within ~24h of its start also polls slowly (5 min)
       // so a page left open transitions countdown → live on its own when the server
-      // flips status (The Open goes live Wednesday) — without a manual reload. Only
-      // near-start open pages poll, so the added load is negligible.
+      // flips status — without a manual reload. Only near-start open pages poll.
       refreshInterval: (latest) => {
         const status = latest?.event?.status;
         if (status === "live") return 45000;
@@ -77,10 +78,38 @@ export default function EventConceptPage() {
     },
   );
 
-  // L2-71: per-competitor history now rides IN the envelope (competitor.history),
-  // so the leaderboard sparklines + race chart read from it directly — no separate
-  // history fetch. evolutionId is still needed for the settled path-to-resolution
-  // chart.
+  // L2-113: canonicalize + upgrade to the pretty, self-resolving slug the backend
+  // supplies (combat: headliner+date). Discover/search cards link with the bare
+  // date-token; once resolved we replace the URL so the address bar reads the
+  // headliner and search engines index one canonical URL.
+  const canonicalSlug = data?.event?.slug || slug;
+  useEffect(() => {
+    if (typeof document === "undefined" || !domain || !canonicalSlug) return;
+    const href = `${window.location.origin}/event/${encodeURIComponent(
+      domain,
+    )}/${encodeURIComponent(canonicalSlug)}`;
+    let link = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    const created = !link;
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "canonical";
+      document.head.appendChild(link);
+    }
+    link.href = href;
+    return () => {
+      if (created && link && link.parentNode) link.parentNode.removeChild(link);
+    };
+  }, [domain, canonicalSlug]);
+
+  useEffect(() => {
+    if (data?.event?.slug && slug && data.event.slug !== slug) {
+      router.replace(`/event/${encodeURIComponent(domain)}/${encodeURIComponent(data.event.slug)}`);
+    }
+  }, [data?.event?.slug, slug, domain, router]);
+
+  // L2-71: per-competitor history rides IN the envelope (competitor.history), so
+  // the leaderboard sparklines + race chart read from it directly. evolutionId is
+  // still needed for the settled path-to-resolution chart.
   const evolutionId = data?.primary?.evolution_market_id ?? null;
 
   if (isLoading) {

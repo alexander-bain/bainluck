@@ -12,7 +12,7 @@ const browsePages = [
   { label: "Tennis", href: "/hub/tennis", emoji: "🎾" },
   { label: "Esports", href: "/hub/esports", emoji: "🎮" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
-  { label: "2026 Midterms", href: "/event/event%3Aelection%3A2026-midterms", emoji: "🗳" },
+  { label: "2026 Midterms", href: "/event/election/2026-midterms", emoji: "🗳" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },
   { label: "Weather", href: "/weather", emoji: "🌤" },

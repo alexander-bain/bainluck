@@ -1,5 +1,5 @@
-// #999 L2-60/L2-64: render guard for /event/[key]. The page P1-crashed in prod
-// (SSR) while the unit suite stayed green because it only tested pure helpers.
+// #999 L2-60/L2-64: render guard for /event/[domain]/[slug]. The page P1-crashed in
+// prod (SSR) while the unit suite stayed green because it only tested pure helpers.
 // This SSR-renders the ACTUAL page component AND its L2-64 children (header,
 // movers strip, race chart, leaderboard w/ sparklines, matchups rail) via
 // renderToStaticMarkup — the same server path that crashed — with a real envelope
@@ -8,11 +8,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 
-// Next 14 client-component params come from useParams() — which returns the
-// segment STILL percent-encoded. The page must decode ONCE before fetch, else it
-// double-encodes (event%253A…) and 404s (L2-61).
+// L2-113: params are now the two colon-free segments (domain + slug); the page
+// reconstructs the API key `event:<domain>:<slug>` from them. useRouter is mocked
+// because the page uses router.replace for the pretty-slug upgrade (an effect that
+// never fires under renderToStaticMarkup, but the hook must exist at render).
 jest.mock("next/navigation", () => ({
-  useParams: () => ({ key: "event%3Agolf%3Athe-open-championship" }),
+  useParams: () => ({ domain: "golf", slug: "the-open-championship" }),
+  useRouter: () => ({ replace: () => {} }),
 }));
 
 // Capture the key the page hands to fetchEventConcept so we can assert it's
@@ -109,7 +111,7 @@ jest.mock("@/lib/api", () => ({
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-import EventConceptPage from "../../app/event/[key]/page";
+import EventConceptPage from "../../app/event/[domain]/[slug]/page";
 
 describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
   test("renders header + movers + race chart + leaderboard + matchups without throwing", () => {
@@ -131,11 +133,11 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).not.toMatch(/[+-]\d{3,}/);
   });
 
-  test("passes the DECODED key to fetchEventConcept (no double-encoding, L2-61)", () => {
+  test("reconstructs the API key from the domain/slug segments (L2-113)", () => {
     fetchCalls.length = 0;
     renderToStaticMarkup(<EventConceptPage />);
-    // useParams gave the percent-encoded segment; the page must decode ONCE so
-    // fetchEventConcept's own encodeURIComponent yields %3A (single), not %253A.
+    // The colon-free route segments recompose the canonical `event:<domain>:<slug>`
+    // key the API expects — with literal colons, never percent-encoded.
     expect(fetchCalls[0]).toBe("event:golf:the-open-championship");
     expect(fetchCalls[0]).not.toContain("%3A");
     expect(fetchCalls[0]).not.toContain("%253A");

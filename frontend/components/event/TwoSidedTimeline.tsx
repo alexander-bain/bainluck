@@ -13,6 +13,7 @@ import { formatProbability } from "@/lib/api";
 import { fieldOrder } from "@/lib/eventConceptDisplay";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
+import FighterAvatar from "./FighterAvatar";
 
 interface TwoSidedTimelineProps {
   competitors: EventConceptCompetitor[];
@@ -52,10 +53,17 @@ export default function TwoSidedTimeline({
     <section id="head-to-head" className="bg-surface-card rounded-card shadow-card p-6">
       <h2 className="text-title-3 font-semibold text-text-primary mb-4">{label || "Head to head"}</h2>
 
-      {/* Two-sided split bar */}
-      <div className="flex items-center justify-between text-sm mb-1.5">
-        <span className="text-text-primary font-medium truncate mr-2">{a.name}</span>
-        <span className="text-text-primary font-medium truncate ml-2 text-right">{b.name}</span>
+      {/* Two-sided split bar. L2-113: fighter avatars flank the head-to-head so the
+          marquee bout reads as two people, not two text labels. */}
+      <div className="flex items-center justify-between text-sm mb-2">
+        <div className="flex items-center gap-2 min-w-0 mr-2">
+          <FighterAvatar name={a.name} size={40} />
+          <span className="text-text-primary font-medium truncate">{a.name}</span>
+        </div>
+        <div className="flex items-center gap-2 min-w-0 ml-2 justify-end">
+          <span className="text-text-primary font-medium truncate text-right">{b.name}</span>
+          <FighterAvatar name={b.name} size={40} />
+        </div>
       </div>
       <div className="flex items-center justify-between font-mono text-lg font-semibold tabular-nums mb-1.5">
         <span className="text-accent-brand">{formatProbability(a.probability)}</span>

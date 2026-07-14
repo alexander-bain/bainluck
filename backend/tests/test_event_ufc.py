@@ -142,3 +142,38 @@ class TestDeriveConcept:
     def test_non_fight_returns_none(self):
         assert derive_ufc_concept("kalshi:KXUFCMOV-26MAR07HOLOLI", "Method of Victory", 4) is None
         assert derive_ufc_concept("kalshi:KXUFCFIGHT-26JUL11MCGHOL", "X vs Y", 1) is None
+
+
+class TestCardSlug:
+    """L2-113: human, self-resolving card slug + the resolver's token tolerance."""
+
+    def test_slug_is_headliner_plus_token(self):
+        from app.utils.event_combat import card_slug
+
+        assert (
+            card_slug("UFC 329: McGregor vs. Holloway 2", "26jul11")
+            == "ufc-329-mcgregor-vs-holloway-2-26jul11"
+        )
+        assert card_slug("Du Plessis vs Usman", "26jul18") == "du-plessis-vs-usman-26jul18"
+
+    def test_slug_falls_back_to_bare_token(self):
+        from app.utils.event_combat import card_slug
+
+        assert card_slug(None, "26jul11") == "26jul11"
+        assert card_slug("", "26jul11") == "26jul11"
+
+    def test_pretty_slug_and_bare_token_resolve_to_same_card(self):
+        # The resolver normalizes a human slug down to its date-token, so a pretty
+        # URL and a legacy bare-token URL address the same card.
+        import re
+
+        from app.utils.event_combat import _DATE_TOKEN_RE
+
+        def _target(slug: str) -> str:
+            t = re.sub(r"[^a-z0-9]", "", slug.lower())
+            m = _DATE_TOKEN_RE.search(t)
+            return m.group(0) if m else t
+
+        assert _target("ufc-329-mcgregor-vs-holloway-2-26jul11") == "26jul11"
+        assert _target("26jul11") == "26jul11"
+        assert _target("du-plessis-vs-usman-26jul18") == "26jul18"

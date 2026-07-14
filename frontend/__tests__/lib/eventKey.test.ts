@@ -7,6 +7,7 @@ import {
   combatCardKey,
   tournamentEventKey,
   eventPath,
+  parseEventKey,
   hubLabel,
   hubPath,
   categoryPageLabel,
@@ -172,9 +173,30 @@ describe("tournamentEventKey", () => {
 });
 
 describe("eventPath", () => {
-  test("single-encodes the key for the route", () => {
+  // L2-113: colon-free `/event/<domain>/<slug>` (was `/event/event%3A…%3A…`).
+  test("splits the key into a colon-free domain/slug path", () => {
     expect(eventPath("event:golf:the-open-championship")).toBe(
-      "/event/event%3Agolf%3Athe-open-championship",
+      "/event/golf/the-open-championship",
     );
+    expect(eventPath("event:ufc:ufc-329-mcgregor-vs-holloway-2-26jul11")).toBe(
+      "/event/ufc/ufc-329-mcgregor-vs-holloway-2-26jul11",
+    );
+    expect(eventPath("event:election:2026-midterms")).toBe(
+      "/event/election/2026-midterms",
+    );
+  });
+  test("tolerates a 2-part or bare key", () => {
+    expect(eventPath("ufc:26jul11")).toBe("/event/ufc/26jul11");
+    expect(eventPath("the-open-championship")).toBe(
+      "/event/golf/the-open-championship",
+    );
+  });
+});
+
+describe("parseEventKey", () => {
+  test("parses canonical, 2-part, and bare keys", () => {
+    expect(parseEventKey("event:ufc:26jul11")).toEqual({ domain: "ufc", slug: "26jul11" });
+    expect(parseEventKey("ufc:26jul11")).toEqual({ domain: "ufc", slug: "26jul11" });
+    expect(parseEventKey("the-open")).toEqual({ domain: "golf", slug: "the-open" });
   });
 });
