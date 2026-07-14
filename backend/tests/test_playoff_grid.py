@@ -231,6 +231,54 @@ class TestMarketToColumnMatching:
         m = _make_market("NBA MVP Winner 2025-26")
         assert _match_market_to_column(m, NBA_CONFIG) is None
 
+    # --- #1059 champion-ticker gate: sub-competition tickers must not leak ---
+    def test_nba_conference_ticker_does_not_leak_into_champion(self):
+        # A generic "Championship Winner" name reaches the Champion column via
+        # the loose \bchampionship\b fallback (verified: odds_api → championship).
+        # On a KXNBAEAST conference ticker that outcome must NOT populate the
+        # Champion column. Pre-#1059 it did — the degenerate A4 mapping.
+        m = _make_market(
+            "Championship Winner", source="kalshi", external_id="KXNBAEAST-27"
+        )
+        assert _match_market_to_column(m, NBA_CONFIG) is None
+
+    def test_nba_game_ticker_never_champion(self):
+        m = _make_market(
+            "Some team to win", source="kalshi", external_id="KXNBAGAME-26FEB19BOSGSW"
+        )
+        assert _match_market_to_column(m, NBA_CONFIG) is None
+
+    def test_nba_champion_series_ticker_still_maps(self):
+        # The genuine full-field champion series (bare prefix + season) is
+        # unaffected by the gate.
+        m = _make_market(
+            "NBA Championship", source="kalshi", external_id="KXNBA2026", market_tier=1
+        )
+        assert _match_market_to_column(m, NBA_CONFIG) == "championship"
+
+    def test_nba_champion_hyphen_season_ticker_still_maps(self):
+        m = _make_market(
+            "NBA Championship Winner", source="kalshi", external_id="KXNBA-26"
+        )
+        assert _match_market_to_column(m, NBA_CONFIG) == "championship"
+
+    def test_odds_api_champion_unaffected_by_gate(self):
+        # odds_api has no ticker → gate is N/A, name match still wins.
+        m = _make_market("NBA Championship Winner 2025-26")
+        assert _match_market_to_column(m, NBA_CONFIG) == "championship"
+
+    def test_is_champion_ticker_helper(self):
+        from app.routes.playoffs import _is_champion_ticker
+
+        assert _is_champion_ticker("KXNBA2026", NBA_CONFIG) is True
+        assert _is_champion_ticker("KXNBA-27", NBA_CONFIG) is True
+        assert _is_champion_ticker("KXNBAEAST-27", NBA_CONFIG) is False
+        assert _is_champion_ticker("KXNBAGAME-26", NBA_CONFIG) is False
+        assert _is_champion_ticker("KXNBAPTS-26", NBA_CONFIG) is False
+        # Foreign / non-league ticker ⇒ gate N/A.
+        assert _is_champion_ticker("KXMLB-26", NBA_CONFIG) is None
+        assert _is_champion_ticker("", NBA_CONFIG) is None
+
     # --- NHL ---
     def test_nhl_stanley_cup(self):
         m = _make_market("Stanley Cup Winner 2025-26")

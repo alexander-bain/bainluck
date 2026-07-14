@@ -598,6 +598,40 @@ def _alias_matches(name_a: str, name_b: str) -> bool:
     return False
 
 
+def _is_champion_ticker(external_id: str | None, config: LeagueConfig) -> bool | None:
+    """Is this ticker the league's genuine full-field champion series?
+
+    #1059: the ``KXNBA`` prefix admits *every* KXNBA* market — conference
+    (KXNBAEAST/WEST), game (KXNBAGAME), and props (KXNBAPTS/REB/AST/…) — and
+    the loose ``\\bchampion\\b`` fallback let their team outcomes leak into the
+    Champion column, producing the degenerate ~37.5% weak-team / ~1.6%-favorite
+    prices the A4 shadow table flagged.
+
+    A real champion market's ticker is the bare league prefix immediately
+    followed by the season (e.g. ``KXNBA2026`` / ``KXNBA-27``), NOT a
+    sub-competition (which inserts extra letters: ``KXNBA`` + ``EAST`` / ``GAME``
+    / ``PTS``). Corroborated by calibration_sentinel folding "KXNBA2026" and
+    "KXNBA2025" as one champion series.
+
+    Returns True (genuine champion series), False (a sub-competition ticker of
+    this league — must NOT populate the Champion column), or None (ticker does
+    not belong to this league's prefixes → gate not applicable, e.g. odds_api).
+    """
+    if not external_id:
+        return None
+    ext = external_id.upper()
+    matched_league = False
+    for pfx in config.external_id_prefixes:
+        P = pfx.upper()
+        if ext.startswith(P):
+            matched_league = True
+            rest = ext[len(P):]
+            # Bare prefix + season (hyphen/digit) ⇒ champion series.
+            if not rest or not rest[0].isalpha():
+                return True
+    return False if matched_league else None
+
+
 def _match_market_to_column(
     market: FuturesMarket,
     config: LeagueConfig,
@@ -609,6 +643,13 @@ def _match_market_to_column(
     """
     name = market.name or ""
     name_lower = name.lower()
+
+    def _gate(col: str | None) -> str | None:
+        # #1059 champion-ticker gate: a sub-competition ticker of this league
+        # (conference/game/prop) must never land in the Champion column.
+        if col == "championship" and _is_champion_ticker(market.external_id, config) is False:
+            return None
+        return col
 
     # 0. Reject non-playoff markets (win totals, props, awards, etc.)
     if not _is_playoff_relevant_market(name):
@@ -636,14 +677,14 @@ def _match_market_to_column(
                 if rule.name_patterns:
                     for pat in rule.name_patterns:
                         if re.search(pat, name, re.IGNORECASE):
-                            return rule.column
+                            return _gate(rule.column)
                 else:
-                    return rule.column
+                    return _gate(rule.column)
 
         # Name pattern match
         for pat in rule.name_patterns:
             if re.search(pat, name, re.IGNORECASE):
-                return rule.column
+                return _gate(rule.column)
 
     # 2. Fall back to tournament_stages.py classify_market_stage
     # NOTE: Do NOT pass market_tier to the fallback — our config matching rules
@@ -659,7 +700,7 @@ def _match_market_to_column(
             stages=stages,
         )
         if stage_key and any(c.key == stage_key for c in config.columns):
-            return stage_key
+            return _gate(stage_key)
 
     return None
 

@@ -201,6 +201,7 @@ class TestBeatScheduleCompleteness:
         "sync-mlb-win-probability",
         "recategorize-other-daily",
         "backfill-canonical-keys-daily",
+        "backfill-market-shapes",
         "audit-canonical-keys-daily",
         "audit-prediction-market-links-daily",
         "audit-related-futures-daily",

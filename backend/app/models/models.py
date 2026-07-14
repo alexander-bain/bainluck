@@ -642,7 +642,10 @@ class FuturesMarket(Base):
     )  # 1=championship, 2=conference, 3=awards, 4=division, 5=props/other
     market_type: Mapped[Optional[str]] = mapped_column(
         String(30)
-    )  # Pattern-classified type (championship, conference, award, division, game, stat_prop, other)
+    )  # Market SHAPE (Queue #194): claim | quantity | duel | field |
+    # container_member | unshaped. Assigned by app.utils.market_shape from
+    # outcome structure + names + group membership (backfill_market_shapes task).
+    # side_kind + shape metadata live in market_metadata["shape"].
 
     # LLM metadata enrichment
     llm_gender: Mapped[Optional[str]] = mapped_column(

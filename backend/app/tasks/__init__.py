@@ -682,6 +682,24 @@ def backfill_canonical_keys(self, limit: int = 500):
     return run_async(_backfill_canonical_keys(limit))
 
 
+@celery_app.task(
+    bind=True,
+    name="app.tasks.backfill_market_shapes",
+    time_limit=660,
+    soft_time_limit=600,
+)
+def backfill_market_shapes(self, limit: int = 40000, dry_run: bool = False):
+    """Classify + persist market shape into market_type (Queue #194 Item 1).
+
+    Bounded/resumable/deadline-guarded. Only touches market_type IS NULL rows,
+    so it also shapes freshly-ingested markets each run."""
+    from app.tasks.backfill_market_shapes import _backfill_market_shapes
+    return _tracked_run(
+        "market_shape_backfill",
+        _backfill_market_shapes(limit=limit, dry_run=dry_run),
+    )
+
+
 # --- Prediction Market → Event Matching ---
 
 @celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=870, soft_time_limit=840)
@@ -2383,6 +2401,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_canonical_keys",
         "schedule": crontab(minute=30, hour=8),  # Daily at 8:30 AM UTC
         "kwargs": {"limit": 2000},
+    },
+    "backfill-market-shapes": {
+        # Queue #194 Item 1 — classify + persist market shape into market_type.
+        # Every 20 min: drains the 456K-row NULL backlog over cycles, then keeps
+        # freshly-ingested markets shaped (only touches market_type IS NULL rows).
+        "task": "app.tasks.backfill_market_shapes",
+        "schedule": crontab(minute="*/20"),
+        "kwargs": {"limit": 40000},
+        "options": {"queue": "background"},
     },
     "audit-canonical-keys-daily": {
         "task": "app.tasks.audit_canonical_keys",
