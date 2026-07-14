@@ -15,7 +15,17 @@ export default function LegacyEventKeyRedirect({
 }: {
   params: { domain: string };
 }) {
-  // `params.domain` is the legacy single-segment key, e.g. "event:ufc:26jul11".
-  const { domain, slug } = parseEventKey(params?.domain || "");
+  // `params.domain` is the legacy single-segment key. Next hands it to us STILL
+  // percent-encoded for a colon-bearing segment (`event%3Aufc%3A26jul18`), so decode
+  // once before parsing — otherwise the colons are invisible and the key falls back
+  // to the bare-slug (golf) branch. decodeURIComponent is idempotent for our keys.
+  const raw = params?.domain || "";
+  let key = raw;
+  try {
+    key = decodeURIComponent(raw);
+  } catch {
+    /* keep raw */
+  }
+  const { domain, slug } = parseEventKey(key);
   permanentRedirect(`/event/${encodeURIComponent(domain)}/${encodeURIComponent(slug)}`);
 }
