@@ -105,6 +105,21 @@ Related admin surfaces:
 - `/api/admin/discover-quality/trace/{market_id}` for per-market ranking/quality trace.
 - `/api/admin/discover-engagement` for first-party impression/action rollups, including context expansion counts/rates and Today’s Challenge starts/completions/completion rate.
 
+## Automated Sentinels (the always-on arm of the ratchet)
+
+The scripts above are run-on-demand. Two Celery **sentinels** now run the same "define a problem once, catch it forever" loop automatically and **auto-file evidence-packed GitHub issues** when they regress. Full architecture (files, beats, endpoints, thresholds) is in `docs/architecture-reference.md` → "Reliability Machinery"; the operating contract for the issues they file is in `docs/github-workflow.md` → "Automated issue intake". Summary:
+
+| Sentinel | Cadence | Guards | Files issues as |
+|----------|---------|--------|-----------------|
+| **Flow Sentinel** (`tasks/flow_sentinel.py`) | daily 07:10 UTC | the user-facing half of the matching table + Alex's six failure classes (search gold set, duplicate events, event completeness, resolved-state, chart density, category/Discover) | one deduped, fingerprinted issue per failing flow, `alert-intake` + `needs-agent`, P1/P2 |
+| **Calibration Sentinel** (`tasks/calibration_sentinel.py`) | weekly Mon 06:20 UTC | calibration accuracy — MCE across `category × source × series-family × structure × provenance` cohorts on the RAW population | one issue per broken cohort (never writes market data, gotcha #21) |
+
+Run them on demand: `POST /api/admin/flow-sentinel/run` (params `file_issues`, `canary`, `inline`) and `POST /api/admin/calibration-sentinel/run`; last-run results at `GET /api/admin/{flow-sentinel,calibration-sentinel}/last`. The **admin cockpit** (`GET /api/cockpit`, rendered in `/admin`) surfaces the Flow Sentinel scorecard plus green/amber/red autopilot tiles.
+
+Two operating notes that gate trust in the sentinels:
+- **`GITHUB_TOKEN` must be set on Heroku** or backend issue-filing silently no-ops — check this FIRST before debugging filing logic (memory `project_github_token_unset`).
+- **A sentinel green depends on the beat actually firing.** Code presence ≠ firing; confirm via the cockpit `fires/24h` autopilot tiles (this is the standing watch on the dedicated cal-price beat).
+
 ## Adding New Checks
 
 Add a function to the audit script following the pattern:
