@@ -719,6 +719,13 @@ export interface GameMarketsResponse {
     movement: number | null;
     player_headshot?: string;
     player_team?: "home" | "away";
+    // Queue #190 Item 3: server-side settled grading (present only when the
+    // event is completed/closed). actual = box-score stat value, hit = graded
+    // result respecting over/under direction.
+    actual?: number | null;
+    hit?: boolean | null;
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   team_totals: {
     threshold: number;

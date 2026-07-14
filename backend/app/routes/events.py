@@ -3693,6 +3693,135 @@ def _extract_threshold(outcome_name: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+# ---- Queue #190 Item 3: settled player-prop grading ------------------------
+# For completed/closed events we compute each player prop's ACTUAL stat value
+# and hit/miss from event.box_score_data, mirroring the authoritative resolver
+# in tasks/backfill_winners.py (_resolve_kalshi_player_props_from_boxscore).
+# Read-only; only invoked when the event is settled so live/scheduled events
+# never touch box_score_data.
+
+# Stat-name phrases used to derive the stat from a market NAME when the Kalshi
+# ticker prefix isn't in _PROP_TICKER_TO_STAT (e.g. Polymarket props, or seeded
+# data). Ordered longest-first so "home runs" wins over a bare "runs".
+_PROP_NAME_STAT_COMBOS = [
+    ("points + rebounds + assists", ["points", "rebounds", "assists"]),
+    ("points + rebounds", ["points", "rebounds"]),
+    ("points + assists", ["points", "assists"]),
+    ("rebounds + assists", ["rebounds", "assists"]),
+]
+_PROP_NAME_STAT_SINGLES = [
+    "home runs", "three pointers", "double doubles", "triple doubles",
+    "strikeouts", "rebounds", "assists", "points", "blocks", "steals",
+    "goals", "saves", "hits",
+]
+
+
+def _build_prop_grade_context(event) -> Optional[dict]:
+    """Build the per-event grading context (normalized box score + resolver
+    helpers) once. Returns None if the event has no usable box score data."""
+    box = getattr(event, "box_score_data", None)
+    if not isinstance(box, dict):
+        return None
+    # Production box scores key players by name under "players" (gotcha #37).
+    raw_players = box.get("players", box)
+    if not isinstance(raw_players, dict):
+        # A list-shaped players payload (legacy) can't be looked up by name.
+        return None
+    # Local import at function scope to avoid an import cycle with tasks/.
+    from app.tasks.backfill_winners import (
+        _normalize_player_name,
+        _PROP_TICKER_TO_STAT,
+        _COMBO_STATS,
+    )
+    norm_box = {
+        _normalize_player_name(k): v
+        for k, v in raw_players.items()
+        if isinstance(v, dict)
+    }
+    if not norm_box:
+        return None
+    return {
+        "norm_box": norm_box,
+        "normalize": _normalize_player_name,
+        "ticker_to_stat": _PROP_TICKER_TO_STAT,
+        "combo_stats": _COMBO_STATS,
+    }
+
+
+def _prop_stat_keys(market, ctx: dict) -> Optional[list]:
+    """Determine the ESPN box-score stat key(s) for a player-prop market.
+    Ticker prefix is authoritative; falls back to parsing the market name."""
+    ticker_lower = (getattr(market, "external_id", None) or "").lower()
+    for prefix, stat in ctx["ticker_to_stat"].items():
+        if ticker_lower.startswith(prefix):
+            return [stat]
+    for prefix, stat_list in ctx["combo_stats"].items():
+        if ticker_lower.startswith(prefix):
+            return list(stat_list)
+    name_lower = (getattr(market, "name", None) or "").lower()
+    for phrase, stats in _PROP_NAME_STAT_COMBOS:
+        if phrase in name_lower:
+            return list(stats)
+    for stat in _PROP_NAME_STAT_SINGLES:
+        if stat in name_lower:
+            return [stat]
+    return None
+
+
+def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_under) -> dict:
+    """Compute {actual, hit, is_winner, resolution_source} for a settled prop.
+
+    is_winner/resolution_source pass through the loaded outcome ORM object (no
+    box score needed). actual/hit are derived from the box score and are None
+    when the player/stat can't be resolved. Returns {} for non-settled events
+    so live/scheduled payloads carry none of these keys.
+    """
+    if not event_finished:
+        return {}
+    result = {
+        "actual": None,
+        "hit": None,
+        "is_winner": getattr(outcome, "is_winner", None),
+        "resolution_source": getattr(outcome, "resolution_source", None),
+    }
+    if ctx is None:
+        return result
+    stat_keys = _prop_stat_keys(market, ctx)
+    if not stat_keys:
+        return result
+    # Player name = part before ":" in the outcome ("Jayson Tatum: 30+").
+    oname = getattr(outcome, "name", None) or ""
+    colon = oname.find(":")
+    player_name = oname[:colon].strip() if colon > 0 else oname.strip()
+    if not player_name:
+        return result
+    normalize = ctx["normalize"]
+    norm_box = ctx["norm_box"]
+    player_stats = norm_box.get(normalize(player_name))
+    # Flipped "Last, First" fallback (mirrors the authoritative resolver).
+    if player_stats is None and "," in player_name:
+        parts = player_name.split(",", 1)
+        player_stats = norm_box.get(normalize(f"{parts[1].strip()} {parts[0].strip()}"))
+    if not isinstance(player_stats, dict):
+        return result
+    total = 0.0
+    found = False
+    for s in stat_keys:
+        v = player_stats.get(s)
+        if v is not None:
+            try:
+                total += float(v)
+                found = True
+            except (TypeError, ValueError):
+                pass
+    if not found:
+        return result
+    result["actual"] = total
+    if threshold is not None:
+        result["hit"] = (total < threshold) if is_under else (total >= threshold)
+    return result
+
+
 def _estimate_game_pace(
     home_score: Optional[int],
     away_score: Optional[int],
@@ -4003,6 +4132,10 @@ async def get_game_markets(
     for o in outcomes:
         outcomes_by_market[o.market_id].append(o)
 
+    # Queue #190 Item 3: build the settled player-prop grading context once.
+    # Only reads box_score_data for completed/closed events — None otherwise.
+    _prop_ctx = _build_prop_grade_context(event) if event_is_finished else None
+
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
         if not market_outcomes:
@@ -4056,7 +4189,7 @@ async def get_game_markets(
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
                         tt_opening_over = round(tt_op if is_over or not is_under else 1.0 - tt_op, 4)
-                    player_props.append({
+                    pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "threshold": threshold,
@@ -4065,7 +4198,9 @@ async def get_game_markets(
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
-                    })
+                    }
+                    pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
+                    player_props.append(pp)
                     continue
 
                 totals_thresholds.append({
@@ -4105,7 +4240,7 @@ async def get_game_markets(
                     op = float(o.opening_probability)
                     opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
 
-                player_props.append({
+                pp = {
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "threshold": threshold,
@@ -4114,7 +4249,9 @@ async def get_game_markets(
                     "source": market.source,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
-                })
+                }
+                pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
+                player_props.append(pp)
 
         elif market_type == "spread":
             for o in market_outcomes:
@@ -4193,7 +4330,7 @@ async def get_game_markets(
                         if o.opening_probability is not None:
                             op = float(o.opening_probability)
                             opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
-                        player_props.append({
+                        pp = {
                             "market_name": market.name,
                             "outcome_name": o.name,
                             "threshold": threshold,
@@ -4202,7 +4339,9 @@ async def get_game_markets(
                             "source": market.source,
                             "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                                 if o.opening_probability is not None and o.current_probability is not None else None,
-                        })
+                        }
+                        pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
+                        player_props.append(pp)
                         continue
                 # Also rescue if the market name itself has a player-stat
                 # pattern (e.g., "Patrick Mahomes Passing Yards") but wasn't
@@ -4223,7 +4362,7 @@ async def get_game_markets(
                     if o.opening_probability is not None:
                         op = float(o.opening_probability)
                         opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
-                    player_props.append({
+                    pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "threshold": threshold,
@@ -4232,7 +4371,9 @@ async def get_game_markets(
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
-                    })
+                    }
+                    pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
+                    player_props.append(pp)
                     continue
                 other_markets.append({
                     "market_name": market.name,

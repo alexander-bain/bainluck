@@ -112,6 +112,8 @@ def _make_outcome(
     name: str = "Celtics",
     probability: float = 0.25,
     market_id: int = 100,
+    is_winner=None,
+    resolution_source=None,
 ):
     outcome = MagicMock()
     outcome.id = id
@@ -120,6 +122,8 @@ def _make_outcome(
     outcome.current_probability = probability
     outcome.market_id = market_id
     outcome.opening_probability = probability - 0.05
+    outcome.is_winner = is_winner
+    outcome.resolution_source = resolution_source
     return outcome
 
 
@@ -250,6 +254,69 @@ async def game_markets_client():
     mock_session = _make_event_detail_session(
         event=event,
         futures=markets,
+        outcomes=outcomes,
+    )
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def settled_game_markets_client():
+    """Client with a COMPLETED event + a player-prop market, seeded with a
+    production-shaped box score so the endpoint grades the prop (Queue #190
+    Item 3)."""
+    from app.main import app
+    from app.routes.events import _game_markets_cache
+
+    _game_markets_cache.clear()
+
+    event = _make_event(id=5, home_team="Celtics", away_team="76ers", status="completed")
+    # PRODUCTION box_score_data shape: players is a DICT keyed by name (gotcha #37).
+    event.box_score_data = {
+        "source": "espn",
+        "players": {
+            "Jayson Tatum": {"points": 31.0, "rebounds": 8.0, "assists": 5.0},
+        },
+    }
+    player_market = _make_futures_market(
+        id=205,
+        name="Celtics at 76ers: Jayson Tatum Points",
+        source="kalshi",
+    )
+    player_market.status = "resolved"
+    player_market.event_id = event.id
+
+    outcomes = [
+        _make_outcome(
+            id=305,
+            market_id=205,
+            name="Jayson Tatum: 30+",
+            probability=0.41,
+            is_winner=True,
+            resolution_source="box_score",
+        ),
+    ]
+    mock_session = _make_event_detail_session(
+        event=event,
+        futures=[player_market],
         outcomes=outcomes,
     )
 
@@ -473,6 +540,26 @@ class TestGameMarketsPopulatedShape:
         assert prop["over_probability"] == 0.41
         assert prop["opening_over_probability"] == 0.36
         assert prop["movement"] == 0.05
+        # Live event: no settled-grade keys leak into the payload.
+        assert "actual" not in prop
+        assert "hit" not in prop
+
+    async def test_settled_player_prop_is_graded(self, settled_game_markets_client):
+        """Queue #190 Item 3: a completed event with a box score returns the
+        real actual stat + hit/miss, not 'grading unavailable'."""
+        resp = await settled_game_markets_client.get("/api/events/5/game-markets")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        prop = body["player_props"][0]
+        assert prop["market_name"] == "Celtics at 76ers: Jayson Tatum Points"
+        assert prop["outcome_name"] == "Jayson Tatum: 30+"
+        assert prop["threshold"] == 30.0
+        # Jayson Tatum scored 31 points -> over the 30+ line -> hit.
+        assert prop["actual"] == 31.0
+        assert prop["hit"] is True
+        assert prop["is_winner"] is True
+        assert prop["resolution_source"] == "box_score"
 
     async def test_spread_and_period_market_contracts(self, game_markets_client):
         resp = await game_markets_client.get("/api/events/2/game-markets")

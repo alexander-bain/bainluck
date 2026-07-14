@@ -16,6 +16,56 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Cross-merged-events guard (#189/#190; gotcha #32 family)
+# ---------------------------------------------------------------------------
+# ESPN's finished-game handling can fold an EARLIER same-matchup game's terminal
+# state (completed_at + final win prob) onto a LATER sibling event, because both
+# write-side match paths are time-loose: the 28h structured match
+# (`_find_by_structured_match`) has no minimum-distance floor — a single
+# name-matching candidate up to 28h away is returned unconditionally — and the
+# ESPN name match (`match_event_to_espn`) has no time guard at all. MLB / NCAA
+# baseball series and doubleheaders repeat the identical matchup inside that
+# window, so the wrong sibling gets stamped. The observable damage is 439 events
+# with `completed_at < commence_time` — impossible, since a game cannot finish
+# before it starts (the empty settled-chart + impossible My-Stuff-date class).
+#
+# These two pure guards enforce that invariant from BOTH directions at the write
+# sites, so the class can never be written again regardless of which match path
+# folded — the fix at the source, complementing the flow-sentinel detector +
+# audit that catch any residual.
+_FOLD_GUARD_SLACK = timedelta(hours=2)  # tolerate clock/commence jitter near start
+
+
+def completion_stamp_inverts_commence(commence_time, completed_at) -> bool:
+    """True when stamping ``completed_at`` onto an event with ``commence_time``
+    would create ``completed_at < commence_time`` — an earlier game's finish
+    folded onto a later sibling. Missing either side is not an inversion."""
+    if commence_time is None or completed_at is None:
+        return False
+    return completed_at < commence_time
+
+
+def commence_correction_inverts_completion(new_commence, completed_at) -> bool:
+    """True when moving an already-completed event's commence_time to
+    ``new_commence`` would push the start AFTER its recorded completion (the same
+    ``completed_at < commence_time`` inversion, approached from the commence side)."""
+    if new_commence is None or completed_at is None:
+        return False
+    return completed_at < new_commence
+
+
+def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
+    """True when writing terminal/live ESPN state onto an EXISTING event whose own
+    ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game
+    that already started/finished was resolved onto a not-yet-played sibling. That
+    is exactly the fold that produces ``completed_at < commence_time``; the caller
+    skips the win-prob + completion write instead of corrupting the sibling."""
+    if event_commence is None or now is None:
+        return False
+    return event_commence > now + slack
+
+
+# ---------------------------------------------------------------------------
 # Team upsert
 # ---------------------------------------------------------------------------
 
@@ -201,7 +251,21 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     # Skip if StatPal set the commence_time (more reliable source)
     if ee.date and event.commence_time:
         time_diff = abs((ee.date - event.commence_time).total_seconds())
-        if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":
+        # #190 guard: never move commence_time to AFTER an already-recorded
+        # completed_at — that inverts the invariant (a game finishing before it
+        # starts) and is a signal this ESPN game belongs to a different sibling.
+        _would_invert = commence_correction_inverts_completion(
+            ee.date, getattr(event, "completed_at", None)
+        )
+        if _would_invert:
+            logger.warning(
+                "ESPN fold guard: refused commence_time correction on event %d "
+                "(%s vs %s) — new commence %s is after completed_at %s (#190/gotcha #32)",
+                event.id, event.home_team_name, event.away_team_name,
+                ee.date.isoformat(), event.completed_at.isoformat(),
+            )
+        if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal" \
+                and not _would_invert:
             logger.info(
                 f"ESPN: Correcting commence_time for event {event.id} "
                 f"({event.home_team_name} vs {event.away_team_name}): "
@@ -265,17 +329,31 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     # find_or_create_event ignores identity.status for existing events,
     # and no other code path updated event.status from ESPN data.
     if ee.status in ("post", "final") and event.status == "live":
-        await session.execute(
-            _sql_update(Event)
-            .where(Event.id == event.id)
-            .values(
-                status="completed",
-                completed_at=event.completed_at or datetime.now(timezone.utc),
+        _completed_at = event.completed_at or datetime.now(timezone.utc)
+        # #190 guard: don't stamp a completion that predates the event's own
+        # commence_time (the earlier-game-folded-onto-later-sibling class). A
+        # genuinely live event has a past commence_time, so this only trips when
+        # the fold put ESPN's finished game onto the wrong (future) event.
+        if completion_stamp_inverts_commence(event.commence_time, _completed_at):
+            logger.warning(
+                "ESPN fold guard: refused completed stamp on event %d (%s vs %s) — "
+                "completed_at %s precedes commence_time %s (#190/gotcha #32)",
+                event.id, event.home_team_name, event.away_team_name,
+                _completed_at.isoformat(), event.commence_time.isoformat(),
             )
-        )
-        event.status = "completed"
-        changed = True
-        stats["espn_completed"] = stats.get("espn_completed", 0) + 1
+            stats["espn_fold_guard_skipped"] = stats.get("espn_fold_guard_skipped", 0) + 1
+        else:
+            await session.execute(
+                _sql_update(Event)
+                .where(Event.id == event.id)
+                .values(
+                    status="completed",
+                    completed_at=_completed_at,
+                )
+            )
+            event.status = "completed"
+            changed = True
+            stats["espn_completed"] = stats.get("espn_completed", 0) + 1
     elif ee.status == "in" and event.status == "scheduled":
         await session.execute(
             _sql_update(Event)
@@ -519,6 +597,28 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 ),
             )
             event, created = await _foc(session, identity)
+
+            # #190/#189 fold guard (gotcha #32): find_or_create_event can resolve
+            # this ESPN game onto a LATER same-matchup sibling within the 28h
+            # structured-match window (no minimum-distance floor). When the ESPN
+            # game already started/finished but the event we attached to is a
+            # not-yet-played sibling (its own commence_time is still in the future),
+            # writing ESPN's live/terminal state here is exactly what produces the
+            # completed_at < commence_time class. Skip the write and log so the flow
+            # sentinel / audit surface it, rather than corrupt the sibling.
+            _now = datetime.now(timezone.utc)
+            if not created and espn_terminal_write_is_fold(event.commence_time, _now):
+                logger.warning(
+                    "ESPN fold guard: skipped write — game %s (%s vs %s, espn_id=%s) "
+                    "resolved onto event %d whose commence_time %s is still in the "
+                    "future (now %s); would fold an earlier game onto a later sibling "
+                    "(#190/gotcha #32)",
+                    ee.date, espn_home, espn_away, ee.espn_id, event.id,
+                    event.commence_time.isoformat() if event.commence_time else None,
+                    _now.isoformat(),
+                )
+                stats["espn_fold_guard_skipped"] = stats.get("espn_fold_guard_skipped", 0) + 1
+                continue
 
             # Write win probability snapshot
             if ee.home_win_probability is not None:

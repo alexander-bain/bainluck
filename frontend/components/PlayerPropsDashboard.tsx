@@ -18,6 +18,7 @@ interface StatRung {
   overProb: number;
   sources: number;
   movement: number | null;
+  hit?: boolean | null;
 }
 
 interface PlayerStat {
@@ -29,6 +30,10 @@ interface PlayerStat {
   sources: number;
   movement: number | null;
   actual?: number | null;
+  // Queue #190 Item 3: authoritative settled grade from the server payload.
+  serverActual?: number | null;
+  serverHit?: boolean | null;
+  serverIsWinner?: boolean | null;
 }
 
 interface PlayerData {
@@ -135,14 +140,58 @@ function StatBox({
   const accent = teamColor;
   const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-  // Settled but ungradeable (no box score, no server-side grade): show the line
-  // honestly with NO probability bar — a resolved market's over_probability
-  // collapses to ~100%/0% and would read as a fake grade (L2-112 Item 3).
+  // Settled game. Queue #190 Item 3: prefer the authoritative server-side grade
+  // (actual stat + hit/miss) from the game-markets payload. Only fall back to
+  // "grading unavailable" when the server carries neither actual nor is_winner —
+  // a resolved market's over_probability collapses to ~100%/0% and would read as
+  // a fake grade (L2-112 Item 3).
   if (gameState === "settled") {
-    const firstLine =
+    const firstRung =
       stat.shape === "ladder" && stat.rungs && stat.rungs.length > 0
-        ? stat.rungs[0].threshold
-        : stat.threshold;
+        ? stat.rungs[0]
+        : null;
+    const firstLine = firstRung ? firstRung.threshold : stat.threshold;
+    const gradeActual = stat.serverActual ?? stat.actual ?? null;
+    const hitBool: boolean | null =
+      (firstRung?.hit ?? null) != null
+        ? (firstRung?.hit as boolean)
+        : stat.serverHit != null
+          ? stat.serverHit
+          : stat.serverIsWinner ?? null;
+    const hasGrade = gradeActual != null || stat.serverIsWinner != null;
+
+    if (hasGrade) {
+      const didHit = hitBool === true;
+      const accentColor = didHit ? accent : "#EF4444";
+      return (
+        <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
+            <SourceDot count={stat.sources} />
+          </div>
+          <div className="flex items-baseline gap-2 mb-1">
+            <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
+              {gradeActual != null ? gradeActual : (didHit ? "✓" : "—")}
+            </div>
+            {firstLine != null && (
+              <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={didHit ? { background: `${accent}22`, color: accent } : { background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
+            >
+              {didHit ? "HIT" : "MISS"}
+            </span>
+            {firstLine != null && (
+              <span className="text-xs text-text-muted font-mono tabular-nums">needed {firstLine}+</span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
         <div className="flex items-center justify-between mb-1">
@@ -392,7 +441,7 @@ export default function PlayerPropsDashboard({
       name: string;
       team: "home" | "away" | "unknown";
       headshot?: string;
-      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null }>;
+      stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null; serverActual?: number | null; serverIsWinner?: boolean | null }>;
     }>();
 
     const homeLower = homeTeam?.toLowerCase() ?? "";
@@ -448,14 +497,20 @@ export default function PlayerPropsDashboard({
         if (p.over_probability != null && (existingRung.overProb == null || p.over_probability > existingRung.overProb)) {
           existingRung.overProb = p.over_probability;
         }
+        if (p.hit != null && existingRung.hit == null) existingRung.hit = p.hit;
       } else {
         statEntry.rungs.push({
           threshold: p.threshold,
           overProb: p.over_probability,
           sources: 1,
           movement: p.movement,
+          hit: p.hit ?? null,
         });
       }
+      // Queue #190 Item 3: carry the server-side settled grade (actual stat +
+      // is_winner) at the player+stat level (same actual across all thresholds).
+      if (p.actual != null) statEntry.serverActual = p.actual;
+      if (p.is_winner != null && statEntry.serverIsWinner == null) statEntry.serverIsWinner = p.is_winner;
       statEntry.sources.add(p.source);
       if (p.movement != null && (statEntry.movement == null || Math.abs(p.movement) > Math.abs(statEntry.movement))) {
         statEntry.movement = p.movement;
@@ -526,6 +581,9 @@ export default function PlayerPropsDashboard({
             sources: statData.sources.size,
             movement: statData.movement,
             actual,
+            serverActual: statData.serverActual ?? null,
+            serverHit: sortedRungs[0]?.hit ?? null,
+            serverIsWinner: statData.serverIsWinner ?? null,
           });
         } else {
           const best = sortedRungs[0];
@@ -537,6 +595,9 @@ export default function PlayerPropsDashboard({
             sources: statData.sources.size,
             movement: statData.movement,
             actual,
+            serverActual: statData.serverActual ?? null,
+            serverHit: best.hit ?? null,
+            serverIsWinner: statData.serverIsWinner ?? null,
           });
         }
       }
@@ -573,6 +634,9 @@ export default function PlayerPropsDashboard({
 
   const filtered = teamFilter === "all" ? players : players.filter((p) => p.team === teamFilter || p.team === "unknown");
   const totalProps = players.reduce((a, p) => a + p.stats.length, 0);
+  // Queue #190 Item 3: is any settled prop graded server-side? If so, drop the
+  // blanket "grading unavailable" subtitle.
+  const anyGraded = players.some((p) => p.stats.some((s) => s.serverActual != null || s.serverIsWinner != null));
   // L2-52: source-name attribution removed (blend-only).
 
   const homeShortCode = homeTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "HOME";
@@ -584,7 +648,9 @@ export default function PlayerPropsDashboard({
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
           {gameState === "settled" && (
-            <p className="text-[11px] text-text-muted mt-0.5">Final &middot; per-player grading unavailable for this game</p>
+            <p className="text-[11px] text-text-muted mt-0.5">
+              {anyGraded ? "Final · graded results" : "Final · per-player grading unavailable for this game"}
+            </p>
           )}
         </div>
         <div className="flex items-center gap-2">

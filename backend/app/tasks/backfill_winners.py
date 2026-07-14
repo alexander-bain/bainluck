@@ -6435,9 +6435,22 @@ async def _compute_calibration_prices():
             # Without this, calibration uses a stale price from when the market
             # first opened (potentially weeks before the tournament).
             #
-            # One-time reset: null calibration_probability on outcomes that
-            # were previously set by Part B (stale opening-day price) so
-            # Part A2 can recompute with the proper closing line.
+            # Reset: null calibration_probability on outcomes that were previously
+            # set by Part B (stale opening-day price) so Part A2 can recompute with
+            # the proper closing line.
+            #
+            # #190 Item 2 — churn kill (was blowing the 600s soft limit on 2/4
+            # slots). Without the EXISTS guard this UPDATE nulled ~237K rows EVERY
+            # run, but only ~38% have a real pre-commence closing snapshot; the rest
+            # fall back to opening_probability in Part A2 → cal == opening again →
+            # re-nulled next run. That ~146K/run null→refill-with-opening→re-null
+            # churn (plus its Part A2 LATERAL seeks) is what tripped
+            # SoftTimeLimitExceeded, leaving the tile RED. The EXISTS clause nulls
+            # ONLY rows Part A2 can genuinely improve (a valid snapshot strictly
+            # before commence exists), so correctly-priced and price-less rows are
+            # left alone and the reset becomes self-limiting / monotonic — the
+            # remaining work drains and the task finishes inside 600s. Uses
+            # idx_fos_outcome_captured(outcome_id, captured_at) for the seek.
             reset_a2 = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET calibration_probability = NULL
@@ -6450,6 +6463,14 @@ async def _compute_calibration_prices():
                       AND fo.calibration_probability IS NOT NULL
                       AND fo.calibration_probability = fo.opening_probability
                       AND fo.opening_probability IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                            AND fos.captured_at < fm.commence_time
+                            AND fos.probability > 0
+                            AND fos.probability < 1
+                      )
                 """))
             await session.commit()
             stats["reset_a2"] = reset_a2.rowcount

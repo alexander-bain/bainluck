@@ -277,6 +277,33 @@ def future_settled_events(events: list[dict], now) -> list[dict]:
     return out
 
 
+def inverted_completed_events(events: list[dict]) -> list[dict]:
+    """completed/closed events whose ``completed_at`` PRECEDES their
+    ``commence_time`` — a game recorded as finishing before it started. This is
+    the #190/#189 cross-merged-events class (gotcha #32): ESPN's finished-game
+    handling folded an earlier same-matchup game's terminal state onto a later
+    sibling. Root cause of empty settled charts + impossible My-Stuff dates. With
+    the write-side guards deployed this should be 0 going forward, so any new hit
+    is a genuine regression the sentinel files."""
+    out = []
+    for e in events:
+        if e.get("status") not in ("completed", "closed"):
+            continue
+        commence = _parse_commence(e.get("commence_time"))
+        completed = _parse_commence(e.get("completed_at"))
+        if commence is None or completed is None:
+            continue
+        if completed < commence:
+            out.append({
+                "event_id": e.get("id"), "sport": e.get("sport"),
+                "home_team": e.get("home_team"), "away_team": e.get("away_team"),
+                "commence_time": e.get("commence_time"),
+                "completed_at": e.get("completed_at"),
+                "inversion_hours": round((commence - completed).total_seconds() / 3600.0, 1),
+            })
+    return out
+
+
 def game_markets_empty(gm: dict) -> bool:
     """True when a game-markets payload has no real markets in ANY section — a
     live Tier-1 event with this is a completeness failure (#3)."""
@@ -526,6 +553,7 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
     completed = await _sample_events(client, "completed", 200)
     stale = stale_live_events(live, now, STALE_LIVE_HOURS)
     future = future_settled_events(completed, now)
+    inverted = inverted_completed_events(completed)
     failures = [
         {"detail": f"live {s['sport']} game {s['home_team']} vs {s['away_team']} "
                    f"started {s['age_hours']}h ago but still renders LIVE (id {s['event_id']})"}
@@ -534,6 +562,12 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
         {"detail": f"settled {f['sport']} event {f['home_team']} vs {f['away_team']} "
                    f"has a FUTURE commence_time {f['commence_time']} (id {f['event_id']})"}
         for f in future
+    ] + [
+        {"detail": f"settled {i['sport']} event {i['home_team']} vs {i['away_team']} "
+                   f"has completed_at {i['completed_at']} BEFORE commence_time "
+                   f"{i['commence_time']} ({i['inversion_hours']}h inverted, id "
+                   f"{i['event_id']}) — cross-merged event (#190/gotcha #32)"}
+        for i in inverted
     ]
     return {
         "flow": "resolved_state",
@@ -544,6 +578,7 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
             "live_sampled": len(live), "completed_sampled": len(completed),
             "stale_live_hours": STALE_LIVE_HOURS,
             "stale_live": stale, "future_settled": future,
+            "inverted_completed": inverted,
         },
     }
 

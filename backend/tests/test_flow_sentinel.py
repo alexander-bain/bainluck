@@ -19,6 +19,7 @@ from app.tasks.flow_sentinel import (
     flow_fingerprint,
     future_settled_events,
     game_markets_empty,
+    inverted_completed_events,
     gold_set_recoveries,
     gold_set_regressions,
     search_found,
@@ -145,6 +146,37 @@ class TestResolvedState:
         ]
         fut = future_settled_events(events, self._now())
         assert [f["event_id"] for f in fut] == [1]
+
+    def test_inverted_completed_flagged(self):
+        # #190/gotcha #32: completed_at BEFORE commence_time (an earlier game's
+        # terminal state folded onto a later sibling). The Sox-Mets forensic row.
+        events = [
+            {"id": 14970335, "status": "completed", "sport": "baseball_mlb",
+             "home_team": "New York Mets", "away_team": "Boston Red Sox",
+             "commence_time": "2026-07-12T17:40:00Z",
+             "completed_at": "2026-07-11T00:46:03Z"},  # finished before it started
+            {"id": 2, "status": "completed", "sport": "baseball_mlb",
+             "home_team": "C", "away_team": "D",
+             "commence_time": "2026-07-12T00:00:00Z",
+             "completed_at": "2026-07-12T03:30:00Z"},  # normal (completed after start)
+        ]
+        inv = inverted_completed_events(events)
+        assert [i["event_id"] for i in inv] == [14970335]
+        assert inv[0]["inversion_hours"] > 40  # ~41h inverted
+
+    def test_inverted_ignores_missing_or_closed_ok(self):
+        events = [
+            # closed + inverted → flagged
+            {"id": 3, "status": "closed", "sport": "mlb", "home_team": "A", "away_team": "B",
+             "commence_time": "2026-07-12T17:00:00Z", "completed_at": "2026-07-11T00:00:00Z"},
+            # missing completed_at → skipped, not a false positive
+            {"id": 4, "status": "completed", "sport": "mlb", "home_team": "E", "away_team": "F",
+             "commence_time": "2026-07-12T17:00:00Z"},
+            # live → not considered
+            {"id": 5, "status": "live", "sport": "mlb", "home_team": "G", "away_team": "H",
+             "commence_time": "2026-07-12T17:00:00Z", "completed_at": "2026-07-11T00:00:00Z"},
+        ]
+        assert [i["event_id"] for i in inverted_completed_events(events)] == [3]
 
 
 class TestGameMarketsEmpty:
