@@ -951,11 +951,12 @@ async def public_calibration(
                 -- Queue #186 (#941, corrects #167): Kalshi player-prop threshold
                 -- "Player: N+" OVER exclusion (mirrors the precompute task's flag;
                 -- keep in sync so a cold-cache fallback serve isn't poisoned).
-                -- EXCLUDED when (A) category='hockey' (NHL goal-family corrupt at
-                -- every band — illiquid degenerate capture, resolution verified
-                -- sane) or (B) the curve price COALESCE(cp, opening) is in the
-                -- degenerate settlement-collapse band (>= 0.90, resolves 0.11–0.48
-                -- across every series). The 2026-07-13 verify disproved #167's
+                -- EXCLUDED when (A) category='hockey' AND curve price >= 0.50
+                -- (Queue #194/#1089: the goal-family is degenerate only in the high
+                -- band; its honest low band <0.50 is RECOVERED, correcting #941's
+                -- wholesale drop) or (B) the curve price COALESCE(cp, opening) is in
+                -- the degenerate settlement-collapse band (>= 0.90, resolves
+                -- 0.11–0.48 across every series). The 2026-07-13 verify disproved #167's
                 -- no-bid keep — real-bid rows are corrupt too (scorer + non-scorer
                 -- both cp 0.995); curve price, not bid, is the discriminator.
                 -- Below-band liquid series stay. Read-side only (gotcha #14/#21).

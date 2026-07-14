@@ -73,13 +73,17 @@ class TestKalshiPropThresholdPredicate:
         # Just below the band.
         assert outcome_is_kalshi_prop_threshold("kalshi", "Some Player: 2+", 0.899) is False
 
-    def test_hockey_goal_family_excluded_at_every_band(self):
-        # The NHL goal-family (llm_sport_category='hockey', KXNHLGOAL/PTS/AST) is
-        # corrupt at EVERY price band (opening 0.82→wr 0.05) while its resolution
-        # is verified sane (5.24 scorers/game) — an illiquid degenerate capture,
-        # not a sign-flip. The whole class is dropped regardless of curve price.
-        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.10, "hockey") is True
+    def test_hockey_goal_family_honest_band_recovered(self):
+        # Queue #194 (#1089): the NHL goal-family (KXNHLGOAL/PTS/AST) is honest
+        # below 0.50 (forensic gaps 3.1/2.2/4.0pp) and degenerate at/above it
+        # (32.6pp → 79.3pp). The honest low band is RECOVERED (kept); only the
+        # degenerate >=0.50 split is dropped. Corrects #941's wholesale drop.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.10, "hockey") is False
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.45, "hockey") is False
+        # Boundary: exactly 0.50 is degenerate → excluded.
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.50, "hockey") is True
         assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.67, "hockey") is True
+        assert outcome_is_kalshi_prop_threshold("kalshi", "Connor Bedard: 1+", 0.98, "hockey") is True
         # Non-hockey below-band rows are still kept even though a category is given.
         assert outcome_is_kalshi_prop_threshold("kalshi", "Aaron Judge: 4+", 0.44, "baseball") is False
         # Category alone (non-threshold name) never matches.

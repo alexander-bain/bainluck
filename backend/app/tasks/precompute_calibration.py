@@ -545,14 +545,36 @@ _KALSHI_PROP_THRESHOLD_RE = re.compile(r"^.+:\s*\d+\+\s*$")
 # within ~10pp of predicted (NBAPTS -2pp, NBAAST -4pp, MLBKS -2pp, MLBHIT -6pp).
 KALSHI_PROP_THRESHOLD_DEGENERATE_BAND = 0.90
 
+# Queue #194 Item 3 (#1089) — NHL GOAL-FAMILY HONEST-BAND RECOVERY. The #941
+# "corrupt at EVERY band" premise was an overstatement (it only sampled the high
+# deciles). A fresh forensic (prod 2026-07-14, curve-price calibration of all
+# resolved KXNHLGOAL/PTS/AST, n=26,436) shows the goal-family is corrupt only in
+# the HIGH band and WELL-CALIBRATED in the low band — so the wholesale hockey drop
+# needlessly discarded ~16.7K honest rows. Curve-price bands (pred → actual):
+#     <0.30      n=13,285   0.127 → 0.096   gap  3.1pp   HONEST
+#     0.30–0.40  n= 2,000   0.345 → 0.323   gap  2.2pp   HONEST
+#     0.40–0.50  n= 1,411   0.445 → 0.405   gap  4.0pp   HONEST
+#     0.50–0.70  n= 3,745   0.637 → 0.311   gap 32.6pp   DEGENERATE
+#     0.70–0.90  n= 1,916   0.795 → 0.189   gap 60.6pp   DEGENERATE
+#     >=0.90     n= 4,079   0.975 → 0.182   gap 79.3pp   DEGENERATE
+# Calibration breaks hard at 0.50 (gap jumps 4pp → 33pp), so the honest cutoff is
+# 0.50: RECOVER (include) hockey goal-family rows below 0.50 — 16,696 well-
+# calibrated outcomes — and EXCLUDE the 9,740 at/above it permanently (the
+# earliest snapshot is also degenerate there — an illiquid one-sided-ask capture,
+# gotcha #14 — so there is genuinely no honest price to recover for that split;
+# the issue's "re-stamp from the first snapshot" premise is disproven). Read-side
+# only (gotcha #21) — never mutates is_winner or probabilities.
+KALSHI_HOCKEY_HONEST_BAND_MAX = 0.50
+
 KALSHI_PROP_THRESHOLD_RULE_TEXT = (
     "Excludes the corrupt slice of Kalshi player-prop threshold outcomes "
     "(single-sided 'Player: N+' OVER markets — points/assists/goals/total-bases/"
-    "hits/HR/strikeouts/rebounds/blocks). Two exclusions: (A) the whole NHL "
-    "goal-family (llm_sport_category='hockey'), whose prices are corrupt at every "
-    "band (opening 0.69→winrate 0.21, 0.82→0.05) though its resolution is verified "
-    "sane (5.24 scorers credited/game) — an illiquid degenerate capture (gotcha "
-    "#14), not a sign-flip or resolution bug; and (B) any row whose curve price "
+    "hits/HR/strikeouts/rebounds/blocks). Two exclusions: (A) the NHL goal-family "
+    "(llm_sport_category='hockey') at/above 0.50, whose prices are degenerate in "
+    "the high band (0.50–0.70 winrate 0.31, >=0.90 winrate 0.18) — an illiquid "
+    "capture (gotcha #14), not a sign-flip or resolution bug — while its honest "
+    "low band (<0.50, ~3pp calibrated) is RECOVERED (Queue #194/#1089, correcting "
+    "#941's over-broad wholesale drop); and (B) any row whose curve price "
     "(closing line, else opening) sits in the degenerate settlement-collapse band "
     "(>= 0.90), which resolves 0.11–0.48 across every series — the settled "
     "post-game quote stamped as the line ('6+ total bases' at 0.96, physically "
@@ -596,7 +618,9 @@ def kalshi_prop_threshold_exclude_sql(
     return (
         f"({source} = 'kalshi'\n"
         f"     AND {name} ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'\n"
-        f"     AND ({category} = 'hockey'\n"
+        f"     AND (({category} = 'hockey'\n"
+        f"            AND COALESCE({calibration_probability}, {opening_probability})\n"
+        f"                >= {KALSHI_HOCKEY_HONEST_BAND_MAX})\n"
         f"          OR COALESCE({calibration_probability}, {opening_probability})\n"
         f"             >= {KALSHI_PROP_THRESHOLD_DEGENERATE_BAND}))"
     )
@@ -684,12 +708,15 @@ def outcome_is_kalshi_prop_threshold(
     (points/assists/goals/total-bases/hits/HR/strikeouts/rebounds/... player
     props). Such a row is EXCLUDED when EITHER:
 
-      A. ``category == 'hockey'`` — the NHL goal-family (KXNHLGOAL/PTS/AST) is
-         corrupt at EVERY price band (opening 0.69→wr 0.21, 0.82→wr 0.05) while
-         its resolution is verified sane (5.24 scorers credited/game, api and
-         box_score agree). The prices are degenerate/illiquid captures (gotcha
-         #14), not a sign-flip or a resolution bug — no honest price to recover,
-         so the class is dropped wholesale.
+      A. ``category == 'hockey'`` AND ``curve_price`` >= 0.50 — the NHL goal-family
+         (KXNHLGOAL/PTS/AST) is degenerate ONLY in the high band. Queue #194 (#1089)
+         forensic (n=26,436) showed it is well-calibrated below 0.50 (<0.30 gap
+         3.1pp, 0.30–0.40 2.2pp, 0.40–0.50 4.0pp) and breaks hard at/above it
+         (0.50–0.70 gap 32.6pp, >=0.90 79.3pp). So the honest low band is RECOVERED
+         (kept) and only the degenerate >=0.50 split is dropped (its earliest
+         snapshot is also degenerate — an illiquid one-sided-ask capture, gotcha
+         #14 — no honest price to recover). This corrects #941's over-broad
+         wholesale hockey drop.
       B. ``curve_price`` (= COALESCE(calibration_probability, opening_probability))
          is in the DEGENERATE SETTLEMENT-COLLAPSE BAND (>= 0.90). Across every
          series this band resolves at 0.11–0.48, never near 0.90 — it is the
@@ -708,12 +735,14 @@ def outcome_is_kalshi_prop_threshold(
         return False
     if not _KALSHI_PROP_THRESHOLD_RE.match(name):
         return False
-    if category == "hockey":
-        return True
     if curve_price is None:
         # Unknown price → conservatively excluded (the SQL path always has a
         # curve price via COALESCE, so this only affects defensive callers).
         return True
+    if category == "hockey":
+        # #1089 recovery: the goal-family is honest below 0.50 and degenerate
+        # at/above it — exclude only the degenerate high band, recover the rest.
+        return curve_price >= KALSHI_HOCKEY_HONEST_BAND_MAX
     return curve_price >= KALSHI_PROP_THRESHOLD_DEGENERATE_BAND
 
 
