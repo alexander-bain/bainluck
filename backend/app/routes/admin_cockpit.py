@@ -392,9 +392,118 @@ def _watchdog_stuck_phases() -> list[dict]:
     return [s for s in stuck if isinstance(s, dict)] if isinstance(stuck, list) else []
 
 
+def _worker_heartbeat_age() -> float | None:
+    """Seconds since the last Celery worker heartbeat (None if never/unreadable).
+
+    Mirrors the celery dashboard's heartbeat read (``admin_celery.py``): the
+    realtime worker refreshes ``bainluck:heartbeat`` every ~60s; an age past 180s
+    means the workers are down and NO task metric can be trusted — the tile must
+    read red regardless of per-task health."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        hb = get_redis_client().get("bainluck:heartbeat")
+        if not hb:
+            return None
+        hb_str = hb.decode() if isinstance(hb, bytes) else hb
+        hb_dt = datetime.fromisoformat(hb_str)
+        if hb_dt.tzinfo is None:
+            hb_dt = hb_dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - hb_dt).total_seconds()
+    except Exception:
+        logger.debug("cockpit: heartbeat read failed", exc_info=True)
+        return None
+
+
+def _celery_health_tile() -> dict:
+    """First-class worker-health tile from the fixed get_task_metrics (L2-117).
+
+    L2-116 fixed ``get_task_metrics`` (idle→no_data instead of a latched
+    critical), but the cockpit still had NO overall celery/worker tile — the
+    only place worker health rendered was buried in the full ops dashboard.
+    This tile mirrors the celery dashboard's ``overall_health`` banding
+    (``admin_celery.py``) so both agree, and surfaces the failing tasks WITH
+    their consecutive-failure counts as the tile detail (the honest first render:
+    the genuinely-failing tasks show RED and named).
+
+    Banding (celery-dashboard parity → cockpit green/amber/red/unknown):
+      - worker heartbeat stale (>180s) → red ("worker down"): metrics untrustworthy
+      - any task health == critical (consecutive >= 5) → red
+      - any task health == degraded (consecutive >= 2) → amber
+      - tasks tracked, none failing → green
+      - no tasks / no heartbeat cache → unknown
+
+    Retired and idle (no_data) tasks are excluded from the failing rollups by
+    ``get_task_metrics`` itself, so the idle-misread can never turn this red.
+    Pure warm read (hgetall per task); isolated by the caller's try/except.
+    """
+    hb_age = _worker_heartbeat_age()
+    from app.tasks.redis_state import get_all_task_metrics
+
+    tasks = get_all_task_metrics()
+    critical = [t for t in tasks if t.get("health") == "critical"]
+    degraded = [t for t in tasks if t.get("health") == "degraded"]
+
+    def _label(t: dict) -> str:
+        name = t.get("task", "?")
+        c = t.get("consecutive_failures")
+        try:
+            c = int(c)
+        except (TypeError, ValueError):
+            c = None
+        return f"{name} ×{c}" if c else name
+
+    worker_down = hb_age is not None and hb_age > 180
+    if hb_age is None and not tasks:
+        status, value = "unknown", "—"
+    elif worker_down:
+        status, value = "red", "Worker down"
+    elif critical:
+        status, value = "red", "Critical"
+    elif degraded:
+        status, value = "amber", "Degraded"
+    elif not tasks:
+        status, value = "unknown", "—"
+    else:
+        status, value = "green", "Healthy"
+
+    detail_bits: list[str] = []
+    if worker_down:
+        detail_bits.append(f"⚠ no heartbeat for {round(hb_age)}s — tasks may not be running")
+    if critical:
+        detail_bits.append(f"{len(critical)} failing: " + ", ".join(_label(t) for t in critical[:4]))
+    if degraded:
+        detail_bits.append(f"{len(degraded)} degraded: " + ", ".join(_label(t) for t in degraded[:4]))
+    if not detail_bits:
+        if tasks:
+            hb_str = f"heartbeat {round(hb_age)}s ago" if hb_age is not None else "heartbeat —"
+            detail_bits.append(f"{len(tasks)} tasks tracked · all healthy · {hb_str}")
+        else:
+            detail_bits.append("no task metrics recorded yet — workers idle or cache cold")
+
+    return {
+        "key": "celery_health",
+        "label": "Worker health",
+        "value": value,
+        "numeric": None,
+        "status": status,
+        "detail": " · ".join(detail_bits),
+        "href": "/admin",
+    }
+
+
 async def _health_group(db: AsyncSession) -> list[dict]:
     """Build the site-health tile row from warm caches + cheap queries."""
     tiles: list[dict] = []
+
+    # --- Worker health (L2-117): first-class celery/worker tile ---
+    # Placed first: if the workers are down, every other warm-cache tile below is
+    # stale-by-omission, so surface the worker state before anything else. Isolated
+    # so a Redis hiccup degrades to no worker tile rather than breaking the payload.
+    try:
+        tiles.append(_celery_health_tile())
+    except Exception:
+        logger.debug("cockpit: celery health tile failed", exc_info=True)
 
     # --- Link rate (warm cache from precompute_admin_link_rate) ---
     # L2-104 honesty pass: the HEADLINE is the open-markets rate (the CLAUDE.md

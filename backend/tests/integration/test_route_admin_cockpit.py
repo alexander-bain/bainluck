@@ -16,6 +16,7 @@ from app.routes.admin_cockpit import (
     _AUTOPILOT_BEATS,
     _WAITING_FALLBACK,
     _autopilot_tile,
+    _celery_health_tile,
     _feed_quality_empty_detail,
     _flow_sentinel_group,
     _hours_since,
@@ -79,6 +80,91 @@ class TestWatchdogStuckPhases:
     def test_safe_on_malformed(self):
         with self._patch(json.dumps({"phase_heartbeat": "oops"})):
             assert _watchdog_stuck_phases() == []
+
+
+class TestCeleryHealthTile:
+    """L2-117: first-class worker-health tile. Bands must mirror the celery
+    dashboard's overall_health, and failing tasks must surface WITH their
+    consecutive-failure counts (the tile's honest first render)."""
+
+    def _run(self, tasks, hb_age):
+        with patch(
+            "app.routes.admin_cockpit._worker_heartbeat_age", return_value=hb_age
+        ), patch(
+            "app.tasks.redis_state.get_all_task_metrics", return_value=tasks
+        ):
+            return _celery_health_tile()
+
+    def test_all_healthy_is_green(self):
+        tasks = [
+            {"task": "poll_kalshi", "health": "healthy"},
+            {"task": "match_prediction_markets", "health": "healthy"},
+        ]
+        tile = self._run(tasks, hb_age=42)
+        assert tile["status"] == "green"
+        assert tile["value"] == "Healthy"
+        assert "2 tasks tracked" in tile["detail"]
+        assert tile["href"] == "/admin"
+        assert tile["key"] == "celery_health"
+
+    def test_critical_tasks_named_with_consecutive_counts(self):
+        # The acceptance criterion: the 3 failing tasks show RED, named, with counts.
+        tasks = [
+            {"task": "both_winner_guess_flip", "health": "critical", "consecutive_failures": "19"},
+            {"task": "compute_fair_fight_comparison", "health": "critical", "consecutive_failures": "12"},
+            {"task": "discover_candidate_snapshot", "health": "critical", "consecutive_failures": "6"},
+            {"task": "poll_kalshi", "health": "healthy"},
+        ]
+        tile = self._run(tasks, hb_age=30)
+        assert tile["status"] == "red"
+        assert tile["value"] == "Critical"
+        assert "3 failing" in tile["detail"]
+        assert "both_winner_guess_flip ×19" in tile["detail"]
+        assert "compute_fair_fight_comparison ×12" in tile["detail"]
+        assert "discover_candidate_snapshot ×6" in tile["detail"]
+
+    def test_degraded_is_amber(self):
+        tasks = [
+            {"task": "poll_polymarket", "health": "degraded", "consecutive_failures": "3"},
+            {"task": "poll_kalshi", "health": "healthy"},
+        ]
+        tile = self._run(tasks, hb_age=30)
+        assert tile["status"] == "amber"
+        assert tile["value"] == "Degraded"
+        assert "poll_polymarket ×3" in tile["detail"]
+
+    def test_worker_down_is_red_regardless_of_task_health(self):
+        # Stale heartbeat (>180s) → red even when every task reads healthy: the
+        # metrics are untrustworthy because nothing is running to update them.
+        tasks = [{"task": "poll_kalshi", "health": "healthy"}]
+        tile = self._run(tasks, hb_age=600)
+        assert tile["status"] == "red"
+        assert tile["value"] == "Worker down"
+        assert "no heartbeat for 600s" in tile["detail"]
+
+    def test_idle_and_retired_tasks_do_not_turn_it_red(self):
+        # get_task_metrics reports idle→no_data and retired→retired; neither is
+        # critical/degraded, so a fleet of idle tasks stays green (the L2-116 fix
+        # this tile depends on — an idle window must not read as a four-alarm).
+        tasks = [
+            {"task": "backfill_combat_wps", "health": "no_data"},
+            {"task": "old_retired_task", "health": "retired"},
+            {"task": "poll_kalshi", "health": "healthy"},
+        ]
+        tile = self._run(tasks, hb_age=20)
+        assert tile["status"] == "green"
+
+    def test_no_tasks_no_heartbeat_is_unknown(self):
+        tile = self._run([], hb_age=None)
+        assert tile["status"] == "unknown"
+        assert tile["value"] == "—"
+
+    def test_malformed_consecutive_falls_back_to_bare_name(self):
+        tasks = [{"task": "weird_task", "health": "critical", "consecutive_failures": "n/a"}]
+        tile = self._run(tasks, hb_age=30)
+        assert tile["status"] == "red"
+        assert "weird_task" in tile["detail"]
+        assert "×" not in tile["detail"].split("weird_task")[1][:2]
 
 
 class TestHelpers:

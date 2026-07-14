@@ -11,6 +11,7 @@
 
 import { motion } from "framer-motion";
 import { staggerContainer, staggerItem } from "@/lib/animations";
+import { probabilityHeat } from "@/lib/probabilityColors";
 
 interface ThresholdOutcome {
   outcome_id: number;
@@ -41,20 +42,6 @@ function formatThreshold(value: number, unit: string): string {
   return `${value}${unit}`;
 }
 
-function probabilityColor(prob: number): string {
-  if (prob >= 0.7) return "text-green-400";
-  if (prob >= 0.4) return "text-amber-400";
-  if (prob >= 0.15) return "text-orange-400";
-  return "text-red-400";
-}
-
-function probabilityBg(prob: number): string {
-  if (prob >= 0.7) return "bg-green-500/15";
-  if (prob >= 0.4) return "bg-amber-500/15";
-  if (prob >= 0.15) return "bg-orange-500/15";
-  return "bg-red-500/15";
-}
-
 export default function ThresholdGrid({ outcomes, title, highlightedValue }: ThresholdGridProps) {
   if (!outcomes || outcomes.length === 0) return null;
 
@@ -74,6 +61,7 @@ export default function ThresholdGrid({ outcomes, title, highlightedValue }: Thr
         {outcomes.map((o) => {
           const prob = o.probability ?? 0;
           const pct = (prob * 100).toFixed(0);
+          const heat = probabilityHeat(prob);
           const isHighlighted = highlightedValue !== undefined && o.threshold_value === highlightedValue;
 
           return (
@@ -99,14 +87,14 @@ export default function ThresholdGrid({ outcomes, title, highlightedValue }: Thr
               </div>
 
               {/* Probability */}
-              <div className={`text-lg font-mono font-bold ${probabilityColor(prob)}`}>
+              <div className={`text-lg font-mono font-bold ${heat.text}`}>
                 {pct}%
               </div>
 
               {/* Mini bar */}
               <div className="mt-1.5 h-1 rounded-full bg-[var(--surface-elevated)] overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${probabilityBg(prob)} transition-all duration-300`}
+                  className={`h-full rounded-full ${heat.bar} transition-all duration-300`}
                   style={{ width: `${Math.max(2, prob * 100)}%` }}
                 />
               </div>

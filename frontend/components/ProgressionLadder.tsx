@@ -10,6 +10,7 @@ import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
 import { getWikipediaImage } from "@/lib/images";
+import { probabilityTextClass } from "@/lib/probabilityColors";
 
 /**
  * TeamLogo — resolves a team logo with fallback:
@@ -96,13 +97,6 @@ interface ProgressionLadderProps {
   seasonYear?: string;
 }
 
-function probColor(p: number): string {
-  if (p >= 0.7) return "text-green-400";
-  if (p >= 0.4) return "text-text-primary";
-  if (p >= 0.15) return "text-orange-400";
-  return "text-red-400";
-}
-
 export default function ProgressionLadder({
   entityName,
   stages,
@@ -136,13 +130,13 @@ export default function ProgressionLadder({
                 onClick={() => onStageClick?.(stage)}
                 className={cn(
                   "flex-shrink-0 px-2 py-1 rounded text-xs transition-colors",
-                  achieved ? "bg-green-500/15 text-green-400" : "bg-surface-elevated hover:bg-surface-elevated/80"
+                  achieved ? "bg-accent-brand/15 text-accent-brand" : "bg-surface-elevated hover:bg-surface-elevated/80"
                 )}
               >
                 <div className="text-[10px] text-text-muted truncate max-w-[60px]">
                   {stage.stage_name.replace(/^(Make |Win )/, "")}
                 </div>
-                <div className={cn("font-mono font-medium", achieved ? "text-green-400" : probColor(prob))}>
+                <div className={cn("font-mono font-medium", achieved ? "text-accent-brand" : probabilityTextClass(prob))}>
                   {achieved ? "done" : `${(prob * 100).toFixed(0)}%`}
                 </div>
               </button>
@@ -184,24 +178,24 @@ export default function ProgressionLadder({
               onClick={() => onStageClick?.(stage)}
               className={cn(
                 "w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 transition-colors",
-                achieved ? "bg-green-500/10" : "hover:bg-surface-elevated/50",
+                achieved ? "bg-accent-brand/10" : "hover:bg-surface-elevated/50",
                 eliminated && "opacity-40"
               )}
             >
               <span className={cn(
                 "w-2 h-2 rounded-full flex-shrink-0",
-                achieved ? "bg-green-500" : eliminated ? "bg-red-500/50" : "bg-text-muted/30"
+                achieved ? "bg-accent-brand" : eliminated ? "bg-accent-danger/50" : "bg-text-muted/30"
               )} />
               <span className="text-text-secondary flex-1 text-left truncate">
                 {stage.stage_name.replace(/^(Make |Win )/, "")}
               </span>
               <div className="w-10 h-1 bg-surface-border rounded-full overflow-hidden">
                 <div
-                  className={cn("h-full rounded-full", achieved ? "bg-green-500" : "bg-text-muted/40")}
+                  className={cn("h-full rounded-full", achieved ? "bg-accent-brand" : "bg-text-muted/40")}
                   style={{ width: `${prob * 100}%` }}
                 />
               </div>
-              <span className={cn("font-mono font-medium min-w-[32px] text-right", achieved ? "text-green-400" : probColor(prob))}>
+              <span className={cn("font-mono font-medium min-w-[32px] text-right", achieved ? "text-accent-brand" : probabilityTextClass(prob))}>
                 {achieved ? "done" : `${(prob * 100).toFixed(0)}%`}
               </span>
             </button>
