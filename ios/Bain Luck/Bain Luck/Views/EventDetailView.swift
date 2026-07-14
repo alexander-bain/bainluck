@@ -27,21 +27,37 @@ struct EventDetailView: View {
             actualStart = scheduledStart
         }
 
+        // Build a domain only when the upper bound is at/after the lower bound.
+        // A market-less / aged-out closed game can have history whose only points
+        // predate the scheduled start (pre-game odds snapshot, no in-game data);
+        // a "stuck live" event can have a future start. Either yields an inverted
+        // ClosedRange, and `lower...upper` TRAPS when lower > upper — the crash on
+        // tapping a market-less card (#1092). Return nil in that case so the child
+        // charts compute their own safe domain from their data points.
+        func domain(upTo end: Date) -> ClosedRange<Date>? {
+            let upper = end.addingTimeInterval(30)
+            return upper >= actualStart ? actualStart...upper : nil
+        }
+
         // For completed games: use last game data point, NOT completedAt
         // (completedAt is a backend processing timestamp, often 30-45 min after game end)
         if event.status == "completed" || event.status == "closed" {
             let lastEspn = vm.history?.espnHistory?.last?.timestamp.asDate
             let lastOdds = vm.history?.history.last?.timestamp.asDate
-            if let gameEnd = [lastEspn, lastOdds].compactMap({ $0 }).max() {
-                return actualStart...gameEnd.addingTimeInterval(30)
+            if let gameEnd = [lastEspn, lastOdds].compactMap({ $0 }).max(),
+               let range = domain(upTo: gameEnd) {
+                return range
             }
             // Fallback to completedAt only if no game data
-            if let ca = vm.history?.completedAt, let end = ca.asDate {
-                return actualStart...end.addingTimeInterval(30)
+            if let ca = vm.history?.completedAt, let end = ca.asDate,
+               let range = domain(upTo: end) {
+                return range
             }
+            return nil
         }
         if event.status == "live" {
-            return actualStart...Date().addingTimeInterval(60)
+            let upper = Date().addingTimeInterval(60)
+            return upper >= actualStart ? actualStart...upper : nil
         }
         return nil
     }
@@ -271,6 +287,14 @@ struct EventDetailView: View {
                             eventStatus: event.status
                         )
                     }
+                    // Graceful empty state: a market-less game (e.g. an aged-out
+                    // closed game whose Kalshi/odds markets have expired) has no
+                    // market sections to show. Say so rather than leaving a gap or
+                    // assuming a section exists (#1092).
+                    if let gameMarkets = vm.gameMarkets,
+                       !gameMarketsHaveContent(gameMarkets) {
+                        noGameMarketsNote
+                    }
                     // Series Probability (playoff series context)
                     if let tags = event.eventTags,
                        (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
@@ -324,6 +348,33 @@ struct EventDetailView: View {
     }
 
     // MARK: - Team Colors
+
+    /// Whether the game-markets payload has any renderable section. All arrays
+    /// are optional and can arrive empty for a market-less / aged-out game.
+    private func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
+        !(gm.spreads ?? []).isEmpty
+            || !(gm.totals ?? []).isEmpty
+            || !(gm.teamTotals ?? []).isEmpty
+            || !(gm.periodMarkets ?? []).isEmpty
+            || !(gm.playerProps ?? []).isEmpty
+            || !(gm.other ?? []).isEmpty
+    }
+
+    private var noGameMarketsNote: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("No prediction markets for this game yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
         let away = Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280")
