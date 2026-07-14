@@ -145,7 +145,12 @@ class _FakeBout:
 @pytest.mark.asyncio
 class TestListBoxingCardConcepts:
     async def test_groups_fights_by_card(self):
-        soon = datetime.now(timezone.utc) + timedelta(days=10)
+        # Anchor to noon so the prelim (headline -1h) stays on the same UTC day.
+        # A raw datetime.now() run at 00:00–02:00 UTC splits the two bouts across
+        # midnight into two card tokens and fails fight_count (the midnight flake).
+        soon = datetime.now(timezone.utc).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        ) + timedelta(days=10)
         rows = [
             (1, "KXBOXING-26JUL04MASONBELL", "Abdullah Mason vs Albert Bell", soon, {}),
             (2, "KXBOXING-26JUL04DAVISRAMOS", "Deric Davis vs Carlos Ramos",
@@ -173,7 +178,11 @@ class TestListBoxingCardConcepts:
         # date-token so it later UNIFIES with the Kalshi-derived card.
         from app.utils.event_combat import event_commence_token
 
-        soon = datetime.now(timezone.utc) + timedelta(days=10)
+        # Noon-anchored so the prelim (headline -1h) never crosses midnight into a
+        # second card token no matter when the suite runs (midnight flake guard).
+        soon = datetime.now(timezone.utc).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        ) + timedelta(days=10)
         token = event_commence_token(soon)
         bouts = [
             _FakeBout(1, "Abdullah Mason", "Albert Bell", soon),
@@ -193,7 +202,10 @@ class TestListBoxingCardConcepts:
         # scheduled bout shares the card token, its fight-start time is authoritative.
         from app.utils.event_combat import event_commence_token
 
-        fight_time = datetime.now(timezone.utc) + timedelta(days=5)
+        # Noon-anchored: keeps the derived date-token stable across near-midnight runs.
+        fight_time = datetime.now(timezone.utc).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        ) + timedelta(days=5)
         token = event_commence_token(fight_time)
         close_date = fight_time + timedelta(days=15)  # bogus Kalshi close date
         rows = [

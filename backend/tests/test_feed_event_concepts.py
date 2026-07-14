@@ -138,7 +138,11 @@ class _FakeBout:
 class TestListUfcCardConcepts:
     async def test_groups_fights_by_card_and_names_numbered(self):
         # Two fights on the JUL11 card (one numbered) + a prop ticker (ignored).
-        soon = datetime.now(timezone.utc) + timedelta(days=10)
+        # Noon-anchored so the undercard (headline -2h) stays on the same UTC day;
+        # a raw datetime.now() run at 00:00–02:00 UTC splits the card (midnight flake).
+        soon = datetime.now(timezone.utc).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        ) + timedelta(days=10)
         rows = [
             (201, "kalshi:KXUFCFIGHT-26JUL11MCGHOL",
              "UFC 329: McGregor vs. Holloway 2", soon,
@@ -166,12 +170,12 @@ class TestListUfcCardConcepts:
         from app.utils.event_combat import event_commence_token
 
         # Anchor both bouts to the SAME UTC calendar day (a real card shares one
-        # Kalshi ticker date). Normalizing to mid-day makes the prelim (main -2h)
+        # Kalshi ticker date). Normalizing to noon makes the prelim (main -2h)
         # land on the same date no matter when the suite runs — otherwise a run
         # near 00:00 UTC splits the two bouts across midnight into two card tokens
         # and the assertion fails (the #1093 midnight combat-test flake).
         card_day = (datetime.now(timezone.utc) + timedelta(days=8)).replace(
-            hour=22, minute=0, second=0, microsecond=0
+            hour=12, minute=0, second=0, microsecond=0
         )
         token = event_commence_token(card_day)
         bouts = [
@@ -191,7 +195,10 @@ class TestListUfcCardConcepts:
         # far-future close date; the scheduled bout's time is authoritative.
         from app.utils.event_combat import event_commence_token
 
-        fight_time = datetime.now(timezone.utc) + timedelta(days=5)
+        # Noon-anchored: keeps the derived date-token stable across near-midnight runs.
+        fight_time = datetime.now(timezone.utc).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        ) + timedelta(days=5)
         token = event_commence_token(fight_time)
         close_date = fight_time + timedelta(days=15)
         rows = [
