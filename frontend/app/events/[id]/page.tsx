@@ -19,6 +19,9 @@ const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectr
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false, loading: ChartSkeleton });
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
+// L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
+const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
+import type { PropMark } from "@/components/event/PropsSection";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1043,6 +1046,30 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
       )}
+
+      {/* THE SCRIPT → THE DIVERGENCE → WHAT HIT (L2-118 Phase 1, duel = first
+          consumer). The pregame-mark + graded fields ship with #195 as
+          gameMarkets.props_script; Phase 2 is a payload swap, not a rebuild.
+          Nothing renders until that field is present. */}
+      {(() => {
+        const propsScript = (gameMarkets as (GameMarketsResponse & { props_script?: PropMark[] }) | undefined)
+          ?.props_script;
+        if (!Array.isArray(propsScript) || propsScript.length === 0) return null;
+        return (
+          <PropsSection
+            eventStatus={event.status}
+            items={propsScript.map((p, i) => ({
+              key: p.key ?? i,
+              label: p.label,
+              pregame_mark: p.pregame_mark ?? null,
+              current: p.current ?? null,
+              graded_result: p.graded_result ?? null,
+              graded_label: p.graded_label ?? null,
+            }))}
+          />
+        );
+      })()}
+
       {/* Standalone pace when no game markets section at all */}
       {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (
         <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">

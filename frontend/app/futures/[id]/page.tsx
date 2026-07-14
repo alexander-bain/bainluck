@@ -31,7 +31,7 @@ import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
-import ThresholdGrid from "@/components/ThresholdGrid";
+import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
@@ -640,12 +640,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Threshold Variants (e.g., "Bitcoin > $80K / $90K / $100K") */}
+      {/* Threshold ladder — one question, many rungs, heat-strip.
+          QuantityGroup (Queue L2-118) replaces the old ThresholdGrid: a "≥ N"
+          market is one continuous question, not N yes/no cards. */}
       {thresholdEntries.map(([stem, outcomes]) => (
-        <ThresholdGrid
+        <QuantityGroup
           key={stem}
           title={stem}
-          outcomes={outcomes}
+          rungs={buildThresholdRungs(outcomes)}
         />
       ))}
 

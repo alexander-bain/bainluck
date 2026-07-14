@@ -80,6 +80,33 @@ def registered_domains() -> list[str]:
     return sorted(_ADAPTERS.keys())
 
 
+# Transactional-only fields that must NEVER ship on the concept-page wire.
+# L2-48 thesis / L2-118: the blend is the product; American odds are a betting
+# artifact we deliberately strip. Golf competitors pick `american_odds` up from
+# routes/golf.py's shared tournament builder — harmless (nothing renders it) but
+# dead weight and a latent leak risk if a future renderer naively maps
+# competitor fields. Strip it at the envelope boundary so every adapter's
+# competitor payload is clean, not just golf's.
+_WIRE_LEAK_COMPETITOR_FIELDS = ("american_odds",)
+
+
+def strip_competitor_wire_leaks(envelope: dict | None) -> dict | None:
+    """Remove transactional-only fields from the concept-page competitor payload.
+
+    Mutates `envelope["primary"]["competitors"]` in place (each is a fresh
+    per-request dict) and returns the envelope for chaining. No-op when there is
+    no competitor list.
+    """
+    if not envelope:
+        return envelope
+    competitors = (envelope.get("primary") or {}).get("competitors") or []
+    for competitor in competitors:
+        if isinstance(competitor, dict):
+            for field in _WIRE_LEAK_COMPETITOR_FIELDS:
+                competitor.pop(field, None)
+    return envelope
+
+
 # ---------------------------------------------------------------------------
 # Golf adapter — the reference implementation (delegates to routes/golf.py).
 # ---------------------------------------------------------------------------

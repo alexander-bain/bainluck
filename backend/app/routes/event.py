@@ -11,7 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
-from app.utils.event_concept import parse_event_key, get_adapter
+from app.utils.event_concept import (
+    parse_event_key,
+    get_adapter,
+    strip_competitor_wire_leaks,
+)
 
 router = APIRouter(tags=["event-concept"])
 
@@ -26,4 +30,5 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     envelope = await adapter.build_event(slug, db)
     if envelope is None:
         raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
-    return envelope
+    # L2-48/L2-118: probability-only product — strip odds from the wire.
+    return strip_competitor_wire_leaks(envelope)
