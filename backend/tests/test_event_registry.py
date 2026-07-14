@@ -92,6 +92,18 @@ class _FakeRegistrySession:
                 and start <= candidate.commence_time <= end
                 and candidate.status in statuses
             ]
+            # #1085: honor the real query's ORDER BY (time-proximity) + LIMIT so
+            # the candidate-truncation regression is actually exercised. The
+            # order_by binds the target commence_time as commence_time_3.
+            target = compiled_params.get("commence_time_3")
+            if target is not None:
+                rows = sorted(
+                    rows,
+                    key=lambda c: abs((c.commence_time - target).total_seconds()),
+                )
+            limit = getattr(statement, "_limit", None)
+            if limit is not None:
+                rows = rows[:limit]
             return _FakeExecuteResult(rows=rows)
 
         raise AssertionError(f"Unexpected statement: {statement}")
@@ -382,6 +394,57 @@ class TestCrossSourceEventMatching:
         )
 
         assert event is existing
+
+    @pytest.mark.asyncio
+    async def test_structured_match_finds_sibling_among_many_collapsed_candidates(self):
+        """#1085 regression: prediction-market auto-creates fall back to a
+        batch-shared ``now`` commence_time, collapsing a whole day's same-sport
+        slate onto ONE identical timestamp. The old un-ordered LIMIT 30 truncated
+        the candidate set so the true same-game sibling was usually not returned
+        and a duplicate was created every matching cycle. The scan must now return
+        the sibling even when it is the 200th event sharing the collapsed time."""
+        collapsed = datetime(2026, 7, 13, 21, 5, tzinfo=timezone.utc)
+        # 250 decoy games (distinct matchups) all sharing the collapsed timestamp,
+        # well past the old LIMIT 30 and past position 30 in insertion order.
+        decoys = [
+            Event(
+                id=1000 + i,
+                sport_id=7,
+                home_team_name=f"Home City {i}",
+                away_team_name=f"Away College {i}",
+                commence_time=collapsed,
+                status="closed",
+            )
+            for i in range(250)
+        ]
+        sibling = Event(
+            id=99999,
+            sport_id=7,
+            home_team_name="Air Force",
+            away_team_name="Oregon State",
+            commence_time=collapsed,
+            status="closed",
+        )
+        # Bury the real sibling at the very end of the candidate list.
+        session = _FakeRegistrySession(structured_candidates=decoys + [sibling])
+
+        event = await _find_by_structured_match(
+            session,
+            7,
+            "Air Force",
+            "Oregon State",
+            collapsed,
+        )
+
+        assert event is sibling
+        # Guard the fix's mechanism: the query must slice generously, not at 30.
+        from app.services.event_registry import _STRUCTURED_MATCH_CANDIDATE_LIMIT
+        assert _STRUCTURED_MATCH_CANDIDATE_LIMIT >= 250
+        structured_stmt = next(
+            s for s in session.statements
+            if "events.commence_time BETWEEN" in str(s)
+        )
+        assert "ORDER BY" in str(structured_stmt)
 
     @pytest.mark.asyncio
     async def test_structured_match_respects_timezone_aware_window(self):

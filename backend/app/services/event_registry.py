@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,21 @@ _MATCH_WINDOW = timedelta(hours=28)  # Wide enough for cross-source date disagre
 
 # Maximum retries on IntegrityError (race condition between concurrent tasks)
 _MAX_RETRIES = 2
+
+# Max structured-match candidates scanned per lookup (#1085). The old value (30)
+# silently truncated the candidate set: prediction-market auto-creates that fall
+# back to a batch-shared ``now`` commence_time (gotcha #14 — no real game time on
+# the market) collapse EVERY same-day, same-sport event onto one identical
+# timestamp, so the ±28h window can hold a full day's slate. NCAA baseball hit
+# 177 events on one timestamp on 2026-07-13; with an un-ordered LIMIT 30 the true
+# same-game sibling was usually not among the 30 rows returned, so the structured
+# match missed and Step 4 created a duplicate every matching cycle (a treadmill
+# the 30-min merge task could never drain). We now ORDER BY time-proximity (so the
+# real siblings, which share the collapsed timestamp, sort first) AND raise the
+# cap well above any realistic single-sport-day count so the sibling is always in
+# the scanned set. names_match still guards the final decision, so a larger set
+# can only surface true matches, never invent false ones.
+_STRUCTURED_MATCH_CANDIDATE_LIMIT = 500
 
 
 @dataclass
@@ -203,7 +218,14 @@ async def _find_by_structured_match(
                 commence_time + _MATCH_WINDOW,
             ),
             Event.status.in_(["scheduled", "live", "completed", "closed"]),
-        ).limit(30)
+        )
+        # #1085: order closest-in-time first so the true same-game sibling — which
+        # shares this event's (often collapsed) commence_time — is always retained
+        # even when the cap binds; then take a generous slice (see the constant).
+        .order_by(
+            func.abs(func.extract("epoch", Event.commence_time - commence_time))
+        )
+        .limit(_STRUCTURED_MATCH_CANDIDATE_LIMIT)
     )
     candidates = candidates_result.scalars().all()
 
