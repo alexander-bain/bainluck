@@ -96,7 +96,7 @@ describe("EventCard", () => {
     expect(html).toContain("Proj");
   });
 
-  it("shows final state and uses opening odds as pre-game probabilities", () => {
+  it("shows settled treatment on final cards: score block, no probability chips", () => {
     const html = renderToStaticMarkup(
       React.createElement(EventCard, {
         event: makeEvent({
@@ -116,13 +116,14 @@ describe("EventCard", () => {
       })
     );
 
-    // Completed games display the OPENING odds (0.55/0.45 from makeEvent) as
-    // separate "55%"/"45%" probability values — not a "Pre-game:" label or a
-    // combined "55%/45%" string (both removed in a prior EventCard redesign).
+    // L2-112 settled treatment: a FINAL card drops the live-style probability
+    // chips and the probability bar in favor of the centered score block. It
+    // shows "Final" + the final score (102-99), and no "NN%" probability chips
+    // (the opening-odds 55%/45% display was removed with the settled redesign).
     expect(html).toContain("Final");
-    expect(html).toContain("55%");
-    expect(html).toContain("45%");
     expect(html).toContain("102");
     expect(html).toContain("99");
+    expect(html).not.toContain("55%");
+    expect(html).not.toContain("45%");
   });
 });
