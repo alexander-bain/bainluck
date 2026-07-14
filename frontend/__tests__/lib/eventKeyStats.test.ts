@@ -3,7 +3,10 @@
 // The old `/100` made the headline fallback show ~1% while the chart tooltip
 // showed ~81% — the reported live tooltip-vs-headline mismatch.
 
-import { computeLastChartPoint } from "../../lib/eventKeyStats";
+import {
+  computeLastChartPoint,
+  computeSharedChartDomain,
+} from "../../lib/eventKeyStats";
 import type { EventHistoryResponse } from "../../lib/types";
 
 function hist(partial: Partial<EventHistoryResponse>): EventHistoryResponse {
@@ -56,5 +59,42 @@ describe("computeLastChartPoint (#1003 fraction fix)", () => {
 
   test("null historyData → null", () => {
     expect(computeLastChartPoint(null, null, null)).toBeNull();
+  });
+});
+
+describe("computeSharedChartDomain (Queue #189: mis-attributed game-end)", () => {
+  // Sox-Mets Jul-12: commence 17:40, real game data (polymarket) 18:52–20:07,
+  // but mis-attributed espn/mlb/stat_model snapshots sit ~41h earlier (Jul-11
+  // 00:xx). The old domain took `end` from those game-end sources, yielding
+  // end < start (an empty chart). The floor guard must drop them.
+  test("game-end timestamps before commence are ignored → domain not inverted", () => {
+    const commence = "2026-07-12T17:40:00Z";
+    const domain = computeSharedChartDomain(
+      hist({
+        commence_time: commence,
+        status: "completed",
+        // Mis-attributed earlier game: game-end sources ~41h before first pitch.
+        win_prob_history: {
+          espn: [{ timestamp: "2026-07-11T00:46:00Z", home_probability: 0 }],
+          mlb: [{ timestamp: "2026-07-11T00:40:00Z", home_probability: 0 }],
+          // The real game, only on polymarket (not a GAME_END_SOURCE):
+          polymarket: [
+            { timestamp: "2026-07-12T18:52:00Z", home_probability: 0.5 },
+            { timestamp: "2026-07-12T20:07:00Z", home_probability: 0.001 },
+          ],
+        } as never,
+        history: [],
+      }),
+      "all",
+      "completed",
+      commence,
+      "baseball_mlb",
+    );
+    expect(domain).not.toBeNull();
+    const startMs = new Date(domain!.start).getTime();
+    const endMs = new Date(domain!.end).getTime();
+    // Domain must be forward (start < end) and cover the real game window.
+    expect(startMs).toBeLessThan(endMs);
+    expect(endMs).toBeGreaterThanOrEqual(new Date(commence).getTime());
   });
 });

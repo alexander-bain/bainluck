@@ -5521,6 +5521,23 @@ async def get_team_progression(
     return _response
 
 
+def _finished_event_end_cap(completed_at, commence_time, commence_cap):
+    """End cap for a finished event's history window.
+
+    Trust ``completed_at`` only when it is after ``commence_time``. An inverted
+    completed_at (< commence) is corrupt — a different, earlier game's data merged
+    onto this event (gotcha #32 family) — and capping there clips the entire real
+    game out of the chart (empty settled chart, Queue #189). In that case (or when
+    completed_at is missing) fall back to the commence-based cap so the real
+    journey renders (gotcha #22).
+    """
+    if completed_at is not None and (
+        commence_time is None or completed_at > commence_time
+    ):
+        return completed_at + timedelta(minutes=30)
+    return commence_cap
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -5607,14 +5624,24 @@ async def get_event_odds_history(
     if is_finished:
         # Return snapshots up to 30 min after game end to exclude stale
         # prediction market data from hours/days after completion.
-        end_cap = None
-        if event.completed_at:
-            end_cap = event.completed_at + timedelta(minutes=30)
-        elif event.commence_time:
+        #
+        # A completed_at that PRE-dates commence_time is corrupt — a different
+        # (earlier) game's data merged onto this event (gotcha #32 family; 439
+        # such events in prod as of Jul-2026). Trusting it caps the window ~before
+        # first pitch and clips the entire real game out of the chart (the empty
+        # settled-chart bug, Queue #189). Per gotcha #22, only trust completed_at
+        # when it is actually after kickoff; otherwise fall back to the
+        # commence-based window so the real journey still renders.
+        commence_cap = None
+        if event.commence_time:
             from app.tasks.odds_polling import get_max_duration_for_sport
             sport_key = event.sport.key if event.sport else ""
             max_hours = get_max_duration_for_sport(sport_key)
-            end_cap = event.commence_time + timedelta(hours=max_hours + 0.5)
+            commence_cap = event.commence_time + timedelta(hours=max_hours + 0.5)
+
+        end_cap = _finished_event_end_cap(
+            event.completed_at, event.commence_time, commence_cap
+        )
 
         query = select(OddsSnapshot).where(OddsSnapshot.event_id == event_id)
         if end_cap:
@@ -6939,6 +6966,10 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat(),
+        # Emit completed_at so finished-event cards (My Stuff, etc.) have an
+        # authoritative game-date fallback instead of showing a stale/future
+        # commence_time on a FINAL card (Queue #189 §B; gotcha #22 family).
+        "completed_at": event.completed_at.isoformat() if event.completed_at else None,
         "status": event.status,
         "home_score": event.home_score,
         "away_score": event.away_score,

@@ -122,6 +122,9 @@ export interface Event {
   home_team: string;
   away_team: string;
   commence_time: string;
+  // Authoritative finished-event date; prefer over commence_time for FINAL cards
+  // to avoid rendering a stale/future date beside a Final badge (Queue #189 §B).
+  completed_at?: string | null;
   status: "scheduled" | "live" | "completed" | "closed";
   home_score: number | null;
   away_score: number | null;

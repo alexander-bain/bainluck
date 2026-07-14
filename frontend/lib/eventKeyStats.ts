@@ -455,11 +455,19 @@ export function computeSharedChartDomain(
       "fangraphs",
       "mlb",
     ]);
+    // A completed game's end cannot precede its start. Drop game-end timestamps
+    // that fall before commence_time (minus a small pregame margin): a
+    // mis-attributed earlier game's snapshots (gotcha #32 / inverted completed_at)
+    // otherwise drag `end` to before `start`, inverting the domain and rendering
+    // an EMPTY settled chart (Queue #189). With them gone we fall through to the
+    // commence-based window and the real journey renders.
+    const ctMs = commenceTime ? new Date(commenceTime).getTime() : NaN;
+    const endFloorMs = !isNaN(ctMs) ? ctMs - 60 * 60 * 1000 : -Infinity;
     const gameEndTs: number[] = [];
 
     for (const pt of historyData.espn_history ?? []) {
       const t = new Date(pt.timestamp).getTime();
-      if (!isNaN(t)) gameEndTs.push(t);
+      if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
     }
     for (const [source, pts] of Object.entries(
       historyData.win_prob_history ?? {},
@@ -467,7 +475,7 @@ export function computeSharedChartDomain(
       if (!GAME_END_SOURCES.has(source)) continue;
       for (const pt of pts) {
         const t = new Date(pt.timestamp).getTime();
-        if (!isNaN(t)) gameEndTs.push(t);
+        if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
       }
     }
 
