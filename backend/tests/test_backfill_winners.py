@@ -1303,6 +1303,51 @@ class TestCalibrationPricePartA2:
         assert "calibration_probability = NULL" in a2_full_section
         assert "reset_a2" in a2_full_section
 
+    def test_cal_price_run_is_self_limiting(self):
+        """#1100: every run must be bounded by a wall-clock deadline (well under
+        the 600s soft_time_limit) so it returns cleanly (SUCCESS) instead of
+        tripping SoftTimeLimitExceeded, recording where it stopped."""
+        import inspect
+        from app.tasks.backfill_winners import _compute_calibration_prices
+        source = inspect.getsource(_compute_calibration_prices)
+        assert "_CAL_DEADLINE_S" in source
+        assert "_cal_remaining" in source
+        assert 'stats["stopped_at"]' in source
+        # deadline must leave a margin under the 600s soft limit
+        assert "540" in source
+        # batches must be small enough that one uninterrupted statement can't
+        # overshoot the margin — the huge 100K batch is gone.
+        assert "LIMIT 100000" not in source
+
+    def test_cal_price_deadline_checked_in_every_batch_loop(self):
+        """The deadline is only useful if checked BETWEEN batches in each Part —
+        a bare `for _ in range(...)` with no `_cal_remaining()` check could still
+        overshoot. Every batch loop in the function must guard on the deadline."""
+        import inspect
+        from app.tasks.backfill_winners import _compute_calibration_prices
+        source = inspect.getsource(_compute_calibration_prices)
+        # Parts A, A2-reset, A2-fill, B, C each mark a distinct stopped_at stage.
+        for stage in ("part_a", "reset_a2", "part_a2", "part_b", "part_c"):
+            assert f'"{stage}"' in source, f"missing deadline break for {stage}"
+
+    def test_reset_a2_is_monotonic_not_churning(self):
+        """#1100 root cause: the #190 EXISTS(snapshot) guard still churned rows
+        whose last pre-commence snapshot EQUALS opening (A2 refilled cal=opening →
+        re-nulled forever). The reset must instead null ONLY rows where the exact
+        snapshot A2 will pick differs from opening (`<> fo.opening_probability`),
+        which also excludes no-snapshot rows (NULL <> x is NULL), so the reset set
+        drains to 0 over cycles rather than churning every run."""
+        import inspect
+        from app.tasks.backfill_winners import _compute_calibration_prices
+        source = inspect.getsource(_compute_calibration_prices)
+        a2_comment_start = source.index("Part A2:")
+        a2_end = source.index("part_b_total")
+        a2_section = source[a2_comment_start:a2_end]
+        # the converging predicate is present in the reset block
+        assert "<> fo.opening_probability" in a2_section
+        # reset is bounded (chunked), not one unbounded UPDATE
+        assert "reset_a2_total" in a2_section
+
     def test_stale_price_impact_on_calibration(self):
         """Demonstrate that using opening vs closing line changes calibration.
 

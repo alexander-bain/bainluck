@@ -59,12 +59,23 @@ def api_get(path: str) -> dict:
 
 
 def get_feed_events(sport: str | None = None) -> list[dict]:
-    """Get today's events from the feed."""
+    """Get today's game events from the feed.
+
+    The Discover feed returns a nested `items[].data` shape with a `type`
+    discriminator: 'event' (games), 'futures', 'tournament', 'concept'. Only
+    'event' cards carry game fields (home_team/away_team/sport); the others have
+    sport=None (or no sport key at all) and no teams. Iterating every item and
+    reading ev.get("sport") on non-event cards is what rendered every row as
+    `? @ ?` and broke the L1-L4 self-check (CLAUDE.md matching-table freshness
+    note). Filter to type == 'event' so the layers see real games.
+    """
     data = api_get("/api/feed?limit=200")
     events = []
     for item in data.get("items", []):
+        if item.get("type") != "event":
+            continue
         ev = item.get("data", {})
-        ev_sport = ev.get("sport", "")
+        ev_sport = ev.get("sport") or ""
         if sport and ev_sport != sport:
             continue
         status = ev.get("status", "")

@@ -6295,6 +6295,30 @@ async def _compute_calibration_prices():
         "errors": [],
     }
 
+    # #1100 SELF-LIMITING: the dedicated compute_calibration_prices task has
+    # soft_time_limit=600. Before this guard the function ran every Part to
+    # completion and routinely tripped SoftTimeLimitExceeded (partial work only
+    # committed by luck of ordering — fragile, could net-negative). We now bound
+    # the whole run with a wall-clock deadline (60s margin under the soft limit)
+    # checked BETWEEN batches, and cap each batch small enough that one
+    # uninterrupted statement can't overshoot the margin (the budget-guard-inner-op
+    # lesson — bound the longest single op, not just loop boundaries). A run that
+    # hits the deadline returns cleanly with stopped_at set (registers SUCCESS,
+    # not a timeout), and the next scheduled slot resumes from the remaining NULLs
+    # — monotonic progress, never restart-from-scratch (#995/#38 playbook).
+    import time as _cal_time
+
+    _cal_start = _cal_time.monotonic()
+    _CAL_DEADLINE_S = 540.0  # soft_time_limit=600, keep a 60s margin
+    _CAL_BATCH = 20000  # small enough that one batch stays well under the margin
+    # reset_a2 only runs while this much budget remains, so its A2 refill (the very
+    # next Part) always has time to run — guarantees net-positive drain per run.
+    _RESET_MIN_BUDGET_S = 150.0
+    stats["stopped_at"] = None
+
+    def _cal_remaining() -> float:
+        return _CAL_DEADLINE_S - (_cal_time.monotonic() - _cal_start)
+
     try:
         async with get_task_session() as session:
             stats["reset"] = 0
@@ -6335,7 +6359,10 @@ async def _compute_calibration_prices():
             # of DISTINCT ON which joins then sorts the full result set.
             # ORDER BY commence_time DESC so recent games are processed first.
             part_a_total = 0
-            for _ in range(20):
+            for _ in range(400):
+                if _cal_remaining() <= 0:
+                    stats["stopped_at"] = "part_a"
+                    break
                 # Queue #167 (#941/#1054) writer-side guard: for Kalshi
                 # player-prop "<subject>: N+" OVER props, a settled no-bid snapshot
                 # (yes_bid=0, yes_ask≈1.00) that lands before commence_time is a
@@ -6366,7 +6393,7 @@ async def _compute_calibration_prices():
                               AND fo.calibration_probability IS NULL
                               AND e.commence_time IS NOT NULL
                             ORDER BY e.commence_time DESC
-                            LIMIT 100000
+                            LIMIT 20000
                         )
                         UPDATE futures_outcomes fo
                         SET calibration_probability = COALESCE(
@@ -6451,34 +6478,66 @@ async def _compute_calibration_prices():
             # left alone and the reset becomes self-limiting / monotonic — the
             # remaining work drains and the task finishes inside 600s. Uses
             # idx_fos_outcome_captured(outcome_id, captured_at) for the seek.
-            reset_a2 = await session.execute(text("""
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = NULL
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.status = 'resolved'
-                      AND fm.event_id IS NULL
-                      AND fm.commence_time IS NOT NULL
-                      AND fm.source != 'datagolf'
-                      AND fo.calibration_probability IS NOT NULL
-                      AND fo.calibration_probability = fo.opening_probability
-                      AND fo.opening_probability IS NOT NULL
-                      AND EXISTS (
-                          SELECT 1
-                          FROM futures_odds_snapshots fos
-                          WHERE fos.outcome_id = fo.id
-                            AND fos.captured_at < fm.commence_time
-                            AND fos.probability > 0
-                            AND fos.probability < 1
-                      )
+            # #1100 monotonic + bounded reset. The #190 EXISTS(snapshot) guard did
+            # not stop the churn: rows whose LAST pre-commence snapshot EQUALS
+            # opening still passed EXISTS, so Part A2 refilled cal=opening and the
+            # next run re-nulled them — a permanent null→opening→null loop that
+            # (with its 194K-row A2 refill) blew the 600s soft limit. We now null
+            # ONLY rows where the exact snapshot Part A2 will select (last
+            # pre-commence, ORDER BY captured_at DESC LIMIT 1) differs from opening
+            # via `<>` — which also correctly EXCLUDES rows with no pre-commence
+            # snapshot (`NULL <> x` is NULL → filtered), preserving the old guard's
+            # intent. So A2 genuinely moves every reset row off `cal = opening`, and
+            # the reset set drains to 0 over a few cycles instead of churning
+            # forever. Bounded chunks + a budget gate so the A2 refill immediately
+            # after always has time to run inside the deadline (net-positive drain).
+            reset_a2_total = 0
+            for _ in range(200):
+                if _cal_remaining() <= _RESET_MIN_BUDGET_S:
+                    stats["stopped_at"] = stats["stopped_at"] or "reset_a2"
+                    break
+                reset_a2 = await session.execute(text("""
+                        WITH targets AS (
+                            SELECT fo.id
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            WHERE fm.status = 'resolved'
+                              AND fm.event_id IS NULL
+                              AND fm.commence_time IS NOT NULL
+                              AND fm.source != 'datagolf'
+                              AND fo.calibration_probability IS NOT NULL
+                              AND fo.calibration_probability = fo.opening_probability
+                              AND fo.opening_probability IS NOT NULL
+                              AND (
+                                  SELECT fos.probability
+                                  FROM futures_odds_snapshots fos
+                                  WHERE fos.outcome_id = fo.id
+                                    AND fos.captured_at < fm.commence_time
+                                    AND fos.probability > 0
+                                    AND fos.probability < 1
+                                  ORDER BY fos.captured_at DESC
+                                  LIMIT 1
+                              ) <> fo.opening_probability
+                            LIMIT 20000
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = NULL
+                        FROM targets t
+                        WHERE fo.id = t.id
                 """))
-            await session.commit()
-            stats["reset_a2"] = reset_a2.rowcount
-            if reset_a2.rowcount > 0:
-                logger.info("Calibration Part A2 reset: %d outcomes", reset_a2.rowcount)
+                await session.commit()
+                reset_a2_total += reset_a2.rowcount
+                if reset_a2.rowcount == 0:
+                    break
+            stats["reset_a2"] = reset_a2_total
+            if reset_a2_total > 0:
+                logger.info("Calibration Part A2 reset: %d outcomes", reset_a2_total)
 
             part_a2_total = 0
-            for _ in range(20):
+            for _ in range(400):
+                if _cal_remaining() <= 0:
+                    stats["stopped_at"] = stats["stopped_at"] or "part_a2"
+                    break
                 result_a2 = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fm.commence_time,
@@ -6490,7 +6549,7 @@ async def _compute_calibration_prices():
                               AND fm.commence_time IS NOT NULL
                               AND (fm.event_id IS NULL)
                             ORDER BY fm.commence_time DESC
-                            LIMIT 100000
+                            LIMIT 20000
                         )
                         UPDATE futures_outcomes fo
                         SET calibration_probability = COALESCE(
@@ -6538,7 +6597,10 @@ async def _compute_calibration_prices():
             # economics, etc.) that have no tournament start date.
             # Batched at 100K. LATERAL subquery for efficient index seeks.
             part_b_total = 0
-            for _ in range(20):
+            for _ in range(400):
+                if _cal_remaining() <= 0:
+                    stats["stopped_at"] = stats["stopped_at"] or "part_b"
+                    break
                 result_b = await session.execute(text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fo.opening_captured_at,
@@ -6549,7 +6611,7 @@ async def _compute_calibration_prices():
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
                               AND (fm.event_id IS NULL OR e.commence_time IS NULL)
-                            LIMIT 100000
+                            LIMIT 20000
                         )
                         UPDATE futures_outcomes fo
                         SET calibration_probability = COALESCE(
@@ -6587,6 +6649,9 @@ async def _compute_calibration_prices():
             # opening_probability is the correct calibration price.
             rescued_total = 0
             for _ in range(100):
+                if _cal_remaining() <= 0:
+                    stats["stopped_at"] = stats["stopped_at"] or "part_c"
+                    break
                 result_c = await session.execute(text("""
                         WITH stuck AS (
                             SELECT fo.id AS outcome_id, fo.opening_probability,
@@ -6658,17 +6723,22 @@ async def _compute_calibration_prices():
         stats["errors"].append(str(e))
         logger.error("Compute calibration prices error: %s", e)
 
+    stats["elapsed_s"] = round(_cal_time.monotonic() - _cal_start, 1)
     logger.info(
-        "Calibration prices: reset=%d, reset_golf_hockey=%d, event_linked=%d, "
-        "non_event=%d, rescued=%d, sanity_reverted=%d, illiquid=%d, errors=%d",
+        "Calibration prices: reset=%d, reset_golf_hockey=%d, reset_a2=%d, "
+        "event_linked=%d, non_event=%d, rescued=%d, sanity_reverted=%d, "
+        "illiquid=%d, errors=%d, stopped_at=%s, elapsed=%.1fs",
         stats["reset"],
         stats.get("reset_golf_hockey", 0),
+        stats.get("reset_a2", 0),
         stats["with_commence"],
         stats["without_commence"],
         stats["rescued"],
         stats.get("sanity_reverted", 0),
         stats.get("illiquid_tails_nulled", 0),
         len(stats["errors"]),
+        stats.get("stopped_at"),
+        stats["elapsed_s"],
     )
     return stats
 
