@@ -69,3 +69,56 @@ def test_features_are_consumable_by_interestingness_scorer():
     assert 0.0 <= result.score <= 100.0
     # leader_probability alias maps to the scorer's probability signal
     assert inputs.probability == 0.7
+
+
+# --- #195: Decimal → float sanitizer for the JSONB columns ---
+# Regression guard for the consec-6 failure: features/anatomy are built from
+# Numeric outcome fields (Decimal), and asyncpg's JSONB encoder raised
+# "Object of type Decimal is not JSON serializable" on insert.
+
+def test_json_safe_converts_decimal_scalars():
+    import json
+    from decimal import Decimal
+    from app.utils.discover_candidate_snapshot import _json_safe
+
+    assert _json_safe(Decimal("0.62")) == 0.62
+    assert isinstance(_json_safe(Decimal("0.62")), float)
+
+
+def test_json_safe_converts_decimals_in_nested_structures():
+    import json
+    from decimal import Decimal
+    from app.utils.discover_candidate_snapshot import _json_safe
+
+    payload = {
+        "prob": Decimal("0.5"),
+        "nested": {"move": Decimal("0.1"), "flag": True, "name": "x"},
+        "list": [Decimal("1.5"), 2, "y"],
+    }
+    safe = _json_safe(payload)
+    # The whole point: it must now be JSON-serializable (the insert failure mode).
+    json.dumps(safe)
+    assert safe["prob"] == 0.5
+    assert safe["nested"]["move"] == 0.1
+    assert safe["nested"]["flag"] is True
+    assert safe["list"][0] == 1.5
+
+
+def test_json_safe_passes_through_plain_values():
+    from app.utils.discover_candidate_snapshot import _json_safe
+
+    assert _json_safe(None) is None
+    assert _json_safe("hello") == "hello"
+    assert _json_safe(7) == 7
+    assert _json_safe(3.14) == 3.14
+
+
+def test_build_candidate_features_output_is_json_serializable_after_sanitize():
+    # End-to-end: real Decimal probabilities flow through build → sanitize → JSON.
+    import json
+    from decimal import Decimal
+    from app.utils.discover_candidate_snapshot import _json_safe
+
+    market = _market(outcomes=[_outcome(prob=Decimal("0.73"), move=Decimal("0.12"))])
+    features = _json_safe(build_candidate_features(market, source_count=1))
+    json.dumps(features)  # must not raise

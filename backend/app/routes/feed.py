@@ -152,6 +152,11 @@ FEED_RECYCLE_PENALTY = float(os.getenv("FEED_RECYCLE_PENALTY", "25"))
 _FEED_RECYCLE_LIVE_LO = 0.12
 _FEED_RECYCLE_LIVE_HI = 0.88
 
+# #1090: below this many scored futures, run a relaxed-window broaden pass so a
+# thin off-season/Open-week slate doesn't drain to "all caught up" in a dozen
+# cards. Tuned to the observed ~60-68 post-filter collapse during summer breaks.
+_THIN_FUTURES_POOL_FLOOR = 100
+
 
 def _futures_recycle_eligible(market, ctx, now) -> bool:
     """Whether a previously-seen futures market may be recycled into an exhausted
@@ -1298,6 +1303,54 @@ async def get_feed(
                     timing_started_at=_started_at,
                     config=discover_config,
                 )
+
+                # #1090: broaden recall when the post-filter pool collapses. The
+                # Open golf week + summer break strands real, open markets behind
+                # the freshness/no-movement filters that keep the feed lively
+                # in-season, so after seen-suppression the user hits "all caught
+                # up" in ~a dozen cards (mostly golf). When the pool is thin,
+                # re-score ONCE with relaxed no-movement / no-resolution windows
+                # and merge in only the NEW markets — existing ones keep their
+                # original, un-penalized score. Fires only when thin, so the
+                # in-season pipeline is untouched.
+                if len(futures_items) < _THIN_FUTURES_POOL_FLOOR:
+                    relaxed = dict(discover_config or {})
+                    relaxed["stale_no_movement_days"] = max(
+                        float(relaxed.get("stale_no_movement_days", 2)) * 3, 7
+                    )
+                    relaxed["no_resolution_stale_days"] = max(
+                        float(relaxed.get("no_resolution_stale_days", 5)) * 2, 14
+                    )
+                    seen_ids = {
+                        (it.get("data") or {}).get("id") for it in futures_items
+                    }
+                    broadened = await _score_futures(
+                        db,
+                        now,
+                        sport,
+                        ctx,
+                        my_teams_only=my_teams_only,
+                        my_team_names=my_team_names,
+                        my_team_sport_categories=my_team_sport_categories,
+                        tag_filter=dynamic_tag_filter or None,
+                        static_tag_filter=static_tag_filter or None,
+                        config=relaxed,
+                    )
+                    added = [
+                        it
+                        for it in broadened
+                        if (it.get("data") or {}).get("id") not in seen_ids
+                    ]
+                    if added:
+                        base_n = len(futures_items)
+                        futures_items = futures_items + added
+                        logger.info(
+                            "Feed #1090 broaden: thin pool %d < %d, relaxed pass "
+                            "added %d markets",
+                            base_n,
+                            _THIN_FUTURES_POOL_FLOOR,
+                            len(added),
+                        )
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:

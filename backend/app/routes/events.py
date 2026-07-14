@@ -3822,6 +3822,69 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     return result
 
 
+def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over):
+    """#195: THE SCRIPT baseline for a prop outcome, as an OVER probability.
+
+    Prefers the commence-time mark pinned by the live poller into
+    ``market_metadata["pregame_mark"]`` (per-outcome raw probability, keyed by
+    ``str(outcome.id)``), converting it to the same over/under orientation the
+    endpoint uses for ``over_probability``. Falls back to the per-outcome
+    ``opening_over_probability`` (the opening line, available today) so THE
+    SCRIPT renders a real number before the pin has been captured, and to
+    ``None`` when neither exists. gotcha #26: use ``__dict__.get`` so a market
+    row loaded without ``market_metadata`` never triggers a lazy load.
+    """
+    meta = market.__dict__.get("market_metadata")
+    if isinstance(meta, dict):
+        pm = meta.get("pregame_mark")
+        if isinstance(pm, dict):
+            raw = (pm.get("outcomes") or {}).get(str(outcome.id))
+            if raw is not None:
+                try:
+                    rawf = float(raw)
+                    return round(rawf if is_over or not is_under else 1.0 - rawf, 4)
+                except (TypeError, ValueError):
+                    pass
+    return opening_over
+
+
+def _build_props_script(player_props, event_is_finished):
+    """#195: flatten graded/priced player props into the PropsSection contract.
+
+    Maps the endpoint's ``player_props[]`` onto the frontend ``PropMark`` shape
+    (``frontend/components/event/PropsSection.tsx``): ``pregame_mark`` (THE
+    SCRIPT), ``current`` (live), and — for settled events — ``graded_result`` /
+    ``graded_label`` (WHAT HIT). The frontend derives its state (script /
+    divergence / graded) from event status and gates the whole section on this
+    array being present and non-empty.
+    """
+    script: list[dict] = []
+    for pp in player_props:
+        label = pp.get("outcome_name") or pp.get("market_name") or ""
+        graded_result = None
+        graded_label = None
+        if event_is_finished:
+            hit = pp.get("hit")
+            if hit is None:
+                is_win = pp.get("is_winner")
+                if is_win is not None:
+                    hit = bool(is_win)
+            if hit is not None:
+                graded_result = "hit" if hit else "miss"
+                actual = pp.get("actual")
+                if actual is not None:
+                    graded_label = f"{actual} — {graded_result}"
+        script.append({
+            "key": f"{pp.get('market_name', '')}|{pp.get('outcome_name', '')}",
+            "label": label,
+            "pregame_mark": pp.get("pregame_mark"),
+            "current": pp.get("over_probability"),
+            "graded_result": graded_result,
+            "graded_label": graded_label,
+        })
+    return script
+
+
 def _estimate_game_pace(
     home_score: Optional[int],
     away_score: Optional[int],
@@ -4095,7 +4158,7 @@ async def get_game_markets(
                 markets.append(m)
 
     if not markets:
-        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None}
+        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None, "props_script": []}
 
     # 4. Load outcomes for all markets
     market_ids = [m.id for m in markets]
@@ -4195,6 +4258,7 @@ async def get_game_markets(
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
+                        "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, tt_opening_over),
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
@@ -4246,6 +4310,7 @@ async def get_game_markets(
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
+                    "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, opening_over),
                     "source": market.source,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
@@ -4648,6 +4713,8 @@ async def get_game_markets(
         "matchups": matchups,
         "other": sorted(other_markets, key=lambda x: (_extract_threshold(x.get("outcome_name", "")) or 0)),
         "pace": pace,
+        # #195: PropsSection contract (THE SCRIPT / DIVERGENCE / WHAT HIT).
+        "props_script": _build_props_script(player_props, event_is_finished),
     }
 
     # Cache response (evict oldest if over size limit)

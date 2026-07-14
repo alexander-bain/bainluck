@@ -2434,26 +2434,40 @@ async def _correct_both_winner_guess_side():
         # never assert a NEW winner (the authoritative sibling already IS the
         # winner) and never touch resolution_source (#754 poison guard); only the
         # wrong is_winner flag flips, so the write is minimal and idempotent.
-        async with get_task_session() as session:
-            rows = await session.execute(text("""
-                SELECT u.id
-                FROM futures_outcomes u
-                JOIN futures_markets m ON u.market_id = m.id
-                WHERE m.mutually_exclusive = true
-                  AND u.is_winner = true
-                  AND u.resolution_source IN """ + SINGLE_WINNER_GUESS_SOURCES_SQL + """
-                  AND (SELECT COUNT(*) FROM futures_outcomes c
-                       WHERE c.market_id = u.market_id) = 2
-                  AND EXISTS (
-                      SELECT 1 FROM futures_outcomes o
-                      WHERE o.market_id = u.market_id
-                        AND o.id <> u.id
-                        AND o.is_winner = true
-                        AND o.resolution_source IS NOT NULL
-                        AND o.resolution_source NOT IN """ + GUESS_FAMILY_SOURCES_SQL + """
-                  )
-            """))
-            ids = [r[0] for r in rows.fetchall()]
+        # The double-correlated-subquery read is the longest uninterrupted op and
+        # is what re-blew the 120s soft limit (SoftTimeLimitExceeded, consec 19,
+        # last success 2026-07-10). Bound it with a per-statement statement_timeout
+        # WELL under the soft limit so a slow plan aborts cleanly (caught here →
+        # empty candidate set this cycle, retried next) instead of tripping the
+        # Celery limit and recording a task failure. This is the budget-guard
+        # inner-op fix, not a soft-limit widen. Isolated try so a slow guess-side
+        # read never starves the placeholder pass below.
+        ids: list = []
+        try:
+            async with get_task_session() as session:
+                await session.execute(text("SET LOCAL statement_timeout = '50s'"))
+                rows = await session.execute(text("""
+                    SELECT u.id
+                    FROM futures_outcomes u
+                    JOIN futures_markets m ON u.market_id = m.id
+                    WHERE m.mutually_exclusive = true
+                      AND u.is_winner = true
+                      AND u.resolution_source IN """ + SINGLE_WINNER_GUESS_SOURCES_SQL + """
+                      AND (SELECT COUNT(*) FROM futures_outcomes c
+                           WHERE c.market_id = u.market_id) = 2
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes o
+                          WHERE o.market_id = u.market_id
+                            AND o.id <> u.id
+                            AND o.is_winner = true
+                            AND o.resolution_source IS NOT NULL
+                            AND o.resolution_source NOT IN """ + GUESS_FAMILY_SOURCES_SQL + """
+                      )
+                """))
+                ids = [r[0] for r in rows.fetchall()]
+        except Exception as e:
+            stats["errors"].append(f"guess_read_timeout: {str(e)[:100]}")
+            logger.warning("Both-winner guess-side read bailed (bounded): %s", e)
         stats["candidates"] = len(ids)
 
         # Write-side: tiny id-keyed UPDATEs committed per batch, so partial
@@ -2489,26 +2503,32 @@ async def _correct_both_winner_guess_side():
         # never moved (current ≈ 1.0); it is demoted ONLY when its market also
         # holds a genuinely-converged winner (a real longshot opening < 0.9 that
         # rose to current ≥ 0.9), so a true champion always survives (gotcha #21).
-        async with get_task_session() as session:
-            ph_rows = await session.execute(text("""
-                SELECT u.id
-                FROM futures_outcomes u
-                JOIN futures_markets m ON u.market_id = m.id
-                WHERE m.mutually_exclusive = true
-                  AND m.status = 'resolved'
-                  AND u.is_winner = true
-                  AND u.opening_probability = 1.0
-                  AND u.current_probability >= 0.99
-                  AND EXISTS (
-                      SELECT 1 FROM futures_outcomes o
-                      WHERE o.market_id = u.market_id
-                        AND o.id <> u.id
-                        AND o.is_winner = true
-                        AND o.opening_probability < 0.9
-                        AND o.current_probability >= 0.9
-                  )
-            """))
-            ph_ids = [r[0] for r in ph_rows.fetchall()]
+        ph_ids: list = []
+        try:
+            async with get_task_session() as session:
+                await session.execute(text("SET LOCAL statement_timeout = '50s'"))
+                ph_rows = await session.execute(text("""
+                    SELECT u.id
+                    FROM futures_outcomes u
+                    JOIN futures_markets m ON u.market_id = m.id
+                    WHERE m.mutually_exclusive = true
+                      AND m.status = 'resolved'
+                      AND u.is_winner = true
+                      AND u.opening_probability = 1.0
+                      AND u.current_probability >= 0.99
+                      AND EXISTS (
+                          SELECT 1 FROM futures_outcomes o
+                          WHERE o.market_id = u.market_id
+                            AND o.id <> u.id
+                            AND o.is_winner = true
+                            AND o.opening_probability < 0.9
+                            AND o.current_probability >= 0.9
+                      )
+                """))
+                ph_ids = [r[0] for r in ph_rows.fetchall()]
+        except Exception as e:
+            stats["errors"].append(f"placeholder_read_timeout: {str(e)[:100]}")
+            logger.warning("Both-winner placeholder read bailed (bounded): %s", e)
         stats["placeholder_candidates"] = len(ph_ids)
 
         for i in range(0, len(ph_ids), BATCH):

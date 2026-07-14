@@ -1422,9 +1422,30 @@ def diversify_discover_first_page(
             break
 
     if len(selected) < target_size:
-        needed = target_size - len(selected)
-        fallback = [item for item in items if _feed_item_key(item) not in selected_keys]
-        selected.extend(fallback[:needed])
+        # #1090: fill remaining first-page slots with PROGRESSIVE cap relaxation,
+        # not a blind sorted append. On a thin/clustered slate (The Open golf week
+        # + summer break) the old fallback dumped whatever sorted highest — golf,
+        # re-boosted to the top for a golf-affinity user — straight into the first
+        # page, wiping out category diversity. Relax the per-category cap in steps
+        # (+2, +5, then unbounded) so one category can flood the page only as an
+        # absolute last resort, keeping >=4 categories visible up top.
+        for relaxed_extra in (2, 5, None):
+            if len(selected) >= target_size:
+                break
+            for item in items:
+                if len(selected) >= target_size:
+                    break
+                key = _feed_item_key(item)
+                if key in selected_keys:
+                    continue
+                if relaxed_extra is not None:
+                    group = _discover_category_group(item)
+                    cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3) + relaxed_extra
+                    if category_counts.get(group, 0) >= cap:
+                        continue
+                selected.append(item)
+                selected_keys.add(key)
+                record(item)
 
     _ensure_required_archetypes(selected, items)
     _ensure_category_hunger(selected, items)

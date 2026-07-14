@@ -2170,23 +2170,40 @@ async def _query_futures_fair_fight_impl(db):
                     AND sq3.canonical_market_key = sq1.canonical_market_key
               )
         ),
-        all_matches AS (
-            SELECT match_key, match_type, category FROM group_pairs
-            UNION ALL
-            SELECT match_key, match_type, category FROM key_pairs
-        ),
         matched_outcomes AS (
+            -- Split the group_id / canonical joins into a UNION ALL instead of a
+            -- single OR-join. group_pairs (match_type='group_id') and key_pairs
+            -- (match_type='canonical', which already excludes any canonical key
+            -- with a group match) are disjoint, so this is equivalent — but each
+            -- arm can use its own index (group_id / canonical_market_key) instead
+            -- of the un-indexable OR, which is what let the scan blow the soft
+            -- limit (#195 fair-fight consec-12 recovery).
             SELECT
-                am.match_key, am.match_type, am.category,
+                gp.category,
                 fm.source,
-                fo.id AS outcome_id,
                 COALESCE(fo.calibration_probability, fo.opening_probability) AS prob,
                 fo.is_winner
-            FROM all_matches am
-            JOIN futures_markets fm ON (
-                (am.match_type = 'group_id' AND fm.group_id = am.match_key)
-                OR (am.match_type = 'canonical' AND fm.canonical_market_key = am.match_key)
-            )
+            FROM group_pairs gp
+            JOIN futures_markets fm ON fm.group_id = gp.match_key
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+              AND fm.source IN ('kalshi', 'polymarket')
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND (fo.resolution_source IS NOT NULL
+                   AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
+                                                    'pass2_loser', 'all_losers',
+                                                    'did_not_play', 'withdrew',
+                                                    'no_pregame_trading'))
+              AND COALESCE(fo.volume, -1) != 0
+            UNION ALL
+            SELECT
+                kp.category,
+                fm.source,
+                COALESCE(fo.calibration_probability, fo.opening_probability) AS prob,
+                fo.is_winner
+            FROM key_pairs kp
+            JOIN futures_markets fm ON fm.canonical_market_key = kp.match_key
             JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
               AND fm.source IN ('kalshi', 'polymarket')
@@ -2372,18 +2389,24 @@ async def _compute_fair_fight_comparison():
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
-    async with get_task_session() as db:
+    # Each MCE query runs in its OWN session with a per-statement timeout. The
+    # task was tripping its 600s soft limit (SoftTimeLimitExceeded, consec 12):
+    # the heavy paired-coverage scans ran away, and a shared session meant one
+    # aborted transaction poisoned the other query's commit-on-exit. Own-session
+    # + 240s statement_timeout bounds each scan well under the soft limit and
+    # isolates failures so a slow half degrades to [] instead of failing the
+    # whole task (advisory Redis surface — partial > red).
+    async def _run_bounded(impl, label):
         try:
-            futures_pairs = await _query_futures_fair_fight_impl(db)
+            async with get_task_session() as db:
+                await db.execute(text("SET LOCAL statement_timeout = '240s'"))
+                return await impl(db)
         except Exception:
-            logger.exception("fair-fight precompute: futures query failed")
-            futures_pairs = []
+            logger.exception("fair-fight precompute: %s query failed", label)
+            return []
 
-        try:
-            sports_pairs = await _query_sports_fair_fight_impl(db)
-        except Exception:
-            logger.exception("fair-fight precompute: sports query failed")
-            sports_pairs = []
+    futures_pairs = await _run_bounded(_query_futures_fair_fight_impl, "futures")
+    sports_pairs = await _run_bounded(_query_sports_fair_fight_impl, "sports")
 
     response = {
         "generated_at": datetime.now(timezone.utc).isoformat(),

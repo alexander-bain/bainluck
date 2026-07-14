@@ -43,6 +43,12 @@ from app.utils.prediction_market_matching import (
 
 logger = logging.getLogger(__name__)
 
+# #195: how far ahead of commence the live poller pins THE SCRIPT pregame mark.
+# The poll already covers scheduled events within +3h; the mark is captured only
+# in the final window before (or after) commence so it reflects the settled
+# pregame consensus rather than a stale hours-out price.
+_PREGAME_MARK_LEAD_MINUTES = 15
+
 
 @dataclass(frozen=True)
 class _LinkedMarketRef:
@@ -1778,6 +1784,7 @@ async def _poll_live_prediction_market_prices():
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
+        "pregame_marks_written": 0,
         "errors": [],
     }
 
@@ -2211,6 +2218,56 @@ async def _poll_live_prediction_market_prices():
 
             except Exception as e:
                 stats["errors"].append(f"snapshot_{market.id}: {str(e)[:100]}")
+
+        # ── #195: pregame-mark pinning (THE SCRIPT baseline for props) ────
+        # At/just-before commence, snapshot each linked market's current
+        # per-outcome probabilities into market_metadata["pregame_mark"], the
+        # divergence baseline the event page renders as THE SCRIPT (pregame
+        # expectation) vs THE DIVERGENCE (live movement). Piggybacks on the
+        # existing poll loop — no new scan (the rows/outcomes are already loaded
+        # and freshly re-priced above). Idempotent: the first mark per market is
+        # captured and never overwritten (Python skip + a NOT jsonb_exists SQL
+        # guard for the concurrent-poll case). Core JSONB merge (gotcha #4) via
+        # CAST to dodge the asyncpg ':param::jsonb' bind trap, preserving any
+        # existing keys (shape, discover_llm, ...).
+        pregame_cutoff = now + timedelta(minutes=_PREGAME_MARK_LEAD_MINUTES)
+        for market, event in rows:
+            commence = event.commence_time
+            if commence is None:
+                continue
+            # Fire once the game is inside the final lead window or has started —
+            # this captures the settled pregame consensus, not a stale opening.
+            if commence > pregame_cutoff:
+                continue
+            existing_meta = market.market_metadata or {}
+            if isinstance(existing_meta, dict) and "pregame_mark" in existing_meta:
+                continue
+            outcome_probs = {}
+            for o in outcomes_by_market.get(market.id, []):
+                if o.current_probability is not None:
+                    outcome_probs[str(o.id)] = round(float(o.current_probability), 6)
+            if not outcome_probs:
+                continue
+            mark_payload = {
+                "captured_at": now.isoformat(),
+                "commence_time": commence.isoformat(),
+                "outcomes": outcome_probs,
+            }
+            try:
+                await session.execute(
+                    text(
+                        "UPDATE futures_markets SET market_metadata = "
+                        "COALESCE(market_metadata, '{}'::jsonb) "
+                        "|| jsonb_build_object('pregame_mark', CAST(:mark AS jsonb)) "
+                        "WHERE id = :id "
+                        "AND NOT jsonb_exists("
+                        "COALESCE(market_metadata, '{}'::jsonb), 'pregame_mark')"
+                    ),
+                    {"mark": json.dumps(mark_payload), "id": market.id},
+                )
+                stats["pregame_marks_written"] += 1
+            except Exception as e:
+                stats["errors"].append(f"pregame_mark_{market.id}: {str(e)[:100]}")
 
         await session.commit()
 

@@ -2408,6 +2408,37 @@ class TestDiscoverFirstPageMixer:
         # other categories should get room instead of a golf wall
         assert any(it.get("data", {}).get("llm_sport_category") == "politics" for it in first_page)
 
+    def test_thin_golf_heavy_pool_fallback_still_bounds_golf(self):
+        # #1090: the thin-slate case. When the diverse selection CANNOT fill the
+        # first page (Open week: mostly golf, few other categories), the fallback
+        # must NOT dump every remaining golf card into the page. Progressive cap
+        # relaxation keeps golf bounded (cap 3 + 2) so >=1 non-golf card survives
+        # and the page isn't a golf wall. Regression guard for the old blind
+        # sorted-append fallback that bypassed all caps.
+        tournaments = [self._tournament(i, score=100 - i) for i in range(15)]
+        fillers = [
+            self._item(200, "politics", 50),
+            self._item(201, "tech", 49),
+            self._item(202, "economics", 48),
+        ]
+        items = tournaments + fillers
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+
+        assert len(mixed) == len(items)  # nothing dropped
+        golf_on_first_page = sum(1 for it in first_page if it["type"] == "tournament")
+        # Old blind-append fallback would put 3 (strict) + 5 (fill) = 8 golf here.
+        # The progressive-relaxation fix bounds golf at cap 3 + first step 2 = 5,
+        # leaving room for every scarce non-golf card.
+        assert golf_on_first_page <= 5, (
+            f"thin-pool fallback let golf flood: {golf_on_first_page}"
+        )
+        for cat in ("politics", "tech", "economics"):
+            assert any(
+                it.get("data", {}).get("llm_sport_category") == cat for it in first_page
+            ), f"{cat} buried under golf on the first page"
+
     def test_mixer_caps_politics_in_first_page_without_dropping_items(self):
         items = [self._item(i, "politics", 100 - i) for i in range(8)] + [
             self._item(100 + i, category, 80 - i)

@@ -14,6 +14,7 @@ tracer code paths read-only; it never mutates ranking behavior.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -25,6 +26,24 @@ from app.models.models import DiscoverCandidateSnapshot, FuturesMarket
 
 DEFAULT_LIMIT = 300
 DEFAULT_RETENTION_DAYS = 30
+
+
+def _json_safe(obj: Any) -> Any:
+    """Recursively coerce Decimal → float so a value is JSON-serializable.
+
+    The ``features``/``anatomy`` JSONB columns are built from FuturesOutcome
+    Numeric fields (current_probability, etc.), which SQLAlchemy hands back as
+    ``Decimal``. asyncpg's JSONB encoder raises ``TypeError: Object of type
+    Decimal is not JSON serializable`` on insert (the #195/consec-6 failure of
+    ``discover_candidate_snapshot``). Sanitize the dicts before persisting.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def _leader_probability(market: FuturesMarket) -> float | None:
@@ -171,8 +190,10 @@ async def snapshot_discover_candidate_pool(
                 pre_blend_rank_score=ranking.get("final_uncapped"),
                 category_base=anatomy.get("category_base"),
                 interestingness_score=data.get("interestingness_score"),
-                features=build_candidate_features(market, source_count=source_count),
-                anatomy=anatomy,
+                features=_json_safe(
+                    build_candidate_features(market, source_count=source_count)
+                ),
+                anatomy=_json_safe(anatomy),
             )
         )
 
