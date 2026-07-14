@@ -140,12 +140,17 @@ export default function EventCard({
       ? `Tomorrow ${timeStr}`
       : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
   
-  // For finished: show just the date
-  const finishedDateStr = gameTime.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: gameTime.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-  });
+  // For finished: show just the date. Guard the impossible state (L2-112 Item 2):
+  // a FINAL game can't be in the future — when commence_time actually holds a
+  // Kalshi close/resolution timestamp (gotcha #14) it can be, so never render a
+  // future date beside the "Final" badge.
+  const finishedDateStr = gameTime.getTime() > now.getTime()
+    ? ""
+    : gameTime.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: gameTime.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+      });
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(event.sport);
@@ -216,7 +221,7 @@ export default function EventCard({
               )}
               {isFinished && (
                 <>
-                  <span className="text-micro-xs text-text-muted">{finishedDateStr}</span>
+                  {finishedDateStr && <span className="text-micro-xs text-text-muted">{finishedDateStr}</span>}
                   <span className="text-micro-xs text-text-muted uppercase">Final</span>
                   {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
                 </>
@@ -312,7 +317,9 @@ export default function EventCard({
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.home_team} score: ${event.home_score}`}>{event.home_score}</span>
                 )}
               </div>
-              {!isLive && (
+              {/* Probability chip — scheduled/live only; a FINAL card drops the
+                  live-style chip for the settled score block above (L2-112 Item 2). */}
+              {!isLive && !isFinished && (
                 <AnimatedProbability
                   value={homeProb}
                   className={cn(
@@ -329,13 +336,15 @@ export default function EventCard({
               )}
             </div>
 
-            {/* Team-colored probability bar */}
-            <ProbabilityBar
-              homeProbability={homeProb}
-              homeFavorite={homeFavorite}
-              useCSSVars
-              height={isLive ? 3 : 5}
-            />
+            {/* Team-colored probability bar — hidden on FINAL (settled score above) */}
+            {!isFinished && (
+              <ProbabilityBar
+                homeProbability={homeProb}
+                homeFavorite={homeFavorite}
+                useCSSVars
+                height={isLive ? 3 : 5}
+              />
+            )}
 
             {/* Away team */}
             <div className="flex items-center justify-between gap-2">
@@ -380,7 +389,8 @@ export default function EventCard({
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.away_team} score: ${event.away_score}`}>{event.away_score}</span>
                 )}
               </div>
-              {!isLive && (
+              {/* Probability chip — scheduled/live only (see home team above). */}
+              {!isLive && !isFinished && (
                 <AnimatedProbability
                   value={awayProb}
                   className={cn(

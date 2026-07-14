@@ -128,6 +128,11 @@ function formatFinishedDate(commenceTime: string): string {
   const game = new Date(commenceTime);
   const now = new Date();
 
+  // L2-112 Item 2: a FINAL game can never be in the future. When commence_time
+  // actually holds a Kalshi close/resolution timestamp (gotcha #14), it can be a
+  // future date — never render that beside a FINAL badge (an impossible state).
+  if (game.getTime() > now.getTime()) return "";
+
   const isToday =
     game.getDate() === now.getDate() &&
     game.getMonth() === now.getMonth() &&
@@ -483,7 +488,9 @@ function EventFeedCard({
             </div>
           </div>
 
-          {displayHomeProb !== null && displayAwayProb !== null && (
+          {/* Live/pregame probability chips — dropped on FINAL for the settled
+              treatment (L2-112 Item 2: the score + bold winner tell the story). */}
+          {!isFinished && displayHomeProb !== null && displayAwayProb !== null && (
             <div className="flex-shrink-0 text-right">
               {/* Away prob */}
               <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
@@ -497,8 +504,10 @@ function EventFeedCard({
           )}
         </div>
 
-        {/* Probability bar — current odds for live/scheduled, opening odds for finished */}
-        {barHomeProb !== null && barAwayProb !== null && (
+        {/* Probability bar — current odds for live/scheduled; dropped on FINAL
+            (the settled card shows score + winner, not a live-style split). The
+            pre-game context survives as the muted "Opened X/Y" text below. */}
+        {!isFinished && barHomeProb !== null && barAwayProb !== null && (
           <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
             <div
               className="h-full transition-all rounded-l-full"

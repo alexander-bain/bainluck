@@ -325,8 +325,34 @@ export default function EventPage({ params }: EventPageProps) {
   const { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb } =
     resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
 
+  // L2-112 Item 1: settled events get a winner treatment (final score + winner
+  // chip), NOT a stale pregame percentage. Mirrors the futures settled-hero rule
+  // (FuturesHero.tsx) — the probability journey stays in the chart below.
+  // Winner is derived from the final score, not the pregame favorite.
+  const settledWinnerName =
+    isFinished && bestHomeScore !== null && bestAwayScore !== null && bestHomeScore !== bestAwayScore
+      ? (bestHomeScore > bestAwayScore
+          ? (event.home_team.split(" ").pop() || event.home_team)
+          : (event.away_team.split(" ").pop() || event.away_team))
+      : null;
+
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
+
+  // L2-112 Item 4: the Score Differential card must hide when there is no
+  // projected OR actual score data — otherwise ScoreDifferentialChart returns
+  // null (or its "Score data is not available" message) inside a card shell,
+  // leaving an empty heading. Mirror the child's real data requirement
+  // (hasProjectedScoreData || hasActualScoreData) at the parent gate.
+  const hasScoreDiffData = !!historyData && (
+    (historyData.history ?? []).some(
+      (p) => p.projected_home_score != null && p.projected_away_score != null
+    ) ||
+    (historyData.score_history?.length ?? 0) > 0 ||
+    (historyData.espn_history ?? []).some(
+      (p) => p.home_score != null && p.away_score != null
+    )
+  );
 
   return (
     <ErrorBoundary fallback={
@@ -562,8 +588,29 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
 
-            {/* Center: Giant Probability */}
+            {/* Center: Giant Probability (live/pregame) OR winner treatment (settled) */}
             <div className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0">
+              {isFinished ? (
+                /* Settled: winner name + chip, no big number (mirrors FuturesHero's
+                   resolved rule). The score is shown under each team; the win-prob
+                   journey stays in the chart below. */
+                <div className="flex flex-col items-center gap-1.5">
+                  {settledWinnerName ? (
+                    <>
+                      <span className="text-base sm:text-lg font-semibold text-text-primary tracking-tight text-center">
+                        {settledWinnerName}
+                      </span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">
+                        Won
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-text-muted/15 text-text-secondary">
+                      {bestHomeScore !== null && bestAwayScore !== null ? "Final · Tied" : "Final"}
+                    </span>
+                  )}
+                </div>
+              ) : (
               <div className="flex items-baseline">
                 <span
                   className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
@@ -591,9 +638,10 @@ export default function EventPage({ params }: EventPageProps) {
                   %
                 </span>
               </div>
+              )}
 
-              {/* Trend indicator — change since opening */}
-              {openingHomeProb !== null && homeProb !== null && (() => {
+              {/* Trend indicator — change since opening (live/pregame only) */}
+              {!isFinished && openingHomeProb !== null && homeProb !== null && (() => {
                 const delta = homeProb - openingHomeProb;
                 const absDelta = Math.abs(delta);
                 if (absDelta < 0.01) return null; // Less than 1% change — not meaningful
@@ -620,8 +668,8 @@ export default function EventPage({ params }: EventPageProps) {
                 );
               })()}
 
-              {/* Opening odds (faint) */}
-              {openingHomeProb !== null && (
+              {/* Opening odds (faint) — live/pregame only */}
+              {!isFinished && openingHomeProb !== null && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
                     Opened {formatProbability(openingHomeProb)} {"–"} {formatProbability(openingAwayProb)}
@@ -629,8 +677,8 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
 
-              {/* Source label */}
-              {probSourceLabel && (
+              {/* Source label — live/pregame only */}
+              {!isFinished && probSourceLabel && (
                 <div className="mt-1">
                   <span className="text-[11px] text-text-muted">
                     {probSourceLabel}
@@ -729,12 +777,9 @@ export default function EventPage({ params }: EventPageProps) {
                 <span className="text-[10px] text-text-muted tabular-nums font-mono">{countdown}s</span>
               </div>
             )}
-            {isFinished && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-text-muted" />
-                <span className="text-[10px] text-text-muted font-medium">Final</span>
-              </div>
-            )}
+            {/* L2-112 Item 1: chart-card "Final" removed — the hero phase badge +
+                winner chip already mark the game final (killed the "Final … Final"
+                dup Alex flagged). The fullscreen modal keeps its own label. */}
           </div>
           <button
             onClick={() => setChartFullscreen(true)}
@@ -874,8 +919,8 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
 
-      {/* Score Differential Chart - always show for live/completed games */}
-      {historyData && ((historyData.history?.length ?? 0) > 0 || (historyData.score_history?.length ?? 0) > 0 || (historyData.espn_history?.length ?? 0) > 0) && (
+      {/* Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4) */}
+      {hasScoreDiffData && (
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             Score Differential

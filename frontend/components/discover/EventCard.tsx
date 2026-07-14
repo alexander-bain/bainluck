@@ -85,7 +85,9 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} {isDone ? "" : "@"} {data.home_team}</h3>
         </Link>
 
-        {homeProb != null && awayProb != null && (
+        {/* Live/pregame win-probability strip — a settled game drops it for the
+            winner treatment below (L2-112 Item 2: FINAL cards don't carry live chips). */}
+        {!isDone && homeProb != null && awayProb != null && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm mb-1">
               <span className="font-bold" style={{ color: awayColor }}>{formatProbability(awayProb)}</span>
@@ -96,6 +98,16 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: awayColor }} />
               <div className="transition-all duration-500" style={{ width: `${homeProb * 100}%`, backgroundColor: homeColor }} />
             </div>
+          </div>
+        )}
+
+        {/* Settled winner treatment — score is shown on the crest above (L2-112 Item 2). */}
+        {isDone && data.home_score != null && data.away_score != null && data.home_score !== data.away_score && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-sm font-semibold text-text-primary">
+              {(data.home_score > data.away_score ? data.home_team : data.away_team).split(" ").pop()} won
+            </span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">Final</span>
           </div>
         )}
 

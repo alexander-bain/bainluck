@@ -129,11 +129,38 @@ function StatBox({
   teamColor,
 }: {
   stat: PlayerStat;
-  gameState: "pre" | "live" | "done";
+  gameState: "pre" | "live" | "done" | "settled";
   teamColor: string;
 }) {
   const accent = teamColor;
   const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+  // Settled but ungradeable (no box score, no server-side grade): show the line
+  // honestly with NO probability bar — a resolved market's over_probability
+  // collapses to ~100%/0% and would read as a fake grade (L2-112 Item 3).
+  if (gameState === "settled") {
+    const firstLine =
+      stat.shape === "ladder" && stat.rungs && stat.rungs.length > 0
+        ? stat.rungs[0].threshold
+        : stat.threshold;
+    return (
+      <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
+          <SourceDot count={stat.sources} />
+        </div>
+        <div className="flex items-baseline gap-2 mb-1.5">
+          <div className="font-mono tabular-nums text-lg font-bold text-text-primary">
+            {firstLine != null ? `${firstLine}+` : "—"}
+          </div>
+          <div className="text-xs text-text-muted">line</div>
+        </div>
+        <span className="text-[10px] font-medium text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
+          Resolved &middot; grading unavailable
+        </span>
+      </div>
+    );
+  }
 
   if (stat.shape === "ladder" && stat.rungs) {
     const actual = stat.actual ?? 0;
@@ -269,7 +296,7 @@ function StatBox({
   );
 }
 
-function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; gameState: "pre" | "live" | "done"; showAllStats: boolean }) {
+function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; gameState: "pre" | "live" | "done" | "settled"; showAllStats: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const isExpanded = showAllStats || expanded;
   const pointsStats = player.stats.filter((s) => /^points?$/i.test(s.type));
@@ -345,9 +372,15 @@ export default function PlayerPropsDashboard({
   const [showAllStats, setShowAllStats] = useState(false);
 
   const hasBoxScore = boxScore?.players != null && boxScore.players.length > 0;
-  const gameState: "pre" | "live" | "done" =
+  const isSettled = eventStatus === "completed" || eventStatus === "closed";
+  // L2-112 Item 3: a settled game with no box score can't be graded client-side
+  // (the game-markets payload carries no actual/is_winner field — see report).
+  // It must NOT fall through to "pre", which renders the resolved over_probability
+  // as a misleading 100%/0% bar. "settled" → honest line-only fallback.
+  const gameState: "pre" | "live" | "done" | "settled" =
     eventStatus === "live" ? "live" :
-    (eventStatus === "completed" || eventStatus === "closed") && hasBoxScore ? "done" : "pre";
+    isSettled && hasBoxScore ? "done" :
+    isSettled ? "settled" : "pre";
 
   const players = useMemo(() => {
     const hasPlayerProps = data.player_props && data.player_props.length > 0;
@@ -550,6 +583,9 @@ export default function PlayerPropsDashboard({
       <div className="flex items-end justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
+          {gameState === "settled" && (
+            <p className="text-[11px] text-text-muted mt-0.5">Final &middot; per-player grading unavailable for this game</p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

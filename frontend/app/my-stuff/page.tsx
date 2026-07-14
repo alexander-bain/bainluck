@@ -621,6 +621,20 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
 }
 
 /**
+ * L2-112 Item 4: every team-futures card should show a season. Prefer the
+ * backend season_year; fall back to the resolution_date's year so a card never
+ * renders a bare "PLAYOFFS" (or a market with no season) when season_year is null.
+ */
+function deriveSeasonYear(item: TeamFutureItem): string | undefined {
+  if (item.season_year) return item.season_year;
+  if (item.resolution_date) {
+    const y = new Date(item.resolution_date).getFullYear();
+    if (!Number.isNaN(y)) return String(y);
+  }
+  return undefined;
+}
+
+/**
  * Detect playoff journeys: teams with any progression stages.
  * Returns journeys and remaining items that aren't part of any journey.
  */
@@ -676,8 +690,34 @@ function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
     });
   }
 
+  // L2-112 Item 4 stopgap: the map is keyed by matched_team.id, so a single real
+  // team represented by two source-specific team ids yields two identical cards.
+  // Fold journeys whose team names normalize equal, merging their stages (keeping
+  // the higher-probability stage per progression order). The proper fix is the
+  // server-side identity graph (Epic-A) collapsing those ids upstream.
+  const foldedByName = new Map<string, PlayoffJourney>();
+  for (const j of journeys) {
+    const nameKey = j.teamName.trim().toLowerCase();
+    const existing = foldedByName.get(nameKey);
+    if (!existing) {
+      foldedByName.set(nameKey, j);
+      continue;
+    }
+    const byOrder = new Map<number, PlayoffJourney["stages"][number]>();
+    for (const s of [...existing.stages, ...j.stages]) {
+      const prev = byOrder.get(s.stageOrder);
+      if (!prev || (s.merged.avgProbability ?? -1) > (prev.merged.avgProbability ?? -1)) {
+        byOrder.set(s.stageOrder, s);
+      }
+    }
+    existing.stages = Array.from(byOrder.values()).sort((a, b) => a.stageOrder - b.stageOrder);
+    existing.teamLogo = existing.teamLogo || j.teamLogo;
+    existing.teamColor = existing.teamColor || j.teamColor;
+  }
+  const dedupedJourneys = Array.from(foldedByName.values());
+
   // Sort journeys by highest stage probability (championship preferred, fallback to any)
-  journeys.sort((a, b) => {
+  dedupedJourneys.sort((a, b) => {
     const bestProb = (j: PlayoffJourney) => {
       const champ = j.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability;
       if (champ != null) return champ;
@@ -686,7 +726,7 @@ function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
     return bestProb(b) - bestProb(a);
   });
 
-  return { journeys, remaining };
+  return { journeys: dedupedJourneys, remaining };
 }
 
 function TeamFuturesSection({
@@ -788,9 +828,10 @@ function TeamFuturesSection({
       {journeys.length > 0 && (
         <div className="grid gap-3 mb-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
           {journeys.map((journey) => {
-            // BR52: Extract season year from any stage's primary item
+            // BR52 + L2-112 Item 4: season from any stage, falling back to the
+            // resolution-date year so every card shows a season (not bare "PLAYOFFS").
             const seasonYear = journey.stages
-              .map((s) => s.merged.primary.season_year)
+              .map((s) => deriveSeasonYear(s.merged.primary))
               .find((y) => y != null) ?? undefined;
             return (
             <ProgressionLadder
@@ -911,6 +952,9 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
     .replace(/\s*20\d{2}-\d{2}\s*/i, " ")
     .trim();
 
+  // L2-112 Item 4: season label with resolution-date fallback (every card shows one).
+  const seasonLabel = deriveSeasonYear(primary);
+
   // Build rank context
   const rankStr = primary.rank && primary.total_outcomes
     ? `#${primary.rank} of ${primary.total_outcomes}`
@@ -952,7 +996,7 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
         <div className="flex items-center gap-1.5 mt-0.5">
           <p className="text-[11px] text-text-muted truncate">
             {marketName}
-            {primary.season_year && <span className="text-text-muted/70"> &middot; {primary.season_year}</span>}
+            {seasonLabel && <span className="text-text-muted/70"> &middot; {seasonLabel}</span>}
             {rankStr && <span className="text-text-muted/70"> &middot; {rankStr}</span>}
           </p>
           {/* Source dots */}
