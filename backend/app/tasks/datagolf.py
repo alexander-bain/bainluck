@@ -50,6 +50,28 @@ INPLAY_WINDOW_TTL = 7200
 POLL_TOURS = ["pga", "euro", "kft", "opp", "alt"]
 
 
+def _in_play_event_matches(market_name: str | None, in_play_event_name: str | None) -> bool:
+    """True if a datagolf market belongs to the in-play event (#191).
+
+    The in-play endpoint is per-TOUR and returns ONE event's board; the live
+    poll must only write that board to markets for the SAME event, else the
+    current event's leaderboard/probabilities get blasted onto every open
+    datagolf:{tour}:% market (The Open got a stale winner's -17 round-4 board two
+    days before tee-off). Mirrors routes/playoffs._validate_in_play_data:
+    substring match of the in-play event name against the market's event part
+    ("The Open Championship - Winner" -> "the open championship"). When the
+    in-play event name is unknown, do not block on identity (the future-date
+    guard still applies at the call site).
+    """
+    ip = (in_play_event_name or "").lower().strip()
+    if not ip:
+        return True
+    mkt_event = (market_name or "").lower().rsplit(" - ", 1)[0].strip()
+    if not mkt_event:
+        return True
+    return ip in mkt_event or mkt_event in ip
+
+
 def _golf_inplay_window_active(r) -> bool:
     """#144: cheap guard for the dedicated in-play beat — True if a tournament is
     happening (schedule window flag set by the hourly poll) OR a live event flag
@@ -419,7 +441,7 @@ async def _poll_datagolf_live() -> dict:
         async with get_task_session() as session:
             for tour in POLL_TOURS:
                 try:
-                    players = await service.get_in_play(tour=tour)
+                    players, in_play_info = await service.get_in_play_with_info(tour=tour)
                     if not players:
                         # No live event — clear live flag
                         r.delete(f"{LIVE_KEY_PREFIX}:{tour}")
@@ -566,8 +588,32 @@ async def _poll_datagolf_live() -> dict:
                     # Detect round transitions for round_history metadata
                     current_round = players[0].current_round if players else None
 
+                    # #191 guard: the in-play endpoint is per-TOUR and returns ONE
+                    # event's board. Without an identity check the current event's
+                    # leaderboard + live probs get blasted onto EVERY open
+                    # datagolf:{tour}:% market — including future majors. This put
+                    # Tom Kim @ 1.0 (a stale winner's board) onto The Open two days
+                    # before tee-off, and the hourly pre-tournament poll's correct
+                    # probs were clobbered ~40s later on every cycle. Mirror
+                    # routes/playoffs._validate_in_play_data: only write to markets
+                    # for the in-play event, and never to a tournament that has not
+                    # started (commence_time in the future).
+                    ip_event_name = (in_play_info or {}).get("event_name", "") or ""
+
                     for market in markets:
                         market_type = market.external_id.rsplit(":", 1)[-1]  # "win", "top_5", etc.
+
+                        # A tournament that hasn't started can have no in-play data.
+                        if market.commence_time and market.commence_time > now:
+                            stats["skipped_future"] = stats.get("skipped_future", 0) + 1
+                            continue
+
+                        # Only write to markets belonging to the in-play event.
+                        if not _in_play_event_matches(market.name, ip_event_name):
+                            stats["skipped_event_mismatch"] = (
+                                stats.get("skipped_event_mismatch", 0) + 1
+                            )
+                            continue
 
                         # Update round_history in metadata
                         if current_round and market.market_metadata:

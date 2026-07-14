@@ -167,6 +167,39 @@ def _norm_player_name(s: str | None) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _ascii_player_name(s: str | None) -> str:
+    """Diacritic-stripped normalized name ("Ludvig Åberg" -> "ludvig aberg").
+
+    The concept-page competitor name (Kalshi/Polymarket display) and the
+    evolution-market outcome name (raw DataGolf) frequently differ only by
+    accents, so an exact ``_norm_player_name`` join silently drops the sparkline
+    for those golfers. (#191)
+    """
+    import unicodedata
+
+    norm = _norm_player_name(s)
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", norm)
+        if not unicodedata.combining(ch)
+    )
+
+
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def _last_first_initial_key(s: str | None) -> str | None:
+    """"lastname|f" key (diacritic-stripped) to bridge nickname/first-name
+    variants like "Matthew Fitzpatrick" (DataGolf) vs "Matt Fitzpatrick"
+    (Kalshi). Returns None for single-token names. Used only as an
+    ambiguity-guarded last-resort join. (#191)
+    """
+    ascii_name = re.sub(r"[.'`]", "", _ascii_player_name(s))
+    toks = [t for t in ascii_name.split() if t not in _NAME_SUFFIXES]
+    if len(toks) < 2:
+        return None
+    return f"{toks[-1]}|{toks[0][0]}"
+
+
 def fuse_golf_live(
     competitors: list[dict],
     leaderboard: list[dict] | None,
@@ -328,22 +361,50 @@ async def attach_competitor_history(
     if cur_oid is not None:
         series_by_outcome[cur_oid] = ordered
 
-    # name → (outcome_id, downsampled history) for name-matching to competitors.
-    hist_by_name: dict[str, dict] = {}
+    # Build three lookups so a competitor whose display name differs from the
+    # evolution-market outcome name only by accents or a first-name nickname
+    # still gets its sparkline (#191): exact-normalized, diacritic-stripped, and
+    # an ambiguity-guarded last-name+first-initial bridge.
+    hist_full: dict[str, dict] = {}
+    hist_ascii: dict[str, dict] = {}
+    hist_li: dict[str, dict] = {}
+    hist_li_ambiguous: set[str] = set()
     for oid, pts in series_by_outcome.items():
         if len(pts) < 2:
             continue
         ds = downsample_points(pts, target_points)
-        hist_by_name[_norm_player_name(id_to_name.get(oid))] = {
+        entry = {
             "outcome_id": oid,
             "history": [
                 {"timestamp": ts.isoformat(), "probability": round(p, 4)}
                 for ts, p in ds
             ],
         }
+        name = id_to_name.get(oid)
+        hist_full[_norm_player_name(name)] = entry
+        hist_ascii.setdefault(_ascii_player_name(name), entry)
+        li = _last_first_initial_key(name)
+        if li:
+            if li in hist_li:
+                hist_li_ambiguous.add(li)
+            hist_li[li] = entry
+
+    # Only bridge by last-name+initial when it's unambiguous on BOTH sides.
+    comp_li_counts: dict[str, int] = {}
+    for c in competitors:
+        li = _last_first_initial_key(c.get("name"))
+        if li:
+            comp_li_counts[li] = comp_li_counts.get(li, 0) + 1
 
     for c in competitors:
-        entry = hist_by_name.get(_norm_player_name(c.get("name")))
+        name = c.get("name")
+        entry = hist_full.get(_norm_player_name(name)) or hist_ascii.get(
+            _ascii_player_name(name)
+        )
+        if not entry:
+            li = _last_first_initial_key(name)
+            if li and li not in hist_li_ambiguous and comp_li_counts.get(li) == 1:
+                entry = hist_li.get(li)
         if entry:
             c["outcome_id"] = entry["outcome_id"]
             c["history"] = entry["history"]
