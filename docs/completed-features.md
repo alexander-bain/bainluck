@@ -1,5 +1,58 @@
 # Completed Features (Shipped)
 
+> **Note (2026-07-14):** Entries before May 20 are the granular daily log. The block
+> below rolls up ~8 weeks (May 20 → mid-July) at the program level; per-item detail
+> lives in GitHub issues (#N), `.claude/handoff/` reports, and `docs/feature-reference.md`.
+
+## May 20 – July 14, 2026 — Reliability program, event concepts, sentinels, cockpit, calibration autopilot
+
+Organized by the programs in `docs/execution-plan-2026-07-13.md` (P1–P7).
+
+### Event concepts + hubs (P5 — the "unified surfaces" priority)
+- ✅ **Event concept pages** — `/event/<domain>/<slug>` renders tournaments, fight cards, ceremonies, and elections as one event-framed page (H1 = event, not a market). Generic envelope `GET /api/event/{key}` + per-domain adapters (golf, tennis, F1, UFC, boxing, awards, elections) over `utils/event_concept.py`. `primary.kind` = `winner_field` or `co_equal_list`.
+- ✅ **Competition hubs** — `GET /api/hub/{competition}` (mma/boxing/golf/tennis/esports): config-driven upcoming rails + futures/awards/props sections, combat fight/prop split, whole-hub Redis cache with stale fallback, 90-day horizon cap on combat rails.
+- ✅ **Fused leaderboard + bout grid** — `EventLeaderboard` (rank/seed/live chip/prob bar/sparkline/24h movement/big %), golf-live fused rows (`Pos · Player · To-par · Thru · Δ · Win%`), `MatchupsRail` bout grid responsive on desktop (L2-113).
+- ✅ **Slug URLs + canonical + redirects** — colon-free `/event/mma/...` slugs replaced the `%3A`-encoded form; `<link rel="canonical">` to the pretty slug; client 301-equivalent upgrade to a backend self-resolving slug (combat = headliner+date). Legacy-key decode-before-redirect (`7f9553a1`).
+- ✅ **Combat concept polish** — Wikipedia fighter headshots (`FighterAvatar`, cached, initials fallback), desktop responsive bout grid, design-token pass (Queue L2-113).
+
+### Settled-state system ("settled means settled")
+- ✅ **System-wide settled treatment** — heroes show winners (winner name + "Won" chip, not stale pregame %), feed cards show results ("FINAL"/"RESOLVED" + result line), props render graded (HIT/MISS vs line via `PlayerPropsDashboard`, prefers authoritative server grade; "Resolved · grading unavailable" fallback rather than misleading ~100%/0% — L2-112), charts show the completed journey with the correct last-snapshot domain (gotcha #22/#46), `SettledPathChart` for concepts.
+- ✅ **Inverted `completed_at` class** — 439 events where a wrong game's data merged on (`completed_at < commence_time`, gotcha #32) read-side healed (#189) and data-repaired 439→0 (Queue #191); DataGolf live-poll contamination fixed (#191/`04e665e6`).
+
+### Reliability / measurement machines (P3)
+- ✅ **Flow Sentinel** (#1078, Queue #185) — 7 production user-flow checks daily at 07:10 UTC (search gold-set, duplicate events, event completeness, sports-feed events, resolved-state, chart density, category discover); auto-files one deduped `alert-intake` issue per failing flow; scorecard on the cockpit. First real catch: 21 recurring unmerged duplicate events (#1085).
+- ✅ **Calibration Sentinel** (#1054) — weekly cohort-mining (category×source×series×structure×provenance) with n-weighted MCE on the raw population + new-format early-warning tier; files evidence packs, never regrades.
+- ✅ **Admin cockpit** (P5, L2-102) — `GET /api/admin/cockpit`: health tiles (green/amber/red with tracked/artifact/untracked RED annotations), "Waiting on you" (GitHub `needs-user`), eval queue, Flow-Sentinel scorecard.
+
+### Calibration done + backfill autopilot (P1)
+- ✅ **Backfill-progress census** (#179/#1052) — snapshot density by source×month, success cohort (≥95% of post-Jul-2 resolved with cal_prob + ≥15 points), `chart_density` no-embarrassing-charts SLA tile, June-freeze recovery ledger (recovered/pending/aged-out per gotcha #35). `GET /api/admin/backfill-progress`.
+- ✅ **Dedicated cal-price task** (#180) — `compute_calibration_prices` extracted from `backfill_winners` (it budget-guarded out every run), beat at :10 of hours 2/8/14/20, monotonic + resumable.
+- ✅ **Kalshi creation-freeze fix** (#995 chain) — poll_kalshi SIGKILL-before-create resolved via orjson decode + smaller pages + resumable cursor + phase markers + bounded sockets (gotchas #38/#39).
+- ✅ **Sign-flip / integrity regrades** — generalized Kalshi player-prop threshold cal_probability capture fix (gotcha #17, cross-sport; #941/#186), Polymarket Under sign-flip regrade, resolution-authority ladder as the single source of truth (`utils/resolution_authority.py`), poison-guard against guess sources overwriting authoritative grades.
+- ✅ **Calibration page pack** (L2-80) — de-duplicated category presentation, consolidated trading-activity story, corrections log as a collapsed disclosure, novelty-market honesty framing.
+
+### Discover always-interesting + end state (P4)
+- ✅ **RANK ruler de-saturation** (#141/#143) — internal ranking is an uncapped float; curation adjustment applies before the cap, the interestingness blend operates on the uncapped score (previously dead for saturated cards), personalization multiplies last. Blend-weight double-scale + +15-cap fixed.
+- ✅ **End-of-feed grace** — `EndOfFeedCard` "You're all caught up" with markets-explored count, refresh affordance, and category links (web sibling of #1087).
+- ✅ **Feed robustness** — per-item try/except so one bad item can't empty a whole tab (#1091/gotcha #42); diversity caps scoped by card type so game events are never capped into an empty Sports tab (gotcha #43); tournament-card cap-escape fix (#1087).
+
+### Instant Answers / search (P1 failure-class #1)
+- ✅ **Instant Answers program launched** (#993) — the "fastest merged entity-question answer" program; Phase 0 established coverage is fine and search+speed are the problem, with a frozen 25-question benchmark (`docs/strategy-instant-answers.md`).
+
+### Universal matching (failure-class #2)
+- ✅ **Entity registry / universal matching** (Epic A, #1018 chain) — identity-graph foundation with person surname↔fullname alias bridges, Polymarket matchup backfill, combat/MMA cross-source fight linkage via entrant-set matching; unmerged-duplicate merge gap fix (#1085, external_id-NULL structured-match, gotcha #32).
+
+### Classification integrity
+- ✅ **Football + motorsports misclassification sweeps** (#181/#183/#184) — esports/rugby/KBO/NPB/K-League/cricket rows mis-tagged `football`; motorsports non-race markets fixed via ticker-prefix maps in `sport_keys.py` + reclassification backfill + guard tests.
+
+### Multi-platform (P7)
+- ✅ **P7 Step-0 device audit** (#1080) — watch/iPad/Mac inventory; CLAUDE.md platform line corrected to iOS/iPadOS/macOS/watchOS; surfaced that the watch complication + `BainLuckWidget/` are not wired into any Xcode target.
+- ✅ **Native dogfood fixes** — macOS build breaks (`Color(.systemBackground)` → cross-platform), iOS `FlowLayout` redeclaration + `TextFormatting` actor-isolation (#184), native Discover golf-flood + abrupt-end fixes (#187).
+
+### Docs & governance
+- ✅ **PRD rev 2026-07-14** — full rewrite folding the ratified theses (reliability definition of success, props = script/divergence, morning digest v1, P7 Apple surfaces, Instant Answers, universal matching, settled-state, no-gambling-enticements).
+- ✅ **Execution plan of record** (`docs/execution-plan-2026-07-13.md`), decisions register (`docs/decisions-2026-07-06.md`), governance sync (#184), docs sweep (#192-docs / L2-115-docs).
+
 ## May 19-20, 2026 — App Store Fixes + Bug Triage + Route Refactors
 
 - ✅ **App Store review fixes** — Added support section to `/about` page (web + native) with `bugs@bainluck.com` contact. Auth health diagnostic endpoint (`/api/auth/health`) verifies Firebase SDK can create tokens. Fixed potential `created_at` null crash in auth response. Drafted "Who creates predictions?" reply for App Store Connect.

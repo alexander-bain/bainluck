@@ -1247,3 +1247,81 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin
 - Tests: `backend/tests/test_market_grouping.py` (315 tests), `backend/tests/test_futures_timeline.py` (20 tests)
 
 ---
+
+## Recent Programs (mid-May → mid-July 2026)
+
+The features below shipped after the mid-May snapshot above. They map to the programs in `docs/execution-plan-2026-07-13.md` (P1–P7) and the six failure classes the reliability program hunts.
+
+### Event Concept Pages + Hubs (unified tournament/card/ceremony surfaces)
+Tournaments, fight cards, ceremonies, and elections render as ONE event-framed page at `/event/<domain>/<slug>` — the H1 is the *event*, not a market. This is the "event concepts + hubs" priority (#5): one matching engine and entity registry underneath, one page pattern on top.
+
+**Backend — generic concept envelope:**
+- `GET /api/event/{key}` (`backend/app/routes/event.py`) — parses `event:<domain>:<slug>` via `parse_event_key`, dispatches to a per-domain adapter, returns the generic envelope (404 if no adapter/event).
+- `backend/app/utils/event_concept.py` — the domain-parameterized core: `EventConceptAdapter` Protocol, `register_adapter`/`get_adapter` registry. Envelope shape: `event / primary{kind,label,competitors,evolution_market_id} / sections / children / movers`. `primary.kind` is `"winner_field"` (golf/tennis/F1 leaderboard) or `"co_equal_list"` (UFC card, awards, elections).
+- Registered adapters: golf (delegates to `routes/golf.py`; includes the fused live leaderboard `fuse_golf_live` + per-competitor history `attach_competitor_history`), tennis (`event_tennis.py`), F1 (`event_f1.py`), UFC (`event_ufc.py`), boxing (`event_boxing.py`), awards (`event_awards.py`), elections (`event_election.py`).
+
+**Backend — competition hubs:**
+- `GET /api/hub/{competition}` (`backend/app/routes/hub.py`) — config-driven landing pages. `HUB_CONFIGS` covers `mma`, `boxing`, `golf`, `tennis`, `esports`. Composes an "upcoming" rail (`_UPCOMING_LISTERS`) + futures/awards/props sections (from `league_futures.get_league_futures`). Combat hubs split fights vs props via `_PROP_CLASSIFIERS`. Whole-hub Redis cache (3 min + 24h stale fallback); 90-day horizon cap on `ufc`/`boxing` rails.
+
+**Frontend — slug routing, canonical, redirect:**
+- `frontend/app/event/[domain]/[slug]/page.tsx` — colon-free URL (L2-113, replacing the `event%3A...` form). Reconstructs the API key from the two decoded segments, injects `<link rel="canonical">` to the pretty slug, and does a client 301-equivalent `router.replace(...)` when the backend returns a prettier self-resolving slug (combat = headliner + date). Legacy-key decode-before-redirect: commit `7f9553a1`.
+- Section components in `frontend/components/event/`: `EventHeader`, `MatchupsRail` (the bout grid — responsive on desktop, not horizontal scroll), `EventLeaderboard` (fused winner-field + golf-live + settled "Won"), `RaceToTitleChart`, `TwoSidedTimeline` (combat), `EventProps`, `SettledPathChart`, `FighterAvatar`, `Sparkline`, `FreshnessChip`.
+
+See `docs/design-system.md` → "Concept-page patterns" for the visual spec.
+
+### Settled-State System ("settled means settled")
+One system-wide rule: a finished event/market/prop/chart shows its result, never a stale live affordance. Live percentages, movement pills, "Opened X/Y", and trend arrows are gated behind `!isFinished`/`!resolved` and *replaced* by a result.
+
+- **Heroes** show winners: settled event hero renders the winner short-name + a "Won" chip instead of the giant percentage (`app/events/[id]/page.tsx`); settled futures hero (`components/FuturesHero.tsx`) shows the winning outcome + "Won"/"Resolved".
+- **Cards** show results: `EventFeedCard` "FINAL" pill (hides prob chips/bar), `FuturesFeedCard` "RESOLVED" + "{winner}: {opening%} → Won", Discover `EventCard` "{winner} won". `formatFinishedDate` guards against printing a future date beside FINAL (gotcha #14).
+- **Props** render GRADED: `components/PlayerPropsDashboard.tsx` states `pre|live|done|settled`; a graded `StatBox` shows actual-vs-line with a "HIT"/"MISS" pill (prefers authoritative server grade, gotcha #37), and settled-but-ungradeable shows "Resolved · grading unavailable" rather than a misleading ~100%/0% bar (L2-112).
+- **Charts** show the completed journey with the domain ending at the real last-snapshot time, not the backend processing timestamp (gotcha #22/#46); settled concept chart = `components/event/SettledPathChart.tsx`.
+
+Backend correctness guards: the Flow Sentinel `resolved_state` flow asserts settled events never render live and `completed_at >= commence_time` (gotcha #32/#46). The 439-row inverted `completed_at < commence_time` class was read-side healed (#189) and data-repaired (Queue #191).
+
+### Flow Sentinel (reliability measurement machine)
+A scripted acceptance sentinel that continuously exercises real user flows against production and auto-files evidence-packed issues on regression — the measurement half of the reliability/design program (#1078, Queue #185). This is "sentinels over Alex's eyeball": Alex exits the detection loop.
+
+- Task: `backend/app/tasks/flow_sentinel.py` (`_run_flow_sentinel`). Celery `app.tasks.flow_sentinel`, beat `flow-sentinel-daily` at **07:10 UTC daily** (soft 840s / hard 900s), background queue.
+- Runs **seven flows** against `https://api.bainluck.com`: `search_gold_set`, `duplicate_events`, `event_completeness`, `sports_feed_events` (the #1091 empty-Sports-tab guard), `resolved_state`, `chart_density`, `category_discover`. Search is scored against a frozen 25-query gold set (frozen 2026-07-06) + a canary query; files only on regressions.
+- Auto-files ONE deduped GitHub issue per failing flow (`flow-sentinel-fingerprint:<sha1[:12]>` dedupe; re-runs comment instead of re-filing). Labels: `alert-intake`, `needs-agent`, an `area:*`, `priority:p1|p2` (chart_density capped at P2). Requires `GITHUB_TOKEN` on Heroku (see gotchas).
+- Endpoints: `POST /api/admin/flow-sentinel/run?inline=true&file_issues=false`, `GET /api/admin/flow-sentinel/last`. Scorecard cached at `bainluck:flow_sentinel:last` (14-day TTL), surfaced on the cockpit.
+
+### Calibration Sentinel (weekly cohort-mining detector)
+Weekly detector that mines resolved-outcome cohorts for miscalibration classes and files evidence packs, so calibration regressions get caught without a human eyeballing curves (#1054).
+
+- Task: `backend/app/tasks/calibration_sentinel.py` (`_run_calibration_sentinel`). Celery `app.tasks.calibration_sentinel`, beat `calibration-sentinel-weekly` at **Monday 06:20 UTC**.
+- Mines cohorts across **category × source × series-family × structure × table-provenance**, computes **n-weighted MCE** on the RAW un-excluded population, with a new-format early-warning tier (series first seen <30d get looser floors). Builds per-cohort evidence packs (bucket cp-vs-winrate, sample rows, placeholder census), classifies overlap vs known shipped exclusions and suppresses already-explained cohorts.
+- Files one deduped issue per cohort fingerprint (`sentinel-fingerprint:<sha1[:12]>`, capped at 6/run). Never writes market data (gotcha #21). Endpoint `POST /api/admin/calibration-sentinel/run` (live/backtest); cached at `bainluck:calibration_sentinel:last`.
+
+### Admin Cockpit (Alex's leverage surface)
+A read-only ops landing view that absorbs the detection loop (P5; L2-102). `GET /api/admin/cockpit` (`backend/app/routes/admin_cockpit.py`, `_check_admin_secret`, 5-min Redis cache, `?bust=1` to bypass). Four groups:
+1. **Health tiles** with green/amber/red bands (`_status_from_pct`): link rate, grid health, background queue, feed boring-rate, newest-market age, plus autopilot beat tiles (`calibration_prices`, `backfill_combat_wps`). Each RED is annotated `tracked` / `artifact` / `untracked` (`_red_sub_context`) so a known red doesn't read as a fresh alarm.
+2. **"Waiting on you"** — GitHub `needs-user` issues when `GITHUB_TOKEN` is set, else a static fallback list.
+3. **Eval queue** — pending `llm_proposed_*` review rows + new bug-report count, with inline verdict via `/api/admin/label-pass/verdict`.
+4. **Flow Sentinel scorecard** — per-flow pass/fail with tracked-issue links.
+
+Frontend: `frontend/components/admin/AdminCockpit.tsx`. Tile/badge conventions documented in `docs/design-system.md` → "Cockpit tile conventions".
+
+### Backfill Progress + Dedicated Cal-Price Task
+The measurement + autopilot half of the calibration program (P1).
+
+- **Backfill-progress census** (#179/#1052): `backend/app/tasks/precompute_backfill_progress.py` (`_precompute_backfill_progress`), cached at `bainluck:backfill_progress` (30-min TTL); beat `precompute-backfill-progress` every 15 min. Computes snapshot density by source × settlement month, the success cohort (settled after Jul-2 with `calibration_probability` + ≥15 history points), the `chart_density` tile (`BAR_POINTS_PER_HOUR=1.0`, the no-embarrassing-charts SLA), and the June-freeze recovery ledger (recovered / pending / permanently-aged-out per gotcha #35). Endpoint `GET /api/admin/backfill-progress`, consumed by the Flow Sentinel `chart_density` flow.
+- **Dedicated cal-price task** (#180): `app.tasks.compute_calibration_prices` (`_compute_calibration_prices` in `backend/app/tasks/backfill_winners.py`), beat `compute-calibration-prices` at minutes :10 of hours 2/8/14/20. Extracted from `backfill_winners` because it budget-guarded out (`stopped_before: calibration_prices`) on every run; now monotonic + resumable per 100K batch (see gotcha: budget-guard starvation).
+
+### End-of-Feed Grace
+The Discover feed no longer stops abruptly when the pool is exhausted. `frontend/components/discover/EndOfFeedCard.tsx` renders a "You're all caught up" card with a markets-explored count, a "Refresh feed" affordance, and category-exploration links. Wired in `frontend/app/discover/page.tsx` for both the empty state and the true end (`has_more=false`), the web sibling of the #1087 thin-pool lesson.
+
+### Settlement / Resolution Timeliness
+There is no single "rapid grading" component; settled-state correctness comes from several cooperating pieces:
+- Forward settlement capture at ingest: `_poll_kalshi_markets` sets `is_winner`/`resolution_source='api_settlement'` when `market.result` is present (the earliest, freshest grade; gotcha #33/#35 make this the only reliable window).
+- `app.tasks.transition_event_statuses` (`espn_sync.py`, every 60s) drives scheduled→live→closed transitions; `app.tasks.mark_resolved_futures` (every 6h) marks futures resolved when `resolution_date` passes.
+- `backfill_winners` + dedicated integrity siblings (`regrade_polymarket_under_signflip`, `correct_both_winner_guess_side`, etc.) backfill and correct historical grades under the resolution-authority ladder (`app/utils/resolution_authority.py`).
+
+### The Open Golf Sprint (coverage machinery)
+The golf-coverage sprint (P3, timed to The Open at Royal Birkdale) is deadline-budget + resumable-cursor work, not a hardcoded tournament list:
+- `kalshi_api.py` `get_events()` carries a `deadline` budget with #969 backoff caps (429 backoff capped at 10s, never sleeps past the deadline, returns the input cursor for resume) + orjson decode + reduced page size to keep the GIL hold sub-second (gotcha #38, #995).
+- `kalshi.py` `_backfill_from_settled_events` dynamically discovers all series with unresolved markets (replaced a hardcoded list); `_backfill_candlestick_snapshots` uses a resumable series cursor (gotcha #34); `_backfill_volume_only` runs a priority series list first.
+- Golf-specific fixes: `_fix_golf_commence_times` (#189, gated by Redis `golf_commence_fix:enabled`, gotcha #14), `_fix_golf_round_leader_dates` (#1088, per-round dates), and the DataGolf live-poll contamination fix (commit `04e665e6`, Queue #191 — stopped one event's in-play board being blasted onto all open tour markets).
+
+---

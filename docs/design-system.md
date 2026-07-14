@@ -1,6 +1,6 @@
 # Bain Luck Design System
 
-> **Source**: Extracted by Claude Design (April 2026) from `frontend/` codebase + user brief.
+> **Source**: Extracted by Claude Design (April 2026) from `frontend/` codebase + user brief. Settled-state, concept-page, threshold-group, end-of-feed, and cockpit sections added 2026-07-14 from the shipped implementation.
 > **Canonical tokens**: `frontend/app/globals.css`, `frontend/app/design-tokens.css`, `frontend/tailwind.config.ts`.
 > **Usage**: Reference this doc when writing Claude Design prompts or implementing new UI in Claude Code.
 
@@ -172,6 +172,78 @@ Thin 1.5px lines, `#EEF0F3` horizontal grid only (no vertical grid), eliminated 
 
 ### League Chips
 Horizontal scrollable row, pill-shaped (`9999px` radius). Active chip: `bg-text-primary text-text-inverse`. Inactive: `bg-surface-elevated text-text-secondary`. Sport emoji prefix. No scrollbar visible.
+
+### Threshold Grid (threshold-group component)
+`components/ThresholdGrid.tsx` — one card per threshold variant of the same question ("Bitcoin > $80K / $90K / $100K"; "RT score ≥ N"), sorted by `threshold_value`. Responsive `grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2`, framer-motion stagger. Each cell (`rounded-lg border p-3` on `--surface-card`): an "Under/Over" label, the mono formatted threshold (`$80K`, `1.5M`), a large mono percentage color-graded by probability, and a mini bar. The `highlightedValue` cell gets an `accent-brand` ring + `bg-accent-brand/5`. Source names removed (blend-only). Companion: `ThresholdSparkline.tsx`; the playoff-progression analog is `ProgressionLadder.tsx` (status dots: green achieved / red eliminated / muted pending). Backend grouping is `_group_threshold_markets()` on the category routes.
+
+### End-of-Feed Card (graceful end state)
+`components/discover/EndOfFeedCard.tsx` — replaces the abrupt silent stop when the Discover pool is exhausted or empty. `rounded-2xl bg-surface-card border` card: headline **"You're all caught up"**, sub-line "{count} markets explored — new markets open throughout the day, so check back soon.", a **"Refresh feed"** pill (`bg-accent-brand/10 text-accent-brand`, the web reload affordance — there's no pull-to-refresh), then an "Explore by category" row of `rounded-full bg-surface-elevated` links (Politics / Economics / Entertainment / Weather / Sports), each firing a `navigation_click` GA event.
+
+---
+
+## STANDING PRODUCT RULINGS (bind every surface)
+
+Two Alex rulings sit above the visual system — they decide *what* renders before this doc decides *how*.
+
+- **Probabilities only, never odds.** No American (−150/+130), decimal, or spread-style prices anywhere a user can see. Probability (`%`) is the only quantity format on any surface. Payloads may still carry `american_odds` for API consumers, but no rendered row prints it. Book/market-mechanics language ("bet", "payout", "juice", "odds") never appears in UI copy. Any odds string that reaches the screen is a P1 bug (the futures-detail `+9900` leak, L2-48). The anti-gambling-enticement thesis is the product's reason to exist.
+- **The blend is the product.** One clean blended probability per question. Source names are quiet data-row chips at most, never in headlines, and per-source *lines* are forbidden on charts. Source divergence is a data-quality bug to fix upstream, not a feature to display. Three deliberate exceptions only: category-page cross-source spotlights, the playoffs "Sources" line, and My Stuff source dots.
+- **Settled means settled** (see next section) and **no chart smoothing, ever** (fixed 0–100 axis; ugly movement is a data bug to fix, not a curve to sand down — see `chart-design-spec.md`).
+
+---
+
+## SETTLED-STATE LANGUAGE
+
+One system-wide rule: **a finished thing shows its result, never a stale live affordance.** Implementation is per-surface but the grammar is shared — live percentages, movement pills, "Opened X/Y", trend arrows, and projected-finals are all gated behind `!isFinished` / `!resolved` and *replaced* by a result, not merely restyled.
+
+**Badge grammar.** An uppercase pill, `text-[10px]/[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded`:
+- **Won / HIT** → `bg-accent-live/15 text-accent-live` (a settled winner-field champion may use `bg-accent-brand/15 text-accent-brand`).
+- **Final / Resolved / MISS** → neutral `bg-text-muted/15 text-text-secondary` or `bg-surface-elevated text-text-muted`.
+
+**Event hero** (`app/events/[id]/page.tsx`, `components/event/EventLeaderboard.tsx`): the giant 48–52px probability block is replaced by the winner's short name + a **"Won"** chip; a tie shows **"Final · Tied"**. The winner team name is `font-semibold text-text-primary`, the loser `text-text-muted`. Never show "Final … Final" — the chart-card duplicate "Final" was deliberately removed (#190).
+
+**Futures hero** (`components/FuturesHero.tsx`): `resolved` suppresses the big number and the movement pill; renders the winning outcome name + **"Won"** (or neutral **"Resolved"**). An upset gets one copy-only line: *"Markets gave this just {pct}%."* — factual, not celebratory.
+
+**Feed cards**: list `EventFeedCard` shows a **"FINAL"** pill and hides the probability chips + bar; futures `FuturesFeedCard` shows **"RESOLVED"** + a green *"{winner}: {opening%} → Won"* line. Discover `EventCard` drops the win-prob strip for *"{winner} won"*. `formatFinishedDate` refuses to print a future date beside FINAL (gotcha #14 guard).
+
+**Props, graded ("the script, graded")** (`components/PlayerPropsDashboard.tsx`): four states — `pre | live | done | settled`. A graded `StatBox` shows the actual stat colored by hit (team accent) vs miss (`#EF4444`), "of {line}", and a **"HIT"/"MISS"** pill; it prefers the authoritative server grade (`serverActual/serverHit`). Settled-but-ungradeable renders a muted **"Resolved · grading unavailable"** — never the misleading ~100%/0% pre bar (L2-112).
+
+**Charts** (`OddsChart`, `components/event/SettledPathChart.tsx`): a completed chart shows the *full journey*. The domain ends at the real last-snapshot time, never the backend processing timestamp (gotcha #22/#46); the settled concept chart ("Path to resolution") is fixed 0–100, step-interpolated, no smoothing.
+
+---
+
+## CONCEPT-PAGE PATTERNS
+
+Event concepts (tournaments, fight cards, ceremonies, elections) render at `/event/<domain>/<slug>` (`app/event/[domain]/[slug]/page.tsx`) with section components in `components/event/`. The H1 is the *event*, not a market. Two `primary.kind` layouts: **`winner_field`** (golf/tennis/F1 leaderboard) and **`co_equal_list`** (UFC card, awards, elections).
+
+**Slug / canonical / redirect rules.** Public URLs are colon-free (`/event/mma/ufc-319-...`), replacing the old `%3A`-encoded `event:domain:slug` form (L2-113). The page reconstructs the API key from the two decoded segments, injects a `<link rel="canonical">` to the pretty slug, and does a client 301-equivalent `router.replace(...)` when the backend returns a prettier self-resolving slug (combat = headliner + date). Live SWR refresh is 45s live / 5min for upcoming-within-24h.
+
+**Header** (`EventHeader.tsx`): H1 `text-title-1`, a status chip (live `bg-accent-live/15`, settled neutral, upcoming `bg-accent-brand/10`), an optional **"Major"** chip (`bg-accent-futures/10`), a "Starts in N days" countdown, a "date · venue · location · N markets tracked" meta line, and an anchor-scroll pill nav.
+
+**Bout / matchups grid** (`MatchupsRail.tsx`): mobile is a horizontal rail; **desktop is a responsive grid, not a horizontal scroll** — `flex gap-3 overflow-x-auto ... md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible` (the L2-113 desktop fix). Each `MatchupCard` is `bg-surface-card rounded-card shadow-card border`, top-2 outcomes with a `FighterAvatar` + name + mono probability + `accent-brand` fill bar. Decided fights collapse into a dimmed `<details>` **"Completed (N)"** with a neutral **"Final"** chip. `FighterAvatar` uses cached Wikipedia headshots with an initials fallback.
+
+**Fused / blended leaderboard** (`EventLeaderboard.tsx`): one row per competitor — rank (mono) · name · optional `#seed` chip · a **"Leader"** chip on rank-1 when live · `accent-brand` probability bar · optional `Sparkline` (real history only, hidden `<sm`) · 24h movement (▲ `text-accent-brand` / ▼ `text-accent-danger`) · big mono probability. The golf-live variant fuses tour data into the row: `Pos · Player · To-par · Thru · Δ · Win%`, sorted by score, with a `FreshnessChip` "as of" stamp; cut/WD/DQ players sink into a collapsed **"Missed cut (N)"** and show "—" for win%. The settled variant is a **"Final result"** heading + 🏆 champion + **"Won"**, with a collapsed **"Did not win (N)"** list (no stale percentages, L2-81). A live/upcoming winner-field also gets `RaceToTitleChart`; co-equal events use `TwoSidedTimeline`.
+
+---
+
+## COCKPIT (admin) TILE CONVENTIONS
+
+The ops cockpit (`components/admin/AdminCockpit.tsx`, data from `GET /api/admin/cockpit`) is admin-only, but its status grammar is worth codifying because the sentinels reuse it.
+
+**Status tokens** (`green | amber | red | unknown`):
+- text — green `text-green-600`, amber `text-yellow-500`, red `text-accent-danger`, unknown `text-text-muted`.
+- background — `bg-{green|yellow}-500/10 border-*/20`, red `bg-accent-danger/10 border-accent-danger/20`, unknown `bg-surface-card border-surface-border`.
+- Flow-Sentinel dots — solid `bg-green-500` / `bg-yellow-500` / `bg-accent-danger`.
+
+**Health tiles**: a 2/4-col grid of `rounded-xl border p-4` cards tinted by status; `text-micro uppercase tracking-wider` label + `text-2xl font-bold` value; the whole tile is a drill-in `<Link>`.
+
+**Tracked badges** (the RED-honesty pass, L2-104) distinguish a *known* red from a fresh alarm:
+- `tracked` → yellow linked pill `bg-yellow-500/10 text-yellow-600`, "{label} {value} — tracked #NNN".
+- `artifact` → muted `bg-surface-elevated text-text-muted`, "… — {expected note}".
+- `untracked` → the only four-alarm state: `bg-accent-danger/15 text-accent-danger ring-1 ring-accent-danger/40` with a bold `⚠` prefix.
+
+**"Waiting on you"** and **quick-eval** blocks are `rounded-xl border border-surface-border bg-surface-card p-4`; empty state reads "Nothing waiting — you're clear." Accept/Reject/Skip buttons follow the accent grammar (green accept, `accent-danger` reject, muted skip).
+
+> **Token debt to flag in reviews**: `ThresholdGrid`, `ProgressionLadder`, and the admin health helpers still use raw Tailwind heat colors (`text-green-400/amber-400/orange-400/red-400`, `text-green-600`) instead of `accent-*` tokens. The token system is not yet universal on threshold/admin surfaces.
 
 ---
 
