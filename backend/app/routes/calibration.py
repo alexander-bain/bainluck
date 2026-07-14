@@ -831,7 +831,8 @@ async def public_calibration(
 
     # 3. Fallback: compute in-request (slow, but ensures the endpoint always works)
     # Same query as admin calibration-data endpoint
-    sql = text("""
+    from app.tasks.precompute_calibration import kalshi_prop_threshold_exclude_sql
+    sql = text(f"""
         WITH market_info AS (
             SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                 fm.commence_time,
@@ -958,11 +959,17 @@ async def public_calibration(
                 -- no-bid keep — real-bid rows are corrupt too (scorer + non-scorer
                 -- both cp 0.995); curve price, not bid, is the discriminator.
                 -- Below-band liquid series stay. Read-side only (gotcha #14/#21).
-                (cv.source = 'kalshi'
-                 AND fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$'
-                 AND (cv.category = 'hockey'
-                      OR COALESCE(fo.calibration_probability, fo.opening_probability)
-                         >= 0.90)) AS is_kalshi_prop_threshold,
+                -- Canonical predicate (Queue #188 Item 3): the literal used to be
+                -- hand-typed here (regex + 0.90) and could drift from the task's
+                -- flag. Now rendered from the one shared helper so every read-path
+                -- honours the identical rule.
+                {kalshi_prop_threshold_exclude_sql(
+                    source='cv.source',
+                    name='fo.name',
+                    category='cv.category',
+                    calibration_probability='fo.calibration_probability',
+                    opening_probability='fo.opening_probability',
+                )} AS is_kalshi_prop_threshold,
                 -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
                 -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
                 -- trade has no real price discovery at its midpoint. Weather-gated

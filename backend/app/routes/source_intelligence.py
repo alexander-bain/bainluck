@@ -1317,7 +1317,14 @@ async def _query_futures_fair_fight(db: AsyncSession) -> list[dict]:
     # A "shared question" is identified by:
     #   - Same group_id (Polymarket multi-outcome events), OR
     #   - Same canonical_market_key (cross-source canonical matching)
-    sql = text("""
+    #
+    # Queue #188 Item 3: this fair-fight MCE used to read Kalshi cal prices raw,
+    # unguarded — the corrupt NHL goal-family / >=0.90 degenerate-band prop rows
+    # (#941/#186) leaked straight into Kalshi's MCE here, the ONE calibration
+    # read-path that never honoured the exclusion. Now rendered from the shared
+    # canonical predicate so it cannot diverge (read-side only, gotcha #21).
+    from app.tasks.precompute_calibration import kalshi_prop_threshold_exclude_sql
+    sql = text(f"""
         WITH source_questions AS (
             SELECT
                 fm.source,
@@ -1380,6 +1387,16 @@ async def _query_futures_fair_fight(db: AsyncSession) -> list[dict]:
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND (fo.resolution_source IS NULL
                    OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
+              -- Queue #188 Item 3: honour the shared #941/#186 Kalshi prop-threshold
+              -- exclusion (NHL goal-family + >=0.90 degenerate band) so the corrupt
+              -- captures no longer poison Kalshi's side of the fair fight.
+              AND NOT {kalshi_prop_threshold_exclude_sql(
+                  source='fm.source',
+                  name='fo.name',
+                  category='am.category',
+                  calibration_probability='fo.calibration_probability',
+                  opening_probability='fo.opening_probability',
+              )}
         )
         SELECT source, category, prob, is_winner
         FROM matched_outcomes

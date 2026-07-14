@@ -40,8 +40,10 @@ from app.tasks import precompute_calibration
 backfill_winners = importlib.import_module("app.tasks.backfill_winners")
 from app.tasks.precompute_calibration import (
     CALIBRATION_CORRECTIONS,
+    KALSHI_PROP_THRESHOLD_DEGENERATE_BAND,
     KALSHI_PROP_THRESHOLD_NAME_RE,
     KALSHI_PROP_THRESHOLD_RULE_TEXT,
+    kalshi_prop_threshold_exclude_sql,
     outcome_is_kalshi_prop_threshold,
 )
 
@@ -137,6 +139,41 @@ class TestCorrectionsLog:
         assert any("kalshi" in t and ("prop" in t or "threshold" in t) for t in titles)
 
 
+class TestCanonicalExcludeSql:
+    """Queue #188 Item 3: the SQL predicate is now rendered from ONE shared helper
+    so every read-path honours the identical rule and no hand-typed literal can
+    drift (the route used to hardcode ``0.90`` + the regex; source_intelligence
+    had no guard at all)."""
+
+    def test_render_carries_corrected_discriminator(self):
+        frag = kalshi_prop_threshold_exclude_sql(
+            source="cv.source",
+            name="fo.name",
+            category="cv.category",
+            calibration_probability="fo.calibration_probability",
+            opening_probability="fo.opening_probability",
+        )
+        # Kalshi-scoped, "<subject>: N+" name shape, curve-price band + hockey class.
+        assert "cv.source = 'kalshi'" in frag
+        assert KALSHI_PROP_THRESHOLD_NAME_RE in frag
+        assert "cv.category = 'hockey'" in frag
+        # The band comes from the constant, never a hand-typed literal.
+        assert str(KALSHI_PROP_THRESHOLD_DEGENERATE_BAND) in frag
+        assert "COALESCE(fo.calibration_probability, fo.opening_probability)" in frag
+
+    def test_render_respects_caller_aliases(self):
+        # source_intelligence uses different aliases (fm.source / am.category).
+        frag = kalshi_prop_threshold_exclude_sql(
+            source="fm.source",
+            name="fo.name",
+            category="am.category",
+            calibration_probability="fo.calibration_probability",
+            opening_probability="fo.opening_probability",
+        )
+        assert "fm.source = 'kalshi'" in frag
+        assert "am.category = 'hockey'" in frag
+
+
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_kalshi_prop_thresholds(self):
         src = inspect.getsource(
@@ -146,11 +183,10 @@ class TestPrecomputeQueryEmbedsExclusion:
         assert "is_kalshi_prop_threshold" in src
         # The exclusion is applied in the deduped filter.
         assert "NOT ro.is_kalshi_prop_threshold" in src
-        # Queue #186 corrected discriminator: the degenerate settlement-collapse
-        # curve-price band + the NHL goal-family (hockey) class — NOT the disproven
-        # no-live-bid rule.
-        assert "cv.category = 'hockey'" in src
-        assert "KALSHI_PROP_THRESHOLD_DEGENERATE_BAND" in src
+        # Queue #188 Item 3: the corrected discriminator (curve-price band + hockey
+        # class) is now rendered from the shared helper, not inlined — so it cannot
+        # drift from the route or source_intelligence copies.
+        assert "kalshi_prop_threshold_exclude_sql" in src
         # Transparency count + payload surface.
         assert "kalshi_prop_threshold_excluded" in src
         assert '"kalshi_prop_threshold_filter"' in src
@@ -191,7 +227,32 @@ class TestRouteFallbackEmbedsExclusion:
         src = inspect.getsource(calibration_route)
         assert "is_kalshi_prop_threshold" in src
         assert "NOT ro.is_kalshi_prop_threshold" in src
-        # Queue #186: the route copy must carry the same corrected discriminator
-        # (curve-price band + hockey class), not the disproven no-bid rule.
-        assert "cv.category = 'hockey'" in src
-        assert ">= 0.90" in src
+        # Queue #188 Item 3: the route no longer hardcodes the band/regex — it
+        # renders the predicate from the shared helper, so it cannot drift.
+        assert "kalshi_prop_threshold_exclude_sql" in src
+
+
+class TestSourceIntelligenceHonorsExclusion:
+    """Queue #188 Item 3: the Kalshi↔Polymarket fair-fight MCE in
+    source_intelligence was the one calibration read-path that read Kalshi cal
+    prices raw — the corrupt #941/#186 prop-threshold rows (NHL goal-family +
+    >=0.90 band) leaked straight into Kalshi's MCE. It must now honour the shared
+    exclusion so the fair fight is not poisoned."""
+
+    def test_fair_fight_applies_shared_exclusion(self):
+        from app.routes import source_intelligence as si
+
+        src = inspect.getsource(si._query_futures_fair_fight)
+        # Renders the predicate from the one shared helper (no drift).
+        assert "kalshi_prop_threshold_exclude_sql" in src
+        # And actually applies it as an exclusion in the matched-outcome scan.
+        assert "AND NOT {kalshi_prop_threshold_exclude_sql(" in src
+
+    def test_fair_fight_is_read_side_only(self):
+        # Gotcha #21: the fair-fight query must never mutate resolutions/prices.
+        from app.routes import source_intelligence as si
+
+        src = inspect.getsource(si._query_futures_fair_fight).lower()
+        assert "update futures_outcomes" not in src
+        assert "update futures_markets" not in src
+        assert "delete from futures_outcomes" not in src

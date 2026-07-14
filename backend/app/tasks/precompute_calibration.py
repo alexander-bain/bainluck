@@ -567,6 +567,40 @@ KALSHI_PROP_THRESHOLD_RULE_TEXT = (
     "Read-side only; never mutates resolutions or probabilities."
 )
 
+
+def kalshi_prop_threshold_exclude_sql(
+    *,
+    source: str,
+    name: str,
+    category: str,
+    calibration_probability: str,
+    opening_probability: str,
+) -> str:
+    """Canonical SQL boolean for the Queue #186/#941 Kalshi prop-threshold exclusion.
+
+    Single source of truth mirrored by ``outcome_is_kalshi_prop_threshold`` (the
+    Python helper). Renders the exact ``is_kalshi_prop_threshold`` predicate used
+    by the calibration curve so every SQL read-path honours the same rule and
+    cannot silently diverge — the calibration precompute task, the
+    ``/api/calibration`` cold-cache fallback serve, AND the source-intelligence
+    fair-fight MCE (Queue #188 Item 3: ``source_intelligence.py`` was reading the
+    corrupt NHL cal prices raw, unguarded). Callers pass the column expressions for
+    their own table aliases; the regex and degenerate band come from the module
+    constants so a hand-typed literal can never drift out of sync (the route used
+    to hardcode ``0.90``).
+
+    Excluded when source='kalshi', ``name`` matches the 'Player: N+' OVER pattern,
+    and EITHER category='hockey' OR COALESCE(cp, opening) >= the degenerate band.
+    Read-side only (gotcha #21) — never mutates resolutions or probabilities.
+    """
+    return (
+        f"({source} = 'kalshi'\n"
+        f"     AND {name} ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'\n"
+        f"     AND ({category} = 'hockey'\n"
+        f"          OR COALESCE({calibration_probability}, {opening_probability})\n"
+        f"             >= {KALSHI_PROP_THRESHOLD_DEGENERATE_BAND}))"
+    )
+
 # Queue #183 Item 4 (#182 historical twin): curve-side exclusion of WEATHER
 # WIDE-SPREAD FABRICATED MIDPOINTS. #182 proved a WIDE Kalshi book
 # (yes_ask - yes_bid >= 0.50) with no trade has NO real price discovery at its
@@ -1008,11 +1042,13 @@ async def _precompute_calibration_main():
                     -- 0.995). Curve price, not bid, is the honest discriminator;
                     -- below-band liquid series stay (SAVE all possible). Read-side
                     -- only, no regrade (sign-flip premise disproven).
-                    (cv.source = 'kalshi'
-                     AND fo.name ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'
-                     AND (cv.category = 'hockey'
-                          OR COALESCE(fo.calibration_probability, fo.opening_probability)
-                             >= {KALSHI_PROP_THRESHOLD_DEGENERATE_BAND})) AS is_kalshi_prop_threshold,
+                    {kalshi_prop_threshold_exclude_sql(
+                        source='cv.source',
+                        name='fo.name',
+                        category='cv.category',
+                        calibration_probability='fo.calibration_probability',
+                        opening_probability='fo.opening_probability',
+                    )} AS is_kalshi_prop_threshold,
                     -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
                     -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
                     -- trade has no real price discovery at its midpoint. Weather-gated
