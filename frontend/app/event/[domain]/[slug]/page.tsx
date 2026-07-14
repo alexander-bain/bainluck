@@ -13,7 +13,7 @@ import { useEffect } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEventConcept } from "@/lib/api";
-import { marketsTracked } from "@/lib/eventConceptDisplay";
+import { marketsTracked, renderedFinishColumns } from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import EventHeader from "@/components/event/EventHeader";
@@ -23,6 +23,7 @@ import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
 import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
 import EventProps from "@/components/event/EventProps";
+import FinishPositionLadder from "@/components/event/FinishPositionLadder";
 import SettledPathChart from "@/components/event/SettledPathChart";
 
 // Design tweaks (queue L2-64): global on/off for per-row sparklines and the
@@ -141,12 +142,19 @@ export default function EventConceptPage() {
   const isSettled = event.status === "settled";
   const isLive = event.status === "live";
   const hasWinnerField = primary.kind === "winner_field" && competitors.length > 0;
+  // L2-116: finish-position ladder (golf Top 5/10/20/Make cut) renders only when
+  // its markets exist AND competitors carry the odds. Suppressed once settled —
+  // a concluded field shows the champion, not stale placement percentages
+  // (settled-means-settled). This must match `marketsTracked`'s count exactly.
+  const showFinishLadder =
+    hasWinnerField && !isSettled && renderedFinishColumns(data).length > 0;
 
   // Section nav — only the sections that will actually render.
   const nav: { id: string; label: string }[] = [];
   if (hasWinnerField && evolutionId && !isSettled) nav.push({ id: "race", label: "Race" });
   if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
+  if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
   if (fightChildren.length > 0) nav.push({ id: "matchups", label: "Matchups" });
   if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
@@ -185,6 +193,8 @@ export default function EventConceptPage() {
           asOf={event.as_of}
         />
       )}
+
+      {showFinishLadder && <FinishPositionLadder data={data} />}
 
       <MatchupsRail items={fightChildren} />
 

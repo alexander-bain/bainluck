@@ -175,13 +175,55 @@ class TestRetiredTaskHealth:
         assert redis_state.get_task_metrics("resolve_winners")["health"] == "retired"
 
     def test_non_retired_task_still_degrades(self, monkeypatch):
+        # A RECENT failure keeps failures_24h > 0, so the task is genuinely
+        # failing (not idle) and the consecutive-failure bands stay live.
         monkeypatch.setattr(
             redis_state, "get_redis_client",
-            lambda: _FakeMetricsRedis({"poll_odds": {b"consecutive_failures": b"3"}}),
+            lambda: _FakeMetricsRedis(
+                {"poll_odds": {b"consecutive_failures": b"3"}},
+                counters={f"{TASK_METRICS_PREFIX}:poll_odds:failures": b"3"},
+            ),
         )
         result = redis_state.get_task_metrics("poll_odds")
         assert result["health"] == "degraded"
         assert "retired" not in result
+
+
+class TestIdleHealthMisread:
+    """L2-116: a task idle in the last 24h must read `no_data`, not
+    critical/degraded, even when a stale `consecutive_failures` lingers in the
+    48h-TTL metrics hash after its 24h :failures counter has expired (r195: an
+    idle moment scored `critical` — the inverse of a stuck fetch)."""
+
+    def test_idle_task_with_stale_consecutive_failures_is_no_data(self, monkeypatch):
+        # consecutive_failures=9 (would be "critical") BUT no successes/failures in
+        # the last 24h → the failures aged out; the task is idle, not broken.
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"backfill_kalshi_settled": {b"consecutive_failures": b"9"}}),
+        )
+        result = redis_state.get_task_metrics("backfill_kalshi_settled")
+        assert result["health"] == "no_data"
+
+    def test_idle_task_excluded_from_critical_rollup(self, monkeypatch):
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis({"backfill_kalshi_settled": {b"consecutive_failures": b"7"}}),
+        )
+        tasks = redis_state.get_all_task_metrics()
+        critical = [t for t in tasks if t.get("health") == "critical"]
+        assert critical == []
+
+    def test_recent_failure_still_critical(self, monkeypatch):
+        # Same latched count, but a failure WITHIN 24h → genuinely failing → critical.
+        monkeypatch.setattr(
+            redis_state, "get_redis_client",
+            lambda: _FakeMetricsRedis(
+                {"backfill_kalshi_settled": {b"consecutive_failures": b"7"}},
+                counters={f"{TASK_METRICS_PREFIX}:backfill_kalshi_settled:failures": b"7"},
+            ),
+        )
+        assert redis_state.get_task_metrics("backfill_kalshi_settled")["health"] == "critical"
 
     def test_retired_task_excluded_from_degraded_rollup(self, monkeypatch):
         monkeypatch.setattr(

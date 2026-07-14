@@ -22,6 +22,7 @@ from app.routes.admin_cockpit import (
     _red_sub_context,
     _status_from_pct,
     _waiting_on_you,
+    _watchdog_stuck_phases,
 )
 
 
@@ -47,6 +48,37 @@ def _fake_redis():
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
+
+
+class TestWatchdogStuckPhases:
+    """L2-116: the phase-heartbeat watchdog's stuck-fetch signal rides the warm
+    `bainluck:watchdog:summary`; the cockpit surfaces it as a tile detail so a
+    genuinely wedged fetch stays visible even though idle tasks now read green."""
+
+    def _patch(self, value):
+        r = MagicMock()
+        r.get.return_value = value
+        return patch("app.tasks.redis_state.get_redis_client", return_value=r)
+
+    def test_extracts_stuck_list(self):
+        payload = json.dumps(
+            {"phase_heartbeat": {"stuck": [{"marker": "poll_kalshi:fetch", "stuck_seconds": 720}]}}
+        )
+        with self._patch(payload):
+            stuck = _watchdog_stuck_phases()
+        assert stuck == [{"marker": "poll_kalshi:fetch", "stuck_seconds": 720}]
+
+    def test_empty_when_no_stuck(self):
+        with self._patch(json.dumps({"phase_heartbeat": {"stuck": []}})):
+            assert _watchdog_stuck_phases() == []
+
+    def test_safe_on_cold_cache(self):
+        with self._patch(None):
+            assert _watchdog_stuck_phases() == []
+
+    def test_safe_on_malformed(self):
+        with self._patch(json.dumps({"phase_heartbeat": "oops"})):
+            assert _watchdog_stuck_phases() == []
 
 
 class TestHelpers:

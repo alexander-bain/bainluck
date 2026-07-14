@@ -297,12 +297,23 @@ def get_task_metrics(task_name: str) -> dict:
             return result
 
         consecutive = int(result.get("consecutive_failures", 0))
-        if consecutive >= 5:
+        # Idle-first health (L2-116): a task that recorded NO successes AND NO
+        # failures in the last 24h is IDLE, not broken — the worker is alive
+        # (fresh heartbeat, no active run) and simply had nothing to do. The
+        # metrics hash keeps `consecutive_failures` for 48h (TASK_METRICS_TTL) but
+        # the :successes / :failures counters expire at 24h, so between 24h–48h
+        # after the last failure a stale `consecutive_failures` would otherwise
+        # latch the health surface to critical/degraded during a pure idle window
+        # (r195: an idle moment read `critical` — the inverse of a stuck fetch,
+        # which is caught separately by the phase-heartbeat watchdog + surfaced on
+        # the cockpit). Real, current failures still surface: any failure in the
+        # last 24h keeps failures_24h > 0, so the consecutive bands below stay live.
+        if successes_24h == 0 and failures_24h == 0:
+            result["health"] = "no_data"
+        elif consecutive >= 5:
             result["health"] = "critical"
         elif consecutive >= 2:
             result["health"] = "degraded"
-        elif successes_24h == 0 and failures_24h == 0:
-            result["health"] = "no_data"
         else:
             result["health"] = "healthy"
 

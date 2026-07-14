@@ -79,20 +79,118 @@ export function settledChampion(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Finish-position ladder (L2-116 RENDER ruling).
+//
+// Golf placement markets — "Top 5 / Top 10 / Top 20 / Make Cut" — are
+// multi-outcome markets whose per-competitor probabilities are fused onto each
+// competitor by the golf aggregation as `top_5_prob` / `top_10_prob` /
+// `top_20_prob` / `make_cut_prob` (0–100 POINTS). They live in the envelope
+// `sections` (types top_5/top_10/top_20/make_cut) but had NO renderer on the
+// concept page — so they were counted by the header chip yet invisible. The
+// ruling: render them as a threshold-group ladder, and count only what renders
+// (both directions). These two helpers are the single source of truth shared by
+// the renderer (FinishPositionLadder) and the count (marketsTracked), so the two
+// can never drift.
+// ---------------------------------------------------------------------------
+
+export interface FinishPositionColumn {
+  /** Envelope section `type` for this column's market group. */
+  type: string;
+  /** Competitor field carrying this column's probability (0–100 points). */
+  key: string;
+  /** Short header label. */
+  label: string;
+}
+
+/** The ladder columns, ordered widest-net last (Win is the anchor rendered
+ *  separately by the leaderboard). Order mirrors golf's `type_order`. */
+export const FINISH_POSITION_COLUMNS: FinishPositionColumn[] = [
+  { type: "top_5", key: "top_5_prob", label: "Top 5" },
+  { type: "top_10", key: "top_10_prob", label: "Top 10" },
+  { type: "top_20", key: "top_20_prob", label: "Top 20" },
+  { type: "make_cut", key: "make_cut_prob", label: "Make cut" },
+];
+
+/** Read a competitor's 0–100 finish-position value for a column key, or null. */
+function finishValue(
+  c: EventConceptCompetitor,
+  key: string,
+): number | null {
+  const raw = (c as Record<string, unknown>)[key];
+  return typeof raw === "number" && !Number.isNaN(raw) ? raw : null;
+}
+
+/** The finish-position columns that ACTUALLY render for this field: a column
+ *  renders iff its market group exists in `sections` AND at least one competitor
+ *  carries a value for it. Suppressed entirely once the event is settled — a
+ *  concluded field shows the champion, not stale placement percentages
+ *  (settled-means-settled). This predicate is the single source of truth for both
+ *  the renderer and the header count, so a finish-position market is counted iff
+ *  its column renders (both directions). */
+export function renderedFinishColumns(
+  data: EventConceptResponse,
+): FinishPositionColumn[] {
+  if (data.event?.status === "settled") return [];
+  const sectionTypes = new Set((data.sections || []).map((s) => s.type));
+  const comps = data.primary?.competitors || [];
+  return FINISH_POSITION_COLUMNS.filter(
+    (col) =>
+      sectionTypes.has(col.type) &&
+      comps.some((c) => finishValue(c, col.key) != null),
+  );
+}
+
+/** Competitors that carry ≥1 rendered finish-position value, ordered by win
+ *  probability desc and limited — the rows of the finish-position ladder. Each
+ *  row keeps the competitor plus a `values` map of column-key → 0–100 points (or
+ *  null where that golfer has no odds for that column — rendered as "—", never
+ *  fabricated). Returns [] when no columns render. */
+export function finishPositionRows(
+  data: EventConceptResponse,
+  columns: FinishPositionColumn[],
+  limit = 20,
+): { competitor: EventConceptCompetitor; values: Record<string, number | null> }[] {
+  if (!columns.length) return [];
+  const comps = fieldOrder(data.primary?.competitors || []);
+  const rows: {
+    competitor: EventConceptCompetitor;
+    values: Record<string, number | null>;
+  }[] = [];
+  for (const c of comps) {
+    const values: Record<string, number | null> = {};
+    let any = false;
+    for (const col of columns) {
+      const v = finishValue(c, col.key);
+      values[col.key] = v;
+      if (v != null) any = true;
+    }
+    if (any) rows.push({ competitor: c, values });
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
 /** Count of distinct markets tracked on this page — for the header "N markets"
- *  chip. Unions section market_ids, child market_ids, and the evolution market so
- *  the count reflects what the page actually surfaces (not a fabricated total). */
+ *  chip. Counts ONLY what the page actually renders (L2-116 RENDER ruling — both
+ *  directions): the evolution market (the winner leaderboard / race / path
+ *  chart), every rendered child (matchups rail + props section — already
+ *  cross-source-deduped and outcome-filtered upstream), and one question per
+ *  rendered finish-position ladder column. It deliberately does NOT union raw
+ *  `sections`, which carried counted-but-invisible markets — hidden placement
+ *  ladders, "Winner Nationality"/"Tour of Winner" props, outcome-less skips, and
+ *  cross-source duplicates. */
 export function marketsTracked(data: EventConceptResponse): number {
   const ids = new Set<number>();
-  for (const s of data.sections || []) {
-    for (const id of s.market_ids || []) ids.add(id);
-  }
+  const ev = data.primary?.evolution_market_id;
+  if (typeof ev === "number") ids.add(ev);
   for (const c of data.children || []) {
     if (typeof c.market_id === "number") ids.add(c.market_id);
   }
-  const ev = data.primary?.evolution_market_id;
-  if (typeof ev === "number") ids.add(ev);
-  return ids.size;
+  // One tracked question per rendered finish-position column (a column may be
+  // backed by several source markets but renders as a single blended ladder
+  // rung — counting it once mirrors how deduped children are counted).
+  return ids.size + renderedFinishColumns(data).length;
 }
 
 /** 24h probability movement for a competitor, read defensively from either the

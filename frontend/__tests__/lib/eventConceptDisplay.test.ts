@@ -8,6 +8,8 @@ import {
   splitChildren,
   settledChampion,
   marketsTracked,
+  renderedFinishColumns,
+  finishPositionRows,
   competitorMovement,
   formatMovement,
   seriesForName,
@@ -224,7 +226,7 @@ describe("eventDateRange", () => {
   });
 });
 
-describe("marketsTracked (L2-64 header count)", () => {
+describe("marketsTracked (L2-116 count only what renders)", () => {
   const base = {
     event: { key: "k", domain: "golf", name: "T", status: "live" as const },
     primary: { kind: "winner_field" as const, label: "Winner", competitors: [], evolution_market_id: 5 },
@@ -232,11 +234,12 @@ describe("marketsTracked (L2-64 header count)", () => {
     children: [{ market_id: 2 }, { market_id: 9 }],
     movers: [],
   };
-  test("unions section + child + evolution market ids (distinct)", () => {
-    // {1,2} ∪ {2,9} ∪ {5} = {1,2,5,9}
-    expect(marketsTracked(base)).toBe(4);
+  test("counts evolution + rendered children, NOT invisible winner-section extras", () => {
+    // Rendered surfaces: evolution {5} ∪ children {2,9} = {2,5,9} = 3.
+    // The extra winner-section market (1) renders nowhere — it must not count.
+    expect(marketsTracked(base)).toBe(3);
   });
-  test("no evolution / no sections is safe", () => {
+  test("no evolution / no children is safe", () => {
     expect(
       marketsTracked({
         ...base,
@@ -245,6 +248,104 @@ describe("marketsTracked (L2-64 header count)", () => {
         children: [],
       }),
     ).toBe(0);
+  });
+  test("counts one question per RENDERED finish-position column (both directions)", () => {
+    // top_5 + make_cut sections exist AND competitors carry the odds → 2 columns
+    // render → +2. top_10 section exists but NO competitor carries top_10_prob →
+    // that column does NOT render → not counted.
+    const data = {
+      ...base,
+      primary: {
+        ...base.primary,
+        competitors: [
+          { name: "A", probability: 0.3, top_5_prob: 55, make_cut_prob: 92 },
+          { name: "B", probability: 0.1, top_5_prob: 30 },
+        ],
+      },
+      sections: [
+        { type: "winner", label: "Winner", market_ids: [1, 2] },
+        { type: "top_5", label: "Top 5", market_ids: [11, 12] }, // two source copies → one column
+        { type: "top_10", label: "Top 10", market_ids: [13] },
+        { type: "make_cut", label: "Make Cut", market_ids: [14] },
+      ],
+    };
+    // evolution {5} ∪ children {2,9} = 3, + top_5 + make_cut columns = 5.
+    expect(marketsTracked(data)).toBe(5);
+  });
+  test("settled field suppresses finish columns from the count (settled-means-settled)", () => {
+    const data = {
+      ...base,
+      event: { ...base.event, status: "settled" as const },
+      primary: {
+        ...base.primary,
+        competitors: [{ name: "A", probability: 1, top_5_prob: 100, make_cut_prob: 100 }],
+      },
+      sections: [
+        { type: "top_5", label: "Top 5", market_ids: [11] },
+        { type: "make_cut", label: "Make Cut", market_ids: [14] },
+      ],
+    };
+    // Only evolution {5} ∪ children {2,9} = 3; finish columns don't render.
+    expect(marketsTracked(data)).toBe(3);
+  });
+});
+
+describe("renderedFinishColumns / finishPositionRows (L2-116 ladder)", () => {
+  const mk = (
+    competitors: Record<string, unknown>[],
+    sectionTypes: string[],
+    status: "live" | "upcoming" | "settled" = "upcoming",
+  ) => ({
+    event: { key: "k", domain: "golf", name: "T", status },
+    primary: {
+      kind: "winner_field" as const,
+      label: "Winner",
+      competitors: competitors as never,
+      evolution_market_id: 5,
+    },
+    sections: sectionTypes.map((t) => ({ type: t, label: t, market_ids: [1] })),
+    children: [],
+    movers: [],
+  });
+
+  test("a column renders iff its section exists AND a competitor carries a value", () => {
+    const cols = renderedFinishColumns(
+      mk(
+        [{ name: "A", probability: 0.3, top_5_prob: 40, top_20_prob: 80 }],
+        ["top_5", "top_10", "top_20", "make_cut"],
+      ),
+    );
+    // top_5 + top_20 have data; top_10/make_cut sections exist but no odds → drop.
+    expect(cols.map((c) => c.type)).toEqual(["top_5", "top_20"]);
+  });
+
+  test("section present but no odds → no column (never an empty ladder)", () => {
+    const cols = renderedFinishColumns(
+      mk([{ name: "A", probability: 0.3 }], ["top_5"]),
+    );
+    expect(cols).toEqual([]);
+  });
+
+  test("settled event renders no finish columns", () => {
+    const cols = renderedFinishColumns(
+      mk([{ name: "A", probability: 1, top_5_prob: 100 }], ["top_5"], "settled"),
+    );
+    expect(cols).toEqual([]);
+  });
+
+  test("rows are win-prob-ordered, drop competitors with no finish odds, keep nulls per cell", () => {
+    const data = mk(
+      [
+        { name: "Low", probability: 0.05, top_5_prob: 10 },
+        { name: "High", probability: 0.4, top_5_prob: 60 },
+        { name: "NoOdds", probability: 0.2 },
+      ],
+      ["top_5", "top_10"],
+    );
+    const cols = renderedFinishColumns(data); // only top_5 has data
+    const rows = finishPositionRows(data, cols);
+    expect(rows.map((r) => r.competitor.name)).toEqual(["High", "Low"]); // NoOdds dropped
+    expect(rows[0].values.top_5_prob).toBe(60);
   });
 });
 

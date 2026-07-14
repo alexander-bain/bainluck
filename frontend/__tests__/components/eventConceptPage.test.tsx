@@ -38,12 +38,33 @@ const ENVELOPE = {
     kind: "winner_field" as const,
     label: "Winner",
     competitors: [
-      { name: "Scottie Scheffler", probability: 0.22, movement_24h: 0.03 },
-      { name: "Rory McIlroy", probability: 0.15, movement_24h: -0.01 },
+      {
+        name: "Scottie Scheffler",
+        probability: 0.22,
+        movement_24h: 0.03,
+        top_5_prob: 58,
+        top_10_prob: 74,
+        make_cut_prob: 96,
+      },
+      {
+        name: "Rory McIlroy",
+        probability: 0.15,
+        movement_24h: -0.01,
+        top_5_prob: 45,
+        top_10_prob: 63,
+        make_cut_prob: 94,
+      },
     ],
     evolution_market_id: 1,
   },
-  sections: [{ type: "winner", label: "Winner", market_ids: [1] }],
+  // L2-116: finish-position sections carry the placement markets whose odds are
+  // fused onto competitors above — the FinishPositionLadder renders them.
+  sections: [
+    { type: "winner", label: "Winner", market_ids: [1] },
+    { type: "top_5", label: "Top 5", market_ids: [21] },
+    { type: "top_10", label: "Top 10", market_ids: [22] },
+    { type: "make_cut", label: "Make Cut", market_ids: [23] },
+  ],
   children: [
     {
       market_id: 9,
@@ -129,6 +150,11 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain("Rory McIlroy");
     // matchups rail
     expect(html).toContain("H2H: Scheffler vs McIlroy");
+    // L2-116 finish-position ladder — the counted-but-formerly-invisible markets
+    // now render (renders without throwing under SSR is the guard's whole point).
+    expect(html).toContain("Finish position");
+    expect(html).toContain("Top 5");
+    expect(html).toContain("Make cut");
     // probability-only: no American-odds moneyline strings
     expect(html).not.toMatch(/[+-]\d{3,}/);
   });

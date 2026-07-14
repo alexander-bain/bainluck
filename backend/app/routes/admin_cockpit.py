@@ -374,6 +374,24 @@ def _queue_depths() -> dict:
     return depths
 
 
+def _watchdog_stuck_phases() -> list[dict]:
+    """Stuck-fetch entries from the warm freshness-watchdog summary (L2-116).
+
+    The phase-heartbeat watchdog (`tasks/watchdog.py`) writes
+    `bainluck:watchdog:summary` (1h TTL) with a `phase_heartbeat.stuck` list of
+    poll phases whose `running_phase` marker has not advanced past
+    PHASE_STUCK_SECONDS — a genuinely wedged fetch (#995's synchronous-op block),
+    which is the DISTINCT failure mode the idle-misread fix must keep visible.
+    Pure warm read (no query); returns [] on cold cache or any error so the tile
+    degrades to its plain queue detail rather than breaking the payload."""
+    summary = _read_redis_json("bainluck:watchdog:summary")
+    if not isinstance(summary, dict):
+        return []
+    phase = summary.get("phase_heartbeat")
+    stuck = phase.get("stuck") if isinstance(phase, dict) else None
+    return [s for s in stuck if isinstance(s, dict)] if isinstance(stuck, list) else []
+
+
 async def _health_group(db: AsyncSession) -> list[dict]:
     """Build the site-health tile row from warm caches + cheap queries."""
     tiles: list[dict] = []
@@ -472,6 +490,30 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         q_status = "amber"
     else:
         q_status = "green"
+    q_detail = (
+        f"realtime: {depths.get('realtime')}"
+        if depths.get("realtime") is not None
+        else "realtime: —"
+    )
+    # L2-116 companion signal: the phase-heartbeat watchdog flags a poll that is
+    # WEDGED mid-fetch (a `running_phase` marker unchanged past PHASE_STUCK_SECONDS
+    # — #995's synchronous-op block). This is the distinct, real failure mode that
+    # the idle-misread fix must NOT swallow: an idle task reads green, but a stuck
+    # fetch stays visible. It rides the warm watchdog summary (1h TTL) so the tile
+    # needs no extra query. A stuck phase elevates the tile to red and names it.
+    stuck_phases = _watchdog_stuck_phases()
+    if stuck_phases:
+        q_status = "red"
+        first = stuck_phases[0]
+        marker = first.get("marker") or first.get("key") or "poll"
+        secs = first.get("stuck_seconds")
+        more = f" (+{len(stuck_phases) - 1} more)" if len(stuck_phases) > 1 else ""
+        q_detail = (
+            f"⚠ stuck fetch: {marker}"
+            + (f" — {secs}s no progress" if secs is not None else "")
+            + more
+            + f" · {q_detail}"
+        )
     tiles.append(
         {
             "key": "queue_depth",
@@ -479,11 +521,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
             "value": str(bg) if bg is not None else "—",
             "numeric": bg,
             "status": q_status,
-            "detail": (
-                f"realtime: {depths.get('realtime')}"
-                if depths.get("realtime") is not None
-                else "realtime: —"
-            ),
+            "detail": q_detail,
             "href": "/admin",
         }
     )
