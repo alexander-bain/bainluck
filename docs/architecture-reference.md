@@ -204,6 +204,84 @@ Fetches historical price data from Polymarket's CLOB API (`/prices-history`) for
 
 ---
 
+## Matching & Identity: Entity Registry, Concepts/Hubs, and the Resolution Engine
+
+The long-term direction for the #1 technical challenge (semantic matching) is a single identity graph plus one matching engine underneath every surface. As of 2026-07, this is partially built: the registry read-path is live and seeded, the user-facing concept/hub surfaces are live, but the unified matching **engine** is still shadow-mode.
+
+### Entity Registry (A1) — LIVE (read path + seed), one production consumer
+
+- **File:** `backend/app/services/entity_registry.py` (#1020). Backed by `Entity` / `EntityAlias` tables. API: `normalize_alias`, `resolve_alias(es)`, `seed_from_teams`, `seed_competitions_from_sports`, `canonicalize_entities`.
+- **Seeding:** Celery task `app.tasks.seed_entity_registry` (+ `entity_seed.py`). Admin triggers in `routes/admin_matching.py` (seed / canonicalize).
+- **Grammar adapters (A2):** `backend/app/services/grammar_adapters.py` consume `entity_registry.normalize_alias`.
+- **Live consumer:** `tasks/prediction_market_matching.py` uses `KIND_PERSON` + `EntityAlias` to bridge combat-sport opponent **surname ↔ full-name** during real matching (see memory `project_universal_matching_cutover`). This is currently the only production path that reads the registry.
+
+### Resolution Engine (A4) — SHADOW-MODE / DORMANT
+
+- **File:** `backend/app/services/resolution_engine.py` (#1023). Header is explicit: *"v1 is shadow-mode only. The engine RESOLVES and REPORTS; it writes nothing."*
+- **Nothing in `backend/app/` imports it** (only tests do). It emits all four link types via strategy classes — `LINK_MARKET_EVENT`, `LINK_MARKET_CONCEPT`, `LINK_CROSS_SOURCE`, `LINK_FAMILY` — but is not wired into any production path.
+- **Cutover gate:** `scripts/audit_resolution_engine.py` must prove no regression vs today's `event_registry` / `prediction_market_matching` / `cross_source_matching` before the engine goes live. When cutting over a link type, check BOTH the link path (`event_id`) and the blend path (`win_probability_sources`) — they are separate and a gate on one silently dropped combat fights once (memory `project_blend_gate_vs_link`).
+
+### Event Concepts + Competition Hubs — LIVE
+
+Tournaments, fight cards, and ceremonies are unified slug-URL surfaces built on the registry.
+
+- **Event-concept detail (B / #999):** backend `routes/event.py` → `GET /api/event/{key}` (prefix `/api/event`); frontend `app/event/[domain]/[slug]/page.tsx`. Domain builders: `utils/event_concept.py` (golf), `event_ufc.py`, `event_boxing.py`, `event_tennis.py`, plus `concept_links.py`.
+- **Competition Hub (B1 / #1028):** backend `routes/hub.py` → `GET /api/hub/{competition}` (prefix `/api/hub`), config-driven via `HUB_CONFIGS` + `_UPCOMING_LISTERS`; frontend `app/hub/[competition]/page.tsx`. Composes upcoming event-concept descriptors + league-futures sections. **MMA** is the first live hub config; boxing/tennis/golf concept listers exist.
+
+---
+
+## Resolution Authority Ladder
+
+`backend/app/utils/resolution_authority.py` is the **single source of truth** for which `is_winner` provenance may overwrite which. It is a pure module (no DB/network); the enforcing test is `tests/test_resolution_authority.py`.
+
+Authority tiers (higher = stronger; never let a weaker source overwrite a stronger one):
+
+| Tier | Class | Sources |
+|------|-------|---------|
+| 3 | **AUTHORITATIVE** (never overwritten) | `api_settlement`, `clob_authoritative`, `clob_ordinal`, `datagolf_settlement`, `settlement_sync`, `poly_total_score` |
+| 2 | **DETERMINISTIC** (box/game/leaderboard) | `box_score`, `box_score_bound`, `scoring_plays`, `game_score`, `leaderboard`, `datagolf_matchup`, `datagolf_played_lost` |
+| 1 | **TERMINAL / soft** | `clean_resolution`, `pass2_loser`, `all_losers`, `did_not_play`, `withdrew`, `no_pregame_trading` |
+| 0 | **GUESS_FAMILY** (the #754 poison class) | `pass2_guess`, `binary_higher_wins`, `multi_max_prob`, `pass3_threshold` |
+
+- Helpers: `is_guess_family()`, `is_authoritative()`, `is_downgrade(existing, new)`, `authority_tier()`. Unknown source → tier `-1` (fail-safe, never authoritative).
+- **Never inline the guess-family tuple** in `backfill_winners.py`. Membership lives only here; the module exposes SQL fragments (`OVERWRITABLE_WINNER_SOURCES_SQL`, `GUESS_FAMILY_SOURCES_SQL`, `AUTHORITATIVE_SOURCES_SQL`, `SINGLE_WINNER_GUESS_SOURCES_SQL`) that backfill phases interpolate. A `KNOWN_SOURCES` completeness check + a drift-scan test (forbidding inline guess tuples) enforce this. See memory `project_resolution_authority_ladder`.
+
+---
+
+## Reliability Machinery: Sentinels, Cockpit, Backfill Progress
+
+The reliability program (Priority #1) is guarded by two automated detectors that file evidence-packed GitHub issues, an ops cockpit that surfaces status, and warm-cache precompute beats.
+
+### Flow Sentinel — LIVE (daily)
+
+- **File:** `backend/app/tasks/flow_sentinel.py`; wrapper `app.tasks.flow_sentinel` (`soft_time_limit=840`). **Beat:** `flow-sentinel-daily`, `crontab(minute=10, hour=7)` = **daily 07:10 UTC**, background queue.
+- **Endpoints:** `POST /api/admin/flow-sentinel/run` (params `file_issues`, `canary`, `inline`), `GET /api/admin/flow-sentinel/last` (Redis `bainluck:flow_sentinel:last`, 14d TTL).
+- **Six flows = Alex's six failure classes:** `search_gold_set` (frozen Instant-Answers gold set), `duplicate_events`, `event_completeness` (Tier-1 live events render game markets), `resolved_state` (settled never renders live), `chart_density` (≥1 pt/open-hour), `category_discover` (category pages + Discover first page non-empty/quality). Runs **read-only against production** (`FLOW_SENTINEL_API`, default `https://api.bainluck.com`).
+- **Auto-files issues:** one deduped, fingerprinted issue per failing flow via the shared `bug_report_github` client (needs `GITHUB_TOKEN` — see memory `project_github_token_unset`), severity P1/P2, area labels + `alert-intake` + `needs-agent`. First real catch was #1085 (21 recurring unmerged duplicate events). See memory `project_flow_sentinel`.
+
+### Calibration Sentinel — LIVE (weekly)
+
+- **File:** `backend/app/tasks/calibration_sentinel.py`; wrapper `app.tasks.calibration_sentinel`. **Beat:** `calibration-sentinel-weekly`, `crontab(minute=20, hour=6, day_of_week=1)` = **weekly Monday 06:20 UTC**, background queue.
+- **Endpoints:** `POST /api/admin/calibration-sentinel/run`, `GET /api/admin/calibration-sentinel/last` (Redis `bainluck:calibration_sentinel:last` / `...:last_backtest`).
+- **What it mines:** resolved-outcome cohorts across `category × source × series-family × structure × table-provenance`, computing n-weighted **MCE** on the RAW un-excluded population. Thresholds `SENTINEL_MCE_THRESHOLD=5.0pp`, new-format tier `SENTINEL_NEW_MCE_THRESHOLD=3.0pp` (series first-seen <30d). Files one issue per broken cohort; **never writes market data** (gotcha #21). Two modes: live (suppress known/shipped-exclusion classes) vs backtest (report every flag with its known-class mapping). See memory `project_calibration_sentinel`.
+
+### Admin Cockpit — LIVE (admin-only)
+
+- **Backend:** `routes/admin_cockpit.py` → `GET /api/cockpit` (`_check_admin_secret`, 5-min Redis cache). **Frontend:** `components/admin/AdminCockpit.tsx`, rendered inside `app/admin/page.tsx` (no standalone `/cockpit` route).
+- **Payload groups:** `health` (site-health tiles), `waiting_on_you`, `eval_queue` (quick-eval), `flow_sentinel` (sentinel scorecard). Tiles carry **green/amber/red** via `_status_from_pct` (e.g. green ≥99, amber ≥90 for link/coverage). Also renders **autopilot tiles** reading warm Redis snapshots from the L2-90 precompute beats (last-fire age, fires/24h) — this is how a non-firing beat (e.g. the cal-price-beat watch) becomes visible.
+
+### Dedicated Cal-Price Task — LIVE
+
+- The calibration-price step always budget-guarded out of `backfill_winners` (`stopped_before: calibration_prices`; memory `project_backfill_winners_budget_starvation`), so it was extracted: `app.tasks.compute_calibration_prices` (wraps `backfill_winners._compute_calibration_prices`, `soft_time_limit=600`). **Beat:** `compute-calibration-prices`, `crontab(minute=10, hour="2,8,14,20")`, background queue (moved to :10 to escape 2-slot worker contention). Monotonic/resumable (`calibration_probability IS NULL`, commits per 100K batch).
+- **Caveat (memory `project_cal_price_beat_not_firing`):** the dedicated beat now exists and is scheduled, but confirm from the cockpit `fires/24h` autopilot tile (or task-metrics) that scheduled fires are actually landing before trusting it as "fixed" — code presence ≠ firing.
+
+### Backfill Progress — LIVE
+
+- **Task:** `app.tasks.precompute_backfill_progress` (`tasks/precompute_backfill_progress.py`), beat `precompute-backfill-progress`, `crontab(minute="*/15")` (every 15 min, #179/#1052).
+- **Endpoint:** `GET /api/admin/backfill-progress` (`routes/admin_data_quality.py`) — reads Redis `bainluck:backfill_progress`; `bust=true` re-enqueues. Reports snapshot density + the June ledger + task health for `backfill_winners`, `calibration_prices`, and itself.
+
+---
+
 ## Admin Dashboard & Cleanup Endpoints
 
 The admin dashboard at `/admin` (frontend) shows quota, source coverage, DB storage, worker metrics.
