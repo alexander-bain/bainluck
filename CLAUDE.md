@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The core magic of Bain Luck is **perfect semantic understanding** of every event, market, and source — then grouping and matching them so the user sees one unified view. This is the hardest technical problem in the product and the biggest leverage point.
 
-There are 4 layers of matching, measured by `scripts/audit_event_matching.py`:
+There are 4 layers of matching, measured by `backend/scripts/audit_event_matching.py`:
 
 | Layer | What it measures | Audit | Status (April 24) |
 |-------|-----------------|-------|-------------------|
@@ -25,9 +25,14 @@ There are 4 layers of matching, measured by `scripts/audit_event_matching.py`:
 | **L3: Futures Surfacing** | Season futures on event detail pages | `--self-check` | ✅ 100% (MLB/NBA/NHL) |
 | **L4: Market Completeness** | Every market type showing per game | `--l4-deep` | ✅ Verified live (April 24) |
 
-Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
+Plus **Grid Accuracy** (`backend/scripts/audit_grid_accuracy.py`, needs a Manus-fed `--ground-truth` file): 51/51 (100%) as of April 24.
 
-**Freshness note (2026-07-14):** the table's last FULL audit is April 24 — re-measure due (docs-sweep queue owns it). Spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
+**Freshness note (re-measure attempted 2026-07-14, docs-sweep Queue #192):** the table's last FULL audit is still April 24 — a clean full re-measure could not be produced today for three compounding reasons, so the April-24 column is intentionally left in place rather than overwritten with tooling-limited numbers:
+1. **`--self-check` is schema-stale.** The Discover feed moved to a nested `items[].data` shape with a `type` field (`event`/`futures`/`tournament`/`concept`) and top-level `sport=null`; the script still reads the old flat schema, so it sees `sport=""` on every card and renders `? @ ?`. Fixing the feed parser is queued for the next code queue (#193).
+2. **`audit_grid_accuracy.py` needs an external `--ground-truth` file** (Manus-fed) — it is not a standalone self-check, so it can't be run fresh here.
+3. **Mid-July is an off-brand sports lull.** Today's feed-surfaced game slate is NBA Summer League, NPB, UCL qualifiers, World Cup, and one settled MLB game — no Tier-1 games, and thin upstream Kalshi/Polymarket game-market coverage.
+
+Direct production spot-check of the 13 feed-surfaced game events (via `/api/events/{id}/game-markets` + `/related-futures`): **L1 = 13/13** (every game carries ≥1 win-prob source); **L2 = 0** game markets (expected upstream coverage gap for this off-brand slate — not a matching regression); **L3 verified working** (e.g. Red Sox @ Rays surfaces 6 team futures). A true dated L1–L4 column requires fixing the self-check feed parser (#193) and re-running during an in-season Tier-1 slate. Also spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`backend/tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
 
 **Hill-climb playbook**: `docs/hill-climb-guide.md` — measure → fix biggest bucket → re-measure → repeat.
 
