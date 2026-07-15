@@ -32,7 +32,7 @@ jobs:
       # github.com", which SKIPPED the mode step so the failure issue rendered a
       # bare "(  )" empty name with no error, 3x/day. The auto-provisioned
       # GITHUB_TOKEN never expires.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
