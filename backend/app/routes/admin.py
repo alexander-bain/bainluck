@@ -747,6 +747,56 @@ async def get_flow_sentinel_last(
     return json.loads(raw)
 
 
+@router.post("/grid-sentinel/run")
+async def trigger_grid_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+):
+    """Queue #196: on-demand run of the Grid Sentinel.
+
+    Enqueues the daily grid-reliability task, or (inline=True) runs it in-request
+    and returns the verdict scorecard — handy for verification
+    (?inline=true&file_issues=false). Classifies every finding against the
+    season-window artifact registry so RED means REAL. Read-only against
+    production + DB; never writes market data (gotcha #21)."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.grid_sentinel import _run_grid_sentinel
+
+        return await _run_grid_sentinel(file_issues=file_issues)
+
+    from app.tasks import celery_app
+
+    result = celery_app.send_task(
+        "app.tasks.grid_sentinel",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/grid-sentinel/last")
+async def get_grid_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue #196: read the last cached Grid Sentinel run (verdict scorecard +
+    filed issues). Lets an enqueued worker run be inspected without re-running,
+    and is the persisted scorecard the cockpit grid tile consumes."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get("bainluck:grid_sentinel:last")
+    if not raw:
+        return {"status": "no_run_cached", "key": "bainluck:grid_sentinel:last"}
+    return json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Pairwise Discover Card Preference Labeling
 # ---------------------------------------------------------------------------

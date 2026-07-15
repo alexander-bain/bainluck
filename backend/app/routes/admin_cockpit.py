@@ -348,6 +348,69 @@ def _flow_sentinel_group() -> dict:
     }
 
 
+def _grid_sentinel_group() -> dict | None:
+    """Per-league grid VERDICT from the last Grid Sentinel run (Queue #196).
+
+    Reads the scorecard the sentinel persists at ``bainluck:grid_sentinel:last``
+    (14d TTL; ``POST /api/admin/grid-sentinel/run`` also writes it) and shapes it
+    for the grid tile. The whole point (the mlb-66 lesson): a grid's tile status
+    is its VERDICT — RED only when a REAL defect survives the artifact registry —
+    not the raw penalty score, which cried wolf on blend-hidden source
+    disagreement. RED if any league has real defects; AMBER if none do but a
+    league carries explained artifacts/watches; GREEN when every league is clean.
+    Returns None (not a stale tile) before the first run is cached, so the caller
+    falls back to the raw audit score."""
+    raw = _read_redis_json("bainluck:grid_sentinel:last")
+    if not raw or "scorecard" not in raw:
+        return None
+    per = (raw.get("scorecard") or {}).get("per_league") or []
+    if not per:
+        return None
+
+    filed_by_league: dict[str, int] = {}
+    for f in raw.get("filed") or []:
+        if isinstance(f, dict) and f.get("issue") and f.get("league"):
+            try:
+                filed_by_league[str(f["league"])] = int(f["issue"])
+            except (TypeError, ValueError):
+                continue
+
+    rows = []
+    any_real = False
+    any_artifact = False
+    for lg in per:
+        if not isinstance(lg, dict):
+            continue
+        real = int(lg.get("real_defects") or 0)
+        arts = int(lg.get("explained_artifacts") or 0)
+        watch = int(lg.get("watch") or 0)
+        any_real = any_real or real > 0
+        any_artifact = any_artifact or arts > 0 or watch > 0
+        league = str(lg.get("league") or "?")
+        issue = filed_by_league.get(league)
+        rows.append({
+            "league": league,
+            "verdict": lg.get("verdict"),
+            "phase": lg.get("phase"),
+            "real_defects": real,
+            "explained_artifacts": arts,
+            "watch": watch,
+            "status": "red" if real else ("amber" if (arts or watch) else "green"),
+            "issue": issue,
+            "issue_url": _GH_ISSUE_URL.format(issue) if issue else None,
+        })
+
+    overall = "red" if any_real else ("amber" if any_artifact else "green")
+    return {
+        "status": overall,
+        "mode": raw.get("mode"),
+        "leagues_total": (raw.get("scorecard") or {}).get("leagues_total"),
+        "leagues_red": (raw.get("scorecard") or {}).get("leagues_red"),
+        "duration_seconds": raw.get("duration_seconds"),
+        "per_league": rows,
+    }
+
+
 def _read_redis_json(key: str) -> dict | None:
     try:
         from app.tasks.redis_state import get_redis_client
@@ -548,9 +611,48 @@ async def _health_group(db: AsyncSession) -> list[dict]:
             }
         )
 
-    # --- Grid health (warm cache from precompute_admin_audit_all) ---
+    # --- Grid health ---
+    # Queue #196: the Grid Sentinel VERDICT replaces the raw penalty score as the
+    # tile's status. The raw score cried wolf (mlb-66 was 100% blend-hidden source
+    # disagreement, zero real defects). When a sentinel run is cached, the tile is
+    # GREEN/AMBER/RED by real-defect verdict and links to the filed issue; the raw
+    # score rides along as secondary context. Cold sentinel cache falls back to the
+    # legacy raw-score tile below.
+    grid_group = _grid_sentinel_group()
     audit = _read_redis_json("bainluck:admin:audit_all")
-    if audit and audit.get("avg_score") is not None:
+    if grid_group:
+        reds = [r for r in grid_group["per_league"] if r["status"] == "red"]
+        scores = (audit or {}).get("scores") or {}
+        if reds:
+            detail = "real defects: " + ", ".join(
+                f"{r['league']}({r['real_defects']})" for r in reds
+            )
+        else:
+            detail = "no real defects — " + ", ".join(
+                f"{r['league']}:{r['verdict']}" for r in grid_group["per_league"]
+            )
+        grid_context = [
+            _red_sub_context("grid_health", r["league"],
+                             f"{r['real_defects']} real defect(s), phase {r['phase']}")
+            for r in reds
+        ]
+        tiles.append(
+            {
+                "key": "grid_health",
+                "label": "Grid health",
+                "value": ("GREEN" if grid_group["status"] == "green"
+                          else grid_group["status"].upper()),
+                "numeric": (audit or {}).get("avg_score"),
+                "status": grid_group["status"],
+                "detail": detail
+                + (f"  ·  raw avg {audit['avg_score']}/100" if audit and audit.get("avg_score") is not None else ""),
+                "context": grid_context,
+                "sentinel": grid_group,
+                "raw_scores": scores,
+                "href": "/admin/matching",
+            }
+        )
+    elif audit and audit.get("avg_score") is not None:
         avg = audit["avg_score"]
         scores = audit.get("scores") or {}
         # L2-104: annotate each RED grid (below the amber band) so a tracked or
@@ -886,6 +988,7 @@ async def cockpit(
         "waiting_on_you": _waiting_on_you(),
         "eval_queue": await _eval_queue(db),
         "flow_sentinel": _flow_sentinel_group(),
+        "grid_sentinel": _grid_sentinel_group(),
     }
 
     try:

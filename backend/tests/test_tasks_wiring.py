@@ -269,6 +269,7 @@ class TestBeatScheduleCompleteness:
         "data-quality-watchdog",
         "calibration-sentinel-weekly",
         "flow-sentinel-daily",
+        "grid-sentinel-daily",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",

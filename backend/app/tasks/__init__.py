@@ -1545,6 +1545,24 @@ def flow_sentinel(self, file_issues=True, canary=False):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grid_sentinel")
+def grid_sentinel(self, file_issues=True):
+    """Grid Sentinel (Queue #196): audit each championship grid (MLB/NBA/NHL),
+    classify every finding as REAL vs an EXPLAINED calendar/blend artifact so RED
+    always means REAL, and file ONE deduped GitHub issue per league with real
+    defects. Includes the ground-truth envelope self-check (merged prob must live
+    inside its source envelope) + a DB freshness self-check — retiring the Manus
+    ground-truth file from accuracy duty. Read-only; never writes market data
+    (gotcha #21). The 840s soft limit (under the 900s hard limit, clear of the
+    global 300s) plus the run's 480s inner deadline keep it from SIGKILLing
+    untracked (#966)."""
+    from app.tasks.grid_sentinel import _run_grid_sentinel
+    return _tracked_run(
+        "grid_sentinel",
+        _run_grid_sentinel(file_issues=file_issues),
+    )
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -2195,6 +2213,17 @@ celery_app.conf.beat_schedule = {
         # deduped issue per failing flow. background queue.
         "task": "app.tasks.flow_sentinel",
         "schedule": crontab(minute=10, hour=7),  # Daily 07:10 UTC
+        "options": {"queue": "background"},
+    },
+    "grid-sentinel-daily": {
+        # Queue #196: championship grid reliability sentinel. Daily (07:25 UTC,
+        # after the flow sentinel) — grid defects (missing teams/columns,
+        # monotonicity, envelope corruption, stale-when-active futures) need
+        # daily detection. Classifies findings against the season-window artifact
+        # registry so RED means REAL; files one deduped issue per RED league.
+        # background queue.
+        "task": "app.tasks.grid_sentinel",
+        "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

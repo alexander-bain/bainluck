@@ -663,6 +663,17 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
         _TIER1 = ("basketball_nba", "icehockey_nhl", "baseball_mlb",
                   "americanfootball_nfl", "basketball_wnba", "basketball_ncaab")
         _SOURCES = ("betting", "espn", "kalshi", "polymarket", "stat_model", "mlb")
+        # Odds-API sport key → season_windows league slug (Queue #196 Item 3).
+        # WNBA (summer) has no offseason window in season_windows → drops stay
+        # real; NCAAB maps to a slug season_windows treats as always-active
+        # unless a band is defined, so only the leagues with defined offseason
+        # bands (nba/nhl/mlb/nfl) get seasonal suppression.
+        _SPORT_KEY_TO_LEAGUE = {
+            "basketball_nba": "nba",
+            "icehockey_nhl": "nhl",
+            "baseball_mlb": "mlb",
+            "americanfootball_nfl": "nfl",
+        }
 
         coverage = {}
         for sport in _TIER1:
@@ -693,7 +704,27 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
         cov_changes = get_source_coverage_changes(threshold_pp=5.0)
         cov_drops = [c for c in cov_changes if c.get("delta") is not None and c["delta"] < -5]
         if cov_drops:
+            # Queue #196 Item 3 (r197's ask): a Tier-1 sport's source coverage
+            # naturally falls when it stops playing (NBA/NHL in July, NCAAB in
+            # summer). Those drops are the calendar, not a regression — annotate
+            # them "seasonal" and do NOT count them as fired alerts (crying wolf),
+            # while keeping them visible in the snapshot. Only ACTIVE-league drops
+            # remain real alerts.
+            from app.utils import season_windows
+
+            real_drops, seasonal_drops = [], []
             for drop in cov_drops:
+                league = _SPORT_KEY_TO_LEAGUE.get((drop.get("key") or "").split(":", 1)[0])
+                note = season_windows.seasonal_note(league) if league else None
+                if note:
+                    drop["seasonal"] = True
+                    drop["seasonal_note"] = note
+                    seasonal_drops.append(drop)
+                    logger.info(
+                        "Source coverage drop (seasonal, suppressed): %s %+.1fpp — %s",
+                        drop["key"], drop["delta"], note,
+                    )
+                    continue
                 alert_msg = (
                     f"Source coverage drop: {drop['key']} went from "
                     f"{drop['yesterday']}% to {drop['today']}% "
@@ -701,7 +732,10 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 )
                 logger.warning(alert_msg)
                 stats["alerts_fired"] += 1
-            stats["source_coverage_drops"] = cov_drops
+                real_drops.append(drop)
+            stats["source_coverage_drops"] = real_drops
+            if seasonal_drops:
+                stats["source_coverage_drops_seasonal"] = seasonal_drops
 
         stats["source_coverage_snapshot"] = coverage
     except Exception as exc:
