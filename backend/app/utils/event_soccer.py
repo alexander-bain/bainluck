@@ -225,12 +225,38 @@ def _is_real_winner_outcome(name: str | None) -> bool:
     return not _ANON_TEAM_CODE_RE.match(n)
 
 
+# (max-min)/max over the real priced field: a genuine winner field's favorite towers
+# over its longshots (odds_api WC: Spain 0.54 vs France 0.07 → ~0.88 spread). A FLAT
+# field is the #199 placeholder signature — the Polymarket WC market is mostly
+# anonymized "Team AM" slots with a few live-polled real names all pinned at the same
+# ~0.082, which after normalization crowns a nonsense favorite (the "Peru 47%" bug).
+# Such a degenerate field is NOT a real winner field and is rejected.
+_MIN_FIELD_SPREAD_RATIO = 0.10
+
+
+def _field_has_real_spread(real_outcomes: list) -> bool:
+    """True when the real priced field has meaningful dispersion (a real favorite),
+    False for a flat placeholder field (#199). Requires ≥2 priced outcomes."""
+    probs = [
+        float(o.current_probability)
+        for o in real_outcomes
+        if o.current_probability is not None
+    ]
+    if len(probs) < 2:
+        return False
+    mx, mn = max(probs), min(probs)
+    if mx <= 0:
+        return False
+    return (mx - mn) / mx >= _MIN_FIELD_SPREAD_RATIO
+
+
 def _select_winner_field(markets: list):
-    """Pick the best World Cup winner-field market: the FRESHEST market carrying ≥2
-    real (non-placeholder), priced outcomes. Freshness (max outcome last_updated) is
-    the tiebreaker so a live-updated odds_api field beats a stale Kalshi one and an
-    anonymized Polymarket placeholder never wins. Returns (market, real_outcomes) or
-    (None, [])."""
+    """Pick the best World Cup winner-field market: the FRESHEST market whose real
+    (non-placeholder) priced field has genuine spread. The spread gate rejects the
+    Polymarket flat/anonymized field (the "Peru 47%" bug) so a live-updated odds_api
+    field wins over a stale Kalshi one and a degenerate Poly one never wins. If NO
+    honest field exists, returns (None, []) — the concept renders duels-only rather
+    than a fabricated favorite. Returns (market, real_outcomes)."""
     best = None
     best_key = None
     best_real: list = []
@@ -240,7 +266,7 @@ def _select_winner_field(markets: list):
             for o in (m.outcomes or [])
             if _is_real_winner_outcome(o.name) and o.current_probability is not None
         ]
-        if len(real) < 2:
+        if len(real) < 2 or not _field_has_real_spread(real):
             continue
         freshness = max(
             (
@@ -250,9 +276,8 @@ def _select_winner_field(markets: list):
             ),
             default=datetime.min.replace(tzinfo=timezone.utc),
         )
-        key = (len(real) >= 2, freshness)
-        if best is None or key > best_key:
-            best, best_key, best_real = m, key, real
+        if best is None or freshness > best_key:
+            best, best_key, best_real = m, freshness, real
     return best, best_real
 
 

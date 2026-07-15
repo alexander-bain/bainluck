@@ -160,6 +160,40 @@ class TestSelectWinnerField:
         # only Spain is priced → < 2 real priced → not selected
         assert market is None
 
+    def test_flat_real_field_rejected_over_honest_stale(self):
+        # The "Peru 47%" bug: Polymarket's WC field is mostly anonymized, with a few
+        # live-polled real names all pinned flat at 0.082 (fresher than odds_api). It
+        # must be REJECTED (no spread) so the honest-spread odds_api field wins even
+        # though it's slightly staler.
+        now = datetime.now(timezone.utc)
+        older = now - timedelta(hours=3)
+        poly_flat = _mk_market(
+            112892, "polymarket",
+            [
+                _mk_outcome("Team AM", 0.082, now),  # placeholder → filtered
+                _mk_outcome("Peru", 0.082, now),      # real name, flat
+                _mk_outcome("Chile", 0.082, now),     # real name, flat
+            ],
+        )
+        odds = _mk_market(
+            10, "odds_api",
+            [_mk_outcome("Spain", 0.537, older), _mk_outcome("France", 0.066, older)],
+        )
+        market, real = _select_winner_field([poly_flat, odds])
+        assert market is not None and market.id == 10
+        assert {o.name for o in real} == {"Spain", "France"}
+
+    def test_all_flat_yields_nothing(self):
+        # If the ONLY field is flat/degenerate, show no winner field (duels-only) —
+        # never a fabricated favorite.
+        now = datetime.now(timezone.utc)
+        poly_flat = _mk_market(
+            112892, "polymarket",
+            [_mk_outcome("Peru", 0.082, now), _mk_outcome("Chile", 0.082, now)],
+        )
+        market, real = _select_winner_field([poly_flat])
+        assert market is None and real == []
+
 
 class TestBuildTeamLookup:
     def test_name_abbrev_and_alt_names_resolve(self):
