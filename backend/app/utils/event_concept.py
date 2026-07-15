@@ -614,7 +614,15 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
         }
         for g in (data.get("round_top_groups") or [])
     ]
-    children = (data.get("related_futures") or []) + round_children
+    # L2-123 Item 3: drop pure-junk related-futures rows (no name AND no outcomes) so
+    # they never render as an empty matchup/prop row. Keep anything with a name OR
+    # outcomes — a thin but real market still surfaces.
+    related = [
+        rf
+        for rf in (data.get("related_futures") or [])
+        if (rf.get("name") or rf.get("market_name")) or (rf.get("outcomes"))
+    ]
+    children = related + round_children
 
     # L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) for the
     # FIELD hero. Built from the prop children's opening→current marks; empty when

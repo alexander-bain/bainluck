@@ -428,6 +428,24 @@ class TestBuildGolfPropsScript:
         env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
         assert env["props_script"] == []
 
+    def test_envelope_drops_junk_related_futures_rows(self):
+        # L2-123 Item 3: a related-future with no name AND no outcomes must not reach
+        # the children rails (it would render as an empty row).
+        f = _golf_fixture()
+        f["tournament"]["schedule_status"] = "upcoming"
+        f["related_futures"] = [
+            {"market_id": 1, "name": None, "outcomes": []},  # pure junk → dropped
+            {
+                "market_id": 2,
+                "market_name": "The Open: Playoff",
+                "outcomes": [{"name": "Yes", "probability": 0.2, "opening_probability": 0.28}],
+            },
+        ]
+        env = golf_detail_to_envelope("event:golf:x", "x", f)
+        child_ids = {c.get("market_id") for c in env["children"]}
+        assert 1 not in child_ids  # junk dropped
+        assert 2 in child_ids  # real market kept
+
 
 class TestFuseGolfLive:
     """L2-66: fuse stored DataGolf leaderboard into competitors by name."""
