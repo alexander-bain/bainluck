@@ -298,14 +298,10 @@ _WORLD_CUP_NEG_RE = re.compile(
 )
 
 
-def _detect_query_world_cup_concept(q: str | None) -> dict | None:
-    """Resolve a raw search query to the FIFA World Cup event concept, or None. #205
-
-    Returns `{key, name, domain, market_id}` (market_id None — the concept resolves by
-    key). Pure + word-boundary anchored, so it is safe to unit-test and cannot
-    false-fire on an unrelated or other-code World Cup query."""
-    if not q or not _WORLD_CUP_QUERY_RE.search(q) or _WORLD_CUP_NEG_RE.search(q):
-        return None
+def _wc_concept_dict() -> dict | None:
+    """The FIFA World Cup 2026 event-concept payload (never-dead — resolves by key),
+    or None if the tournament config is missing. Shared by the query-text detector
+    and the #206 country-team surfacing path so both emit the identical dict."""
     try:
         from app.utils.event_soccer import SOCCER_TOURNAMENTS
     except Exception:
@@ -319,6 +315,17 @@ def _detect_query_world_cup_concept(q: str | None) -> dict | None:
         "domain": "soccer",
         "market_id": None,
     }
+
+
+def _detect_query_world_cup_concept(q: str | None) -> dict | None:
+    """Resolve a raw search query to the FIFA World Cup event concept, or None. #205
+
+    Returns `{key, name, domain, market_id}` (market_id None — the concept resolves by
+    key). Pure + word-boundary anchored, so it is safe to unit-test and cannot
+    false-fire on an unrelated or other-code World Cup query."""
+    if not q or not _WORLD_CUP_QUERY_RE.search(q) or _WORLD_CUP_NEG_RE.search(q):
+        return None
+    return _wc_concept_dict()
 
 
 def _market_volume(m) -> float:
@@ -1611,7 +1618,11 @@ async def search_events(
     # cards. One concept per event key, richest-first (deduped_futures is
     # volume-reranked).
     from app.utils.event_awards import derive_awards_concept as _derive_awards_concept
-    from app.utils.event_election import derive_election_concept as _derive_election_concept
+    from app.utils.event_election import (
+        classify_election_market as _classify_election_market,
+        derive_election_concept as _derive_election_concept,
+        is_race as _is_election_race,
+    )
     from app.utils.event_soccer import derive_soccer_concept as _derive_soccer_concept
     from app.utils.event_tennis import is_winner_market as _is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _derive_ufc_concept
@@ -1645,7 +1656,23 @@ async def search_events(
         # category-agnostic (election markets carry llm_sport_category=politics) and
         # returns None for novelties/other-edition (2028 pres) markets, so only a
         # real race/primary/control surfaces the civic concept.
-        _el = _derive_election_concept(_m.external_id, _m.name)
+        # #206 Item 1b: gate the deriver behind a US-election ticker stem + a real
+        # race (mirroring concept_links.py:194-197). Without it, a name-collision
+        # market — "France United Left Primary Winner" (French politics, matched by a
+        # bare "france" query) — classifies as `primary` and falsely surfaces the US
+        # "2026 Midterms" concept. The stem guard keeps only genuine US races/primaries.
+        _eid_l = (_m.external_id or "").lower()
+        _el = (
+            _derive_election_concept(_m.external_id, _m.name)
+            if any(
+                _stem in _eid_l
+                for _stem in ("kxgov", "kxsenate", "kxhouse", "kxcongress")
+            )
+            and _is_election_race(
+                _classify_election_market(_m.external_id, _m.name)
+            )
+            else None
+        )
         if _el is not None:
             if _el["key"] in _seen_concept_keys:
                 continue
@@ -1782,6 +1809,21 @@ async def search_events(
                 "record": row.current_record,
                 "sport_key": _normalize_team_sport_key(row.sport_key),
             })
+
+    # #206 Item 1b: positively surface the never-dead World Cup concept for a bare
+    # WC-participant country query ("france") — the deriver guard above stops the
+    # false Midterms mapping, and this raises the LIVE tournament to index 0 so the
+    # fan lands on the sports context. Self-gating to the tournament: fires only when
+    # the query matched a World Cup national team AND a WC game is in the results, so
+    # the games aging out after the final naturally retires this (no hardcoded dates).
+    if "soccer_fifa_world_cup" in sports_found and any(
+        t.get("sport_key") == "soccer_fifa_world_cup" for t in matched_teams
+    ):
+        _wc_team_concept = _wc_concept_dict()
+        if _wc_team_concept and _wc_team_concept["key"] not in _seen_concept_keys:
+            _seen_concept_keys.add(_wc_team_concept["key"])
+            event_concepts.insert(0, _wc_team_concept)
+            event_concepts = event_concepts[:5]
 
     return {
         "query": q,

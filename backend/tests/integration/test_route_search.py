@@ -16,7 +16,9 @@ from app.routes.events import (
     _futures_search_vector,
     _search_rank,
     _team_search_vector,
+    _wc_concept_dict,
 )
+from app.utils.event_election import classify_election_market, is_race
 
 
 # ============================================================================
@@ -111,6 +113,60 @@ class TestWorldCupConceptDetection:
     def test_none_and_empty_are_safe(self):
         assert _detect_query_world_cup_concept(None) is None
         assert _detect_query_world_cup_concept("") is None
+
+
+# ============================================================================
+# #206 Item 1b — "france" → Midterms mismatch fix
+# ============================================================================
+
+
+class TestWorldCupConceptDict:
+    """`_wc_concept_dict` is the shared never-dead WC payload used by BOTH the
+    query-text detector and the #206 country-team surfacing path — the two must emit
+    the identical concept dict so a "france" hit and a "world cup" hit converge."""
+
+    def test_returns_canonical_wc_concept(self):
+        result = _wc_concept_dict()
+        assert result is not None
+        assert result["key"] == "event:soccer:world-cup-2026"
+        assert result["domain"] == "soccer"
+        assert result["name"] == "2026 FIFA World Cup"
+        assert result["market_id"] is None
+
+    def test_matches_query_detector_payload(self):
+        assert _wc_concept_dict() == _detect_query_world_cup_concept("world cup")
+
+
+class TestElectionDeriverGuard:
+    """#206 Item 1b root cause: a bare "france" query matches "France United Left
+    Primary Winner" (French politics, non-Kalshi ticker), which classifies as
+    `primary` and, before the guard, falsely surfaced the US "2026 Midterms" concept.
+    The search loop now gates the deriver on a US-election ticker stem + a real race
+    (mirroring concept_links.py). This tests that exact predicate."""
+
+    _STEMS = ("kxgov", "kxsenate", "kxhouse", "kxcongress")
+
+    def _passes_guard(self, external_id, name):
+        eid_l = (external_id or "").lower()
+        return any(s in eid_l for s in self._STEMS) and is_race(
+            classify_election_market(external_id, name)
+        )
+
+    def test_france_primary_is_rejected(self):
+        # The exact production culprit (market 16626230): French-politics market with
+        # a bare-numeric Polymarket ticker → no US-election stem → guard rejects it.
+        assert self._passes_guard("438483", "France United Left Primary Winner") is False
+
+    @pytest.mark.parametrize(
+        "external_id,name",
+        [
+            ("KXSENATE-26-GA", "Georgia Senate Election Winner"),
+            ("KXGOV-26-CA", "California Governor Election Winner"),
+            ("KXHOUSE-26-TX01", "Texas 1st District House Winner"),
+        ],
+    )
+    def test_real_us_races_pass_guard(self, external_id, name):
+        assert self._passes_guard(external_id, name) is True
 
 
 # ============================================================================
