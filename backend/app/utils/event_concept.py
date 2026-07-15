@@ -450,20 +450,24 @@ def _clean_prop_label(market_name: str | None, tournament_name: str | None) -> s
     return name or "Prop"
 
 
-# The all-tied spread (0-1 probability) under which a multi-outcome family reads
-# as a flat placeholder rather than a real book — the wide-spread/no-trade capture
-# signature #199 diagnosed (The Open's R2 leaders all at 0.24, R3 all at 0.30). A
-# genuine field never has its outcomes agree to within 0.5pp, so this is a safe
-# floor that only trips on fabricated flats.
-_DEGENERATE_TIED_EPS = 0.005
+# A multi-outcome family reads as a flat placeholder (not a real book) — the #199
+# wide-spread/no-trade capture signature — when the whole field agrees. "Agrees" is
+# tested two ways because the captured placeholders are not always perfectly tied:
+# The Open's R2 leaders were all exactly 0.24 (0pp spread) but R3 spanned ~1pp
+# (0.29–0.30). An ABSOLUTE floor alone (0.5pp) missed R3; a RELATIVE test —
+# (max-min)/max — catches both (R2 0%, R3 3.3%) while a genuine field's favorites
+# tower over its longshots (R1: 59% relative spread), so neither trips on real books.
+_DEGENERATE_TIED_EPS = 0.005   # absolute: <=0.5pp across the field
+_DEGENERATE_FLAT_RATIO = 0.10  # relative: (max-min)/max <= 10% => the field agrees
 
 
 def _is_degenerate_placeholder(outs: list[dict]) -> bool:
     """True when a MULTI-outcome prop family carries NO honest price — the #199
     wide-spread/no-trade capture class: every outcome's `opening_probability` is null
-    AND the live probabilities are either all null or an all-tied flat placeholder.
-    Such a family must render an honest pending state ("Opens after Round N" / "no
-    market yet"), never the fabricated flat and never an arbitrary crowned "leader".
+    AND the live probabilities are either all null or a near-flat placeholder where
+    the whole field agrees. Such a family must render an honest pending state ("Opens
+    after Round N" / "no market yet"), never the fabricated flat and never an arbitrary
+    crowned "leader".
 
     Restricted to families with ≥2 outcomes — the degeneracy signature is agreement
     ACROSS a field. A single-outcome prop (a lone binary "Yes", or a one-golfer test
@@ -477,7 +481,11 @@ def _is_degenerate_placeholder(outs: list[dict]) -> bool:
     currents = [o.get("probability") for o in outs if isinstance(o.get("probability"), (int, float))]
     if not currents:
         return True  # nothing priced at all → no market yet
-    return (max(currents) - min(currents)) <= _DEGENERATE_TIED_EPS  # all-tied flat
+    mx, mn = max(currents), min(currents)
+    if mx <= 0:
+        return True  # a field of zeros is not a real book
+    spread = mx - mn
+    return spread <= _DEGENERATE_TIED_EPS or (spread / mx) <= _DEGENERATE_FLAT_RATIO
 
 
 def build_golf_props_script(

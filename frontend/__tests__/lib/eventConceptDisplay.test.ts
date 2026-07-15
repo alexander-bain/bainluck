@@ -346,6 +346,18 @@ describe("renderedFinishColumns / finishPositionRows (L2-116 ladder)", () => {
     expect(cols.map((c) => c.type)).toEqual(["top_5"]); // make_cut dropped
   });
 
+  test("L2-123: a near-flat (not perfectly tied) placeholder column is suppressed", () => {
+    // Mirrors the live Open R3 shape: values agree to ~1pp, not exactly. The relative
+    // ratio must still catch it.
+    const nearFlat = Array.from({ length: 8 }, (_, i) => ({
+      name: `G${i}`,
+      probability: 0.5 - i * 0.01,
+      make_cut_prob: i === 0 ? 1.9 : 2.0, // ~0.1pt spread on a ~2pt field
+    }));
+    const cols = renderedFinishColumns(mk(nearFlat, ["make_cut"]));
+    expect(cols).toEqual([]);
+  });
+
   test("L2-123: a real spread survives even at scale (not over-suppressed)", () => {
     const real = Array.from({ length: 8 }, (_, i) => ({
       name: `G${i}`,

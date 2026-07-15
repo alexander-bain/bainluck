@@ -340,6 +340,20 @@ class TestBuildGolfPropsScript:
         marks = build_golf_props_script(children, "The Open Championship", "upcoming")
         assert marks[0]["pending_label"] == "Opens after Round 2"
 
+    def test_near_flat_placeholder_not_perfectly_tied_is_degenerate(self):
+        # The Open's LIVE R3 was not perfectly tied — 0.29–0.30 (a ~1pp spread) with
+        # null openings. The relative-flatness test must still classify it degenerate
+        # (an absolute 0.5pp floor alone missed it in the first ship).
+        outs = [{"name": f"G{i}", "probability": 0.30, "opening_probability": None} for i in range(9)]
+        outs.append({"name": "G9", "probability": 0.29, "opening_probability": None})
+        children = [
+            {"market_id": 81, "market_name": "Round 3 Leader", "kind": "prop",
+             "prop_type": "round", "round": 3, "outcomes": outs}
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "upcoming")
+        assert marks[0]["pending_label"] == "Opens after Round 2"
+        assert marks[0]["current"] is None
+
     def test_all_null_multi_outcome_family_is_no_market_yet(self):
         # A multi-outcome family with outcomes but no priced probabilities at all →
         # honestly "No market yet" (never blank), not silently dropped.

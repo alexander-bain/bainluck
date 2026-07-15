@@ -126,9 +126,12 @@ function finishValue(
 // capture class: The Open's make-cut showed the whole field at ≈1.1 pts, top-5
 // crowned a ceremonial past champion) is NOT a real book. It must not render as a
 // wall of fake flats. A genuine placement field spreads tens of points across the
-// leaderboard, so a spread this tight only appears on fabricated placeholders.
-// Guarded on ≥5 values so an early, thin-but-real field is never mistaken for one.
-const FINISH_COLUMN_DEGENERATE_SPREAD = 0.5; // points (0–100 scale)
+// leaderboard, so "agreement" only appears on fabricated placeholders. Tested by
+// absolute floor OR relative ratio (mirrors the props path) so a placeholder that
+// is near-flat but not perfectly tied is still caught. Guarded on ≥5 values so an
+// early, thin-but-real field is never mistaken for one.
+const FINISH_COLUMN_DEGENERATE_SPREAD = 1.0; // points (0–100 scale)
+const FINISH_COLUMN_FLAT_RATIO = 0.1; // (max-min)/max
 
 function finishColumnIsDegenerate(
   comps: EventConceptCompetitor[],
@@ -138,7 +141,11 @@ function finishColumnIsDegenerate(
     .map((c) => finishValue(c, key))
     .filter((v): v is number => v != null);
   if (vals.length < 5) return false;
-  return Math.max(...vals) - Math.min(...vals) <= FINISH_COLUMN_DEGENERATE_SPREAD;
+  const mx = Math.max(...vals);
+  const mn = Math.min(...vals);
+  if (mx <= 0) return true;
+  const spread = mx - mn;
+  return spread <= FINISH_COLUMN_DEGENERATE_SPREAD || spread / mx <= FINISH_COLUMN_FLAT_RATIO;
 }
 
 /** The finish-position columns that ACTUALLY render for this field: a column
