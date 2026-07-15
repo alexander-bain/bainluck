@@ -153,7 +153,7 @@ Bain Luck is **NOT**: a sportsbook or betting interface; a trading platform; a p
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 5,000+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 7,000+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (realtime + background workers) | Heroku Redis |
 | Web | Next.js 14 | Vercel |

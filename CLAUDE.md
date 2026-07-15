@@ -34,7 +34,7 @@ The **Grid Sentinel** (`backend/app/tasks/grid_sentinel.py`, daily 07:25 UTC; `P
 2. **`audit_grid_accuracy.py` needs an external `--ground-truth` file** (Manus-fed) — it is not a standalone self-check, so it can't be run fresh here.
 3. **Mid-July is an off-brand sports lull.** Today's feed-surfaced game slate is NBA Summer League, NPB, UCL qualifiers, World Cup, and one settled MLB game — no Tier-1 games, and thin upstream Kalshi/Polymarket game-market coverage.
 
-Direct production spot-check of the 13 feed-surfaced game events (via `/api/events/{id}/game-markets` + `/related-futures`): **L1 = 13/13** (every game carries ≥1 win-prob source); **L2 = 0** game markets (expected upstream coverage gap for this off-brand slate — not a matching regression); **L3 verified working** (e.g. Red Sox @ Rays surfaces 6 team futures). A true dated L1–L4 column requires fixing the self-check feed parser (#193) and re-running during an in-season Tier-1 slate. Also spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`backend/tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
+Direct production spot-check of the 13 feed-surfaced game events (via `/api/events/{id}/game-markets` + `/related-futures`): **L1 = 13/13** (every game carries ≥1 win-prob source); **L2 = 0** game markets (expected upstream coverage gap for this off-brand slate — not a matching regression); **L3 verified working** (e.g. Red Sox @ Rays surfaces 6 team futures). A true dated L1–L4 column requires fixing the self-check feed parser (#193) and re-running during an in-season Tier-1 slate. Also spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`backend/app/tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
 
 **Hill-climb playbook**: `docs/hill-climb-guide.md` — measure → fix biggest bucket → re-measure → repeat.
 
@@ -64,11 +64,11 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 5,000+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 7,000+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS / iPadOS / macOS / watchOS App | SwiftUI (shared codebase, ~128 Swift files in the main app + a 9-file watchOS app). The Apple Watch app exists today and is the top-priority secondary surface (P7). Caveat surfaced by the P7 Step-0 audit (#1080): the watch app itself builds & ships, but the watch complication and the iOS/macOS home-screen widget source (`BainLuckWidget/`) are **not wired into any Xcode target** and do not ship. | TestFlight / direct |
+| iOS / iPadOS / macOS / watchOS App | SwiftUI (shared codebase, 142 Swift files across app/watch/widget targets — 129 main app, 9 watchOS, 4 widget). The Apple Watch app exists today and is the top-priority secondary surface (P7). Caveat surfaced by the P7 Step-0 audit (#1080): the watch app itself builds & ships, but the watch complication and the iOS/macOS home-screen widget source (`BainLuckWidget/`) are **not wired into any Xcode target** and do not ship. | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -89,7 +89,7 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 
 - **Deployments from GitHub**: `git push origin master` triggers CI; Vercel deploys frontend from GitHub, and Heroku deploy runs through the serialized CI `deploy` job after tests pass.
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (5,000+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (7,000+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
 - **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (590+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
@@ -121,7 +121,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 5,000+ pytest items
+│   └── tests/                   # 7,000+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
