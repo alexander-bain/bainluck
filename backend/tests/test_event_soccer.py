@@ -60,6 +60,26 @@ class TestIsWcWinnerFieldMarket:
         assert not is_wc_winner_field_market("T20 World Cup Final: India vs New Zealand")
         assert not is_wc_winner_field_market("Who will host the 2029 Men's FIFA Club World Cup?")
 
+    def test_other_code_world_cups_excluded(self):
+        # L2-130 live-envelope forensic (2026-07-15): "Esports World Cup Chess Finals
+        # Winner" (mis-tagged llm_sport_category="soccer") is a LIVE, freshly-polled,
+        # coherent field, so before this guard it BEAT the real FIFA field on freshness
+        # and crowned a chess grandmaster the "World Cup" favorite. Other-code World
+        # Cups + non-team (continent) fields must never occupy the trophy slot.
+        assert not is_wc_winner_field_market("Esports World Cup Chess Finals Winner")
+        assert not is_wc_winner_field_market("Chess World Cup Winner")
+        assert not is_wc_winner_field_market("Rugby World Cup Winner")
+        assert not is_wc_winner_field_market("Cricket World Cup Winner")
+        assert not is_wc_winner_field_market("Netball World Cup Winner")
+        assert not is_wc_winner_field_market("Hockey World Cup Winner")
+        assert not is_wc_winner_field_market("Continent to Win the Men's World Cup")
+        assert not is_wc_winner_field_market("Which continent will win the World Cup?")
+        assert not is_wc_winner_field_market("Women's World Cup Winner")
+        assert not is_wc_winner_field_market("U-20 World Cup Winner")
+        # ...but the real men's FIFA trophy fields still surface:
+        assert is_wc_winner_field_market("FIFA World Cup Winner")
+        assert is_wc_winner_field_market("2026 Men's World Cup Winner")
+
     def test_needs_winner_word(self):
         assert not is_wc_winner_field_market("World Cup halftime show performer")
         assert not is_wc_winner_field_market("Random market")

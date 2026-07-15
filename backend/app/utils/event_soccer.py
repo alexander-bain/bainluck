@@ -109,13 +109,28 @@ def parse_soccer_slug(slug: str) -> SoccerTournamentConfig | None:
 
 # Non-trophy World Cup markets that ride the "world cup" name but are NOT the overall
 # winner field: individual awards (boot/glove/ball), group winners, novelties, hosts.
+#
+# Two guard classes live here:
+#   1. Award / group / novelty markets of the FIFA WC itself (boot, glove, squad, ...).
+#   2. OTHER-CODE "World Cup" competitions that carry the phrase but are a different
+#      sport entirely — the "Esports World Cup Chess Finals Winner" (Kalshi
+#      KXCHESSTOURNAMENT-26EWC, mis-tagged llm_sport_category="soccer") is a LIVE,
+#      freshly-polled, coherent field, so before this guard it BEAT the real FIFA field
+#      on freshness and crowned Magnus Carlsen as the "World Cup" favorite (L2-130
+#      live-envelope forensic, 2026-07-15). Mirrors the search-side `_WORLD_CUP_NEG_RE`
+#      vocabulary (routes/events.py) plus chess/esports/continent — a winner-field
+#      market must be the men's FIFA trophy, not chess, cricket, rugby, a continent
+#      bucket, or an age-group/women's edition.
 _NON_WINNER_FIELD_RE = re.compile(
     r"\bgolden\b|\bsilver\b|\bbronze\b|\bboot\b|\bglove\b|\bball\b"
     r"|\bgroup\b|\bfirst\s+time\b|\bfair\s+play\b|\byoung\s+player\b"
     r"|\bhost\b|\bhalftime\b|\bsquad\b|\btrail\b|\bunbeaten\b|\bqualif\w+"
     r"|\bannouncers?\b|\bmention\b|\bremoved\b|\bcompete\b|\bT20\b|\bclub\b"
     r"|\bintercontinental\b|\bmessi\b|\bronaldo\b|\bpenalty\b|\bgoalie\b"
-    r"|\bafc\b|\bworst\b|\bfurthest\b|\bsemifinals?\b",
+    r"|\bafc\b|\bworst\b|\bfurthest\b|\bsemifinals?\b"
+    # other-code World Cups + non-team fields that would false-win the trophy slot:
+    r"|\besports?\b|\bchess\b|\bcricket\b|\brugby\b|\bnetball\b|\bhockey\b"
+    r"|\bcontinent\b|\bwomen'?s?\b|\bu-?\s?(?:17|19|20|21|23)\b",
     re.I,
 )
 

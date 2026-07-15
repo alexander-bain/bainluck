@@ -17,6 +17,10 @@ import {
   competitorsToOutcomeHistory,
   daysUntilStart,
   countdownLabel,
+  isMatchupChild,
+  childReactKey,
+  headlinerMatchup,
+  matchupKickoffLabel,
 } from "../../lib/eventConceptDisplay";
 
 describe("daysUntilStart / countdownLabel (L2-78 pre-tournament countdown)", () => {
@@ -440,5 +444,83 @@ describe("seriesForName", () => {
   test("empty when no match or no data", () => {
     expect(seriesForName(outcomes, "Rory McIlroy")).toEqual([]);
     expect(seriesForName(undefined, "x")).toEqual([]);
+  });
+});
+
+// L2-130 — soccer matchup duels (World Cup bracket games as team duels).
+describe("isMatchupChild", () => {
+  test("true for explicit matchup kind or home/away presence", () => {
+    expect(isMatchupChild({ kind: "matchup", home: { name: "A" }, away: { name: "B" } })).toBe(true);
+    expect(isMatchupChild({ home: { name: "A" } })).toBe(true);
+    expect(isMatchupChild({ away: { name: "B" } })).toBe(true);
+  });
+  test("false for combat fight cards and props", () => {
+    expect(isMatchupChild({ kind: "fight", outcomes: [{ name: "X", probability: 0.6 }] })).toBe(false);
+    expect(isMatchupChild({ kind: "prop", market_id: 5 })).toBe(false);
+    expect(isMatchupChild({ market_id: 5, outcomes: [] })).toBe(false);
+  });
+});
+
+describe("childReactKey", () => {
+  test("prefers market_id, then event_id, then name+index — soccer games never collide on undefined", () => {
+    expect(childReactKey({ market_id: 42 }, 0)).toBe("m42");
+    // The pre-L2-130 bug: matchup children have NO market_id, so every soccer game
+    // keyed as `undefined`. event_id keeps them distinct.
+    expect(childReactKey({ event_id: 7 }, 0)).toBe("e7");
+    expect(childReactKey({ event_id: 8 }, 1)).toBe("e8");
+    expect(childReactKey({ market_name: "A vs B" }, 3)).toBe("A vs B-3");
+  });
+});
+
+describe("headlinerMatchup", () => {
+  const live = { kind: "matchup" as const, event_id: 1, status: "live", commence_time: "2026-07-15T19:00:00Z", home: { name: "England" }, away: { name: "Argentina" } };
+  const soon = { kind: "matchup" as const, event_id: 2, status: "scheduled", commence_time: "2026-07-16T19:00:00Z", home: { name: "Spain" }, away: { name: "France" } };
+  const later = { kind: "matchup" as const, event_id: 3, status: "scheduled", commence_time: "2026-07-19T19:00:00Z", home: { name: "Spain" }, away: { name: "England" } };
+  const done = { kind: "matchup" as const, event_id: 4, status: "completed", settled: true, commence_time: "2026-07-14T19:00:00Z", home: { name: "France", score: 0 }, away: { name: "Spain", score: 2 } };
+  test("prefers the live game", () => {
+    expect(headlinerMatchup([done, later, live, soon])?.event_id).toBe(1);
+  });
+  test("falls back to the soonest upcoming when nothing is live", () => {
+    expect(headlinerMatchup([done, later, soon])?.event_id).toBe(2);
+  });
+  test("null when only settled games remain (hero suppressed)", () => {
+    expect(headlinerMatchup([done])).toBeNull();
+  });
+  test("ignores non-matchup children", () => {
+    expect(headlinerMatchup([{ kind: "prop", market_id: 9 }])).toBeNull();
+  });
+});
+
+describe("matchupKickoffLabel", () => {
+  const now = Date.parse("2026-07-15T18:00:00Z");
+  test("live and settled read as status, clock-independent", () => {
+    expect(matchupKickoffLabel({ status: "live" }, now)).toBe("Live");
+    expect(matchupKickoffLabel({ status: "completed", settled: true }, now)).toBe("Final");
+    expect(matchupKickoffLabel({ settled: true }, now)).toBe("Final");
+  });
+  test("relative countdown for an upcoming game within the hour / day", () => {
+    expect(matchupKickoffLabel({ status: "scheduled", commence_time: "2026-07-15T18:45:00Z" }, now)).toBe("Kicks off in 45m");
+    expect(matchupKickoffLabel({ status: "scheduled", commence_time: "2026-07-15T20:30:00Z" }, now)).toBe("Kicks off in 2h 30m");
+  });
+  test("null when an upcoming game has no usable time", () => {
+    expect(matchupKickoffLabel({ status: "scheduled" }, now)).toBeNull();
+    expect(matchupKickoffLabel({ status: "scheduled", commence_time: "not-a-date" }, now)).toBeNull();
+  });
+});
+
+describe("marketsTracked counts soccer games by event_id", () => {
+  test("winner market + matchup children (event_id) all count, no id collisions", () => {
+    const data = {
+      event: { key: "event:soccer:world-cup-2026", domain: "soccer", name: "WC", status: "live" as const },
+      primary: { kind: "winner_field" as const, label: "Winner", competitors: [], evolution_market_id: 10 },
+      sections: [],
+      children: [
+        { kind: "matchup" as const, event_id: 1, home: { name: "A" }, away: { name: "B" } },
+        { kind: "matchup" as const, event_id: 2, home: { name: "C" }, away: { name: "D" } },
+      ],
+      movers: [],
+    };
+    // 1 winner market + 2 games = 3.
+    expect(marketsTracked(data)).toBe(3);
   });
 });

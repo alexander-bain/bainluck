@@ -12,14 +12,20 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import Link from "next/link";
 import { fetchEventConcept } from "@/lib/api";
-import { marketsTracked, renderedFinishColumns } from "@/lib/eventConceptDisplay";
+import {
+  marketsTracked,
+  renderedFinishColumns,
+  headlinerMatchup,
+} from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import EventHeader from "@/components/event/EventHeader";
 import MoversStrip from "@/components/event/MoversStrip";
 import RaceToTitleChart from "@/components/event/RaceToTitleChart";
 import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
+import SoccerContainerHero from "@/components/event/SoccerContainerHero";
 import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
 import EventProps from "@/components/event/EventProps";
@@ -161,17 +167,28 @@ export default function EventConceptPage() {
   // matchups rail and props get a dedicated section. Untagged children (golf /
   // tennis / f1) are treated as matchups (unchanged behavior). Props-script markets
   // are excluded from both so they render once, in PropsSection.
+  // L2-130: matchup children (soccer games) have no market_id, so a props-script
+  // exclusion can only apply to children that carry one.
+  const inPropsScript = (c: (typeof children)[number]) =>
+    typeof c.market_id === "number" && propScriptIds.has(c.market_id);
   const fightChildren = children.filter(
-    (c) => c.kind !== "prop" && !propScriptIds.has(c.market_id),
+    (c) => c.kind !== "prop" && !inPropsScript(c),
   );
   const propChildren = children.filter(
-    (c) => c.kind === "prop" && !propScriptIds.has(c.market_id),
+    (c) => c.kind === "prop" && !inPropsScript(c),
   );
   const competitors = primary.competitors || [];
   const isCoEqual = primary.kind === "co_equal_list";
   const isSettled = event.status === "settled";
   const isLive = event.status === "live";
   const hasWinnerField = primary.kind === "winner_field" && competitors.length > 0;
+  // L2-130: soccer tournaments (World Cup) are winner-field concepts whose CHILDREN
+  // are team duels from the events plane. They open with a container hero (the live
+  // /next match), NOT the RaceToTitleChart (the winner-field competitors carry no
+  // per-outcome history, so the race chart would render its honest-empty state).
+  const isSoccer = event.domain === "soccer";
+  const soccerHero =
+    isSoccer && !isSettled ? headlinerMatchup(fightChildren) : null;
   // L2-116: finish-position ladder (golf Top 5/10/20/Make cut) renders only when
   // its markets exist AND competitors carry the odds. Suppressed once settled —
   // a concluded field shows the champion, not stale placement percentages
@@ -181,17 +198,31 @@ export default function EventConceptPage() {
 
   // Section nav — only the sections that will actually render.
   const nav: { id: string; label: string }[] = [];
-  if (hasWinnerField && evolutionId && !isSettled) nav.push({ id: "race", label: "Race" });
+  if (soccerHero) nav.push({ id: "headliner", label: "Now" });
+  else if (hasWinnerField && evolutionId && !isSettled)
+    nav.push({ id: "race", label: "Race" });
   if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
   if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
-  if (fightChildren.length > 0) nav.push({ id: "matchups", label: "Matchups" });
+  if (fightChildren.length > 0)
+    nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
   if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
   else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
+      {/* L2-130: hub/category up-link. Soccer has no /hub/soccer page, so the World
+          Cup concept up-links to the Sports feed (an existing, honest destination). */}
+      {isSoccer && (
+        <Link
+          href="/sports"
+          className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+        >
+          <span aria-hidden>←</span> Sports
+        </Link>
+      )}
+
       <EventHeader
         event={event}
         marketsTracked={marketsTracked(data)}
@@ -201,14 +232,17 @@ export default function EventConceptPage() {
 
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
 
-      {/* Race to the title (winner-field, live/upcoming) OR co-equal two-sided
-          timeline. Settled events show the path-to-resolution chart below. */}
+      {/* Hero: co-equal two-sided timeline (combat), soccer container hero (the live
+          /next match duel), or the winner-field race chart. Settled events show the
+          path-to-resolution chart below instead. */}
       {isCoEqual ? (
         <TwoSidedTimeline
           competitors={competitors}
           label={primary.label}
           evolutionMarketId={evolutionId}
         />
+      ) : soccerHero ? (
+        <SoccerContainerHero matchups={fightChildren} />
       ) : (
         hasWinnerField &&
         !isSettled && <RaceToTitleChart competitors={competitors} domain={event.domain} />
@@ -227,7 +261,11 @@ export default function EventConceptPage() {
 
       {showFinishLadder && <FinishPositionLadder data={data} />}
 
-      <MatchupsRail items={fightChildren} />
+      <MatchupsRail
+        items={fightChildren}
+        exclude={soccerHero}
+        title={isSoccer ? "Matches" : undefined}
+      />
 
       {hasPropsScript ? (
         <PropsSection items={propMarks} eventStatus={event.status} />

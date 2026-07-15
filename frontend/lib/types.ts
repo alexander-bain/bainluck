@@ -1762,7 +1762,29 @@ export interface EventConceptCompetitor {
   // leaderboard sparkline + race chart read from the envelope in one fetch.
   outcome_id?: number;
   history?: { timestamp: string; probability: number }[];
+  // L2-130: entity linkage — national-team crest/identity for the winner-field
+  // leaderboard (soccer World Cup). Present only where a competitor resolves to a
+  // known team; absent (honest gap) otherwise.
+  team?: EventConceptTeamRef | null;
   [k: string]: unknown;
+}
+
+// L2-130: a resolved team-identity ref (crest + canonical name) carried on soccer
+// winner-field competitors and matchup sides. All fields optional — a matchup side
+// always has a `name`, but a crest only when the team resolves.
+export interface EventConceptTeamRef {
+  team_id?: number | null;
+  name?: string | null;
+  slug?: string | null;
+  abbreviation?: string | null;
+  logo?: string | null;
+}
+
+// L2-130: one side of a matchup (soccer duel child). Carries the team identity plus
+// this side's blended win probability and (live/settled) score.
+export interface EventConceptMatchupSide extends EventConceptTeamRef {
+  probability?: number | null;
+  score?: number | null;
 }
 
 export interface EventConceptSection {
@@ -1774,7 +1796,9 @@ export interface EventConceptSection {
 }
 
 export interface EventConceptChild {
-  market_id: number;
+  // L2-130: matchup children (soccer games) come from the events table and carry
+  // `event_id`, not `market_id` — so `market_id` is optional now.
+  market_id?: number;
   market_name?: string;
   name?: string;
   probability?: number | null;
@@ -1782,8 +1806,15 @@ export interface EventConceptChild {
   outcomes?: { name: string; probability: number | null }[];
   // L2-84: UFC cards tag children so the page splits fights (matchups rail) from
   // props (dedicated props section). Other domains leave these unset (all → rail).
-  kind?: "fight" | "prop";
+  // L2-130: soccer bracket games tag `kind:"matchup"` and render as team duels.
+  kind?: "fight" | "prop" | "matchup";
   prop_type?: "method" | "rounds" | "distance" | "occurrence" | string;
+  // L2-130 matchup (soccer duel) fields — present only when kind === "matchup":
+  event_id?: number;
+  status?: string; // "live" | "scheduled" | "completed" | "closed"
+  commence_time?: string | null;
+  home?: EventConceptMatchupSide;
+  away?: EventConceptMatchupSide;
   [k: string]: unknown;
 }
 

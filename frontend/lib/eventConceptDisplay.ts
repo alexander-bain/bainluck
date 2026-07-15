@@ -80,6 +80,92 @@ export function settledChampion(
 }
 
 // ---------------------------------------------------------------------------
+// Matchup duels (L2-130 — soccer World Cup bracket games as team duels).
+//
+// The soccer adapter is the first to fuse the events data-plane into concept
+// children: each bracket game is a `kind:"matchup"` child carrying `home`/`away`
+// team sides (crest + blended win probability + score) and `event_id` (NOT a
+// `market_id`). These helpers keep the rail/hero rendering pure + unit-tested.
+// ---------------------------------------------------------------------------
+
+/** True when a child is a soccer-style team duel (home vs away), not a combat
+ *  fight-card outcome list or a prop. Detected by the explicit `matchup` kind or,
+ *  defensively, by the presence of a `home`/`away` side. */
+export function isMatchupChild(child: EventConceptChild): boolean {
+  return (
+    child.kind === "matchup" ||
+    child.home != null ||
+    child.away != null
+  );
+}
+
+/** A stable React key for any child. Matchup children carry `event_id` (no
+ *  `market_id`), so `market_id` alone keyed every soccer game as `undefined`
+ *  (React dup-key warning + broken reconciliation). Falls back through
+ *  event_id → market name → index. */
+export function childReactKey(child: EventConceptChild, index: number): string {
+  if (typeof child.market_id === "number") return `m${child.market_id}`;
+  if (typeof child.event_id === "number") return `e${child.event_id}`;
+  return `${child.market_name || child.name || "child"}-${index}`;
+}
+
+/** The headliner matchup for the container hero: the live game if one is in play,
+ *  else the soonest upcoming game. Returns null when there is no live/upcoming
+ *  matchup (e.g. a fully-settled tournament — the hero is then suppressed and the
+ *  final result reads from the leaderboard). Pure. */
+export function headlinerMatchup(
+  children: EventConceptChild[],
+): EventConceptChild | null {
+  const matchups = (children || []).filter(isMatchupChild);
+  const live = matchups.find((c) => (c.status || "").toLowerCase() === "live");
+  if (live) return live;
+  const upcoming = matchups
+    .filter((c) => (c.status || "").toLowerCase() === "scheduled")
+    .sort((a, b) => {
+      const ta = a.commence_time ? Date.parse(a.commence_time) : Infinity;
+      const tb = b.commence_time ? Date.parse(b.commence_time) : Infinity;
+      return ta - tb;
+    });
+  return upcoming[0] ?? null;
+}
+
+/** A human kickoff/status label for a matchup, from `now` (ms). Live → "Live";
+ *  settled → "Final"; upcoming → a relative "Kicks off in Nh Mm" within a day, a
+ *  weekday+time within a week, else a short date. Returns null when there's no
+ *  usable time for an upcoming game. Pure so the wording is clock-free tested. */
+export function matchupKickoffLabel(
+  child: EventConceptChild,
+  now: number,
+): string | null {
+  const status = (child.status || "").toLowerCase();
+  if (status === "live") return "Live";
+  if (child.settled || status === "completed" || status === "closed") return "Final";
+  const ct = child.commence_time;
+  if (!ct) return null;
+  const t = Date.parse(ct);
+  if (Number.isNaN(t)) return null;
+  const diffMs = t - now;
+  if (diffMs <= 0) return "Kicking off";
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 60) return `Kicks off in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) {
+    const rem = mins % 60;
+    return rem > 0 ? `Kicks off in ${hours}h ${rem}m` : `Kicks off in ${hours}h`;
+  }
+  const dt = new Date(t);
+  const days = Math.floor(diffMs / (24 * 3600 * 1000));
+  if (days < 7) {
+    return dt.toLocaleDateString("en-US", {
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ---------------------------------------------------------------------------
 // Finish-position ladder (L2-116 RENDER ruling).
 //
 // Golf placement markets — "Top 5 / Top 10 / Top 20 / Make Cut" — are
@@ -217,6 +303,11 @@ export function marketsTracked(data: EventConceptResponse): number {
   if (typeof ev === "number") ids.add(ev);
   for (const c of data.children || []) {
     if (typeof c.market_id === "number") ids.add(c.market_id);
+    // L2-130: matchup children (soccer games) carry `event_id`, not `market_id`;
+    // count each rendered game so the header reflects the bracket, not just the
+    // winner market. Offset the id space so an event_id can't collide with a
+    // market_id in the same Set.
+    else if (typeof c.event_id === "number") ids.add(-c.event_id - 1);
   }
   // One tracked question per rendered finish-position column (a column may be
   // backed by several source markets but renders as a single blended ladder

@@ -17,6 +17,7 @@ import {
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import Sparkline from "./Sparkline";
 import FreshnessChip from "./FreshnessChip";
+import { TeamCrest } from "./MatchupDuel";
 
 interface EventLeaderboardProps {
   competitors: EventConceptCompetitor[];
@@ -156,6 +157,7 @@ export default function EventLeaderboard({
             <span aria-hidden className="text-xl shrink-0">
               🏆
             </span>
+            {champion.team && <TeamCrest side={champion.team} size={28} />}
             <span className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
               {champion.name}
             </span>
@@ -249,6 +251,9 @@ export default function EventLeaderboard({
 
   const ranked = fieldOrder(competitors).slice(0, limit);
   if (ranked.length === 0) return null;
+  // L2-130: reserve a crest slot only when at least one competitor resolved to a
+  // team (soccer World Cup) — golf/tennis/F1 fields stay text-only and unshifted.
+  const anyCrest = ranked.some((c) => c.team);
 
   return (
     <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
@@ -278,6 +283,14 @@ export default function EventLeaderboard({
               <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
                 {i + 1}
               </span>
+
+              {/* Team crest (soccer) — reserved slot so rows stay aligned. */}
+              {anyCrest &&
+                (c.team ? (
+                  <TeamCrest side={c.team} size={22} />
+                ) : (
+                  <span className="shrink-0" style={{ width: 22, height: 22 }} />
+                ))}
 
               {/* Name + chips + bar */}
               <div className="min-w-0 flex-1">

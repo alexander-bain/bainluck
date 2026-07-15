@@ -4,11 +4,21 @@
 // cards (top outcomes with probability bars); decided ones are grouped under a
 // collapsed "Completed (N)" so a settled 99% never reads as live (L2-63 Item 2).
 // Probability-only, no source names.
+//
+// L2-130: soccer bracket games are TEAM duels (home vs away crest + score + win
+// probability), not fight-card outcome lists — they render via MatchupDuel. The
+// combat/golf outcome-card path is unchanged for non-matchup children.
 
 import { formatProbability } from "@/lib/api";
-import { childLeader, splitChildren } from "@/lib/eventConceptDisplay";
+import {
+  childLeader,
+  childReactKey,
+  isMatchupChild,
+  splitChildren,
+} from "@/lib/eventConceptDisplay";
 import type { EventConceptChild } from "@/lib/types";
 import FighterAvatar from "./FighterAvatar";
+import MatchupDuel from "./MatchupDuel";
 
 function topOutcomes(child: EventConceptChild): { name: string; probability: number | null }[] {
   const outs = child.outcomes || [];
@@ -75,23 +85,41 @@ function MatchupCard({ child, dim }: { child: EventConceptChild; dim?: boolean }
   );
 }
 
-interface MatchupsRailProps {
-  items: EventConceptChild[];
+/** Render one child in the rail: a soccer team duel (crest + score + win prob) or
+ *  the combat/golf outcome card. `dim` is passed to the combat card for the
+ *  completed group; MatchupDuel handles its own settled treatment internally. */
+function RailChild({ child, index, dim }: { child: EventConceptChild; index: number; dim?: boolean }) {
+  if (isMatchupChild(child)) {
+    return <MatchupDuel child={child} />;
+  }
+  return <MatchupCard child={child} dim={dim} />;
 }
 
-export default function MatchupsRail({ items }: MatchupsRailProps) {
-  if (!items || items.length === 0) return null;
-  const { live, settled } = splitChildren(items);
+interface MatchupsRailProps {
+  items: EventConceptChild[];
+  /** L2-130: a child already shown in the container hero — excluded from the rail
+   *  so the headliner isn't rendered twice. Matched by reference identity. */
+  exclude?: EventConceptChild | null;
+  /** Optional section heading override (soccer reads "Matches", not "Matchups"). */
+  title?: string;
+}
+
+export default function MatchupsRail({ items, exclude, title }: MatchupsRailProps) {
+  const shown = (items || []).filter((c) => c !== exclude);
+  if (shown.length === 0) return null;
+  const { live, settled } = splitChildren(shown);
+  const gridClass =
+    "flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0";
 
   return (
     <section id="matchups" className="bg-surface-card rounded-card shadow-card p-6">
-      <h2 className="text-title-3 font-semibold text-text-primary mb-4">Matchups &amp; props</h2>
+      <h2 className="text-title-3 font-semibold text-text-primary mb-4">{title || "Matchups & props"}</h2>
       {live.length > 0 && (
         // Mobile: a horizontal-scroll rail. Desktop (L2-113): a responsive 2–3-col
         // grid so wide viewports don't hide bouts behind a scroll gutter.
-        <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0">
-          {live.map((child) => (
-            <MatchupCard key={child.market_id} child={child} />
+        <div className={gridClass}>
+          {live.map((child, i) => (
+            <RailChild key={childReactKey(child, i)} child={child} index={i} />
           ))}
         </div>
       )}
@@ -100,9 +128,9 @@ export default function MatchupsRail({ items }: MatchupsRailProps) {
           <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
             Completed ({settled.length})
           </summary>
-          <div className="flex gap-3 overflow-x-auto pb-2 mt-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0">
-            {settled.map((child) => (
-              <MatchupCard key={child.market_id} child={child} dim />
+          <div className={`${gridClass} mt-2`}>
+            {settled.map((child, i) => (
+              <RailChild key={childReactKey(child, i)} child={child} index={i} dim />
             ))}
           </div>
         </details>
