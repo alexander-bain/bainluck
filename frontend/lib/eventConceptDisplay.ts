@@ -121,6 +121,26 @@ function finishValue(
   return typeof raw === "number" && !Number.isNaN(raw) ? raw : null;
 }
 
+// L2-123 / #199: a finish-position column whose values are an all-tied flat
+// placeholder (every golfer at ~the same 0–100 points — the wide-spread/no-trade
+// capture class: The Open's make-cut showed the whole field at ≈1.1 pts, top-5
+// crowned a ceremonial past champion) is NOT a real book. It must not render as a
+// wall of fake flats. A genuine placement field spreads tens of points across the
+// leaderboard, so a spread this tight only appears on fabricated placeholders.
+// Guarded on ≥5 values so an early, thin-but-real field is never mistaken for one.
+const FINISH_COLUMN_DEGENERATE_SPREAD = 0.5; // points (0–100 scale)
+
+function finishColumnIsDegenerate(
+  comps: EventConceptCompetitor[],
+  key: string,
+): boolean {
+  const vals = comps
+    .map((c) => finishValue(c, key))
+    .filter((v): v is number => v != null);
+  if (vals.length < 5) return false;
+  return Math.max(...vals) - Math.min(...vals) <= FINISH_COLUMN_DEGENERATE_SPREAD;
+}
+
 /** The finish-position columns that ACTUALLY render for this field: a column
  *  renders iff its market group exists in `sections` AND at least one competitor
  *  carries a value for it. Suppressed entirely once the event is settled — a
@@ -137,7 +157,11 @@ export function renderedFinishColumns(
   return FINISH_POSITION_COLUMNS.filter(
     (col) =>
       sectionTypes.has(col.type) &&
-      comps.some((c) => finishValue(c, col.key) != null),
+      comps.some((c) => finishValue(c, col.key) != null) &&
+      // L2-123 / #199: drop degenerate all-tied-flat placeholder columns so the
+      // ladder never shows a wall of fake finish percentages (the honest treatment
+      // for the wide-spread/no-trade capture class is to suppress the column).
+      !finishColumnIsDegenerate(comps, col.key),
   );
 }
 

@@ -450,6 +450,36 @@ def _clean_prop_label(market_name: str | None, tournament_name: str | None) -> s
     return name or "Prop"
 
 
+# The all-tied spread (0-1 probability) under which a multi-outcome family reads
+# as a flat placeholder rather than a real book — the wide-spread/no-trade capture
+# signature #199 diagnosed (The Open's R2 leaders all at 0.24, R3 all at 0.30). A
+# genuine field never has its outcomes agree to within 0.5pp, so this is a safe
+# floor that only trips on fabricated flats.
+_DEGENERATE_TIED_EPS = 0.005
+
+
+def _is_degenerate_placeholder(outs: list[dict]) -> bool:
+    """True when a MULTI-outcome prop family carries NO honest price — the #199
+    wide-spread/no-trade capture class: every outcome's `opening_probability` is null
+    AND the live probabilities are either all null or an all-tied flat placeholder.
+    Such a family must render an honest pending state ("Opens after Round N" / "no
+    market yet"), never the fabricated flat and never an arbitrary crowned "leader".
+
+    Restricted to families with ≥2 outcomes — the degeneracy signature is agreement
+    ACROSS a field. A single-outcome prop (a lone binary "Yes", or a one-golfer test
+    row) has no field to agree, so a real-but-opening-less single price renders
+    normally (falls through to the usual leader path). A single real opening OR a real
+    spread in the live probabilities also means the book is priced → False."""
+    if len(outs) < 2:
+        return False  # no field to be "tied" across — not the placeholder signature
+    if any(isinstance(o.get("opening_probability"), (int, float)) for o in outs):
+        return False  # a real opening mark exists → the family is priced
+    currents = [o.get("probability") for o in outs if isinstance(o.get("probability"), (int, float))]
+    if not currents:
+        return True  # nothing priced at all → no market yet
+    return (max(currents) - min(currents)) <= _DEGENERATE_TIED_EPS  # all-tied flat
+
+
 def build_golf_props_script(
     children: list[dict],
     tournament_name: str | None,
@@ -467,6 +497,14 @@ def build_golf_props_script(
     so the strongest story leads (THE SCRIPT keeps this order; THE DIVERGENCE re-ranks
     client-side).
 
+    L2-123 / #199 honesty: a degenerate prop family (no opening, all-tied flat or
+    null live probabilities — the wide-spread/no-trade capture class) does NOT get a
+    fabricated flat and is NOT crowned with an arbitrary "leader". It emits a mark
+    carrying `pending_label` ("Opens after Round N" for a not-yet-live round leader,
+    "No market yet" otherwise) that PropsSection renders as the design's quiet pending
+    state. Rendering whatever #199 leaves in the store — nulled placeholders show the
+    honest label instead of vanishing (never blank) or lying (never fake flats).
+
     Suppressed once settled — a concluded field shows the champion, not stale prop
     marks (settled-means-settled); grading field-shaped props is a separate backend
     (#887 / L2-121 Item 3), so WHAT HIT is intentionally deferred here. Pure —
@@ -478,6 +516,30 @@ def build_golf_props_script(
     marks: list[dict] = []
     for c in children or []:
         outs = c.get("outcomes") or []
+        if not outs:
+            continue  # null/empty child — nothing to render (Item 3 territory)
+        mid = c.get("market_id")
+        base = _clean_prop_label(c.get("market_name") or c.get("name"), tournament_name)
+        # #199 degenerate family → honest pending row (no fake flat, no false leader).
+        if _is_degenerate_placeholder(outs):
+            rnd = c.get("round")
+            if c.get("prop_type") == "round" and isinstance(rnd, int) and rnd > 1:
+                pending = f"Opens after Round {rnd - 1}"
+            else:
+                pending = "No market yet"
+            marks.append(
+                {
+                    "key": mid,
+                    "market_id": mid,
+                    "label": base,
+                    "pregame_mark": None,
+                    "current": None,
+                    "graded_result": None,
+                    "graded_label": None,
+                    "pending_label": pending,
+                }
+            )
+            continue
         leader = None
         best = -1.0
         for o in outs:
@@ -487,8 +549,6 @@ def build_golf_props_script(
                 leader = o
         if leader is None or not isinstance(leader.get("probability"), (int, float)):
             continue
-        mid = c.get("market_id")
-        base = _clean_prop_label(c.get("market_name") or c.get("name"), tournament_name)
         if c.get("prop_type") == "round" and leader.get("name"):
             label = f"{base}: {leader['name']}"
         else:
@@ -503,6 +563,7 @@ def build_golf_props_script(
                 "current": leader.get("probability"),
                 "graded_result": None,
                 "graded_label": None,
+                "pending_label": None,
             }
         )
 
@@ -512,7 +573,8 @@ def build_golf_props_script(
             return abs(cur - pg)
         return -1.0
 
-    # Stable sort: biggest mover first; no-movement marks sink but keep order.
+    # Stable sort: biggest mover first; no-movement marks (incl. pending) sink but
+    # keep order, so real prop stories lead and honest-pending rows trail.
     marks.sort(key=_movement, reverse=True)
     return marks
 
@@ -546,6 +608,9 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             "outcomes": g.get("outcomes", []),
             "kind": "prop",
             "prop_type": "round",
+            # L2-123: carry the round number so build_golf_props_script can label a
+            # degenerate (not-yet-live) round-leader family "Opens after Round N-1".
+            "round": g.get("round"),
         }
         for g in (data.get("round_top_groups") or [])
     ]

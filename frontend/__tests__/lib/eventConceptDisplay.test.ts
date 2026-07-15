@@ -333,6 +333,38 @@ describe("renderedFinishColumns / finishPositionRows (L2-116 ladder)", () => {
     expect(cols).toEqual([]);
   });
 
+  test("L2-123: an all-tied-flat placeholder column is suppressed (never fake flats)", () => {
+    // The Open's make-cut showed the whole field at ≈1.1 pts — a wide-spread/no-trade
+    // capture placeholder (#199). The column must not render as a wall of fake flats.
+    const flat = Array.from({ length: 8 }, (_, i) => ({
+      name: `G${i}`,
+      probability: 0.5 - i * 0.01,
+      make_cut_prob: 1.1, // every golfer identical → degenerate
+      top_5_prob: 40 - i * 4, // a genuine spread → keeps rendering
+    }));
+    const cols = renderedFinishColumns(mk(flat, ["top_5", "make_cut"]));
+    expect(cols.map((c) => c.type)).toEqual(["top_5"]); // make_cut dropped
+  });
+
+  test("L2-123: a real spread survives even at scale (not over-suppressed)", () => {
+    const real = Array.from({ length: 8 }, (_, i) => ({
+      name: `G${i}`,
+      probability: 0.5 - i * 0.05,
+      make_cut_prob: 95 - i * 10, // wide, genuine field
+    }));
+    const cols = renderedFinishColumns(mk(real, ["make_cut"]));
+    expect(cols.map((c) => c.type)).toEqual(["make_cut"]);
+  });
+
+  test("L2-123: a thin (<5) tied field is NOT flagged degenerate (too few to judge)", () => {
+    const thin = [
+      { name: "A", probability: 0.3, make_cut_prob: 1.1 },
+      { name: "B", probability: 0.2, make_cut_prob: 1.1 },
+    ];
+    const cols = renderedFinishColumns(mk(thin, ["make_cut"]));
+    expect(cols.map((c) => c.type)).toEqual(["make_cut"]);
+  });
+
   test("rows are win-prob-ordered, drop competitors with no finish odds, keep nulls per cell", () => {
     const data = mk(
       [

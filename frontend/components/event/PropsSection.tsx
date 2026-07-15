@@ -44,6 +44,13 @@ export interface PropMark {
   graded_result?: "hit" | "miss" | "push" | null;
   /** Optional human-readable result, e.g. "31 pts — hit". */
   graded_label?: string | null;
+  /**
+   * L2-123 / #199 honesty seam: when set, this prop family carries NO honest price
+   * (the wide-spread/no-trade capture class — e.g. a not-yet-live round leader). The
+   * row renders this quiet label ("Opens after Round 1", "No market yet") instead of
+   * a fabricated flat number or an arbitrary crowned leader — and never blank.
+   */
+  pending_label?: string | null;
 }
 
 interface PropsSectionProps {
@@ -155,12 +162,22 @@ export default function PropsSection({
 }
 
 function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
+  // L2-123 / #199: a family with no honest price renders one quiet pending label
+  // ("Opens after Round N" / "No market yet") in every state — never a fabricated
+  // number, never a crowned arbitrary leader, never blank.
+  const pending = item.pending_label?.trim();
   return (
     <div className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0">
       <span className="flex-1 min-w-0 text-sm text-text-primary truncate">{item.label}</span>
-      {state === "script" && <ScriptValue item={item} />}
-      {state === "divergence" && <DivergenceValue item={item} />}
-      {state === "graded" && <GradedValue item={item} />}
+      {pending ? (
+        <Pending note={pending} />
+      ) : (
+        <>
+          {state === "script" && <ScriptValue item={item} />}
+          {state === "divergence" && <DivergenceValue item={item} />}
+          {state === "graded" && <GradedValue item={item} />}
+        </>
+      )}
     </div>
   );
 }

@@ -297,6 +297,117 @@ class TestBuildGolfPropsScript:
         marks = build_golf_props_script(self._children(), "The Open Championship", "upcoming")
         assert all(m["key"] == m["market_id"] for m in marks)
 
+    # ---- L2-123 / #199: degenerate (no-honest-price) families render pending ----
+
+    def test_degenerate_round_leader_gets_opens_after_round_label(self):
+        # The Open's real R2 leader: 10 golfers all tied at 0.24, no openings — the
+        # wide-spread/no-trade capture class. Must render an honest pending row, NOT
+        # a fabricated flat and NOT an arbitrary crowned "leader".
+        children = [
+            {
+                "market_id": 77,
+                "market_name": "Round 2 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 2,
+                "outcomes": [
+                    {"name": f"Golfer {i}", "probability": 0.24, "opening_probability": None}
+                    for i in range(10)
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "upcoming")
+        assert len(marks) == 1
+        m = marks[0]
+        assert m["pending_label"] == "Opens after Round 1"
+        assert m["current"] is None and m["pregame_mark"] is None
+        assert m["label"] == "Round 2 Leader"  # no arbitrary golfer crowned
+
+    def test_degenerate_round3_labels_opens_after_round_2(self):
+        children = [
+            {
+                "market_id": 78,
+                "market_name": "Round 3 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 3,
+                "outcomes": [
+                    {"name": f"G{i}", "probability": 0.30, "opening_probability": None}
+                    for i in range(10)
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "upcoming")
+        assert marks[0]["pending_label"] == "Opens after Round 2"
+
+    def test_all_null_multi_outcome_family_is_no_market_yet(self):
+        # A multi-outcome family with outcomes but no priced probabilities at all →
+        # honestly "No market yet" (never blank), not silently dropped.
+        children = [
+            {
+                "market_id": 79,
+                "market_name": "The Open Championship: Top 5 Finish",
+                "outcomes": [
+                    {"name": "A", "probability": None},
+                    {"name": "B", "probability": None},
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "upcoming")
+        assert len(marks) == 1
+        assert marks[0]["pending_label"] == "No market yet"
+        assert marks[0]["current"] is None
+
+    def test_priced_round_leader_is_not_degenerate(self):
+        # A real spread with openings (R1) must render normally, NOT as pending.
+        marks = build_golf_props_script(self._children(), "The Open Championship", "upcoming")
+        by_id = {m["market_id"]: m for m in marks}
+        assert by_id[11].get("pending_label") is None
+        assert by_id[11]["current"] == 0.044
+
+    def test_first_round_leader_with_null_openings_but_real_spread_prices(self):
+        # Openings never captured but the live book has a genuine spread → NOT
+        # degenerate (the spread is the honest price); renders normally, pregame null.
+        children = [
+            {
+                "market_id": 80,
+                "market_name": "Round 1 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 1,
+                "outcomes": [
+                    {"name": "Fav", "probability": 0.09, "opening_probability": None},
+                    {"name": "Mid", "probability": 0.04, "opening_probability": None},
+                    {"name": "Long", "probability": 0.01, "opening_probability": None},
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "upcoming")
+        assert marks[0].get("pending_label") is None
+        assert marks[0]["current"] == 0.09
+        assert marks[0]["label"] == "Round 1 Leader: Fav"
+
+    def test_envelope_round_children_carry_round_and_pending(self):
+        # golf_detail_to_envelope must forward `round` onto round children so the
+        # degenerate-family label can say "Opens after Round N".
+        f = _golf_fixture()
+        f["tournament"]["schedule_status"] = "upcoming"
+        f["round_top_groups"] = [
+            {
+                "market_id": 90,
+                "kind": "leader",
+                "round": 2,
+                "outcomes": [
+                    {"name": f"G{i}", "probability": 0.24, "opening_probability": None}
+                    for i in range(10)
+                ],
+            }
+        ]
+        env = golf_detail_to_envelope("event:golf:x", "x", f)
+        ps = [p for p in env["props_script"] if p["market_id"] == 90]
+        assert len(ps) == 1
+        assert ps[0]["pending_label"] == "Opens after Round 1"
+
     def test_envelope_carries_props_script_when_not_settled(self):
         f = _golf_fixture()
         f["tournament"]["schedule_status"] = "upcoming"

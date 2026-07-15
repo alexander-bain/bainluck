@@ -1826,6 +1826,9 @@ export interface EventConceptResponse {
     current: number | null;
     graded_result?: "hit" | "miss" | "push" | null;
     graded_label?: string | null;
+    // L2-123 / #199: honest pending label for a family with no real price
+    // ("Opens after Round N" / "No market yet") — no fabricated flat, never blank.
+    pending_label?: string | null;
   }[];
   movers: { name?: string; change?: number | null; [k: string]: unknown }[];
 }

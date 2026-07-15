@@ -63,6 +63,34 @@ describe("PropsSection rendering", () => {
     expect(graded).toContain("grading pending");
   });
 
+  test("L2-123: pending_label renders the honest state, never a fabricated flat", () => {
+    // A degenerate (no-price) family — the #199 wide-spread/no-trade class. It must
+    // show the honest label in EVERY state, never the fake number, never blank.
+    const degenerate: PropMark[] = [
+      { key: 7, label: "Round 2 Leader", pregame_mark: null, current: null, pending_label: "Opens after Round 1" },
+    ];
+    for (const state of ["script", "divergence", "graded"] as const) {
+      const html = renderToStaticMarkup(<PropsSection items={degenerate} state={state} />);
+      expect(html).toContain("Round 2 Leader");
+      expect(html).toContain("Opens after Round 1");
+      // Never the fabricated flat, never a bare em-dash value, never the #195 seams.
+      expect(html).not.toContain("24%");
+      expect(html).not.toContain("pregame mark pending");
+      expect(html).not.toContain("script pending");
+    }
+  });
+
+  test("L2-123: pending_label wins even if a stray current sneaks through", () => {
+    // Defense in depth: if the store still holds a fabricated flat, the pending
+    // label suppresses it rather than rendering the lie.
+    const items: PropMark[] = [
+      { key: 8, label: "Top 5 Finish", pregame_mark: null, current: 0.011, pending_label: "No market yet" },
+    ];
+    const html = renderToStaticMarkup(<PropsSection items={items} state="divergence" />);
+    expect(html).toContain("No market yet");
+    expect(html).not.toContain("1%");
+  });
+
   test("derives state from eventStatus when state omitted", () => {
     const html = renderToStaticMarkup(<PropsSection items={ITEMS} eventStatus="completed" />);
     expect(html).toContain("What hit");

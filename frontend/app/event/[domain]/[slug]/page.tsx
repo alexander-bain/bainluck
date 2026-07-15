@@ -148,6 +148,8 @@ export default function EventConceptPage() {
     current: p.current ?? null,
     graded_result: p.graded_result ?? null,
     graded_label: p.graded_label ?? null,
+    // L2-123 / #199: honest pending label for degenerate (unpriced) prop families.
+    pending_label: p.pending_label ?? null,
   }));
   const hasPropsScript = propMarks.length > 0;
   const propScriptIds = new Set(
