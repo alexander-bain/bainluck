@@ -154,3 +154,86 @@ def test_is_stale_dated_bucket_helper():
     fresh = _cand(2, "Rain in LA in August 2026", 0.5, 50.0, category="weather")
     assert is_stale_dated_bucket(stale, _JULY_15) == "stale_explicit_title_month"
     assert is_stale_dated_bucket(fresh, _JULY_15) is None
+
+
+# --- Feed-parity quality gate in _gather_digest_candidates (Queue #202, Item 2) ---
+
+
+class _FakeOutcome:
+    def __init__(self, name, prob):
+        self.name = name
+        self.current_probability = prob
+
+
+class _FakeMarket:
+    def __init__(self, mid, name, category, external_id, outcomes, volume=1000.0):
+        self.id = mid
+        self.name = name
+        self.llm_sport_category = category
+        self.canonical_market_key = None
+        self.group_id = None
+        self.volume_24h = volume
+        self.external_id = external_id
+        self.outcomes = outcomes
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def unique(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalars(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, *args, **kwargs):
+        return _FakeResult(self._rows)
+
+
+class _FakeRedis:
+    def mget(self, keys):
+        return [None] * len(keys)
+
+
+def test_gather_applies_feed_parity_quality_gate():
+    """The digest must never surface a market the Discover feed would suppress."""
+    import asyncio
+
+    from app.tasks.morning_digest import _gather_digest_candidates
+
+    compelling = _FakeMarket(
+        1,
+        "Will Democrats win the 2028 US Presidential election?",
+        "politics",
+        "KXPRES-28",
+        [_FakeOutcome("Yes", 0.55), _FakeOutcome("No", 0.45)],
+    )
+    # margin_turnout_excluded -> quality_class == "suppress" in the feed.
+    suppressed = _FakeMarket(
+        2,
+        "Voter turnout in the 2026 Georgia Senate election",
+        "politics",
+        "KXTURNOUT-26GA",
+        [_FakeOutcome("Over 60%", 0.60), _FakeOutcome("Under 60%", 0.40)],
+    )
+
+    cands = asyncio.run(
+        _gather_digest_candidates(_FakeSession([compelling, suppressed]), _FakeRedis())
+    )
+    ids = {c.market_id for c in cands}
+    assert 1 in ids, "compelling market should survive the quality gate"
+    assert 2 not in ids, "feed-suppressed market must be dropped from the digest"

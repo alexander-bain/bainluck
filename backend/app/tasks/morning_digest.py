@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select, update as sa_update
 
 from app.models.models import DeviceToken, FuturesMarket, FuturesOutcome, User
+from app.utils.feed_market_quality import classify_market_quality
 from app.utils.morning_digest import (
     DEFAULT_DIGEST_LIMIT,
     DigestCandidate,
@@ -49,6 +50,7 @@ async def _gather_digest_candidates(session, redis, *, pool_size=CANDIDATE_POOL_
                 FuturesMarket.canonical_market_key,
                 FuturesMarket.group_id,
                 FuturesMarket.volume_24h,
+                FuturesMarket.external_id,
             ),
             selectinload(FuturesMarket.outcomes).load_only(
                 FuturesOutcome.name,
@@ -88,6 +90,22 @@ async def _gather_digest_candidates(session, redis, *, pool_size=CANDIDATE_POOL_
 
     candidates: list[DigestCandidate] = []
     for m in markets:
+        # Full feed-parity quality gate: the digest must never surface a market
+        # the Discover feed itself would suppress (boring ladders/buckets, social
+        # filler, margin/turnout, weak explanation cards). Mirror feed.py's
+        # ``classify_market_quality`` call and drop the ``suppress`` class. Status
+        # is always "open" here (guaranteed by the query WHERE) — R6 resolved-sports
+        # suppression is a no-op but we pass it for exact parity.
+        quality = classify_market_quality(
+            market_name=m.name,
+            sport_category=m.llm_sport_category,
+            outcome_names=[o.name for o in m.outcomes if o.name],
+            external_id=m.external_id,
+            status="open",
+        )
+        if quality.quality_class == "suppress":
+            continue
+
         leader_name = None
         leader_prob = None
         for o in m.outcomes:
