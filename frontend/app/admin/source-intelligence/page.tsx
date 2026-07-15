@@ -116,17 +116,39 @@ export default function SourceIntelligencePage() {
 
   const { coverage, source_accuracy, disagreements, case_studies } = data;
 
+  // L2-129 Item 1 — THE ACTION RULE on this page's one badge. A core cross-sport
+  // source that reports ZERO observations means its win-prob pipeline is dark, not
+  // that the market is quiet. MLB is excluded (baseball-only → legitimately absent
+  // from a cross-sport aggregate) so we don't cry wolf.
+  const CORE_SOURCES = ["betting", "espn", "stat_model", "kalshi", "polymarket"] as const;
+  const darkSources = CORE_SOURCES.filter(
+    (src) => !source_accuracy.some((sa) => sa.source === src && sa.observations > 0)
+  );
+  const pageStatus: "good" | "warning" = darkSources.length > 0 ? "warning" : "good";
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-8">
       {/* Hero */}
       <section className="text-center pt-4 pb-2">
 <PageHeader
             question="Which probability source is most accurate?"
-            status={isLoading ? "loading" : "good"}
+            status={isLoading ? "loading" : pageStatus}
             summary={isLoading ? "Loading..." : "Brier scores and calibration curves across all sources"}
             ideal="All sources measured. Best source identified per sport."
             subtitle="When sources disagree, who is right?"
           />
+        {/* L2-129 Item 1 — action rule: the "Needs attention" badge above never
+            dead-ends; it names the dark source(s) and where to look. */}
+        {darkSources.length > 0 && (
+          <div className="mt-3 mx-auto max-w-2xl rounded-lg border border-accent-warning/30 bg-accent-warning/10 px-3 py-2 text-xs text-accent-warning text-left leading-relaxed">
+            <strong>{darkSources.map((s) => SOURCE_NAMES[s] || s).join(", ")}</strong>{" "}
+            {darkSources.length === 1 ? "reports" : "report"} zero measured observations across all
+            sports — that source&rsquo;s win-probability pipeline is likely dark, not merely quiet. Do
+            this: check that source&rsquo;s polling task and last-poll time on{" "}
+            <Link href="/admin" className="underline">/admin</Link> (PREQ card). This page can only rank
+            sources it receives data for.
+          </div>
+        )}
         <p className="mt-3 text-text-secondary text-sm md:text-base leading-relaxed max-w-2xl mx-auto">
           We identified {coverage.total_events.toLocaleString()} sporting events with dense,
           overlapping coverage from multiple probability sources — sportsbooks, prediction

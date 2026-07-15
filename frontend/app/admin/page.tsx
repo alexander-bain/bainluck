@@ -294,6 +294,24 @@ function StatCard({
   );
 }
 
+// L2-129 Item 1 — THE ACTION RULE, cockpit-wide. Every non-green badge on a
+// self-fetching card (LinkRate/DataQuality/GridHealth/PREQ) gets a sentence:
+// what it means + what to do + the tracked pointer. Mirrors AdminCockpit's
+// tileAction so "Needs attention" never dead-ends without a place to look.
+function CardAction({ tone, children }: { tone: "danger" | "warn" | "muted"; children: React.ReactNode }) {
+  const cls =
+    tone === "danger"
+      ? "border-accent-danger/30 bg-accent-danger/10 text-accent-danger"
+      : tone === "warn"
+        ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-600"
+        : "border-surface-border bg-surface-elevated text-text-muted";
+  return (
+    <div className={"mt-3 rounded-lg border px-2.5 py-2 text-micro leading-relaxed " + cls}>
+      {children}
+    </div>
+  );
+}
+
 function KeyTakeaways({ data }: { data: DashboardData }) {
   const items: { icon: string; text: string; severity: "ok" | "warn" | "crit" }[] = [];
 
@@ -822,6 +840,24 @@ function LinkRateCard({ secret }: { secret: string }) {
           </div>
         );
       })}
+      {/* L2-129 Item 1 — action rule: a sub-80% link rate is not a dead end. */}
+      {(() => {
+        const low = (["kalshi", "polymarket"] as const)
+          .filter((s) => data[s].totals.open_link_rate_pct < 80)
+          .map((s) => `${s} ${data[s].totals.open_link_rate_pct}%`);
+        if (low.length === 0) return null;
+        const worst = Math.min(data.kalshi.totals.open_link_rate_pct, data.polymarket.totals.open_link_rate_pct);
+        return (
+          <CardAction tone={worst < 50 ? "danger" : "warn"}>
+            <strong>{low.join(", ")}</strong> of open game markets aren&rsquo;t linked to events — unlinked
+            markets don&rsquo;t appear on event pages or feed the blend. Do this: check the 15-min{" "}
+            <code>match_prediction_markets</code> task (Pass 1 Kalshi ticker scan / Pass 2 Polymarket name
+            match) and the ticker→sport maps in <code>sport_keys.py</code> — a low rate concentrated in one
+            sport (bars above) is usually a missing ticker prefix, not a matching regression. Drill in:{" "}
+            <a href="/admin/matching" className="underline">/admin/matching</a>.
+          </CardAction>
+        );
+      })()}
     </div>
   );
 }
@@ -1593,6 +1629,19 @@ function DataQualityCard({ secret }: { secret: string }) {
         </div>
       )}
 
+      {/* L2-129 Item 1 — action rule: a WARNING/CRITICAL status gets a where-to-look sentence. */}
+      {statusHealth !== "healthy" && (
+        <CardAction tone={statusHealth === "critical" ? "danger" : "warn"}>
+          {cls && cls.unclassified_rate > 0.15
+            ? `${(cls.unclassified_rate * 100).toFixed(1)}% of the last 24h of markets are unclassified`
+            : "Classification/linking quality is degraded"}
+          {" "}— unclassified markets don&rsquo;t land in the right category, feed, or grid. Do this: hit{" "}
+          <strong>Copy backlog prompt</strong> below (it traces each sample to <code>sport_keys.py</code>{" "}
+          KALSHI_TICKER_TO_SPORT_KEY / <code>compute_market_tier()</code>), then add the missing ticker
+          prefix or name pattern. The alerts and sample rows here name the exact markets to fix.
+        </CardAction>
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-3 mb-3">
         {cls && (
@@ -1862,6 +1911,19 @@ function GridHealthCard({ secret }: { secret: string }) {
         ))
       }
 
+      {/* L2-129 Item 1 — action rule, honest to CLAUDE.md: a sub-90 raw score is
+          NOT proof of a defect (this score cried wolf before the Grid Sentinel). */}
+      {data?.avg_score != null && data.avg_score < 90 && (
+        <CardAction tone={data.avg_score < 70 ? "danger" : "warn"}>
+          Score <strong>{data.avg_score}/100</strong> — but a sub-90 raw score is not itself a defect.
+          The Grid Sentinel classifies each finding as REAL (monotonicity, over-100% sums, empty/stale
+          grid), EXPLAINED (a season-window artifact), or WATCH (source disagreement — blend-hidden,
+          never RED). Do this: read the findings above and the Grid tile on the cockpit for the verdict;
+          only a REAL finding warrants an issue. Blend-hidden Kalshi/Polymarket disagreement is expected
+          here, not actionable.
+        </CardAction>
+      )}
+
       {/* Generate backlog prompt button */}
       {allFindings.length > 0 && (
         <div className="mt-2 pt-2 border-t border-surface-border flex justify-end">
@@ -1982,6 +2044,20 @@ function PREQCard({ secret }: { secret: string }) {
             </span>
           )}
         </div>
+      )}
+
+      {/* L2-129 Item 1 — action rule: a DEGRADED badge names the culprit + what it breaks. */}
+      {healthData && healthData.status !== "ready" && (
+        <CardAction tone="danger">
+          Infra reports <strong>DEGRADED</strong> —{" "}
+          {healthData.checks?.redis !== "ok"
+            ? "Redis isn't OK, which freezes Celery beats + caching (feed latency spikes and no-timeout clients can hang a task loop, gotcha #39)"
+            : healthData.checks?.database !== "ok"
+              ? "the database isn't OK, which blocks every read/write path"
+              : "a health check isn't OK"}
+          . Do this: check the Heroku add-on and worker dynos for the red dot above; the DB/Redis/Odds-API
+          dots and last-poll times show which source is stale. Source: <code>/health/ready</code>.
+        </CardAction>
       )}
 
       {/* Latency measurements */}

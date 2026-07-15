@@ -646,8 +646,25 @@ className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-
         {crossSeason && spread > 0.15 && (
           <div style={{ marginTop: 8, fontSize: 13, color: "#fcd34d" }}>
             ⚠️ <strong>Cross-season pairing</strong> ({seasonLabels.join(" vs ")}) — a gap between
-            different seasons isn&rsquo;t a real disagreement. If these are different seasons, this is
-            a linkage/season-metadata fix, not a bad merge.
+            different seasons isn&rsquo;t a real disagreement.{" "}
+            {/* L2-129 Item 2a: #204's verdict on the odds_api "Spurs" championship row.
+                A perpetual/season-agnostic futures market rolls to next season the moment
+                one ends, so one source shows next-season odds (legit) while its peer still
+                shows the just-settled season. Not a bad merge, not a settle — a missing
+                season-stamp. Tracked #1113. */}
+            Per the #204 forensic, this is the perpetual-futures pattern: one source (usually
+            odds_api) has already rolled to next season&rsquo;s championship odds while its peer still
+            carries the settled season. Legit odds, missing metadata — the fix is a{" "}
+            <strong>season-stamp</strong> (
+            <a
+              href="https://github.com/alexander-bain/bainluck/issues/1113"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "underline" }}
+            >
+              #1113
+            </a>
+            ), not a settle or a display-flip, and not a bad merge.
           </div>
         )}
       </div>
