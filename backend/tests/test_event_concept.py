@@ -200,6 +200,19 @@ class TestGolfEnvelope:
         assert _golf_status({"schedule_status": "", "start_date": "2026-07-01"}, now) == "settled"
         assert _golf_status({"schedule_status": "", "start_date": "2026-07-12"}, now) == "upcoming"
 
+        # (e') commence_time fallback: the finished DP-World-Tour cards (BMW
+        #     International Open) carry NO schedule start_date — the date lives in
+        #     commence_time — and a FUTURE Kalshi resolution_date. The past
+        #     commence_time must still settle them (the actual hub-rail leak).
+        assert _golf_status(
+            {"schedule_status": None, "commence_time": "2026-07-03T18:59:53+00:00",
+             "resolution_date": "2026-08-02T00:00:00+00:00"}, now
+        ) == "settled"
+        # …but a FUTURE commence_time (genuinely upcoming, no start_date) stays up.
+        assert _golf_status(
+            {"schedule_status": None, "commence_time": "2026-07-20T00:00:00+00:00"}, now
+        ) == "upcoming"
+
         # (f) explicit terminal/live status always wins over dates
         assert _golf_status(
             {"schedule_status": "in-progress", "end_date": "2026-01-01"}, now

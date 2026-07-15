@@ -137,7 +137,13 @@ def _golf_status(tournament: dict, now: datetime | None = None) -> str:
 
     now_date = (now or datetime.now(timezone.utc)).date()
     end_date = tournament.get("end_date")
-    start_date = tournament.get("start_date")
+    # Mirror the hub card's own start signal: `start_date or commence_time`. The
+    # finished DP-World-Tour cards that leaked (BMW International Open, US Senior
+    # Open) carry NO schedule start_date — their date lives in commence_time — so
+    # a start_date-only check missed them and they fell through to a FUTURE Kalshi
+    # resolution_date (gotcha #14) and stayed "upcoming". For an upcoming event a
+    # Kalshi commence/close time is in the future, so it never false-settles.
+    start_date = tournament.get("start_date") or tournament.get("commence_time")
     resolution_date = tournament.get("resolution_date")
     if end_date:
         try:
