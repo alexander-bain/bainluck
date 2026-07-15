@@ -399,12 +399,12 @@ class TestComputeMCE:
     """Unit tests for the MCE computation helper."""
 
     def test_empty_input_returns_none(self):
-        from app.routes.source_intelligence import _compute_mce
+        from app.tasks.precompute_calibration import _compute_mce
         assert _compute_mce([], []) is None
 
     def test_perfect_calibration_returns_zero(self):
         """All predictions in 90-100% bucket, all win -> MCE = 0."""
-        from app.routes.source_intelligence import _compute_mce
+        from app.tasks.precompute_calibration import _compute_mce
         probs = [0.95, 0.96, 0.97, 0.98, 0.99]
         outcomes = [True, True, True, True, True]
         mce = _compute_mce(probs, outcomes)
@@ -414,7 +414,7 @@ class TestComputeMCE:
 
     def test_terrible_calibration_is_high(self):
         """Predict 90%+ but all lose -> high MCE."""
-        from app.routes.source_intelligence import _compute_mce
+        from app.tasks.precompute_calibration import _compute_mce
         probs = [0.95, 0.96, 0.97, 0.98, 0.99]
         outcomes = [False, False, False, False, False]
         mce = _compute_mce(probs, outcomes)
@@ -423,7 +423,7 @@ class TestComputeMCE:
 
     def test_multiple_buckets(self):
         """Predictions across multiple buckets."""
-        from app.routes.source_intelligence import _compute_mce
+        from app.tasks.precompute_calibration import _compute_mce
         probs = [0.15, 0.25, 0.55, 0.75, 0.85, 0.95]
         outcomes = [False, False, True, True, True, True]
         mce = _compute_mce(probs, outcomes)
@@ -432,7 +432,7 @@ class TestComputeMCE:
 
     def test_returns_percentage_points(self):
         """MCE should be in percentage points, not raw fraction."""
-        from app.routes.source_intelligence import _compute_mce
+        from app.tasks.precompute_calibration import _compute_mce
         probs = [0.5] * 100
         outcomes = [True] * 50 + [False] * 50
         mce = _compute_mce(probs, outcomes)

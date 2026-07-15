@@ -237,26 +237,36 @@ class TestRouteFallbackEmbedsExclusion:
 
 
 class TestSourceIntelligenceHonorsExclusion:
-    """Queue #188 Item 3: the Kalshi↔Polymarket fair-fight MCE in
-    source_intelligence was the one calibration read-path that read Kalshi cal
-    prices raw — the corrupt #941/#186 prop-threshold rows (NHL goal-family +
-    >=0.90 band) leaked straight into Kalshi's MCE. It must now honour the shared
-    exclusion so the fair fight is not poisoned."""
+    """Queue #188 Item 3: the Kalshi↔Polymarket fair-fight MCE was the one
+    calibration read-path that read Kalshi cal prices raw — the corrupt
+    #941/#186 prop-threshold rows (NHL goal-family + >=0.90 band) leaked
+    straight into Kalshi's MCE. It must still honour the exclusion so the fair
+    fight is not poisoned.
+
+    Queue #197/#198: the canonical impl now lives in the precompute task
+    (`_query_futures_fair_fight_impl`); the dead route-level duplicate that
+    predated #195 (and hung 240s+) was removed. The #197 profile rewrite swapped
+    the `kalshi_prop_threshold_exclude_sql` helper for an inlined
+    `resolution_source NOT IN (...)` guard-list + `volume != 0` predicate, so
+    these assertions track the impl's actual exclusion mechanism."""
 
     def test_fair_fight_applies_shared_exclusion(self):
-        from app.routes import source_intelligence as si
+        from app.tasks.precompute_calibration import _query_futures_fair_fight_impl
 
-        src = inspect.getsource(si._query_futures_fair_fight)
-        # Renders the predicate from the one shared helper (no drift).
-        assert "kalshi_prop_threshold_exclude_sql" in src
-        # And actually applies it as an exclusion in the matched-outcome scan.
-        assert "AND NOT {kalshi_prop_threshold_exclude_sql(" in src
+        src = inspect.getsource(_query_futures_fair_fight_impl)
+        # Excludes the guess/threshold resolution families that poisoned the
+        # Kalshi curve (#754/#941/#186) so they cannot leak into the fair fight.
+        assert "resolution_source NOT IN" in src
+        assert "pass3_threshold" in src  # the prop-threshold class (#186)
+        assert "pass2_guess" in src      # the guess family (#754)
+        # And drops zero-volume placeholder rows (illiquid one-sided capture).
+        assert "COALESCE(fo.volume, -1) != 0" in src
 
     def test_fair_fight_is_read_side_only(self):
         # Gotcha #21: the fair-fight query must never mutate resolutions/prices.
-        from app.routes import source_intelligence as si
+        from app.tasks.precompute_calibration import _query_futures_fair_fight_impl
 
-        src = inspect.getsource(si._query_futures_fair_fight).lower()
+        src = inspect.getsource(_query_futures_fair_fight_impl).lower()
         assert "update futures_outcomes" not in src
         assert "update futures_markets" not in src
         assert "delete from futures_outcomes" not in src

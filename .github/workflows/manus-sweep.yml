@@ -25,9 +25,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # Use the default GITHUB_TOKEN (permissions.contents: write below covers
+      # the results push). Queue #198 / #1101: this checkout previously pinned
+      # `token: secrets.GH_PUSH_TOKEN`, a manually-rotated PAT — when it lapsed
+      # (~Jul-11) checkout died at step 2 with "could not read Username for
+      # github.com", which SKIPPED the mode step so the failure issue rendered a
+      # bare "(  )" empty name with no error, 3x/day. The auto-provisioned
+      # GITHUB_TOKEN never expires.
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PUSH_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -131,14 +136,23 @@ jobs:
             git push || echo "Push failed — results saved as artifact"
           fi
 
-      - name: Create issue on failure
+      # Queue #198 / #1101: ONE deduped tracker per failure class, ever. The old
+      # step did a blind `gh issue create` every run -> 3 spam issues/day. Now we
+      # find the single open tracker (title prefix + marker) and append the new
+      # occurrence as a COMMENT; only if none is open do we create it.
+      - name: Report failure (deduped)
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TODAY=$(date -u +%Y-%m-%d)
+          MODE="${{ steps.mode.outputs.mode }}"
+          MODE="${MODE:-unknown}"   # empty if an early step (e.g. checkout) died
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           MANIFEST="Manus/audit_results/$TODAY/manifest.json"
-          BODY="The Manus health sweep (${{ steps.mode.outputs.mode }}) failed on $TODAY."
+          MARKER="<!-- manus-sweep-failure-tracker -->"
+
+          # Build the per-occurrence detail block.
           if [ -f "$MANIFEST" ]; then
             DETAIL=$(python3 -c "
           import json
@@ -146,18 +160,30 @@ jobs:
           tasks = m.get('tasks', {})
           failed = [f'- **{n}**: {t[\"status\"]}' for n, t in tasks.items() if t.get('status') != 'complete']
           if failed:
-              print('### Failed modules')
+              print('Failed modules:')
               print('\n'.join(failed))
           else:
               print('All modules completed but the workflow still failed (commit/push issue?).')
           " 2>/dev/null || echo "Could not parse manifest.")
-            BODY="$BODY
-
-          $DETAIL
-
-          **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            DETAIL="No manifest written — an early step (checkout / setup / mode) failed before any module ran. Check the run log."
           fi
-          gh issue create \
-            --title "Manus sweep failed — $TODAY" \
-            --body "$BODY" \
-            --label "area:infra,type:ops,alert-intake"
+
+          OCCURRENCE=$(printf '**New failure occurrence** — %s (mode: \`%s\`)\n\n%s\n\nRun: %s' "$TODAY" "$MODE" "$DETAIL" "$RUN_URL")
+
+          # Find the single OPEN tracker (client-side title-prefix filter — no
+          # reliance on search indexing of the HTML marker).
+          EXISTING=$(gh issue list --state open --label alert-intake --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title | startswith("Manus sweep failing"))][0].number' 2>/dev/null || true)
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$OCCURRENCE"
+            echo "Appended occurrence to existing tracker #$EXISTING"
+          else
+            gh issue create \
+              --title "Manus sweep failing (recurring)" \
+              --body "$(printf '%s\nThe Manus health sweep workflow is failing. This is the single deduped tracker for that failure class — each new occurrence is appended as a comment below. Close it once a run goes green; a later failure re-files a fresh tracker.\n\n%s' "$MARKER" "$OCCURRENCE")" \
+              --label "area:infra,type:ops,alert-intake"
+            echo "Created new tracker (no open one existed)"
+          fi
