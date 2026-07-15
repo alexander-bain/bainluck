@@ -7,6 +7,11 @@ Only considers "well-covered" events: those with 20+ snapshots from at
 least 2 sources during live play. Events with thin coverage are excluded
 entirely — if a Tier 1 event lacks dense multi-source data, that's a
 pipeline bug to fix, not sparse data to analyze.
+
+A source's live series must also be non-flat (STDDEV_POP >= FLAT_EPSILON) to
+count as a live opinion: a dead/stuck feed (e.g. ESPN's frequently-flatlined
+MLB win-prob line) is excluded so that both parties to every counted
+divergence are actually alive (Queue #204 Item 2).
 """
 
 import json
@@ -39,6 +44,18 @@ _BASE_FILTER = f"""
 # Minimum snapshots per source per event to consider the source "present".
 # Below this threshold, the data is too thin to draw conclusions from.
 MIN_SNAPS = 20
+
+# Minimum in-game standard deviation for a source's live series to count as a
+# LIVE opinion. A source whose win-prob line never moves (STDDEV_POP below this
+# floor) across 20+ snapshots is a dead/stuck feed, not a live opinion — and a
+# divergence measured against a dead line is not a disagreement (Queue #204
+# Item 2). ESPN's MLB win-prob feed flatlines near zero on ~36% of games it
+# covers (14-day census: 23/64 events sd<0.02, all stuck mean<0.10), while
+# mlb/stat_model run avg_sd ~0.14 with ~0% flat. Excluding flat lines from the
+# "rich source" bar means both parties to every counted divergence are alive.
+# A real MLB game's win prob always moves more than 2pp over its course, so this
+# floor only removes genuinely dead feeds, never legitimately steady games.
+FLAT_EPSILON = 0.02
 
 # CTE fragment: for each (event, source) pair, count live-game snapshots
 # and take the closing probability. Only sources with >= MIN_SNAPS qualify.
@@ -90,6 +107,7 @@ _RICH_SOURCES_CTE = f"""
           {_KALSHI_PROP_FILTER}
         GROUP BY wp.event_id, wp.source
         HAVING COUNT(*) >= {MIN_SNAPS}
+           AND STDDEV_POP(wp.home_win_probability) >= {FLAT_EPSILON}
     ),
     rich_events AS (
         SELECT event_id
