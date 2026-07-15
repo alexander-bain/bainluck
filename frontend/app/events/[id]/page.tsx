@@ -338,6 +338,16 @@ export default function EventPage({ params }: EventPageProps) {
           : (event.away_team.split(" ").pop() || event.away_team))
       : null;
 
+  // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
+  // pre-game win probability ("were 35% pregame"). This is what makes an upset
+  // read surprising at a glance. Data = the opening blend (opening_odds).
+  const settledWinnerPregameProb =
+    settledWinnerName !== null && openingHomeProb !== null && openingAwayProb !== null
+      ? (bestHomeScore! > bestAwayScore! ? openingHomeProb : openingAwayProb)
+      : null;
+  const settledWinnerWasUnderdog =
+    settledWinnerPregameProb !== null && settledWinnerPregameProb < 0.4;
+
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
@@ -605,6 +615,18 @@ export default function EventPage({ params }: EventPageProps) {
                       <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">
                         Won
                       </span>
+                      {settledWinnerPregameProb !== null && (
+                        <span
+                          className={`text-[11px] ${
+                            settledWinnerWasUnderdog
+                              ? "text-amber-600 font-semibold"
+                              : "text-text-muted"
+                          }`}
+                        >
+                          {settledWinnerWasUnderdog ? "Upset · " : ""}
+                          were {Math.round(settledWinnerPregameProb * 100)}% pregame
+                        </span>
+                      )}
                     </>
                   ) : (
                     <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-text-muted/15 text-text-secondary">

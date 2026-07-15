@@ -51,6 +51,7 @@ const LANE_TOP: Record<string, number> = {
 };
 
 export default function MarketMap({
+  variant,
   title,
   subtitle,
   headline,
@@ -359,6 +360,21 @@ export default function MarketMap({
             minWidth: 320,
           }}
         >
+          {/* L2-131 Item 4: name what the bars mean — the pregame chance of
+              covering each margin (or going over each total). */}
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 950,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: "#94a3b8",
+              margin: "0 0 6px 2px",
+            }}
+          >
+            {status === "done" ? "Pregame chance of " : "Chance of "}
+            {variant === "total" ? "going over" : "covering"}
+          </div>
           {ladder.map((row, i) => {
             const barColor = `rgba(${accentRgb},0.65)`;
             return (

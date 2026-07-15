@@ -295,8 +295,14 @@ export default function MarketMapSection({
     }
 
     return {
-      title: `Full game ${vocab.marginTitle.toLowerCase()}`,
-      subtitle: `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
+      // L2-131 Item 4: a settled game grades the distribution — actual final
+      // margin vs the pregame mass — so it reads "expected vs final".
+      title: status === "done"
+        ? "Margin: expected vs final"
+        : `Full game ${vocab.marginTitle.toLowerCase()}`,
+      subtitle: status === "done"
+        ? "Where it landed vs the pregame spread"
+        : `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
       headline,
       rangeMin,
       rangeMax,
@@ -455,8 +461,13 @@ export default function MarketMapSection({
     const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
 
     return {
-      title: `Full game ${vocab.totalTitle.toLowerCase()}`,
-      subtitle: `Final ${vocab.unit} distribution`,
+      // L2-131 Item 4: settled totals grade expected vs final, same as margins.
+      title: status === "done"
+        ? "Total: expected vs final"
+        : `Full game ${vocab.totalTitle.toLowerCase()}`,
+      subtitle: status === "done"
+        ? "Where it landed vs the pregame total"
+        : `Final ${vocab.unit} distribution`,
       headline: headlineValue,
       rangeMin,
       rangeMax,

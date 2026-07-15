@@ -28,7 +28,10 @@ import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
-  betting: { display_name: "Betting Odds", color: "#e5e7eb", dash_pattern: null, type: "market" },
+  // Betting is the prominent primary line in sportsbooks-only mode — it must be a
+  // dark, high-contrast color, NOT the near-white #e5e7eb that vanished on the
+  // light-mode card (L2-131: "the blend line absent/gray on this class").
+  betting: { display_name: "Betting Odds", color: "#0f172a", dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
   stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
   kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
@@ -107,11 +110,14 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
 interface ChartDataPoint {
   timestamp: string;
   time: string;
-  /** Home probability delta from 50% (range: -50 to +50) */
+  // NOTE: the `*Delta` field names are legacy. As of L2-131 these hold the raw
+  // HOME win probability on a single 0–100 axis (not a delta from 50), so the
+  // chart reads as one clean 0–100 scale instead of the old mirrored ±50 axis.
+  /** Home win probability, 0–100 */
   homeDelta: number | null;
-  /** ESPN home probability delta from 50% (legacy) */
+  /** ESPN home win probability, 0–100 (legacy) */
   espnDelta: number | null;
-  /** Bain Luck aggregated probability delta (multi-source mode) */
+  /** Bain Luck aggregated win probability, 0–100 (multi-source mode) */
   bainLuckDelta: number | null;
   /** Game state carried through for interactive play-by-play card */
   _homeScore?: number | null;
@@ -213,6 +219,10 @@ export default function OddsChart({
   // its initial value on mount, so if history arrives after first render
   // the default stays "all" even when it should be "live"
   const [hasUserOverridden, setHasUserOverridden] = useState(false);
+
+  // Lead-change diamonds are OFF by default (L2-131): they clutter the one clean
+  // blend line. A toggle surfaces them for the games where they tell a story.
+  const [showLeadChanges, setShowLeadChanges] = useState(false);
   useEffect(() => {
     if (!hasUserOverridden && !externalTimeRange && defaultTimeRange === "live") {
       setInternalTimeRange("live");
@@ -266,18 +276,21 @@ export default function OddsChart({
         }
       }
 
-      return new Date(endTime.getTime() + 5 * 60 * 1000); // 5 min buffer
+      // End AT the final snapshot — no trailing buffer (L2-131 / gotcha #22).
+      // The old +5 min pad forward-filled a flat tail that read like the game
+      // kept going after it ended.
+      return new Date(endTime.getTime());
     }
 
-    // No game-end sources — use sportsbook data with modest buffer
+    // No game-end sources — end at the last sportsbook snapshot.
     if (history && history.length > 0) {
       const lastBetting = parseISO(history[history.length - 1].timestamp);
-      return new Date(lastBetting.getTime() + 5 * 60 * 1000);
+      return new Date(lastBetting.getTime());
     }
 
     // Last resort: completedAt (backend timestamp, not ideal)
     if (completedAt) {
-      return new Date(parseISO(completedAt).getTime() + 5 * 60 * 1000);
+      return new Date(parseISO(completedAt).getTime());
     }
 
     return null;
@@ -466,11 +479,11 @@ export default function OddsChart({
       return point;
     };
 
-    // Add aggregate data points (betting odds consensus)
+    // Add aggregate data points (betting odds consensus). Values are the raw
+    // home win probability on a 0–100 axis (single-axis, not ±50 delta).
     for (const point of filteredHistory) {
-      const homeProb =
+      const delta =
         point.home_probability !== null ? point.home_probability * 100 : null;
-      const delta = homeProb !== null ? homeProb - 50 : null;
 
       const dp = ensurePoint(point.timestamp);
       dp.homeDelta = delta;
@@ -491,11 +504,10 @@ export default function OddsChart({
       filteredBookmakerHistory
     )) {
       for (const point of points) {
-        const homeProb =
+        const delta =
           point.home_probability !== null
             ? point.home_probability * 100
             : null;
-        const delta = homeProb !== null ? homeProb - 50 : null;
 
         const dp = ensurePoint(point.timestamp);
         dp[`${bookmaker}_delta`] = delta;
@@ -530,9 +542,8 @@ export default function OddsChart({
       for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
         const dataKey = `wp_${sourceKey}_delta`;
         for (const point of points) {
-          const homeProb =
+          const delta =
             point.home_probability !== null ? point.home_probability * 100 : null;
-          const delta = homeProb !== null ? homeProb - 50 : null;
 
           const dp = ensurePoint(point.timestamp);
           dp[dataKey] = delta;
@@ -551,9 +562,8 @@ export default function OddsChart({
     } else {
       // Legacy ESPN data
       for (const point of filteredEspnHistory) {
-        const espnHome =
+        const delta =
           point.home_probability !== null ? point.home_probability * 100 : null;
-        const delta = espnHome !== null ? espnHome - 50 : null;
 
         const dp = ensurePoint(point.timestamp);
         dp.espnDelta = delta;
@@ -567,8 +577,7 @@ export default function OddsChart({
       if (filteredAggregateLine && filteredAggregateLine.length > 0) {
         // Use backend-computed aggregate line
         for (const point of filteredAggregateLine) {
-          const homeProb = point.home_probability * 100;
-          const delta = homeProb - 50;
+          const delta = point.home_probability * 100;
           const dp = ensurePoint(point.timestamp);
           dp.bainLuckDelta = delta;
         }
@@ -788,7 +797,11 @@ export default function OddsChart({
     const filtered = periodBoundaries
       .filter((b) => {
         const t = parseISO(b.timestamp).getTime();
-        return t >= chartStart && t <= chartEnd;
+        if (t < chartStart || t > chartEnd) return false;
+        // Drop any "Final"-like boundary — the single explicit Final marker below
+        // owns the game-end label, so there is exactly one (L2-131).
+        if (/^(final|ft|f|full\s*time)$/i.test(b.label.trim())) return false;
+        return true;
       })
       .sort((a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime());
 
@@ -816,9 +829,19 @@ export default function OddsChart({
     }));
   }, [periodBoundaries, chartData]);
 
-  // Fixed 100-50-100 Y-axis: always show full probability range
-  const yDomain: [number, number] = [-55, 55];
-  const yTicks = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50];
+  // "Final" marker (settled games only): a single vertical line at the last
+  // chart category — i.e. the final snapshot, which is now the chart's right
+  // edge (buffer removed). Exactly one, deduped against period boundaries above.
+  const finalMarkerTime = useMemo(() => {
+    if (!isClosed || chartData.length === 0) return null;
+    return chartData[chartData.length - 1].time;
+  }, [isClosed, chartData]);
+
+  // Single 0–100 win-probability axis (L2-131): the line is the HOME team's win
+  // probability read straight up the scale. This replaces the old mirrored ±50
+  // dual-axis where the same "80%" appeared both above and below center.
+  const yDomain: [number, number] = [0, 100];
+  const yTicks = [0, 25, 50, 75, 100];
 
   // ── Compute lead change points (50% crossings) ──
   // Instead of creating a separate data array (which breaks Recharts categorical
@@ -836,8 +859,9 @@ export default function OddsChart({
       const delta = pt[key] as number | null;
       if (delta === null) continue;
       if (prevDelta !== null) {
-        if ((prevDelta > 0 && delta <= 0) || (prevDelta < 0 && delta >= 0)) {
-          pt.leadChangeDelta = 0; // Stamp onto chartData point at y=0 (50% line)
+        // A lead change is a crossing of the 50% line (0–100 axis).
+        if ((prevDelta > 50 && delta <= 50) || (prevDelta < 50 && delta >= 50)) {
+          pt.leadChangeDelta = 50; // Stamp at y=50 (the 50% line)
           count++;
         }
       }
@@ -859,7 +883,7 @@ export default function OddsChart({
     for (let i = chartData.length - 1; i >= 0; i--) {
       const delta = chartData[i][key] as number | null;
       if (delta !== null) {
-        const homeProb = 50 + delta;
+        const homeProb = delta; // 0–100 axis: the value IS the home probability
         chartData[i].calloutDelta = delta; // Stamp onto chartData point
         return {
           time: chartData[i].time,
@@ -932,12 +956,8 @@ export default function OddsChart({
   const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter: shows probability percentages only
-  // Team names are shown separately above the chart as "X favored ↑ / ↓"
-  const formatYTick = (value: number): string => {
-    const prob = Math.min(100, 50 + Math.abs(value));
-    return `${prob}%`;
-  };
+  // Y-axis tick formatter: the value is already the home win probability (0–100).
+  const formatYTick = (value: number): string => `${value}%`;
 
   // Custom tooltip showing actual probabilities
   const CustomTooltip = ({
@@ -956,7 +976,7 @@ export default function OddsChart({
   }) => {
     if (active && payload && payload.length) {
       const formatProb = (delta: number) => {
-        const homeProb = delta + 50;
+        const homeProb = delta; // 0–100 axis: value is the home probability
         const awayProb = 100 - homeProb;
         return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
       };
@@ -1084,7 +1104,7 @@ export default function OddsChart({
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
-                const homeProb = entry.value + 50;
+                const homeProb = entry.value; // 0–100 axis
                 const awayProb = 100 - homeProb;
                 return (
                   <p key={bookmaker} className="text-xs text-text-muted">
@@ -1147,6 +1167,26 @@ export default function OddsChart({
           </button>
           );
         })}
+
+        {/* Lead-change toggle — only offered when there are crossings to show.
+            Hidden in the compact fillContainer (fullscreen) layout. */}
+        {!fillContainer && leadChangeCount > 0 && (
+          <button
+            onClick={() => setShowLeadChanges((v) => !v)}
+            className={`ml-auto flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              showLeadChanges
+                ? "bg-text-primary text-surface-deep"
+                : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
+            }`}
+            title={showLeadChanges ? "Hide lead changes" : "Show lead changes"}
+            aria-pressed={showLeadChanges}
+          >
+            <svg width="9" height="9" viewBox="0 0 10 10" className="shrink-0">
+              <polygon points="5,0 10,5 5,10 0,5" fill="currentColor" />
+            </svg>
+            Lead changes ({leadChangeCount})
+          </button>
+        )}
       </div>
 
       {/* Probability Chart with vertical team labels */}
@@ -1187,7 +1227,7 @@ export default function OddsChart({
               const pt = chartData[idx];
               const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
               const delta = pt[primaryDeltaKey] as number | null;
-              const homeProb = delta != null ? (50 + delta) / 100 : 0.5;
+              const homeProb = delta != null ? delta / 100 : 0.5; // 0–100 axis → 0–1
               onActivePointChange({
                 timestamp: pt.timestamp,
                 homeProb,
@@ -1240,7 +1280,7 @@ export default function OddsChart({
             />
             {/* 50% reference line */}
             <ReferenceLine
-              y={0}
+              y={50}
               stroke="rgba(0,0,0,0.2)"
               strokeWidth={1.5}
               strokeDasharray="4 4"
@@ -1280,6 +1320,20 @@ export default function OddsChart({
                 }}
               />
             ))}
+            {/* Final marker — exactly one, at the game-end snapshot (settled only) */}
+            {finalMarkerTime && (
+              <ReferenceLine
+                x={finalMarkerTime}
+                stroke="rgba(0,0,0,0.35)"
+                strokeWidth={1.5}
+                isFront
+                label={{
+                  value: "Final",
+                  position: "insideTopLeft",
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.7)", fontWeight: 700 },
+                }}
+              />
+            )}
             <Tooltip content={<CustomTooltip />} />
 
             {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}
@@ -1297,7 +1351,8 @@ export default function OddsChart({
               />
             ))}
 
-            {/* ── MODE A: Multi-source — individual source lines (thin, colored, semi-transparent) ── */}
+            {/* ── MODE A: Multi-source — individual source lines (near-invisible so
+                the one blended Bain Luck line clearly dominates, per L2-131) ── */}
             {isMultiSource && resolvedSources.map((source) => (
               <Line
                 key={source.dataKey}
@@ -1305,8 +1360,8 @@ export default function OddsChart({
                 dataKey={source.dataKey}
                 name={source.displayName}
                 stroke={source.color}
-                strokeWidth={1.5}
-                strokeOpacity={0.5}
+                strokeWidth={1}
+                strokeOpacity={0.28}
                 strokeDasharray={source.dashPattern ?? undefined}
                 dot={false}
                 activeDot={{ r: 3, fill: source.color }}
@@ -1361,24 +1416,26 @@ export default function OddsChart({
               />
             )}
 
-            {/* ── MODE B: Sportsbooks-only — betting odds line (solid, on top) ── */}
+            {/* ── MODE B: Sportsbooks-only — betting odds line (solid, prominent, on top).
+                Dark slate (#0f172a), NOT the old near-white #e5e7eb that vanished on
+                the light-mode card (L2-131 "the blend line absent/gray"). ── */}
             {!isMultiSource && (
               <Line
                 type="monotone"
                 dataKey="homeDelta"
                 name="Betting Odds"
-                stroke="#e5e7eb"
-                strokeWidth={2.5}
+                stroke="#0f172a"
+                strokeWidth={3}
                 dot={false}
-                activeDot={{ r: 5, fill: "#e5e7eb" }}
+                activeDot={{ r: 5, fill: "#0f172a" }}
                 connectNulls
               />
             )}
 
 
 
-            {/* Lead change markers — diamonds at 50% crossings */}
-            {leadChangeCount > 0 && (
+            {/* Lead change markers — diamonds at 50% crossings (default off) */}
+            {showLeadChanges && leadChangeCount > 0 && (
               <Scatter
                 dataKey="leadChangeDelta"
                 fill="none"
@@ -1414,7 +1471,7 @@ export default function OddsChart({
                   const { cx = 0, cy = 0 } = props;
                   const fillColor = isMultiSource
                     ? BAIN_LUCK_CONFIG.color
-                    : "#e5e7eb";
+                    : "#0f172a";
                   return (
                     <g>
                       {/* Outer glow */}
@@ -1471,9 +1528,9 @@ export default function OddsChart({
                 <line
                   x1="0" y1="2" x2="20" y2="2"
                   stroke={source.color}
-                  strokeWidth={isMultiSource ? "1.5" : "2.5"}
+                  strokeWidth={isMultiSource ? "1" : "2.5"}
                   strokeDasharray={source.dashPattern ?? undefined}
-                  strokeOpacity={isMultiSource ? 0.6 : 1}
+                  strokeOpacity={isMultiSource ? 0.4 : 1}
                 />
               </svg>
               <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}>
@@ -1515,8 +1572,8 @@ export default function OddsChart({
 
 
 
-        {/* Lead changes legend */}
-        {leadChangeCount > 0 && (
+        {/* Lead changes legend (only when the toggle is on) */}
+        {showLeadChanges && leadChangeCount > 0 && (
           <div className="flex items-center gap-1.5">
             <svg width="10" height="10" className="shrink-0">
               <polygon points="5,1 9,5 5,9 1,5" fill="#fbbf24" />

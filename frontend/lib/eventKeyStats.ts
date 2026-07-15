@@ -499,20 +499,19 @@ export function computeSharedChartDomain(
         }
       }
 
-      const lastData = new Date(endMs);
-      lastData.setMinutes(lastData.getMinutes() + 5);
-      end = lastData;
+      // End AT the final snapshot — no trailing buffer (L2-131 / gotcha #22).
+      // The old +5 min pad left a flat forward-filled tail that read as if the
+      // game continued after it ended.
+      end = new Date(endMs);
     } else if (historyData.history && historyData.history.length > 0) {
-      // No game-end sources — use sportsbook data with buffer
+      // No game-end sources — end at the last sportsbook snapshot.
       const bettingTs: number[] = [];
       for (const pt of historyData.history) {
         const t = new Date(pt.timestamp).getTime();
         if (!isNaN(t)) bettingTs.push(t);
       }
       if (bettingTs.length > 0) {
-        const lastBetting = new Date(Math.max(...bettingTs));
-        lastBetting.setMinutes(lastBetting.getMinutes() + 5);
-        end = lastBetting;
+        end = new Date(Math.max(...bettingTs));
       }
     } else if (commenceTime) {
       const ct = new Date(commenceTime);
