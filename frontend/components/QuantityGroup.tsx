@@ -64,6 +64,24 @@ interface QuantityGroupProps {
   sort?: boolean;
   /** Glance zoom for Discover cards: fewer rungs, tighter spacing, no distribution. */
   compact?: boolean;
+  /**
+   * Embed mode: drop the outer card chrome (border/shadow/padding) so the ladder
+   * can render INSIDE an existing card that already owns the question context
+   * (e.g. the Discover FuturesCard's title). Queue L2-119.
+   */
+  bare?: boolean;
+  /**
+   * Cap the number of rungs shown. Defaults to 4 in `compact`, unbounded
+   * otherwise. Date-bucket cards use a slightly higher cap to keep the full
+   * timeline legible without wrapping columns.
+   */
+  maxRungs?: number;
+  /**
+   * Wide-label mode for date/time buckets ("2029 or later") that don't fit the
+   * fixed numeric-threshold label column. The "by WHEN" variant of the kernel —
+   * same ladder, roomier label track. Queue L2-119.
+   */
+  wideLabels?: boolean;
 }
 
 function pct(p: number | null): string {
@@ -79,6 +97,9 @@ export default function QuantityGroup({
   onRungSelect,
   sort = true,
   compact = false,
+  bare = false,
+  maxRungs,
+  wideLabels = false,
 }: QuantityGroupProps) {
   if (!rungs || rungs.length === 0) return null;
 
@@ -90,13 +111,14 @@ export default function QuantityGroup({
       return av - bv;
     });
   }
-  if (compact) ordered = ordered.slice(0, 4);
+  const cap = maxRungs ?? (compact ? 4 : undefined);
+  if (cap != null) ordered = ordered.slice(0, cap);
 
   const interactive = typeof onRungSelect === "function";
   const headerHint = hint ?? (interactive ? "tap a rung for its history" : undefined);
 
-  return (
-    <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4">
+  const inner = (
+    <>
       {(title || headerHint) && (
         <div className="flex items-center gap-2 pb-2.5 mb-1.5 border-b border-surface-elevated">
           {title && (
@@ -132,7 +154,9 @@ export default function QuantityGroup({
             >
               <span
                 className={[
-                  "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
+                  wideLabels
+                    ? "shrink-0 max-w-[45%] text-[12px] font-semibold leading-tight"
+                    : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
                   rung.highlighted ? "text-accent-brand" : "text-text-primary",
                 ].join(" ")}
               >
@@ -175,6 +199,14 @@ export default function QuantityGroup({
           <QuantityDistribution bins={distribution} />
         </div>
       )}
+    </>
+  );
+
+  if (bare) return inner;
+
+  return (
+    <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4">
+      {inner}
     </div>
   );
 }

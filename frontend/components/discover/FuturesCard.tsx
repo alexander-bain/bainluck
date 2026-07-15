@@ -9,6 +9,7 @@ import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText } from "./shared";
+import QuantityGroup from "../QuantityGroup";
 import type { CardActionCallbacks } from "./types";
 
 interface FuturesCardProps extends CardActionCallbacks {
@@ -68,81 +69,37 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-4">{data.name}</h3>
           </Link>
 
-          {/* Cell grid — emerald intensity ramp */}
-          <div className="flex gap-[3px]">
-            {shownCells.map((row) => {
-              const p = row.probability ?? 0;
-              const pct = Math.round(p * 100);
-              const resolved = row.resolved;
-              const isResWinner = resolved && row.isWinner;
-              const isResLoser = resolved && !row.isWinner;
-              const isLandingCell = resolved && row.isWinner && row.isLanding;
+          {/* #1102/L2-119: the "by WHEN" Quantity kernel. The old horizontal
+              cell grid used equal flex-1 columns, so long date labels ("2029 or
+              later") wrapped and broke alignment against the fixed-height cells.
+              The vertical ladder (QuantityGroup, wide-label variant) never wraps
+              its columns — one component covers "how MANY" and "by WHEN". */}
+          <QuantityGroup
+            bare
+            compact
+            wideLabels
+            sort={false}
+            rungs={shownCells.map((row) => ({
+              key: row.key,
+              label: row.label,
+              probability: row.probability,
+              value: row.sortValue,
+            }))}
+          />
 
-              let bg: string;
-              let textColor: string;
-              if (isResLoser) {
-                bg = "var(--surface-elevated)";
-                textColor = "var(--text-muted)";
-              } else if (p >= 0.85) {
-                bg = "#10B981";
-                textColor = "#fff";
-              } else if (p >= 0.65) {
-                bg = "rgba(16,185,129,0.76)";
-                textColor = "#fff";
-              } else if (p >= 0.50) {
-                bg = "rgba(16,185,129,0.52)";
-                textColor = "#fff";
-              } else if (p >= 0.30) {
-                bg = "rgba(16,185,129,0.26)";
-                textColor = "var(--text-primary)";
-              } else {
-                bg = "rgba(16,185,129,0.11)";
-                textColor = "var(--text-muted)";
-              }
-
-              return (
-                <div
-                  key={row.key}
-                  className="flex-1 h-14 rounded-md flex flex-col items-center justify-center gap-0.5"
-                  style={{
-                    background: bg,
-                    boxShadow: isLandingCell ? "0 0 0 2px var(--accent-brand), 0 0 12px rgba(16,185,129,0.3)" : undefined,
-                  }}
-                >
-                  <span className="font-mono font-bold text-sm tabular-nums" style={{ color: textColor }}>
-                    {pct}<span className="text-[0.6em] font-bold">%</span>
-                  </span>
-                  {resolved && (
-                    <span className="text-[11px]" style={{ color: textColor }}>
-                      {isResWinner ? "✓" : "✕"}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Threshold labels */}
-          <div className="flex gap-[3px] mt-[7px]">
-            {shownCells.map((row) => (
-              <div key={`label-${row.key}`} className="flex-1 text-center font-mono text-[11px] text-text-secondary">
-                {row.label}
-              </div>
-            ))}
-          </div>
-
-          {/* Summary footer */}
-          <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
-            {lastAbove50Label ? (
-              <>
-                <span className="text-[12px] text-text-secondary">Above 50% through</span>
-                <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
-              </>
-            ) : (
-              <span className="text-[12px] text-text-secondary">All below 50%</span>
-            )}
-            {volumeStr && <span className="ml-auto text-[11px] text-text-muted">{volumeStr}</span>}
-          </div>
+          {/* Summary footer — orphan-free: "All below 50%" is dropped (it read as
+              a context-less phrase); when nothing clears 50% we show only volume. */}
+          {(lastAbove50Label || volumeStr) && (
+            <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
+              {lastAbove50Label && (
+                <>
+                  <span className="text-[12px] text-text-secondary">Above 50% through</span>
+                  <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
+                </>
+              )}
+              {volumeStr && <span className="ml-auto text-[11px] text-text-muted">{volumeStr}</span>}
+            </div>
+          )}
 
           <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
         </div>

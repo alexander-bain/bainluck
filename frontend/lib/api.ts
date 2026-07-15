@@ -1319,6 +1319,8 @@ export async function fetchSharedTeamFutures(
 }
 
 export interface ResolutionItem {
+  /** FuturesMarket id — link the settled result back to /futures/{id}. */
+  market_id: number;
   market_name: string;
   category: string | null;
   guess: string;

@@ -70,6 +70,32 @@ describe("QuantityGroup", () => {
     expect(renderToStaticMarkup(<QuantityGroup rungs={[]} />)).toBe("");
   });
 
+  // L2-119: the "by WHEN" / embed variants for the Discover date-bucket card.
+  test("bare mode drops the outer card chrome but keeps the rungs", () => {
+    const carded = renderToStaticMarkup(<QuantityGroup rungs={RUNGS} />);
+    expect(carded).toContain("shadow-card");
+    const bare = renderToStaticMarkup(<QuantityGroup rungs={RUNGS} bare />);
+    expect(bare).not.toContain("shadow-card");
+    expect(bare).toContain("≥ 60"); // rungs still render
+  });
+
+  test("wideLabels renders long date-bucket labels without the fixed w-11 column", () => {
+    const dateRungs = [
+      { key: "a", label: "2027", probability: 0.4, value: 2027 },
+      { key: "b", label: "2029 or later", probability: 0.1, value: 2029 },
+    ];
+    const html = renderToStaticMarkup(<QuantityGroup rungs={dateRungs} wideLabels sort={false} />);
+    expect(html).toContain("2029 or later");
+    expect(html).not.toContain("w-11"); // wide-label track, not the numeric column
+  });
+
+  test("maxRungs caps how many rungs render", () => {
+    const html = renderToStaticMarkup(<QuantityGroup rungs={RUNGS} maxRungs={2} sort={false} />);
+    expect(html).toContain("≥ 60");
+    expect(html).toContain("≥ 80");
+    expect(html).not.toContain("≥ 95");
+  });
+
   test("null probability renders an em dash, never throws", () => {
     const html = renderToStaticMarkup(
       <QuantityGroup rungs={[{ key: "x", label: "≥ 10", probability: null }]} />,

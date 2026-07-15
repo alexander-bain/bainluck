@@ -21,6 +21,7 @@ export type { DiscoverGroupedItem } from "./discover/types";
 export { GuessCard } from "./discover/GuessCard";
 export { DailyChallengeCard } from "./discover/DailyChallengeCard";
 export { ResolutionCard } from "./discover/ResolutionCard";
+export { ResolutionGroup } from "./discover/ResolutionGroup";
 
 interface DiscoverCardProps {
   groupedItem: DiscoverGroupedItem;

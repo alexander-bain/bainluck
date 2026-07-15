@@ -6,7 +6,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData } from "@/lib/types";
-import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -754,12 +754,18 @@ export default function DiscoverPage() {
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
             <div className="flex items-center gap-3">
-              <Link href="/discover/stats" className="text-text-muted hover:text-text-primary transition-colors">
+              {/* L2-119: killed the "{N} markets" count — on an infinite feed it
+                  was the loaded-so-far tally, which reads as a (wrong) total and
+                  ticks up as you scroll. The stats link stays. */}
+              <Link
+                href="/discover/stats"
+                aria-label="Prediction stats"
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 20V10" /><path d="M18 20V4" /><path d="M6 20v-4" />
                 </svg>
               </Link>
-              <span className="text-text-muted text-xs font-medium">{processedItems.length} markets</span>
             </div>
           </div>
         </div>
@@ -820,21 +826,29 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {/* Resolution notifications */}
+        {/* Your settled Higher/Lower guesses (L2-119). 3+ collapse into one
+            "Your results" group; 1–2 render as individual clickable cards. */}
         {resolutionsData && resolutionsData.resolutions.length > 0 && (
-          <div className="mb-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
-            {resolutionsData.resolutions.slice(0, 3).map((r, idx) => (
-              <div key={idx} className="break-inside-avoid mb-4">
-                <ResolutionCard
-                  marketName={r.market_name}
-                  guess={r.guess}
-                  threshold={r.threshold}
-                  actual={r.actual}
-                  correct={r.correct}
-                />
-              </div>
-            ))}
-          </div>
+          resolutionsData.resolutions.length >= 3 ? (
+            <div className="mb-4">
+              <ResolutionGroup resolutions={resolutionsData.resolutions.slice(0, 8)} />
+            </div>
+          ) : (
+            <div className="mb-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
+              {resolutionsData.resolutions.map((r, idx) => (
+                <div key={`${r.market_id}-${idx}`} className="break-inside-avoid mb-4">
+                  <ResolutionCard
+                    marketId={r.market_id}
+                    marketName={r.market_name}
+                    guess={r.guess}
+                    threshold={r.threshold}
+                    actual={r.actual}
+                    correct={r.correct}
+                  />
+                </div>
+              ))}
+            </div>
+          )
         )}
 
         {/* Daily Challenge — passive progress tracker, counts guesses from feed */}

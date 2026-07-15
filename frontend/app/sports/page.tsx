@@ -128,6 +128,136 @@ export default function SportsPage() {
     return groupFeedIntoSections(feedData.items);
   }, [feedData]);
 
+  // #1102 information architecture: games LEAD the page. Split the game sections
+  // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
+  // the grouped props strip can slot BELOW the games feed and above Top Markets.
+  const gameSections = useMemo(
+    () => feedSections.filter((s) => s.key !== "markets"),
+    [feedSections]
+  );
+  const marketsSection = useMemo(
+    () => feedSections.find((s) => s.key === "markets") ?? null,
+    [feedSections]
+  );
+
+  // =========================================================================
+  // Section renderer (shared by game sections + Top Markets)
+  // =========================================================================
+
+  const renderFeedSection = useCallback(
+    (section: (typeof feedSections)[number], sectionIndex: number) => {
+      // For "markets" section, group futures by canonical_market_key
+      const isMarkets = section.key === "markets";
+      const groupedMarkets = isMarkets ? groupTopMarkets(section.items) : null;
+
+      return (
+        <section key={section.key}>
+          {/* Divider between sections */}
+          {sectionIndex > 0 && (
+            <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+          )}
+          <motion.div
+            className="flex items-center gap-2 mb-3"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+          >
+            <span className="text-sm">{section.emoji}</span>
+            <h2 className={`text-sm font-semibold ${section.accent}`}>
+              {section.title}
+            </h2>
+            <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+              {section.items.length}
+            </span>
+          </motion.div>
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+          >
+            {isMarkets && groupedMarkets
+              ? /* Top Markets: render grouped cross-source cards + singles */
+                groupedMarkets.ordered.map((entry, itemIndex) => {
+                  if (isGroupedMarket(entry)) {
+                    return (
+                      <motion.div
+                        key={`grouped-${entry.canonicalKey}`}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: 0.3,
+                          ease: "easeOut",
+                          delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                        }}
+                      >
+                        <CombinedFeedCard group={entry} />
+                      </motion.div>
+                    );
+                  }
+                  const singleData = entry.data as FeedFuturesData;
+                  const category = singleData.llm_sport_category ?? "other";
+                  return (
+                    <motion.div
+                      key={`feed-futures-${singleData.id}`}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.3,
+                        ease: "easeOut",
+                        delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                      }}
+                    >
+                      <FeedCard
+                        item={entry}
+                        onThumbsUp={handleThumbsUp}
+                        onThumbsDown={handleThumbsDown}
+                        category={category}
+                      />
+                    </motion.div>
+                  );
+                })
+              : /* Other sections: render as before */
+                section.items.map((item, itemIndex) => {
+                  const key = item.type === "event"
+                    ? `feed-event-${(item.data as FeedEventData).id}`
+                    : item.type === "tournament"
+                    ? `feed-tournament-${(item.data as FeedTournamentData).key}`
+                    : item.type === "concept"
+                    ? `feed-concept-${(item.data as FeedConceptData).key}`
+                    : `feed-futures-${(item.data as FeedFuturesData).id}`;
+                  const category = item.type === "event"
+                    ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                    : item.type === "tournament"
+                    ? "golf"
+                    : item.type === "concept"
+                    ? (item.data as FeedConceptData).domain ?? "other"
+                    : (item.data as FeedFuturesData).llm_sport_category ?? "other";
+                  return (
+                    <motion.div
+                      key={key}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.3,
+                        ease: "easeOut",
+                        delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                      }}
+                    >
+                      <FeedCard
+                        item={item}
+                        onThumbsUp={handleThumbsUp}
+                        onThumbsDown={handleThumbsDown}
+                        category={category}
+                      />
+                    </motion.div>
+                  );
+                })}
+          </div>
+        </section>
+      );
+    },
+    [handleThumbsUp, handleThumbsDown]
+  );
+
   // =========================================================================
   // Render
   // =========================================================================
@@ -173,9 +303,19 @@ export default function SportsPage() {
               {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 
-              {/* Grouped Futures Section (Player Props, Playoff Progressions) */}
+              {/* #1102: Games LEAD — Live Now / Just Happened / Upcoming first */}
+              {gameSections.map((section, sectionIndex) =>
+                renderFeedSection(section, sectionIndex)
+              )}
+
+              {/* Player Props & Progressions strip — BELOW the games feed (#1102).
+                  Renders the shared Quantity kernel (QuantityGroup) per question,
+                  never a naked pooled strip without its context. */}
               {groupedData && groupedData.feed.length > 0 && (
                 <section>
+                  {gameSections.length > 0 && (
+                    <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+                  )}
                   <motion.div
                     className="flex items-center gap-2 mb-3"
                     initial={{ opacity: 0 }}
@@ -194,119 +334,9 @@ export default function SportsPage() {
                 </section>
               )}
 
-              {/* Grouped feed sections */}
-              {feedSections.map((section, sectionIndex) => {
-                // For "markets" section, group futures by canonical_market_key
-                const isMarkets = section.key === "markets";
-                const groupedMarkets = isMarkets
-                  ? groupTopMarkets(section.items)
-                  : null;
-
-                return (
-                  <section key={section.key}>
-                    {/* Divider between sections */}
-                    {sectionIndex > 0 && (
-                      <div className="border-t border-surface-border/30 -mt-1 mb-5" />
-                    )}
-                    <motion.div
-                      className="flex items-center gap-2 mb-3"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ duration: 0.3, ease: "easeOut" }}
-                    >
-                      <span className="text-sm">{section.emoji}</span>
-                      <h2 className={`text-sm font-semibold ${section.accent}`}>
-                        {section.title}
-                      </h2>
-                      <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                        {section.items.length}
-                      </span>
-                    </motion.div>
-                    <div
-                      className="grid gap-3"
-                      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
-                    >
-                      {isMarkets && groupedMarkets
-                        ? /* Top Markets: render grouped cross-source cards + singles */
-                          groupedMarkets.ordered.map((entry, itemIndex) => {
-                            if (isGroupedMarket(entry)) {
-                              return (
-                                <motion.div
-                                  key={`grouped-${entry.canonicalKey}`}
-                                  initial={{ opacity: 0, y: 8 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  transition={{
-                                    duration: 0.3,
-                                    ease: "easeOut",
-                                    delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                                  }}
-                                >
-                                  <CombinedFeedCard group={entry} />
-                                </motion.div>
-                              );
-                            }
-                            const singleData = entry.data as FeedFuturesData;
-                            const category = singleData.llm_sport_category ?? "other";
-                            return (
-                              <motion.div
-                                key={`feed-futures-${singleData.id}`}
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{
-                                  duration: 0.3,
-                                  ease: "easeOut",
-                                  delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                                }}
-                              >
-                                <FeedCard
-                                  item={entry}
-                                  onThumbsUp={handleThumbsUp}
-                                  onThumbsDown={handleThumbsDown}
-                                  category={category}
-                                />
-                              </motion.div>
-                            );
-                          })
-                        : /* Other sections: render as before */
-                          section.items.map((item, itemIndex) => {
-                            const key = item.type === "event"
-                              ? `feed-event-${(item.data as FeedEventData).id}`
-                              : item.type === "tournament"
-                              ? `feed-tournament-${(item.data as FeedTournamentData).key}`
-                              : item.type === "concept"
-                              ? `feed-concept-${(item.data as FeedConceptData).key}`
-                              : `feed-futures-${(item.data as FeedFuturesData).id}`;
-                            const category = item.type === "event"
-                              ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
-                              : item.type === "tournament"
-                              ? "golf"
-                              : item.type === "concept"
-                              ? (item.data as FeedConceptData).domain ?? "other"
-                              : (item.data as FeedFuturesData).llm_sport_category ?? "other";
-                            return (
-                              <motion.div
-                                key={key}
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{
-                                  duration: 0.3,
-                                  ease: "easeOut",
-                                  delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                                }}
-                              >
-                                <FeedCard
-                                  item={item}
-                                  onThumbsUp={handleThumbsUp}
-                                  onThumbsDown={handleThumbsDown}
-                                  category={category}
-                                />
-                              </motion.div>
-                            );
-                          })}
-                    </div>
-                  </section>
-                );
-              })}
+              {/* Top Markets (futures) close out the page */}
+              {marketsSection &&
+                renderFeedSection(marketsSection, gameSections.length)}
             </div>
           )}
 

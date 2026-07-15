@@ -305,6 +305,9 @@ async def get_resolutions(
     return {
         "resolutions": [
             {
+                # market_id is a FuturesMarket id (the query joins on it), so the
+                # client can link a settled result back to /futures/{id} (L2-119).
+                "market_id": pred.market_id,
                 "market_name": name or f"Market #{pred.market_id}",
                 "category": cat,
                 "guess": pred.guess,

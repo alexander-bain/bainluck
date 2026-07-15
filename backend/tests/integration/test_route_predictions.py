@@ -152,6 +152,9 @@ async def test_resolutions_response_shape(client, mock_db):
     body = resp.json()
     assert set(body) == {"resolutions"}
     assert body["resolutions"] == [{
+        # market_id lets the client link a settled result back to /futures/{id}
+        # (Queue L2-119).
+        "market_id": 99,
         "market_name": "Fed cuts rates in June?",
         "category": "economics",
         "guess": "higher",

@@ -6,7 +6,9 @@
  * Automatically selects the appropriate component based on item type:
  * - stat_prop → PlayerStatCard
  * - playoff_progression → ProgressionLadder
- * - threshold → ThresholdSparkline (wrapped in a card)
+ * - threshold → QuantityGroup (the shared Quantity kernel — one question, many
+ *   rungs; Queue L2-119 retired the #958-era pooled ThresholdSparkline strip so
+ *   the card system and detail-page system draw the SAME primitive)
  * - market → FuturesCard (fallback for ungrouped markets)
  */
 
@@ -22,7 +24,7 @@ import type {
 
 import PlayerStatCard from "./PlayerStatCard";
 import ProgressionLadder from "./ProgressionLadder";
-import ThresholdSparkline from "./ThresholdSparkline";
+import QuantityGroup, { buildThresholdRungs } from "./QuantityGroup";
 import FuturesCard from "./FuturesCard";
 
 interface GroupedFeedRendererProps {
@@ -75,38 +77,52 @@ function PlayoffProgressionItem({
   );
 }
 
+/**
+ * Prettify a threshold stem into a question-context title. The backend stem is
+ * lowercased with the numeric threshold stripped (e.g. "will bitcoin exceed $"),
+ * so we collapse whitespace, trim dangling stem artifacts, and sentence-case it.
+ * The kernel discipline (Queue L2-119): a Quantity ladder NEVER renders without
+ * its question context, so we always resolve to a non-empty title.
+ */
+export function formatThresholdTitle(title: string): string {
+  const cleaned = (title ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s#$·,:;–-]+$/g, "")
+    .trim();
+  if (!cleaned) return "Threshold market";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 function ThresholdItem({
   item,
+  compact,
   onClick,
 }: {
   item: ThresholdFeedItem;
+  compact?: boolean;
   onClick?: () => void;
 }) {
+  // One question, many rungs — the shared Quantity kernel. Every rung is a
+  // cumulative threshold; the ladder reads top-down and never wraps its columns
+  // (the old pooled sparkline hid the shape). Always title it: the kernel
+  // discipline forbids a naked ladder without its question context.
+  const rungs = buildThresholdRungs(
+    item.points.map((p) => ({
+      outcome_id: p.id,
+      name: p.name,
+      probability: p.probability,
+      threshold_value: p.threshold_value,
+      threshold_unit: p.threshold_unit,
+      threshold_direction: p.threshold_direction,
+    })),
+  );
   return (
-    <motion.div
-      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-xl p-4"
-      variants={staggerItem}
-    >
-      {/* Title */}
-      <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-3">
-        {item.title}
-      </h3>
-
-      {/* Sparkline */}
-      <ThresholdSparkline
-        points={item.points}
-        height={48}
-        showLabels
-        onPointClick={() => onClick?.()}
-      />
-
-      {/* Count badge */}
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-xs text-[var(--text-muted)]">
-          {item.outcome_count} thresholds
-        </span>
-      </div>
-    </motion.div>
+    <QuantityGroup
+      title={formatThresholdTitle(item.title)}
+      rungs={rungs}
+      compact={compact}
+      onRungSelect={onClick ? () => onClick() : undefined}
+    />
   );
 }
 
@@ -205,11 +221,13 @@ export default function GroupedFeedRenderer({
 
           case "threshold":
             return (
-              <ThresholdItem
-                key={key}
-                item={item}
-                onClick={() => onItemClick?.(item)}
-              />
+              <motion.div key={key} variants={staggerItem}>
+                <ThresholdItem
+                  item={item}
+                  compact={compact}
+                  onClick={() => onItemClick?.(item)}
+                />
+              </motion.div>
             );
 
           case "market":
