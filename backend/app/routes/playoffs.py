@@ -2311,6 +2311,69 @@ def _grid_column_resolved(teams: list, key: str, eps: float = 0.01) -> bool:
     return all(p <= eps or p >= 1.0 - eps for p in probs)
 
 
+# Gender exclusion: Men's leagues should not include Women's markets and vice versa
+_GRID_WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
+_GRID_MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
+_GRID_MENS_LEAGUES = ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
+_GRID_WOMENS_LEAGUES = ("wnba", "ncaa-women-basketball")
+
+
+def _market_passes_league_filter(name: str, external_id: str, config) -> bool:
+    """Decide whether a market belongs in ``config``'s playoff grid.
+
+    Encapsulates the series -> league gating so it is unit-testable. Order
+    matters: gender + universal exclusion run BEFORE any inclusion path, so a
+    colliding ticker prefix (e.g. KXNBACUP under the NBA's KXNBA prefix) or a
+    colliding market name (e.g. "Pro Basketball Cup Champion" matching the
+    ``\\bPro Basketball\\b`` name pattern) cannot leak a *different* competition
+    into this league's grid. ``re.compile`` on constant pattern strings is
+    module-cached, so per-call compilation here is cheap.
+    """
+    name = name or ""
+    eid = external_id or ""
+
+    # Gender filter: reject women's markets from men's grids and vice versa
+    if config.slug in _GRID_MENS_LEAGUES and _GRID_WOMENS_RE.search(name):
+        return False
+    if config.slug in _GRID_WOMENS_LEAGUES and _GRID_MENS_RE.search(name) \
+            and not _GRID_WOMENS_RE.search(name):
+        return False
+
+    # Universal league exclusion (series -> league gating).
+    if config.external_id_exclude_prefixes and eid and \
+            any(eid.startswith(pfx) for pfx in config.external_id_exclude_prefixes):
+        return False
+    league_exclude = [
+        re.compile(p, re.IGNORECASE) for p in config.league_exclude_patterns
+    ] if config.league_exclude_patterns else []
+    if league_exclude and any(excl.search(name) for excl in league_exclude):
+        return False
+
+    # Path A: sport key prefix (Odds API) always passes
+    if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
+        return True
+    # Path B.1: external_id ticker prefix (Kalshi)
+    if config.external_id_prefixes and eid and \
+            any(eid.startswith(pfx) for pfx in config.external_id_prefixes):
+        return True
+    # Path B.2: league name pattern in market name (Polymarket)
+    league_patterns = [
+        re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
+    ] if config.league_name_patterns else []
+    if league_patterns:
+        if any(pat.search(name) for pat in league_patterns):
+            # Champions League: reject "qualify TO UCL" markets from domestic leagues.
+            if config.slug == "champions-league" and re.search(
+                r"\b(?:qualif|spot|place|make.*champions|top\s*\d)\b",
+                name, re.IGNORECASE,
+            ):
+                return False
+            return True
+        return False
+    # No league_name_patterns configured -> all category matches pass
+    return True
+
+
 async def get_playoff_grid(
     league_slug: str,
     hours: int = None,
@@ -2427,56 +2490,14 @@ async def get_playoff_grid(
     result = await db.execute(stmt)
     all_markets = result.scalars().unique().all()
 
-    # Filter by league name patterns (Python-side) to separate e.g. NBA from NCAAB
-    league_patterns = [
-        re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
-    ] if config.league_name_patterns else []
-    league_exclude = [
-        re.compile(p, re.IGNORECASE) for p in config.league_exclude_patterns
-    ] if config.league_exclude_patterns else []
-
-    # Gender exclusion: Men's leagues should not include Women's markets and vice versa
-    _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
-    _MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
-    is_mens_league = config.slug in ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
-    is_womens_league = config.slug in ("wnba", "ncaa-women-basketball")
-
-    markets = []
-    for market in all_markets:
-        eid = market.external_id or ""
-        name = market.name or ""
-
-        # Gender filter: reject women's markets from men's grids and vice versa
-        if is_mens_league and _WOMENS_RE.search(name):
-            continue
-        if is_womens_league and _MENS_RE.search(name) and not _WOMENS_RE.search(name):
-            continue
-
-        # Path A markets (sport key prefix) always pass
-        if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
-            markets.append(market)
-            continue
-        # Path B.1: Check external_id prefix (e.g., Kalshi tickers like KXMARMADROUND)
-        if config.external_id_prefixes and eid:
-            if any(eid.startswith(pfx) for pfx in config.external_id_prefixes):
-                markets.append(market)
-                continue
-        # Path B.2: Match by league name pattern in market name
-        if league_patterns:
-            if any(pat.search(name) for pat in league_patterns) and \
-               not any(excl.search(name) for excl in league_exclude):
-                # For Champions League: reject "Champions League Qualification/Spot"
-                # markets from domestic leagues (they're about qualifying TO UCL,
-                # not performance IN the UCL).
-                if config.slug == "champions-league" and re.search(
-                    r"\b(?:qualif|spot|place|make.*champions|top\s*\d)\b",
-                    name, re.IGNORECASE,
-                ):
-                    continue
-                markets.append(market)
-        # If no league_name_patterns configured, all category matches pass
-        elif not league_patterns:
-            markets.append(market)
+    # Filter by league membership (Python-side) to separate e.g. NBA from NCAAB
+    # and reject sibling competitions (e.g. the NBA Cup) whose ticker/name would
+    # otherwise leak in. The full gating decision lives in the pure, unit-tested
+    # helper _market_passes_league_filter (series -> league gating guard).
+    markets = [
+        market for market in all_markets
+        if _market_passes_league_filter(market.name or "", market.external_id or "", config)
+    ]
 
     # -----------------------------------------------------------------------
     # 1b. Filter out non-current-season markets

@@ -56,6 +56,13 @@ class LeagueConfig:
     # external_id starts with any of these prefixes pass the league filter
     # even if their name doesn't match league_name_patterns.
     external_id_prefixes: list[str] = field(default_factory=list)
+    # Kalshi ticker prefixes for a *different* competition that would otherwise
+    # be over-captured by external_id_prefixes (prefix collision) or by
+    # league_name_patterns. Markets whose external_id starts with any of these
+    # are excluded from the grid on EVERY match path. Example: KXNBACUP (the
+    # in-season Cup) collides with the NBA's KXNBA prefix but is a separate
+    # competition and must not surface in the NBA Championship grid.
+    external_id_exclude_prefixes: list[str] = field(default_factory=list)
     team_sort: str = "championship_desc"  # "championship_desc" | "name_asc" | "seed_asc"
     conference_split: bool = False  # Show teams grouped by conference?
     conference_field: str = "conference"  # Field on standings_data for grouping
@@ -80,6 +87,17 @@ NBA_CONFIG = LeagueConfig(
         r"\bPro\s+Basketball\b",
     ],
     external_id_prefixes=["KXNBA"],
+    # The in-season Cup (Emirates NBA Cup) is a *different* competition than the
+    # NBA Championship this grid represents. Its Kalshi series KXNBACUP collides
+    # with the KXNBA prefix above, and its market names ("... Pro Basketball Cup
+    # Champion") match the \bPro Basketball\b name pattern. Both would otherwise
+    # inject Cup probabilities into the Championship grid (grid sentinel #196
+    # extreme-watch: teams shown at Cup odds in the NBA champion column).
+    external_id_exclude_prefixes=["KXNBACUP"],
+    league_exclude_patterns=[
+        r"\bPro\s+Basketball\s+Cup\b",
+        r"\bNBA\s+Cup\b",
+    ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),

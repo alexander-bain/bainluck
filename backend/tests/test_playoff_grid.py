@@ -27,6 +27,7 @@ from app.config.league_configs import (
 )
 from app.routes.playoffs import (
     _match_market_to_column,
+    _market_passes_league_filter,
     _match_golfer_to_field,
     _merge_probabilities,
     _normalize_team_name,
@@ -1031,6 +1032,105 @@ class TestLeagueNamePatterns:
                     pytest.fail(
                         f"{slug} has invalid league_name_pattern '{pat}': {e}"
                     )
+
+
+class TestSeriesToLeagueGating:
+    """_market_passes_league_filter: sibling-competition markets must not leak
+    into a league's grid via a colliding ticker prefix or a colliding name.
+
+    Root cause (grid sentinel #196 / #197): the NBA in-season Cup series
+    KXNBACUP collides with the NBA's KXNBA external_id prefix AND its market
+    names ("... Pro Basketball Cup Champion") match the \\bPro Basketball\\b
+    league name pattern, so Cup probabilities surfaced in the NBA Champion grid
+    (teams shown at Cup odds — the extreme-watch mis-linkage signal).
+    """
+
+    # --- The defect: NBA Cup must be excluded from the NBA grid ---
+    def test_nba_cup_ticker_excluded(self):
+        # KXNBACUP-26 collides with the KXNBA prefix (Path B.1) — must be gated out.
+        assert _market_passes_league_filter(
+            "2026 Pro Basketball Cup Champion", "KXNBACUP-26", NBA_CONFIG
+        ) is False
+
+    def test_nba_cup_qualifier_tickers_excluded(self):
+        for eid, name in [
+            ("KXNBACUPQUAL-26KO", "Pro Basketball Cup Knockout Rounds Qualifiers"),
+            ("KXNBACUPQUAL-26FIN", "Pro Basketball Cup Finals Qualifiers"),
+        ]:
+            assert _market_passes_league_filter(name, eid, NBA_CONFIG) is False, eid
+
+    def test_nba_cup_name_excluded_without_ticker(self):
+        # A Polymarket-style Cup market (no KXNBACUP ticker) is still gated by
+        # the league_exclude_patterns name rule, which now runs on every path.
+        assert _market_passes_league_filter(
+            "2026 Pro Basketball Cup Champion", "", NBA_CONFIG
+        ) is False
+
+    # --- The genuine NBA champion series must STILL pass ---
+    def test_nba_real_champion_series_still_passes(self):
+        assert _market_passes_league_filter(
+            "2026 Pro Basketball Champion", "KXNBA-26", NBA_CONFIG
+        ) is True
+
+    def test_nba_champion_by_sport_key_still_passes(self):
+        assert _market_passes_league_filter(
+            "NBA Championship Winner 2025-26", "basketball_nba_championship_2026", NBA_CONFIG
+        ) is True
+
+    def test_nba_conference_ticker_still_passes(self):
+        # Conference sub-series (not the Cup) still belongs in the NBA grid.
+        assert _market_passes_league_filter(
+            "NBA Eastern Conference Winner", "KXNBAEAST-27", NBA_CONFIG
+        ) is True
+
+    # --- No collateral damage to other leagues ---
+    def test_mlb_college_world_series_still_excluded(self):
+        # Pre-existing MLB exclude still works via the universal path.
+        assert _market_passes_league_filter(
+            "College World Series Winner", "", MLB_CONFIG
+        ) is False
+
+    def test_mlb_world_series_still_passes(self):
+        assert _market_passes_league_filter(
+            "World Series Winner 2026", "KXMLB-26", MLB_CONFIG
+        ) is True
+
+    def test_gender_filter_preserved(self):
+        # Women's market rejected from the men's NBA grid.
+        assert _market_passes_league_filter(
+            "Women's NBA Championship", "", NBA_CONFIG
+        ) is False
+
+    def test_champions_league_qualify_to_ucl_still_rejected(self):
+        assert _market_passes_league_filter(
+            "Champions League Qualification Spot", "", CHAMPIONS_LEAGUE_CONFIG
+        ) is False
+
+    def test_nba_cup_not_picked_up_by_other_basketball_leagues(self):
+        # WNBA / NCAAB should not absorb the NBA Cup either (no matching path).
+        assert _market_passes_league_filter(
+            "2026 Pro Basketball Cup Champion", "KXNBACUP-26", WNBA_CONFIG
+        ) is False
+        assert _market_passes_league_filter(
+            "2026 Pro Basketball Cup Champion", "KXNBACUP-26", NCAA_BASKETBALL_CONFIG
+        ) is False
+
+
+class TestNbaCupExcludeConfig:
+    """The NBA config carries the series -> league gating rules."""
+
+    def test_nba_has_cup_ticker_exclude(self):
+        assert "KXNBACUP" in NBA_CONFIG.external_id_exclude_prefixes
+
+    def test_nba_has_cup_name_exclude(self):
+        assert any(
+            re.compile(p, re.IGNORECASE).search("2026 Pro Basketball Cup Champion")
+            for p in NBA_CONFIG.league_exclude_patterns
+        )
+
+    def test_exclude_prefixes_default_empty_elsewhere(self):
+        # Only leagues that need it opt in; the field defaults to empty.
+        assert MLB_CONFIG.external_id_exclude_prefixes == []
 
 
 class TestMatchingRulePatterns:

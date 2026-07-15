@@ -2134,69 +2134,54 @@ _KALSHI_PROP_FILTER = """
 
 
 async def _query_futures_fair_fight_impl(db):
-    """Paired MCE comparison for Kalshi vs Polymarket on futures markets."""
+    """Paired MCE comparison for Kalshi vs Polymarket on futures markets.
+
+    Rewrite (#197 fair-fight profile): the previous version built a 432K-row
+    ``source_questions`` CTE, then SELF-JOINED it three ways (group_pairs,
+    key_pairs, and a correlated NOT EXISTS). Because the CTE is referenced
+    multiple times, Postgres MATERIALIZES it — so those self-joins run over an
+    UN-INDEXED 432K-row spool and blow the soft limit (0 successes / 12 consec
+    timeouts). Prod profiling (2026-07-14) proved two things:
+
+      1. The ``group_id`` arm matches NOTHING and never can: kalshi group_ids are
+         prefixed ``kalshi:...`` and polymarket ``polymarket:<event_id>`` — the
+         namespaces are structurally disjoint (0 cross-source matches). The arm
+         (and the NOT EXISTS that references it) was pure dead weight.
+      2. The composite index the pairing wants already exists
+         (``ix_fm_canonical_source_count (canonical_market_key, source) WHERE
+         canonical_market_key IS NOT NULL``).
+
+    So we drop the dead group arm and discover shared canonical keys with a
+    single index-driven GROUP BY on the base table (measured ~0.3s vs the old
+    self-join blowup). Output is identical to the old key arm (the group arm
+    contributed nothing). Pair-discovery is now sub-second; the join to
+    futures_outcomes is the only remaining cost.
+
+    NOTE for maintainers: shared canonical keys are dominated by GENERIC bucket
+    keys (e.g. ``basketball::championship:2026`` is shared by ~47K markets), so
+    this pairs broad category buckets, not one-question-to-one-question. That is
+    a pre-existing pairing-granularity concern for the fair-fight surface, not
+    something this perf rewrite changes.
+    """
     sql = text("""
-        WITH source_questions AS (
+        WITH key_pairs AS (
+            -- Shared canonical keys covered by BOTH sources. Index-driven
+            -- aggregation on the base table (ix_fm_canonical_source_count),
+            -- replacing the materialized-CTE self-join. Category is taken from
+            -- the kalshi side, matching the old sq1.category semantics.
             SELECT
-                fm.source,
-                fm.id AS market_id,
-                fm.group_id,
-                fm.canonical_market_key,
-                COALESCE(fm.llm_sport_category, 'uncategorized') AS category
+                fm.canonical_market_key AS match_key,
+                MIN(COALESCE(fm.llm_sport_category, 'uncategorized'))
+                    FILTER (WHERE fm.source = 'kalshi') AS category
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
               AND fm.source IN ('kalshi', 'polymarket')
-        ),
-        group_pairs AS (
-            SELECT DISTINCT sq1.group_id AS match_key, 'group_id' AS match_type,
-                sq1.category
-            FROM source_questions sq1
-            JOIN source_questions sq2 ON sq1.group_id = sq2.group_id
-            WHERE sq1.source = 'kalshi' AND sq2.source = 'polymarket'
-              AND sq1.group_id IS NOT NULL
-        ),
-        key_pairs AS (
-            SELECT DISTINCT sq1.canonical_market_key AS match_key, 'canonical' AS match_type,
-                sq1.category
-            FROM source_questions sq1
-            JOIN source_questions sq2 ON sq1.canonical_market_key = sq2.canonical_market_key
-            WHERE sq1.source = 'kalshi' AND sq2.source = 'polymarket'
-              AND sq1.canonical_market_key IS NOT NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM source_questions sq3
-                  JOIN source_questions sq4 ON sq3.group_id = sq4.group_id
-                  WHERE sq3.source = 'kalshi' AND sq4.source = 'polymarket'
-                    AND sq3.group_id IS NOT NULL
-                    AND sq3.canonical_market_key = sq1.canonical_market_key
-              )
+              AND fm.canonical_market_key IS NOT NULL
+            GROUP BY fm.canonical_market_key
+            HAVING COUNT(*) FILTER (WHERE fm.source = 'kalshi') > 0
+               AND COUNT(*) FILTER (WHERE fm.source = 'polymarket') > 0
         ),
         matched_outcomes AS (
-            -- Split the group_id / canonical joins into a UNION ALL instead of a
-            -- single OR-join. group_pairs (match_type='group_id') and key_pairs
-            -- (match_type='canonical', which already excludes any canonical key
-            -- with a group match) are disjoint, so this is equivalent — but each
-            -- arm can use its own index (group_id / canonical_market_key) instead
-            -- of the un-indexable OR, which is what let the scan blow the soft
-            -- limit (#195 fair-fight consec-12 recovery).
-            SELECT
-                gp.category,
-                fm.source,
-                COALESCE(fo.calibration_probability, fo.opening_probability) AS prob,
-                fo.is_winner
-            FROM group_pairs gp
-            JOIN futures_markets fm ON fm.group_id = gp.match_key
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            WHERE fm.status = 'resolved'
-              AND fm.source IN ('kalshi', 'polymarket')
-              AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NOT NULL
-                   AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
-              AND COALESCE(fo.volume, -1) != 0
-            UNION ALL
             SELECT
                 kp.category,
                 fm.source,
