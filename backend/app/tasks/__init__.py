@@ -1763,6 +1763,16 @@ def compute_fair_fight_comparison(self):
     return _tracked_run("compute_fair_fight_comparison", _compute_fair_fight_comparison())
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_source_intelligence")
+def precompute_source_intelligence(self):
+    """Precompute the Source-Intelligence ("Measure") snapshot into Redis (every 6h).
+
+    L2-129 / #206: keeps the 4 heavy corpus queries off the request path and never
+    caches a degraded/empty build (the blank-page poisoning bug)."""
+    from app.tasks.precompute_source_intelligence import _compute_source_intelligence
+    return _tracked_run("precompute_source_intelligence", _compute_source_intelligence())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.snapshot_coverage_metrics")
 def snapshot_coverage_metrics(self):
     """Daily snapshot of coverage metrics for tracking progress."""
@@ -2524,6 +2534,11 @@ celery_app.conf.beat_schedule = {
     "compute-fair-fight-comparison": {
         "task": "app.tasks.compute_fair_fight_comparison",
         "schedule": crontab(minute=15, hour="1,7,13,19"),  # Every 6 hours, offset 15min
+        "options": {"queue": "background"},
+    },
+    "precompute-source-intelligence": {
+        "task": "app.tasks.precompute_source_intelligence",
+        "schedule": crontab(minute=30, hour="1,7,13,19"),  # Every 6 hours, offset 30min
         "options": {"queue": "background"},
     },
     "precompute-admin-audit-all": {

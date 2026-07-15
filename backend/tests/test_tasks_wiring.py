@@ -261,6 +261,7 @@ class TestBeatScheduleCompleteness:
         "precompute-calibration-main",
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
+        "precompute-source-intelligence",
         "precompute-category-pages",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",

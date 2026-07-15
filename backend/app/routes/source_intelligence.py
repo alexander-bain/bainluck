@@ -32,6 +32,41 @@ router = APIRouter()
 _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 21600  # 6 hours
 
+# L2-129 / #206: the Measure page reads a PRECOMPUTED Redis snapshot (warmed every
+# 6h by app.tasks.precompute_source_intelligence — the fair-fight pattern) so the 4
+# heavy corpus queries never run on the request path in the common case. The stale
+# key is the serve-stale fallback when a fresh (inline) build degrades.
+_REDIS_KEY = "bainluck:source_intelligence"
+_REDIS_STALE_KEY = "bainluck:source_intelligence:stale"
+# 7-day stale window: long enough that a multi-cycle precompute outage still serves
+# the last good snapshot rather than a blank page.
+_REDIS_STALE_TTL = 7 * 86400
+
+# Empty-fallback shapes for a query that times out / errors. Named so the route, the
+# precompute task, and the guard test agree on exactly what "degraded" looks like.
+_EMPTY_COVERAGE = {
+    "total_events": 0, "multi_source_events": 0,
+    "by_source_count": [], "by_sport": [],
+}
+_EMPTY_DISAGREEMENTS = {
+    "total_comparisons": 0, "rate_5pp": 0, "rate_10pp": 0, "rate_20pp": 0,
+    "by_sport": [], "pairwise": [],
+}
+
+
+def _is_degenerate_si(coverage, accuracy, disagreements, case_studies) -> bool:
+    """True when a Source-Intelligence payload is entirely empty — the exact shape a
+    timeout/exception produces via the empty fallbacks. Such a payload must NEVER be
+    persisted (the L2-129 cache-poisoning bug: one empty build blanked the page for
+    6h). A genuinely-empty DB is indistinguishable from a total timeout here, so we
+    treat both the same: don't cache, retry next request, serve stale if present."""
+    return (
+        (coverage or {}).get("total_events", 0) == 0
+        and not accuracy
+        and (disagreements or {}).get("total_comparisons", 0) == 0
+        and not case_studies
+    )
+
 _RECENCY = "e.commence_time > NOW() - INTERVAL '3 months'"
 
 _BASE_FILTER = f"""
@@ -1308,40 +1343,65 @@ async def source_intelligence(
     refresh: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """Cross-source disagreement analysis for the /source-intelligence page."""
+    """Cross-source disagreement analysis for the /source-intelligence page.
 
+    Serving order: precomputed Redis snapshot → warm process-local cache → inline
+    build. The inline build is a cold-cache fallback only; crucially it NEVER caches a
+    timeout/empty result (the L2-129 poisoning bug) — on a degraded build it serves the
+    last good snapshot (stale) and leaves the caches untouched so the next request retries.
+    """
+    import json as _json
+
+    # 1. Precomputed Redis snapshot (warmed by app.tasks.precompute_source_intelligence).
+    if not refresh:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            rc = get_redis_client()
+            cached = rc.get(_REDIS_KEY)
+            if cached:
+                return _json.loads(
+                    cached.decode() if isinstance(cached, bytes) else cached
+                )
+        except Exception:
+            logger.debug("source-intelligence: Redis read failed", exc_info=True)
+
+    # 2. Warm process-local cache (a dyno that already built this window).
     now = time.time()
     if not refresh and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
         return _cache["data"]
 
+    # 3. Cold fallback — build inline, tracking whether any query degraded.
     await _set_timeout(db)
+    degraded = False
 
     try:
         coverage = await _query_coverage(db)
     except Exception:
         logger.exception("source-intelligence: coverage query failed")
-        coverage = {"total_events": 0, "multi_source_events": 0,
-                     "by_source_count": [], "by_sport": []}
+        coverage = dict(_EMPTY_COVERAGE)
+        degraded = True
 
     try:
         accuracy = await _query_source_accuracy(db)
     except Exception:
         logger.exception("source-intelligence: accuracy query failed")
         accuracy = []
+        degraded = True
 
     try:
         disagreements = await _query_disagreements(db)
     except Exception:
         logger.exception("source-intelligence: disagreements query failed")
-        disagreements = {"total_comparisons": 0, "rate_5pp": 0,
-                         "rate_10pp": 0, "rate_20pp": 0,
-                         "by_sport": [], "pairwise": []}
+        disagreements = dict(_EMPTY_DISAGREEMENTS)
+        degraded = True
 
     try:
         case_studies = await _query_case_studies(db)
     except Exception:
         logger.exception("source-intelligence: case studies query failed")
         case_studies = []
+        degraded = True
 
     response = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1351,7 +1411,39 @@ async def source_intelligence(
         "case_studies": case_studies,
     }
 
+    # NEVER cache a timeout/empty result — that is the poisoning bug. A degraded OR
+    # fully-empty payload leaves both caches untouched and, if we hold a prior good
+    # snapshot, serves it stale rather than blanking the page for 6h.
+    if degraded or _is_degenerate_si(coverage, accuracy, disagreements, case_studies):
+        if _cache["data"]:
+            stale = dict(_cache["data"])
+            stale["stale"] = True
+            return stale
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            rc = get_redis_client()
+            s = rc.get(_REDIS_STALE_KEY)
+            if s:
+                out = _json.loads(s.decode() if isinstance(s, bytes) else s)
+                out["stale"] = True
+                return out
+        except Exception:
+            logger.debug("source-intelligence: stale read failed", exc_info=True)
+        response["degraded"] = True
+        return response
+
+    # Healthy build — warm both the process cache and Redis (primary + stale).
     _cache["data"] = response
     _cache["timestamp"] = now
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        payload = _json.dumps(response, default=str)
+        rc.set(_REDIS_KEY, payload, ex=CACHE_TTL)
+        rc.set(_REDIS_STALE_KEY, payload, ex=_REDIS_STALE_TTL)
+    except Exception:
+        logger.debug("source-intelligence: Redis warm failed", exc_info=True)
 
     return response
