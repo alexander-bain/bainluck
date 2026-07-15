@@ -23,6 +23,7 @@ import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
 import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
 import EventProps from "@/components/event/EventProps";
+import PropsSection, { type PropMark } from "@/components/event/PropsSection";
 import FinishPositionLadder from "@/components/event/FinishPositionLadder";
 import SettledPathChart from "@/components/event/SettledPathChart";
 
@@ -132,11 +133,38 @@ export default function EventConceptPage() {
   }
 
   const { event, primary, children, movers } = data;
+  // L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) — the ONE
+  // props component under the DUEL/FIELD/CONTAINER heroes — replaces the plain
+  // EventProps WHERE the envelope supplies props-script marks (golf today). Each
+  // mark tracks its current-favorite outcome's opening → current probability. Its
+  // markets are deduped out of BOTH rails below so nothing double-renders (Item 2:
+  // "don't double-render" — the finish-position ladder is separate, reading
+  // `sections`/competitor fields, not `children`). No marks (settled, or a domain
+  // that doesn't emit them) → graceful fallback to EventProps.
+  const propMarks: PropMark[] = (data.props_script ?? []).map((p, i) => ({
+    key: p.key ?? i,
+    label: p.label,
+    pregame_mark: p.pregame_mark ?? null,
+    current: p.current ?? null,
+    graded_result: p.graded_result ?? null,
+    graded_label: p.graded_label ?? null,
+  }));
+  const hasPropsScript = propMarks.length > 0;
+  const propScriptIds = new Set(
+    (data.props_script ?? [])
+      .map((p) => p.market_id ?? p.key)
+      .filter((v): v is number => typeof v === "number"),
+  );
   // L2-84: UFC cards tag children kind="fight"|"prop" so fights render in the
   // matchups rail and props get a dedicated section. Untagged children (golf /
-  // tennis / f1) are treated as matchups (unchanged behavior).
-  const fightChildren = children.filter((c) => c.kind !== "prop");
-  const propChildren = children.filter((c) => c.kind === "prop");
+  // tennis / f1) are treated as matchups (unchanged behavior). Props-script markets
+  // are excluded from both so they render once, in PropsSection.
+  const fightChildren = children.filter(
+    (c) => c.kind !== "prop" && !propScriptIds.has(c.market_id),
+  );
+  const propChildren = children.filter(
+    (c) => c.kind === "prop" && !propScriptIds.has(c.market_id),
+  );
   const competitors = primary.competitors || [];
   const isCoEqual = primary.kind === "co_equal_list";
   const isSettled = event.status === "settled";
@@ -156,7 +184,8 @@ export default function EventConceptPage() {
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
   if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
   if (fightChildren.length > 0) nav.push({ id: "matchups", label: "Matchups" });
-  if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
+  if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
+  else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
   return (
@@ -198,7 +227,11 @@ export default function EventConceptPage() {
 
       <MatchupsRail items={fightChildren} />
 
-      <EventProps items={propChildren} />
+      {hasPropsScript ? (
+        <PropsSection items={propMarks} eventStatus={event.status} />
+      ) : (
+        <EventProps items={propChildren} />
+      )}
 
       {isSettled && evolutionId && (
         <SettledPathChart marketId={evolutionId} domain={event.domain} />

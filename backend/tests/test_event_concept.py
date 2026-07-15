@@ -10,6 +10,8 @@ from app.utils.event_concept import (
     fuse_golf_live,
     golf_live_deltas,
     downsample_points,
+    build_golf_props_script,
+    _clean_prop_label,
     _golf_leaderboard_has_live_rows,
     _golf_within_play_window,
     _golf_leaderboard_is_fresh,
@@ -192,6 +194,128 @@ class TestGolfEnvelope:
         env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
         assert len(env["children"]) == 1
         assert env["children"][0]["market_name"] == "H2H: A vs B"
+
+
+class TestCleanPropLabel:
+    def test_strips_tournament_prefix(self):
+        assert _clean_prop_label("The Open Championship: Playoff", "The Open Championship") == "Playoff"
+
+    def test_strips_prefix_case_insensitive_and_dashes(self):
+        assert _clean_prop_label("the open championship – Hole-in-One", "The Open Championship") == "Hole-in-One"
+
+    def test_no_prefix_returned_verbatim(self):
+        assert _clean_prop_label("Round 1 Leader", "The Open Championship") == "Round 1 Leader"
+
+    def test_empty_falls_back(self):
+        assert _clean_prop_label("", "The Open") == "Prop"
+        assert _clean_prop_label(None, None) == "Prop"
+
+    def test_prefix_only_does_not_blank_the_label(self):
+        # A market named exactly the tournament name keeps the tournament name
+        # rather than collapsing to "Prop".
+        assert _clean_prop_label("The Open Championship", "The Open Championship") == "The Open Championship"
+
+
+class TestBuildGolfPropsScript:
+    def _children(self):
+        return [
+            # Field-shaped round leader — names the current pick; opening→current arc.
+            {
+                "market_id": 11,
+                "market_name": "Round 1 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "outcomes": [
+                    {"name": "Scottie Scheffler", "probability": 0.044, "opening_probability": 0.0495},
+                    {"name": "Rory McIlroy", "probability": 0.035, "opening_probability": 0.0375},
+                ],
+            },
+            # Binary occurrence prop — reads as the question; big mover.
+            {
+                "market_id": 22,
+                "market_name": "The Open Championship: Playoff",
+                "outcomes": [{"name": "Yes", "probability": 0.205, "opening_probability": 0.28}],
+            },
+            # Threshold prop — leading rung, small mover.
+            {
+                "market_id": 33,
+                "market_name": "The Open Championship: Hole-in-One",
+                "outcomes": [
+                    {"name": "1+ holes-in-one", "probability": 0.515, "opening_probability": 0.56},
+                    {"name": "2+ holes-in-one", "probability": 0.155, "opening_probability": 0.185},
+                ],
+            },
+        ]
+
+    def test_one_mark_per_prop_tracking_the_favorite(self):
+        marks = build_golf_props_script(self._children(), "The Open Championship", "upcoming")
+        assert len(marks) == 3
+        by_id = {m["market_id"]: m for m in marks}
+        # Round leader labels the current pick; endpoints come from THAT outcome.
+        assert by_id[11]["label"] == "Round 1 Leader: Scottie Scheffler"
+        assert by_id[11]["current"] == 0.044
+        assert by_id[11]["pregame_mark"] == 0.0495
+        # Binary/threshold props read as the (prefix-stripped) question.
+        assert by_id[22]["label"] == "Playoff"
+        assert by_id[22]["current"] == 0.205 and by_id[22]["pregame_mark"] == 0.28
+        assert by_id[33]["label"] == "Hole-in-One"
+        assert by_id[33]["current"] == 0.515
+        # Graded is intentionally deferred (WHAT HIT is a separate backend).
+        assert all(m["graded_result"] is None for m in marks)
+
+    def test_sorted_biggest_mover_first(self):
+        marks = build_golf_props_script(self._children(), "The Open Championship", "upcoming")
+        # Playoff moved 7.5pts, Hole-in-One 4.5pts, Round leader ~0.55pt.
+        assert [m["market_id"] for m in marks] == [22, 33, 11]
+
+    def test_settled_suppresses_marks(self):
+        assert build_golf_props_script(self._children(), "The Open Championship", "settled") == []
+
+    def test_missing_opening_leaves_pregame_null(self):
+        children = [
+            {
+                "market_id": 44,
+                "market_name": "Round 2 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "outcomes": [{"name": "John Daly", "probability": 0.24}],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "live")
+        assert len(marks) == 1
+        assert marks[0]["pregame_mark"] is None
+        assert marks[0]["current"] == 0.24
+
+    def test_child_without_usable_leader_is_skipped(self):
+        children = [
+            {"market_id": 55, "market_name": "Empty", "outcomes": []},
+            {"market_id": 56, "market_name": "AllNull", "outcomes": [{"name": "X", "probability": None}]},
+        ]
+        assert build_golf_props_script(children, "The Open", "upcoming") == []
+
+    def test_key_and_market_id_both_carry_the_id(self):
+        marks = build_golf_props_script(self._children(), "The Open Championship", "upcoming")
+        assert all(m["key"] == m["market_id"] for m in marks)
+
+    def test_envelope_carries_props_script_when_not_settled(self):
+        f = _golf_fixture()
+        f["tournament"]["schedule_status"] = "upcoming"
+        f["related_futures"] = [
+            {
+                "market_id": 22,
+                "market_name": "The Masters: Playoff",
+                "outcomes": [{"name": "Yes", "probability": 0.2, "opening_probability": 0.28}],
+            }
+        ]
+        env = golf_detail_to_envelope("event:golf:x", "x", f)
+        assert "props_script" in env
+        assert len(env["props_script"]) == 1
+        assert env["props_script"][0]["label"] == "Playoff"
+
+    def test_envelope_props_script_empty_when_settled(self):
+        # Default fixture status is "completed" -> settled.
+        env = golf_detail_to_envelope("event:golf:x", "x", _golf_fixture())
+        assert env["props_script"] == []
 
 
 class TestFuseGolfLive:

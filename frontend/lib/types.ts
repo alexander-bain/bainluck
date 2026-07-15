@@ -1813,5 +1813,19 @@ export interface EventConceptResponse {
   };
   sections: EventConceptSection[];
   children: EventConceptChild[];
+  // L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) for the
+  // FIELD hero — one mark per prop, each tracking its current-favorite outcome's
+  // opening (`pregame_mark`) → current probability. Golf emits it today (empty
+  // when settled or when no usable marks exist); domains that don't emit it fall
+  // back to the plain props rendering. Same PropMark contract the DUEL page uses.
+  props_script?: {
+    key: string | number;
+    market_id?: number;
+    label: string;
+    pregame_mark: number | null;
+    current: number | null;
+    graded_result?: "hit" | "miss" | "push" | null;
+    graded_label?: string | null;
+  }[];
   movers: { name?: string; change?: number | null; [k: string]: unknown }[];
 }

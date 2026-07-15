@@ -74,6 +74,37 @@ const ENVELOPE = {
         { name: "McIlroy", probability: 0.45 },
       ],
     },
+    // L2-121: a round-leader prop child that ALSO appears in props_script below.
+    // It must render once (in PropsSection), deduped out of the plain props grid.
+    {
+      market_id: 42,
+      market_name: "Round 1 Leader",
+      kind: "prop",
+      prop_type: "round",
+      outcomes: [{ name: "Scottie Scheffler", probability: 0.044 }],
+    },
+  ],
+  // L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) for the
+  // FIELD hero — opening (pregame_mark) → current per prop.
+  props_script: [
+    {
+      key: 41,
+      market_id: 41,
+      label: "Playoff",
+      pregame_mark: 0.28,
+      current: 0.205,
+      graded_result: null,
+      graded_label: null,
+    },
+    {
+      key: 42,
+      market_id: 42,
+      label: "Round 1 Leader: Scottie Scheffler",
+      pregame_mark: 0.0495,
+      current: 0.044,
+      graded_result: null,
+      graded_label: null,
+    },
   ],
   movers: [{ name: "Rory McIlroy", change: 0.03 }],
 };
@@ -157,6 +188,21 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain("Make cut");
     // probability-only: no American-odds moneyline strings
     expect(html).not.toMatch(/[+-]\d{3,}/);
+  });
+
+  test("mounts PropsSection (THE SCRIPT/DIVERGENCE) and dedups its markets from the plain props grid (L2-121)", () => {
+    const html = renderToStaticMarkup(<EventConceptPage />);
+    // The shared props body renders under its own anchor (not the plain EventProps).
+    expect(html).toContain('id="props-script"');
+    // Live event -> THE DIVERGENCE state, with real props-script labels.
+    expect(html).toContain("The divergence");
+    expect(html).toContain("Playoff");
+    expect(html).toContain("Round 1 Leader: Scottie Scheffler");
+    // The round-leader prop child (market_id 42) is deduped out of the plain grid,
+    // so the plain EventProps "By round" group must NOT also render it.
+    expect(html).not.toContain("By round");
+    // The H2H matchup (not a props-script market) still renders in the rail.
+    expect(html).toContain("H2H: Scheffler vs McIlroy");
   });
 
   test("reconstructs the API key from the domain/slug segments (L2-113)", () => {

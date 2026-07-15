@@ -2265,6 +2265,15 @@ async def get_golf_tournament(
                     {
                         "name": o.name,
                         "probability": round(float(o.current_probability), 3),
+                        # L2-121: opening probability = the pregame mark the concept
+                        # page's PropsSection renders as THE SCRIPT (opening → current
+                        # divergence). Already loaded on the ORM row (zero new query);
+                        # None where the polling pipeline never captured an opening.
+                        "opening_probability": (
+                            round(float(o.opening_probability), 4)
+                            if o.opening_probability is not None
+                            else None
+                        ),
                     }
                     for o in outs
                 ),
@@ -2319,6 +2328,13 @@ async def get_golf_tournament(
                 "probability": round(float(o.current_probability), 4) if o.current_probability else None,
                 "american_odds": o.current_american_odds,
                 "probability_change_24h": round(float(o.probability_change_24h), 4) if o.probability_change_24h else None,
+                # L2-121: pregame mark for the concept page PropsSection (see round
+                # groups above). Free — the ORM row is already loaded.
+                "opening_probability": (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                ),
             })
 
         # market_id -> source for cross-source dedup + per-card attribution (#956/#957).

@@ -437,6 +437,86 @@ async def attach_competitor_history(
             c["history"] = entry["history"]
 
 
+def _clean_prop_label(market_name: str | None, tournament_name: str | None) -> str:
+    """Strip the tournament-name prefix off a prop market name so the PropsSection
+    row reads as the question itself ("The Open Championship: Playoff" -> "Playoff").
+    Falls back to the raw name (or "Prop") when there is nothing to strip."""
+    name = (market_name or "").strip()
+    tn = (tournament_name or "").strip()
+    if tn and name.lower().startswith(tn.lower()):
+        rest = name[len(tn):].lstrip(" :–-").strip()
+        if rest:
+            name = rest
+    return name or "Prop"
+
+
+def build_golf_props_script(
+    children: list[dict],
+    tournament_name: str | None,
+    status: str,
+) -> list[dict]:
+    """Map golf concept prop children into the PropMark contract the shared
+    PropsSection renders under the FIELD hero (THE SCRIPT → THE DIVERGENCE).
+
+    One mark per prop, tracking its current-favorite outcome: `pregame_mark` = that
+    outcome's opening probability (routes/golf.py now emits `opening_probability`
+    per outcome), `current` = its live probability. Both endpoints of the arc
+    describe the SAME outcome, so the divergence is meaningful. Field-shaped round
+    props ("Round 1 Leader") name the current pick; binary/threshold props ("Playoff",
+    "Hole-in-One") read as the question. Sorted biggest opening→current mover first
+    so the strongest story leads (THE SCRIPT keeps this order; THE DIVERGENCE re-ranks
+    client-side).
+
+    Suppressed once settled — a concluded field shows the champion, not stale prop
+    marks (settled-means-settled); grading field-shaped props is a separate backend
+    (#887 / L2-121 Item 3), so WHAT HIT is intentionally deferred here. Pure —
+    unit-tested. Returns [] when nothing usable, so the frontend gates the mount on
+    presence and falls back to the plain props rendering otherwise.
+    """
+    if (status or "").lower() == "settled":
+        return []
+    marks: list[dict] = []
+    for c in children or []:
+        outs = c.get("outcomes") or []
+        leader = None
+        best = -1.0
+        for o in outs:
+            p = o.get("probability")
+            if isinstance(p, (int, float)) and p > best:
+                best = p
+                leader = o
+        if leader is None or not isinstance(leader.get("probability"), (int, float)):
+            continue
+        mid = c.get("market_id")
+        base = _clean_prop_label(c.get("market_name") or c.get("name"), tournament_name)
+        if c.get("prop_type") == "round" and leader.get("name"):
+            label = f"{base}: {leader['name']}"
+        else:
+            label = base
+        opening = leader.get("opening_probability")
+        marks.append(
+            {
+                "key": mid,
+                "market_id": mid,
+                "label": label,
+                "pregame_mark": opening if isinstance(opening, (int, float)) else None,
+                "current": leader.get("probability"),
+                "graded_result": None,
+                "graded_label": None,
+            }
+        )
+
+    def _movement(m: dict) -> float:
+        pg, cur = m.get("pregame_mark"), m.get("current")
+        if isinstance(pg, (int, float)) and isinstance(cur, (int, float)):
+            return abs(cur - pg)
+        return -1.0
+
+    # Stable sort: biggest mover first; no-movement marks sink but keep order.
+    marks.sort(key=_movement, reverse=True)
+    return marks
+
+
 def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     """Map get_golf_tournament()'s output into the generic event envelope.
 
@@ -471,6 +551,13 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
     ]
     children = (data.get("related_futures") or []) + round_children
 
+    # L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) for the
+    # FIELD hero. Built from the prop children's opening→current marks; empty when
+    # settled or when no usable marks exist (the frontend then falls back to the
+    # plain props rendering). Disjoint from the finish-position ladder, which reads
+    # `sections`/competitor fields — no double-render.
+    props_script = build_golf_props_script(children, t.get("name"), _golf_status(t))
+
     return {
         "event": {
             "key": key if key.startswith("event:") else f"event:golf:{slug}",
@@ -496,6 +583,7 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
         },
         "sections": data.get("markets", []) or [],
         "children": children,
+        "props_script": props_script,
         "movers": data.get("biggest_movers", []) or [],
     }
 
