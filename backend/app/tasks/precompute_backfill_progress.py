@@ -55,6 +55,66 @@ DENSE_POINTS = 15
 # line or two lonely dots). Measured as snapshots / open-hours per outcome.
 BAR_POINTS_PER_HOUR = 1.0
 
+# chart_density hard bounds (#202). Unlike the density/cohort tiles — which are
+# self-bounded by `fm.status='resolved' AND resolution_date >= :since` (a small,
+# fixed window) — the chart_density tile also scans OPEN markets (resolution_date
+# IS NULL passes the filter): an unbounded, growing population whose outcomes
+# carry huge live-polled snapshot counts. Left bounded only by `random() < :frac`,
+# the per-outcome COUNT(*) probe against futures_odds_snapshots (the largest
+# table) grew with the population until it blew past the worker's 150s
+# statement_timeout — erroring the tile and blinding the Flow Sentinel's
+# chart_density check (observed live: QueryCanceledError). Two absolute bounds
+# keep the query well under the timeout regardless of population growth:
+#   * SAMPLE_CAP — max outcomes probed per run (after random() thinning), so the
+#     probe COUNT can't grow with the population.
+#   * SNAP_CAP — each per-outcome snapshot count is capped, so one hyper-liquid
+#     outcome's probe can't dominate. Directionally SAFE: a capped count only
+#     ever LOWERS density → at worst it over-reports below-bar for the rare market
+#     open longer than SNAP_CAP hours; it can NEVER hide a density collapse (the
+#     failure this sentinel exists to catch).
+CHART_DENSITY_SAMPLE_CAP = 12000
+CHART_DENSITY_SNAP_CAP = 5000
+
+# Extracted to a module constant so the guard test can assert it stays bounded
+# (never regresses to a raw full-population scan) without needing a live DB.
+CHART_DENSITY_SQL = """
+    WITH uv AS (
+        SELECT fo.id AS oid, fm.source AS source,
+               fo.opening_captured_at AS opened,
+               CASE WHEN fm.status = 'resolved'
+                    THEN COALESCE(fm.resolution_date, fm.commence_time, now())
+                    ELSE now() END AS ended
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status IN ('open', 'resolved')
+          AND (fm.event_id IS NOT NULL OR fm.llm_sport_category IS NOT NULL)
+          AND fo.opening_captured_at IS NOT NULL
+          AND (fm.resolution_date IS NULL OR fm.resolution_date >= :since)
+          AND random() < :frac
+        LIMIT :cap
+    ),
+    d AS (
+        SELECT uv.source,
+               GREATEST(EXTRACT(EPOCH FROM (uv.ended - uv.opened)) / 3600.0, 1.0) AS open_hours,
+               (SELECT COUNT(*) FROM (
+                    SELECT 1 FROM futures_odds_snapshots s
+                    WHERE s.outcome_id = uv.oid
+                    LIMIT :snapcap
+                ) capped) AS snaps
+        FROM uv
+        WHERE uv.ended > uv.opened
+    )
+    SELECT source,
+           COUNT(*) AS sampled,
+           COUNT(*) FILTER (WHERE snaps / open_hours < :bar) AS below_bar,
+           ROUND(AVG(snaps / open_hours)::numeric, 3) AS avg_pts_per_hr,
+           ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (
+                ORDER BY snaps / open_hours))::numeric, 3) AS median_pts_per_hr
+    FROM d
+    GROUP BY source
+    ORDER BY sampled DESC
+"""
+
 
 async def _precompute_backfill_progress() -> dict:
     """Run the heavy density + June-ledger census and cache the result."""
@@ -211,40 +271,11 @@ async def _precompute_backfill_progress() -> dict:
             # 'clob_history'; Kalshi candlestick writes are unmarked). That split
             # needs either a snapshots.source column or a per-outcome native flag.
             try:
-                cd = await session.execute(text("""
-                    WITH uv AS (
-                        SELECT fo.id AS oid, fm.source AS source,
-                               fo.opening_captured_at AS opened,
-                               CASE WHEN fm.status = 'resolved'
-                                    THEN COALESCE(fm.resolution_date, fm.commence_time, now())
-                                    ELSE now() END AS ended
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.status IN ('open', 'resolved')
-                          AND (fm.event_id IS NOT NULL OR fm.llm_sport_category IS NOT NULL)
-                          AND fo.opening_captured_at IS NOT NULL
-                          AND (fm.resolution_date IS NULL OR fm.resolution_date >= :since)
-                          AND random() < :frac
-                    ),
-                    d AS (
-                        SELECT uv.source,
-                               GREATEST(EXTRACT(EPOCH FROM (uv.ended - uv.opened)) / 3600.0, 1.0) AS open_hours,
-                               (SELECT COUNT(*) FROM futures_odds_snapshots s
-                                WHERE s.outcome_id = uv.oid) AS snaps
-                        FROM uv
-                        WHERE uv.ended > uv.opened
-                    )
-                    SELECT source,
-                           COUNT(*) AS sampled,
-                           COUNT(*) FILTER (WHERE snaps / open_hours < :bar) AS below_bar,
-                           ROUND(AVG(snaps / open_hours)::numeric, 3) AS avg_pts_per_hr,
-                           ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (
-                                ORDER BY snaps / open_hours))::numeric, 3) AS median_pts_per_hr
-                    FROM d
-                    GROUP BY source
-                    ORDER BY sampled DESC
-                """), {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
-                       "bar": BAR_POINTS_PER_HOUR})
+                cd = await session.execute(text(CHART_DENSITY_SQL),
+                      {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
+                       "bar": BAR_POINTS_PER_HOUR,
+                       "cap": CHART_DENSITY_SAMPLE_CAP,
+                       "snapcap": CHART_DENSITY_SNAP_CAP})
                 by_source = []
                 total_sampled = 0
                 total_below = 0
@@ -264,11 +295,16 @@ async def _precompute_backfill_progress() -> dict:
                     "since": DENSITY_SINCE,
                     "sampled": True,
                     "sample_frac": DENSITY_SAMPLE_FRAC,
+                    "sample_cap": CHART_DENSITY_SAMPLE_CAP,
+                    "snap_cap": CHART_DENSITY_SNAP_CAP,
                     "bar_points_per_hour": BAR_POINTS_PER_HOUR,
                     "definition": (
                         "user-visible = event-linked game markets + categorized "
                         "(feed-shaped) futures; density = snapshots / elapsed-open-"
                         "hours per outcome; below_bar = density < bar_points_per_hour"
+                        f"; bounded: <= {CHART_DENSITY_SAMPLE_CAP} outcomes sampled, "
+                        f"each snapshot count capped at {CHART_DENSITY_SNAP_CAP} "
+                        "(conservative — capping can only raise below_bar, never hide a collapse)"
                     ),
                     "overall_below_bar_pct": round(100.0 * total_below / max(total_sampled, 1), 1),
                     "by_source": by_source,

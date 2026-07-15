@@ -111,18 +111,52 @@ def strip_competitor_wire_leaks(envelope: dict | None) -> dict | None:
 # Golf adapter — the reference implementation (delegates to routes/golf.py).
 # ---------------------------------------------------------------------------
 
-def _golf_status(tournament: dict) -> str:
+def _golf_status(tournament: dict, now: datetime | None = None) -> str:
     """Normalize golf's schedule_status into upcoming/live/settled.
 
     L2-66: DataGolf's schedule reports "in-progress" (HYPHEN) while this only
     matched "in_progress" (underscore) — so a live tournament never flipped the
     event page into LIVE mode. Normalize hyphens→underscores so both forms work.
+
+    L2-124 (#202): fall back to the schedule DATES when schedule_status is absent
+    or non-terminal. Without this, a finished tournament whose status never
+    flipped to "completed" (e.g. a past-dated BMW card) returns "upcoming" and
+    leaks into the competition hub's UPCOMING rail — the hub lister classifies
+    purely on this function, it does NOT run _filter_stale_tournaments. Fail-open:
+    only a PARSEABLE, clearly-past date demotes to "settled"; a missing or
+    unparseable date stays "upcoming" so a real card is never hidden by a bad date
+    field. Grace windows mirror _filter_stale_tournaments (routes/golf.py). We do
+    NOT trust resolution_date here alone — it can carry a FUTURE Kalshi close-time
+    artifact (gotcha #14); it is only consulted when no start/end date exists.
     """
     raw = (tournament.get("schedule_status") or "").lower().replace("-", "_")
     if raw in ("in_progress", "live", "active"):
         return "live"
     if raw in ("completed", "closed", "resolved", "final", "settled"):
         return "settled"
+
+    now_date = (now or datetime.now(timezone.utc)).date()
+    end_date = tournament.get("end_date")
+    start_date = tournament.get("start_date")
+    resolution_date = tournament.get("resolution_date")
+    if end_date:
+        try:
+            if datetime.fromisoformat(end_date).date() < now_date - timedelta(days=1):
+                return "settled"
+        except (ValueError, TypeError):
+            pass
+    elif start_date:
+        try:
+            if datetime.fromisoformat(start_date).date() < now_date - timedelta(days=7):
+                return "settled"
+        except (ValueError, TypeError):
+            pass
+    elif resolution_date:
+        try:
+            if datetime.fromisoformat(resolution_date).date() < now_date - timedelta(days=7):
+                return "settled"
+        except (ValueError, TypeError):
+            pass
     return "upcoming"
 
 

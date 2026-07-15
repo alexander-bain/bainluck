@@ -15,6 +15,7 @@ from app.utils.event_concept import (
     _golf_leaderboard_has_live_rows,
     _golf_within_play_window,
     _golf_leaderboard_is_fresh,
+    _golf_status,
 )
 
 
@@ -155,9 +156,54 @@ class TestGolfEnvelope:
         assert status("in_progress") == "live"
         # L2-66: DataGolf reports the HYPHEN form — must also map to live.
         assert status("in-progress") == "live"
-        assert status("upcoming") == "upcoming"
-        assert status("") == "upcoming"
         assert status("resolved") == "settled"
+        # L2-124 (#202): non-terminal statuses ("", "upcoming", unknown) now fall
+        # back to the schedule DATE. The fixture is past-dated (April 2026), so a
+        # stale "upcoming"/empty status on a finished tournament resolves to
+        # "settled" — it no longer leaks into the hub's upcoming rail. Date-fallback
+        # edges (future dates, fail-open, grace) are covered in
+        # test_status_date_fallback_both_directions.
+        assert status("") == "settled"
+        assert status("upcoming") == "settled"
+
+    def test_status_date_fallback_both_directions(self):
+        # L2-124 (#202): _golf_status must fall back to schedule DATES when
+        # schedule_status is absent/non-terminal — guard BOTH directions
+        # (gotcha #43): a past card demotes to settled AND a future card stays
+        # upcoming, plus fail-open on missing/unparseable dates.
+        now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+        # (a) PAST end_date, no terminal status -> settled (the hub-rail leak fix)
+        assert _golf_status(
+            {"schedule_status": "", "start_date": "2026-06-30", "end_date": "2026-07-03"}, now
+        ) == "settled"
+
+        # (b) FUTURE end_date -> stays upcoming (the flood we must NOT hide)
+        assert _golf_status(
+            {"schedule_status": None, "start_date": "2026-07-16", "end_date": "2026-07-19"}, now
+        ) == "upcoming"
+
+        # (c) end_date == today and yesterday are within the 1-day grace -> upcoming
+        #     (a final round in progress must not be prematurely demoted)
+        assert _golf_status({"schedule_status": "", "end_date": "2026-07-15"}, now) == "upcoming"
+        assert _golf_status({"schedule_status": "", "end_date": "2026-07-14"}, now) == "upcoming"
+        assert _golf_status({"schedule_status": "", "end_date": "2026-07-13"}, now) == "settled"
+
+        # (d) FAIL-OPEN: missing or unparseable dates stay upcoming — never hide a
+        #     real card because a date field was bad.
+        assert _golf_status({"schedule_status": ""}, now) == "upcoming"
+        assert _golf_status({"schedule_status": "", "end_date": "not-a-date"}, now) == "upcoming"
+        assert _golf_status({"schedule_status": "", "end_date": None}, now) == "upcoming"
+
+        # (e) start_date fallback (no end_date) uses a 7-day grace (tournaments run
+        #     ~4 days); a start >7d ago is settled, within 7d stays upcoming.
+        assert _golf_status({"schedule_status": "", "start_date": "2026-07-01"}, now) == "settled"
+        assert _golf_status({"schedule_status": "", "start_date": "2026-07-12"}, now) == "upcoming"
+
+        # (f) explicit terminal/live status always wins over dates
+        assert _golf_status(
+            {"schedule_status": "in-progress", "end_date": "2026-01-01"}, now
+        ) == "live"
 
     def test_envelope_carries_as_of_slot(self):
         # L2-66: the freshness slot always exists (None until live fusion sets it).
@@ -406,6 +452,11 @@ class TestBuildGolfPropsScript:
         # degenerate-family label can say "Opens after Round N".
         f = _golf_fixture()
         f["tournament"]["schedule_status"] = "upcoming"
+        # L2-124 (#202): the shared fixture is past-dated, and _golf_status now
+        # date-demotes a stale "upcoming" to settled; clear the dates so this
+        # envelope-logic test stays a genuine not-settled tournament (fail-open).
+        f["tournament"]["start_date"] = None
+        f["tournament"]["end_date"] = None
         f["round_top_groups"] = [
             {
                 "market_id": 90,
@@ -425,6 +476,10 @@ class TestBuildGolfPropsScript:
     def test_envelope_carries_props_script_when_not_settled(self):
         f = _golf_fixture()
         f["tournament"]["schedule_status"] = "upcoming"
+        # L2-124 (#202): clear the past dates so the date fallback keeps this a
+        # genuine not-settled tournament (else stale "upcoming" + past date settles).
+        f["tournament"]["start_date"] = None
+        f["tournament"]["end_date"] = None
         f["related_futures"] = [
             {
                 "market_id": 22,
