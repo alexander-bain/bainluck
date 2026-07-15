@@ -12,9 +12,14 @@ import CalibrationChart from "@/components/CalibrationChart";
 import { ece, mce, monthYear } from "@/lib/calibrationMath";
 import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
 
-// L2-103 Item 1: buckets below this sample size are hidden from the By Source /
-// By Category comparison charts — a single point built from <1,000 outcomes is
-// noise, not a calibration signal, and its wide error bar reads as an anomaly.
+// L2-127 (Alex's Option 4): the 1,000-outcome floor USED to HIDE buckets from the
+// By Source / By Category charts, which made a longshot category (golf, tennis)
+// read like a broken page — a few dots in the corner. Alex's ruling: undo the
+// hiding. This is now the THIN threshold, not a hide floor: buckets below it still
+// render, as faded hollow dots with wide 95% CI bars (the existing n<30 visual
+// convention, extended), so a casual reader sees "80% means 80%" with every bucket
+// visible in its honest treatment — big solid dots = proven, ghost dots = small
+// sample. Nothing is silently dropped.
 const MIN_CHART_BUCKET_N = 1000;
 
 // L2-103 Item 3b (Alex D5): a thin sub-league (e.g. icehockey_sweden_hockey_league,
@@ -316,36 +321,21 @@ export default function CalibrationPage() {
     `${DISPLAY_NAMES[c] || c} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
   ).join(", ");
 
-  // L2-103 Item 1: hide buckets below MIN_CHART_BUCKET_N from the comparison
-  // charts so every source/category gets the SAME treatment — no anomalous
-  // wide-error-bar points built from a handful of outcomes. The label count
-  // stays the full source/category total (not the post-filter sum) so the tab
-  // still shows how much data each source carries.
+  // L2-127 (Alex's Option 4): show EVERY populated bucket — no floor filter. A
+  // small-sample bucket renders as a faded hollow dot with a wide 95% CI bar (the
+  // thin convention, threshold = MIN_CHART_BUCKET_N), never silently hidden. The
+  // label count is the full source/category total, as before.
   const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
-    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)))
-      .filter(b => b.n >= MIN_CHART_BUCKET_N),
+    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
     color: SOURCE_COLORS[src] || COLORS[i % COLORS.length],
     label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
-    data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)))
-      .filter(b => b.n >= MIN_CHART_BUCKET_N),
+    data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
     color: COLORS[i % COLORS.length],
     label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
-
-  // L2-104 Item 3: count how many populated buckets fall UNDER the 1,000-outcome
-  // floor in the current view, so the skeptic knows exactly what's being hidden
-  // rather than silently dropped from the chart.
-  const sourceHiddenBuckets = (activeSource ? [activeSource] : sources).reduce((sum, src) =>
-    sum + aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)))
-      .filter(b => b.n > 0 && b.n < MIN_CHART_BUCKET_N).length, 0);
-  const catHiddenBuckets = (activeCat ? [activeCat] : categories.slice(0, 5)).reduce((sum, cat) =>
-    sum + aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)))
-      .filter(b => b.n > 0 && b.n < MIN_CHART_BUCKET_N).length, 0);
-  const hiddenNote = (n: number) =>
-    n > 0 ? ` ${n} ${n === 1 ? "bucket is" : "buckets are"} hidden under the ${MIN_CHART_BUCKET_N.toLocaleString()}-outcome floor in this view.` : "";
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
@@ -537,6 +527,7 @@ export default function CalibrationPage() {
             ]}
             width={700}
             height={400}
+            thinFloor={MIN_CHART_BUCKET_N}
           />
           <div className="grid grid-cols-2 gap-3 mt-4">
             <StatCard label="Active Trading"
@@ -572,6 +563,7 @@ export default function CalibrationPage() {
             }]}
             width={700}
             height={400}
+            thinFloor={MIN_CHART_BUCKET_N}
           />
         </section>
       )}
@@ -618,8 +610,10 @@ export default function CalibrationPage() {
         <h2 className="text-title-3 text-text-primary mb-1">By Source</h2>
         <p className="text-xs text-text-muted mb-4">
           Every source gets the same treatment: error bars are the 95% CI (wider = less
-          certain), and buckets under {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are
-          hidden &mdash; a single point built from a small sample misleads.{hiddenNote(sourceHiddenBuckets)} Select a source
+          certain). Every bucket is shown &mdash; well-sampled buckets are solid dots,
+          small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are faded
+          hollow dots with wide error bars, so you can see exactly how much data stands
+          behind each point rather than having any hidden. Select a source
           tab to see per-bucket sample counts{activeSource ? " and click a point for examples" : ""}.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -632,6 +626,7 @@ export default function CalibrationPage() {
           series={sourceChartData}
           width={700}
           height={340}
+          thinFloor={MIN_CHART_BUCKET_N}
           showAllN
           onPointClick={activeSource ? (_, pt) => openDrillIn(activeSource, pt.bucket, Math.floor(pt.midpoint / 10)) : undefined}
         />
@@ -646,8 +641,9 @@ export default function CalibrationPage() {
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">By Category</h2>
         <p className="text-xs text-text-muted mb-4">
-          Same treatment as By Source: 95% CI error bars, and buckets under{" "}
-          {MIN_CHART_BUCKET_N.toLocaleString()} outcomes hidden.{hiddenNote(catHiddenBuckets)} Select a category tab to see
+          Same treatment as By Source: 95% CI error bars, and every bucket shown &mdash;
+          small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) as faded
+          hollow dots with wide error bars, never hidden. Select a category tab to see
           per-bucket sample counts.
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -656,7 +652,7 @@ export default function CalibrationPage() {
             <TabButton key={c} label={DISPLAY_NAMES[c] || c} active={activeCat === c} onClick={() => setActiveCat(c)} />
           ))}
         </div>
-        <CalibrationChart series={catChartData} width={700} height={340} showAllN />
+        <CalibrationChart series={catChartData} width={700} height={340} thinFloor={MIN_CHART_BUCKET_N} showAllN />
       </section>
 
       {/* L2-80 Item 1: the standalone per-category chart grid was removed — the
