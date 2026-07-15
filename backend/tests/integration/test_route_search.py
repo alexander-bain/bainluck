@@ -11,6 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.routes.events import (
     _detect_query_golf_major_concept,
+    _detect_query_world_cup_concept,
     _event_search_vector,
     _futures_search_vector,
     _search_rank,
@@ -68,6 +69,48 @@ class TestGolfMajorConceptDetection:
     def test_none_and_empty_are_safe(self):
         assert _detect_query_golf_major_concept(None) is None
         assert _detect_query_golf_major_concept("") is None
+
+
+# ============================================================================
+# #205 — World Cup event-concept detection (pure, query-level)
+# ============================================================================
+
+
+class TestWorldCupConceptDetection:
+    """`_detect_query_world_cup_concept` must surface the never-dead WC concept for the
+    core queries (Lisa's acceptance: "world cup" lands on the concept FIRST) and never
+    false-fire on an unrelated or other-code World Cup query. Regression for #205."""
+
+    @pytest.mark.parametrize(
+        "query",
+        ["world cup", "World Cup", "world cup final", "the world cup", "fifa", "FIFA World Cup", "worldcup"],
+    )
+    def test_surfaces_world_cup(self, query):
+        result = _detect_query_world_cup_concept(query)
+        assert result is not None, f"{query!r} should surface the World Cup concept"
+        assert result["key"] == "event:soccer:world-cup-2026"
+        assert result["domain"] == "soccer"
+        assert result["name"] == "2026 FIFA World Cup"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "club world cup",        # a different competition
+            "t20 world cup",         # cricket
+            "rugby world cup",       # rugby
+            "women's world cup",     # different tournament
+            "u-20 world cup",        # age-group
+            "nba finals",            # unrelated
+            "france",                # team query — resolves via events, not this concept
+            "world series",          # baseball, not "world cup"
+        ],
+    )
+    def test_does_not_false_fire(self, query):
+        assert _detect_query_world_cup_concept(query) is None
+
+    def test_none_and_empty_are_safe(self):
+        assert _detect_query_world_cup_concept(None) is None
+        assert _detect_query_world_cup_concept("") is None
 
 
 # ============================================================================

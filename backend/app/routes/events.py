@@ -281,6 +281,46 @@ def _detect_query_golf_major_concept(q: str | None) -> dict | None:
     return {"key": f"event:golf:{slug}", "name": display, "domain": "golf", "market_id": None}
 
 
+# #205 (World Cup Emergency Assembly): the FIFA World Cup is a first-class event
+# concept surfaced DIRECTLY from the query — the winner-field market that would
+# otherwise derive it carries anonymized "Team AM" placeholders on Polymarket, and a
+# fan searching "world cup" must still land on the concept FIRST (Lisa's real search
+# failure, 2026-07-15). The concept page (`event:soccer:world-cup-2026`) resolves
+# whenever the WC games or a real winner field are ingested, so this is never-dead.
+# "fifa" alone maps here (in a prediction-market product, FIFA == the World Cup);
+# other-code World Cups (club / T20 cricket / rugby / women's / age-group) are guarded
+# out so they don't false-fire the men's 2026 tournament.
+_WORLD_CUP_QUERY_RE = re.compile(r"\bfifa\b|\bworld\s*cup\b", re.I)
+_WORLD_CUP_NEG_RE = re.compile(
+    r"\bclub\b|\bt20\b|\bcricket\b|\brugby\b|\bnetball\b|\bwomen'?s?\b"
+    r"|\bu-?\s?(?:17|19|20|21|23)\b",
+    re.I,
+)
+
+
+def _detect_query_world_cup_concept(q: str | None) -> dict | None:
+    """Resolve a raw search query to the FIFA World Cup event concept, or None. #205
+
+    Returns `{key, name, domain, market_id}` (market_id None — the concept resolves by
+    key). Pure + word-boundary anchored, so it is safe to unit-test and cannot
+    false-fire on an unrelated or other-code World Cup query."""
+    if not q or not _WORLD_CUP_QUERY_RE.search(q) or _WORLD_CUP_NEG_RE.search(q):
+        return None
+    try:
+        from app.utils.event_soccer import SOCCER_TOURNAMENTS
+    except Exception:
+        return None
+    cfg = SOCCER_TOURNAMENTS.get("world-cup-2026")
+    if cfg is None:
+        return None
+    return {
+        "key": f"event:soccer:{cfg.slug}",
+        "name": cfg.display,
+        "domain": "soccer",
+        "market_id": None,
+    }
+
+
 def _market_volume(m) -> float:
     try:
         return float(m.volume or 0)
@@ -1572,6 +1612,7 @@ async def search_events(
     # volume-reranked).
     from app.utils.event_awards import derive_awards_concept as _derive_awards_concept
     from app.utils.event_election import derive_election_concept as _derive_election_concept
+    from app.utils.event_soccer import derive_soccer_concept as _derive_soccer_concept
     from app.utils.event_tennis import is_winner_market as _is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _event_clean_slug
@@ -1613,6 +1654,23 @@ async def search_events(
                 "key": _el["key"],
                 "name": _el["name"],
                 "domain": "election",
+                "market_id": _m.id,
+            })
+            if len(event_concepts) >= 5:
+                break
+            continue
+        # #205: soccer tournaments (World Cup) are winner-field event concepts. A
+        # matched trophy market surfaces the concept page; award/group/novelty
+        # markets return None (they reach the sport page, not a dead concept link).
+        _sc = _derive_soccer_concept(_m.external_id, _m.name, _m.llm_sport_category)
+        if _sc is not None:
+            if _sc["key"] in _seen_concept_keys:
+                continue
+            _seen_concept_keys.add(_sc["key"])
+            event_concepts.append({
+                "key": _sc["key"],
+                "name": _sc["name"],
+                "domain": "soccer",
                 "market_id": _m.id,
             })
             if len(event_concepts) >= 5:
@@ -1668,6 +1726,16 @@ async def search_events(
     if _golf_major_concept and _golf_major_concept["key"] not in _seen_concept_keys:
         _seen_concept_keys.add(_golf_major_concept["key"])
         event_concepts.insert(0, _golf_major_concept)
+        event_concepts = event_concepts[:5]
+
+    # #205: prepend the World Cup concept when the QUERY names it ("world cup" /
+    # "world cup final" / "fifa"). Prepended so it outranks the placeholder-riddled
+    # Polymarket "World Cup Winner" market and any cross-sport noise — a fan
+    # searching "world cup" must land on the concept FIRST (Lisa's acceptance test).
+    _wc_concept = _detect_query_world_cup_concept(q)
+    if _wc_concept and _wc_concept["key"] not in _seen_concept_keys:
+        _seen_concept_keys.add(_wc_concept["key"])
+        event_concepts.insert(0, _wc_concept)
         event_concepts = event_concepts[:5]
 
     # Search teams (ILIKE with expansion — table is small, no FTS needed)
@@ -2015,6 +2083,7 @@ async def typeahead_search(
     # adapter (exact clean_slug), so no dead links. First-class, above markets.
     from app.utils.event_awards import derive_awards_concept as _ta_derive_awards
     from app.utils.event_election import derive_election_concept as _ta_derive_election
+    from app.utils.event_soccer import derive_soccer_concept as _ta_derive_soccer
     from app.utils.event_tennis import is_winner_market as _ta_is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _ta_derive_ufc_concept
     from app.utils.name_normalization import clean_slug as _ta_clean_slug
@@ -2049,6 +2118,19 @@ async def typeahead_search(
                 "text": _ta_el["name"],
                 "event_key": _ta_el["key"],
                 "sport_key": "election",
+            })
+            continue
+        # #205: soccer tournaments (World Cup) — winner-field concept from a trophy market.
+        _ta_sc = _ta_derive_soccer(market.external_id, market.name, market.llm_sport_category)
+        if _ta_sc is not None:
+            if _ta_sc["key"] in _ta_seen_concept_keys:
+                continue
+            _ta_seen_concept_keys.add(_ta_sc["key"])
+            event_concept_pool.append({
+                "type": "event_concept",
+                "text": _ta_sc["name"],
+                "event_key": _ta_sc["key"],
+                "sport_key": "soccer",
             })
             continue
         # L2-84: UFC cards (co-equal) — derive event:ufc:<token> from a fight ticker.
@@ -2098,6 +2180,19 @@ async def typeahead_search(
             "text": _ta_golf_major["name"],
             "event_key": _ta_golf_major["key"],
             "sport_key": "golf",
+        })
+        event_concept_pool = event_concept_pool[:3]
+
+    # #205: World Cup is query-derived in typeahead too — "world cup"/"fifa" surfaces
+    # the concept in the single event_concept slot the dropdown shows.
+    _ta_wc = _detect_query_world_cup_concept(q)
+    if _ta_wc and _ta_wc["key"] not in _ta_seen_concept_keys:
+        _ta_seen_concept_keys.add(_ta_wc["key"])
+        event_concept_pool.insert(0, {
+            "type": "event_concept",
+            "text": _ta_wc["name"],
+            "event_key": _ta_wc["key"],
+            "sport_key": "soccer",
         })
         event_concept_pool = event_concept_pool[:3]
 

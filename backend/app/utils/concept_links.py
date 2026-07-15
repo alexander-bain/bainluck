@@ -201,6 +201,19 @@ def derive_market_concept_key(
     except Exception:
         pass
 
+    # 2c. Soccer tournaments — the World Cup trophy winner field up-links to its
+    #     tournament concept (`event:soccer:<slug>`). Name-gated (is_wc_winner_field_market
+    #     excludes boot/glove/group/novelty markets), so award/group markets fall through
+    #     to the sport page rather than a wrong concept breadcrumb (honest).
+    try:
+        from app.utils.event_soccer import derive_soccer_concept
+
+        sc = derive_soccer_concept(external_id, name, llm_sport_category)
+        if sc and sc.get("key"):
+            return sc["key"]
+    except Exception:
+        pass
+
     # 3. Winner-field domains — name-slug (adapters resolve token-tolerantly).
     if cat == "tennis":
         try:

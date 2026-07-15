@@ -923,3 +923,11 @@ register_adapter(AwardsEventAdapter())
 from app.utils.event_election import ElectionEventAdapter  # noqa: E402
 
 register_adapter(ElectionEventAdapter())
+
+# Soccer tournaments (winner_field) — #205 (World Cup Emergency Assembly). The
+# trophy winner field is the primary block (national teams); the remaining bracket
+# GAMES (from the events table) are the duel children. First adapter to fuse the
+# futures + events data planes.
+from app.utils.event_soccer import SoccerEventAdapter  # noqa: E402
+
+register_adapter(SoccerEventAdapter())
