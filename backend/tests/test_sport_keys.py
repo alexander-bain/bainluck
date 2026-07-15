@@ -586,3 +586,42 @@ class TestFootballDumpingGroundFamilies:
         # KXBBLGAME is the German Basketball Bundesliga (e.g. "Fraport Skyliners
         # vs Niners Chemnitz"), NOT the Australian Big Bash League cricket.
         assert self._category("KXBBLGAME-26") == "basketball"
+
+
+class TestMotorsportsDumpingGroundFamilies:
+    """#1081 (motorsports half, Queue #203): the broad `\\bracing\\b` / `NNN winner`
+    name rules in futures_categorization.py mis-tagged non-race families as
+    'motorsports' when their Kalshi tickers were unmapped. Each family below must
+    resolve to its TRUE sport via the ticker, NOT motorsports — while genuine
+    race tickers (positive-match guard) must STAY motorsports."""
+
+    def _category(self, ticker):
+        sk = get_sport_key_from_ticker(ticker)
+        if not sk:
+            return None
+        return SPORT_PREFIX_TO_LLM_CATEGORY.get(sk.split("_")[0])
+
+    @pytest.mark.parametrize(
+        ("ticker", "expected_category"),
+        [
+            # Aussie rules — the #202 motorsports-census offender (×7)
+            ("KXAFLGAME-26", "aussierules"),
+            # French rugby (Top 14) — resolves via the kxrugby prefix (×5)
+            ("KXRUGBYFRA14MATCH-26", "rugby"),
+            # FIFA World Cup group points — the #181 named offender (×1)
+            ("KXWCGROUPPTS-26", "soccer"),
+        ],
+    )
+    def test_family_no_longer_falls_to_motorsports(self, ticker, expected_category):
+        cat = self._category(ticker)
+        assert cat == expected_category, f"{ticker} -> {cat}, expected {expected_category}"
+        assert cat != "motorsports", f"{ticker} still classifies as motorsports"
+
+    def test_genuine_motorsports_tickers_still_motorsports(self):
+        # Positive-match guard (gotcha #43 — assert BOTH directions): the sweep
+        # must not strip real races. F1/NASCAR race + championship tickers stay.
+        for ticker in [
+            "KXF1RACE-BRIGP26", "KXF1WDC-26", "KXF1WCC-26",
+            "KXNASCAR-26", "KXNASCARRACE-26",
+        ]:
+            assert self._category(ticker) == "motorsports", ticker
