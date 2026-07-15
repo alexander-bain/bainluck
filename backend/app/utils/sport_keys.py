@@ -507,6 +507,40 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxsohockey": "fieldhockey_olympics",
     "kxsobasketball": "basketball_olympics",
     "kxsosoccer": "soccer_olympics",
+    # ── #1081: leagues that were falling to the 'football' name-rule dumping
+    # ground because their tickers were unmapped. get_sport_key_from_ticker()
+    # returned None → _categorize_kalshi_market's name rules (coach-of-the-year,
+    # wins over/under, seasonal bare-matchup) defaulted them to football, which
+    # polluted the football calibration cohort. We ingest NO events for these
+    # leagues, so every prefix here is ALSO added to _UNSUPPORTED_LEAGUE_PREFIXES
+    # below (keeps them out of matching + link-rate, exactly like AHL/KHL and the
+    # foreign soccer leagues). The sport_key value only needs a prefix present in
+    # SPORT_PREFIX_TO_LLM_CATEGORY — that prefix is what drives classification.
+    # Esports (Call of Duty, Dota 2, Rainbow Six, Overwatch)
+    "kxcod": "esports",                       # Call of Duty (kxcodgame, kxcodmap)
+    "kxdota2": "esports",                     # Dota 2 (kxdota2game, kxdota2map)
+    "kxr6": "esports",                        # Rainbow Six (kxr6game, kxr6map)
+    "kxow": "esports",                        # Overwatch (kxowgame)
+    # Asian baseball
+    "kxkbo": "baseball_kbo",                  # Korean KBO (kxkbogame, kxkborfi)
+    "kxnpb": "baseball_npb",                  # Japanese NPB (kxnpbgame)
+    # Rugby league
+    "kxrugby": "rugby_nrl",                   # NRL / rugby (kxrugbynrlmatch)
+    # Cricket (kxbbl is German BASKETBALL, NOT Big Bash — handled below)
+    "kxt20": "cricket_t20",                   # Men's T20 (kxt20match)
+    "kxwt20": "cricket_t20",                  # Women's T20 (kxwt20match)
+    "kxipl": "cricket_ipl",                   # Indian Premier League cricket
+    # International basketball
+    "kxnznbl": "basketball_other",            # New Zealand NBL
+    "kxvba": "basketball_other",              # Vietnam Basketball Association
+    "kxbbl": "basketball_other",              # German Basketball Bundesliga
+    # International soccer
+    "kxkleague": "soccer_other",              # Korean K-League
+    "kxeredivisie": "soccer_other",           # Dutch Eredivisie
+    # Aussie rules
+    "kxaflgame": "aussierules_afl",           # AFL game
+    # Winter Olympics curling (kxwocurlgame; kxwocurling already mapped above)
+    "kxwocurlgame": "curling_olympics",
 }
 
 
@@ -521,6 +555,15 @@ _UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
     "kxshlgame", "kxliigagame",
     "kxeculpgame", "kxvenfutvegame", "kxapfddhgame", "kxdimayorgame",
     "kxcbagame", "kxjbleaguegame", "kxarglnbgame",
+    # #1081: classification-only prefixes — we ingest no events for these
+    # leagues, so keep them out of matching + link-rate (they only exist here
+    # to route llm_sport_category away from the football dumping ground).
+    "kxcod", "kxdota2", "kxr6", "kxow",
+    "kxkbo", "kxnpb", "kxrugby",
+    "kxt20", "kxwt20", "kxipl",
+    "kxnznbl", "kxvba", "kxbbl",
+    "kxkleague", "kxeredivisie",
+    "kxaflgame", "kxwocurlgame",
 })
 
 KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
@@ -1017,6 +1060,15 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # Cricket
     "kxcricket": "cricket",
     "kxcricketseries": "cricket",
+    # #1081: FIFA World Cup 2026 group/knockout structure markets. These are
+    # season-shaped (group order, stage of elimination, furthest-advancing
+    # nation), so they live in the futures map. They were mis-tagged 'football'
+    # (name rules); nations/groups/knockout make them unambiguously soccer.
+    # (kxfifawcm above is the same World Cup via a different ticker family.)
+    "kxwcstage": "soccer_fifa_world_cup",       # incl. kxwcstageofelim
+    "kxwcregion": "soccer_fifa_world_cup",      # incl. kxwcregionko
+    "kxwcgroup": "soccer_fifa_world_cup",       # incl. kxwcgroupbottom/grouporder
+    "kxwcfurthest": "soccer_fifa_world_cup",    # furthest-advancing nation
 }
 
 

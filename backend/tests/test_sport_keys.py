@@ -505,3 +505,84 @@ class TestKxpgaGolfCatchAll:
     def test_kxpga_catchall_does_not_match_lpga(self):
         # 'kxlpga' starts with kxl, not kxp — catch-all must not swallow LPGA
         assert not "kxlpgatour-26".startswith("kxpga")
+
+
+class TestFootballDumpingGroundFamilies:
+    """#1081: leagues that were mis-tagged 'football' because their Kalshi tickers
+    were unmapped — get_sport_key_from_ticker() returned None so the classifier's
+    name rules (coach-of-the-year, wins over/under, seasonal bare-matchup) defaulted
+    them to football, polluting the football calibration cohort. Each family below
+    must now resolve to its true sport via the ticker, NOT football."""
+
+    def _category(self, ticker):
+        sk = get_sport_key_from_ticker(ticker)
+        if not sk:
+            return None
+        return SPORT_PREFIX_TO_LLM_CATEGORY.get(sk.split("_")[0])
+
+    @pytest.mark.parametrize(
+        ("ticker", "expected_category"),
+        [
+            # Esports (Call of Duty, Dota 2, Rainbow Six, Overwatch)
+            ("KXCODMAP-26X", "esports"),
+            ("KXCODGAME-26X", "esports"),
+            ("KXDOTA2MAP-26X", "esports"),
+            ("KXDOTA2GAME-26X", "esports"),
+            ("KXR6GAME-26X", "esports"),
+            ("KXR6MAP-26X", "esports"),
+            ("KXOWGAME-26X", "esports"),
+            # Asian baseball (KBO / NPB) — NOT baseball_mlb, but 'baseball' category
+            ("KXKBOGAME-26MAY01", "baseball"),
+            ("KXKBORFI-26MAY01", "baseball"),
+            ("KXNPBGAME-26MAY01", "baseball"),
+            # Rugby league (NRL)
+            ("KXRUGBYNRLMATCH-26", "rugby"),
+            # Cricket (T20 / Women's T20 / IPL)
+            ("KXT20MATCH-26", "cricket"),
+            ("KXWT20MATCH-26", "cricket"),
+            ("KXIPLGAME-26", "cricket"),
+            # International basketball (NZ NBL, Vietnam BA, German BBL)
+            ("KXNZNBLGAME-26", "basketball"),
+            ("KXVBAGAME-26", "basketball"),
+            ("KXBBLGAME-26", "basketball"),
+            # International soccer (K-League, Eredivisie)
+            ("KXKLEAGUEGAME-26", "soccer"),
+            ("KXEREDIVISIEGAME-26", "soccer"),
+            # Aussie rules
+            ("KXAFLGAME-26", "aussierules"),
+            # Winter Olympics curling
+            ("KXWOCURLGAME-26", "curling"),
+            # FIFA World Cup group/knockout structure markets (soccer)
+            ("KXWCSTAGEOFELIM-26", "soccer"),
+            ("KXWCSTAGE-26", "soccer"),
+            ("KXWCREGIONKO-26", "soccer"),
+            ("KXWCGROUPBOTTOM-26", "soccer"),
+            ("KXWCGROUPORDER-26", "soccer"),
+            ("KXWCFURTHESTADVANCING-26", "soccer"),
+        ],
+    )
+    def test_family_no_longer_falls_to_football(self, ticker, expected_category):
+        cat = self._category(ticker)
+        assert cat == expected_category, f"{ticker} -> {cat}, expected {expected_category}"
+        assert cat != "football", f"{ticker} still classifies as football"
+
+    def test_dumping_ground_families_excluded_from_matching_and_link_rate(self):
+        # We ingest no events for these leagues — they must NOT be game tickers
+        # (would pollute the matching scan) nor the link-rate denominator.
+        for ticker in [
+            "KXCODMAP-26X", "KXKBOGAME-26", "KXNPBGAME-26", "KXRUGBYNRLMATCH-26",
+            "KXT20MATCH-26", "KXNZNBLGAME-26", "KXKLEAGUEGAME-26", "KXAFLGAME-26",
+            "KXWOCURLGAME-26",
+        ]:
+            assert is_kalshi_game_ticker(ticker) is False, ticker
+
+    def test_genuine_football_tickers_still_football(self):
+        # Guard the opposite direction: the sweep must not strip real football.
+        for ticker in ["KXNFLGAME-26", "KXNFLWINS-KC", "KXNCAAFGAME-26",
+                       "KXNFLMVP-26", "KXNCAAFSEC-26"]:
+            assert self._category(ticker) == "football", ticker
+
+    def test_bbl_is_basketball_not_cricket(self):
+        # KXBBLGAME is the German Basketball Bundesliga (e.g. "Fraport Skyliners
+        # vs Niners Chemnitz"), NOT the Australian Big Bash League cricket.
+        assert self._category("KXBBLGAME-26") == "basketball"
