@@ -7548,7 +7548,11 @@ def _build_search_top_outcomes(
             }
             for o in top
         ]
-    _normalize_search_outcome_probs(out)
+    # #199: don't sum-to-1 non-mutually-exclusive participation families
+    # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
+    _normalize_search_outcome_probs(
+        out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 

@@ -146,6 +146,13 @@ def _normalize_outcome_probs(outcomes: list[dict], key: str = "prob") -> None:
     candidate.  Raw probabilities can sum well over 100%.  When displayed as a
     ranked list, divide each by the sum so they total ~100%.
 
+    Only call this for MUTUALLY-EXCLUSIVE fields (exactly one winner).  For
+    non-mutually-exclusive PARTICIPATION families (golf make-cut/top-N, where many
+    outcomes are simultaneously true and the set sums to many multiples of 100%),
+    normalizing squashes an honest 86%-to-make-the-cut down to ~1% (#199, The Open
+    marquee rail).  The display wrapper (outcome_display.normalize_display_probs)
+    gates on FuturesMarket.mutually_exclusive so this never runs on those.
+
     See also: feed.py BR27 fix for the same class of bug on the Discover feed.
     """
     prob_sum = sum(o.get(key, 0) or 0 for o in outcomes)

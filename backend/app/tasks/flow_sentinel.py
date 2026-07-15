@@ -32,6 +32,7 @@ The scorecard always reports the current numbers so the trend stays visible.
 import hashlib
 import logging
 import os
+import re
 import time as _time
 from typing import Any
 
@@ -58,6 +59,8 @@ EVENT_SAMPLE_SIZE = 10          # flow:sentinel_event_sample_size
 STALE_LIVE_HOURS = 12.0         # flow:sentinel_stale_live_hours
 # Feed-quality @20 targets (CLAUDE.md production audit target).
 FEED_QUALITY_TOP_N = 20
+# participation_family (#199): how many golf prop markets to detail-probe per run.
+PARTICIPATION_SAMPLE_SIZE = 8
 
 # Tier-1 leagues (CLAUDE.md quota-guard tiers): a live game here with zero
 # markets is a real completeness bug, not an upstream coverage gap.
@@ -119,6 +122,7 @@ _FLOW_AREA_LABELS = {
     "resolved_state": "area:calibration",
     "chart_density": "area:event-details",
     "category_discover": "area:discover-ranking",
+    "participation_family": "area:event-details",
 }
 _FLOW_TITLES = {
     "search_gold_set": "search misses gold-set entities",
@@ -127,6 +131,7 @@ _FLOW_TITLES = {
     "resolved_state": "settled/live event state incorrect",
     "chart_density": "user-visible charts below the density bar",
     "category_discover": "category / Discover first page empty or low-quality",
+    "participation_family": "non-ME prop family (make-cut/top-N) squashed to sum-100%",
 }
 
 
@@ -321,6 +326,31 @@ def feed_event_card_count(feed_items: Any) -> int:
     if not isinstance(feed_items, list):
         return 0
     return sum(1 for i in feed_items if isinstance(i, dict) and i.get("type") == "event")
+
+
+def overnormalized_participation_family(
+    detail: dict, min_outcomes: int = 5, sum_lo: float = 0.9, sum_hi: float = 1.1
+) -> bool:
+    """True when a NON-mutually-exclusive futures family has been squashed to sum
+    ~100% on its detail rail (#199, The Open marquee-rail bug).
+
+    Golf make-cut / top-5 / top-N are ``mutually_exclusive=False`` — MANY outcomes
+    are simultaneously true, so an honest displayed distribution sums to several
+    multiples of 100% (make-cut ~7800%, top-5 ~500%). If the #23 normalizer wrongly
+    runs on such a family, the whole set is divided down to sum ~1.0, turning an
+    honest 87% make-cut into ~1%. A displayed sum of ~100% on an ME=False family
+    with n>=5 priced outcomes is that regression. (ME=True fields are supposed to
+    sum ~100%, so they are never flagged.)"""
+    if detail.get("mutually_exclusive") is not False:
+        return False
+    outs = [
+        o for o in (detail.get("outcomes") or [])
+        if isinstance(o, dict) and o.get("probability")
+    ]
+    if len(outs) < min_outcomes:
+        return False
+    total = sum(float(o["probability"]) for o in outs)
+    return sum_lo <= total <= sum_hi
 
 
 def chart_density_verdict(tile: dict, threshold: float) -> tuple[bool, dict]:
@@ -660,6 +690,75 @@ async def _run_category_discover(client: httpx.AsyncClient) -> dict:
     }
 
 
+async def _run_participation_family(client: httpx.AsyncClient) -> dict:
+    """#199: a non-mutually-exclusive prop family (golf make-cut / top-N) must NEVER
+    render as a sum-to-1 distribution — that squashed an honest 87% make-cut to ~1%
+    on The Open's detail/ladder rail. Sample golf prop markets whose names look like
+    participation families, pull each detail, and assert none are over-normalized.
+    This class files itself next time it recurs."""
+    failures: list[dict] = []
+    checked = 0
+    prop_name_re = re.compile(
+        r"\b(make\s+the?\s*cut|top\s*\d+|round\s*\d+\s*leader|to\s+finish)\b", re.I
+    )
+    try:
+        faceted = await _get_json(
+            client, "/api/futures/faceted", {"sport_category": "golf", "limit": "40"}
+        )
+        markets = faceted.get("markets", []) if isinstance(faceted, dict) else []
+    except Exception as exc:
+        return {
+            "flow": "participation_family",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {"reason": f"faceted golf errored: {str(exc)[:100]}"},
+        }
+
+    candidates = [
+        m for m in markets
+        if isinstance(m, dict)
+        and (m.get("outcome_count") or 0) >= 5
+        and prop_name_re.search(m.get("name") or "")
+    ][:PARTICIPATION_SAMPLE_SIZE]
+
+    for m in candidates:
+        mid = m.get("id")
+        if mid is None:
+            continue
+        try:
+            detail = await _get_json(client, f"/api/futures/{mid}")
+        except Exception as exc:
+            failures.append({"market_id": mid, "detail": f"detail errored: {str(exc)[:100]}"})
+            continue
+        # Only ME=False families are eligible; detector guards that internally.
+        if detail.get("mutually_exclusive") is not False:
+            continue
+        checked += 1
+        if overnormalized_participation_family(detail):
+            outs = [o for o in (detail.get("outcomes") or []) if o.get("probability")]
+            total = sum(float(o["probability"]) for o in outs)
+            failures.append({
+                "market_id": mid,
+                "detail": f"non-ME family '{(detail.get('name') or '')[:50]}' "
+                          f"({len(outs)} outcomes) displayed sum={total:.2f} ~100% — "
+                          f"squashed by #23 normalizer (#199); should sum >>100%",
+            })
+
+    return {
+        "flow": "participation_family",
+        "checked": checked,
+        "passed": len(failures) == 0,
+        "skipped": checked == 0,
+        "failures": failures,
+        "evidence": {
+            "golf_prop_markets_sampled": checked,
+            "no_eligible_markets": checked == 0,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
@@ -825,6 +924,7 @@ async def _run_flow_sentinel(
         ("resolved_state", _run_resolved_state),
         ("chart_density", _run_chart_density),
         ("category_discover", _run_category_discover),
+        ("participation_family", _run_participation_family),
     )
 
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,

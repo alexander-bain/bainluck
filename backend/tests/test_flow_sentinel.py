@@ -22,10 +22,45 @@ from app.tasks.flow_sentinel import (
     inverted_completed_events,
     gold_set_recoveries,
     gold_set_regressions,
+    overnormalized_participation_family,
     search_found,
     severity_for_flow,
     stale_live_events,
 )
+
+
+class TestOvernormalizedParticipationFamily:
+    """#199: a non-ME prop family (make-cut/top-N) displayed at sum ~100% is the
+    squash regression; an honest family sums to several multiples of 100%."""
+
+    def _fam(self, me, probs):
+        return {
+            "mutually_exclusive": me,
+            "outcomes": [{"name": f"P{i}", "probability": p} for i, p in enumerate(probs)],
+        }
+
+    def test_squashed_make_cut_flagged(self):
+        # honest make-cut (0.87, 0.885, ...) wrongly divided down to sum ~1.0
+        squashed = self._fam(False, [0.011, 0.0113, 0.0108, 0.009, 0.008] + [0.006] * 160)
+        assert overnormalized_participation_family(squashed) is True
+
+    def test_honest_make_cut_not_flagged(self):
+        honest = self._fam(False, [0.87, 0.885, 0.84, 0.79, 0.685, 0.44] + [0.3] * 20)
+        assert overnormalized_participation_family(honest) is False
+
+    def test_mutually_exclusive_never_flagged(self):
+        # a real who-wins field is SUPPOSED to sum ~100%
+        who_wins = self._fam(True, [0.4, 0.3, 0.2, 0.05, 0.05])
+        assert overnormalized_participation_family(who_wins) is False
+
+    def test_missing_flag_never_flagged(self):
+        # ME defaults True at the model; absent/None flag must not false-positive
+        assert overnormalized_participation_family(
+            {"outcomes": [{"probability": 0.2}] * 5}
+        ) is False
+
+    def test_too_few_outcomes_not_flagged(self):
+        assert overnormalized_participation_family(self._fam(False, [0.5, 0.5])) is False
 
 
 class TestGoldSet:

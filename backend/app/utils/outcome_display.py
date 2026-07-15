@@ -54,10 +54,26 @@ def is_field_outcome(name: str | None) -> bool:
     return bool(_FIELD_OUTCOME_RE.match((name or "").strip()))
 
 
-def normalize_display_probs(outcomes: list[dict], key: str = "probability") -> None:
+def normalize_display_probs(
+    outcomes: list[dict],
+    key: str = "probability",
+    mutually_exclusive: bool = True,
+) -> None:
     """#23: normalize the displayed distribution in place when independent binary
     outcomes sum >100%. Reuses the SINGLE politics normalizer (percentage-scale)
-    via a 0-1 adapter — do not fork it. Values on ``key`` are 0-1 floats."""
+    via a 0-1 adapter — do not fork it. Values on ``key`` are 0-1 floats.
+
+    #199: only mutually-exclusive fields (exactly one winner) should be squeezed to
+    sum ~100%. Non-mutually-exclusive PARTICIPATION families — golf make-cut /
+    top-5 / top-N, where many outcomes are simultaneously true and the set sums to
+    several multiples of 100% — must NOT be normalized: doing so squashed an honest
+    86%-to-make-the-cut down to ~1% on The Open's detail/ladder rail. Callers pass
+    ``mutually_exclusive`` from ``FuturesMarket.mutually_exclusive`` (reliable:
+    Kalshi/DataGolf both flag make-cut/top-N False, winner fields True). Default
+    True preserves every existing caller (search, awards/tennis/f1/election, etc.).
+    """
+    if not mutually_exclusive:
+        return  # non-ME participation family — raw per-outcome probs are honest
     from app.routes.politics import _normalize_outcome_probs  # shared #23 util
 
     pct = [{"p": (o.get(key) or 0) * 100} for o in outcomes]

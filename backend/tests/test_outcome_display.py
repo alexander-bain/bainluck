@@ -42,6 +42,56 @@ class TestNormalizeAndLeaderPick:
         normalize_display_probs(outs)
         assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
 
+    def test_who_wins_overround_still_normalized(self):
+        # A mutually-exclusive "who wins" field with Kalshi overround (default
+        # mutually_exclusive=True) must STILL be normalized to ~100%.
+        outs = [{"probability": 0.55}, {"probability": 0.45}, {"probability": 0.30}]
+        normalize_display_probs(outs)  # default mutually_exclusive=True
+        assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
+        # leader preserved
+        assert outs[0]["probability"] > outs[1]["probability"]
+
+    def test_make_cut_family_not_squashed(self):
+        # #199: golf make-cut is NON-mutually-exclusive (FuturesMarket.mutually_exclusive
+        # is False) — half a ~156 field makes the cut, so per-player probs are ~0.5-0.9
+        # and the SET sums to many multiples of 100%. Normalizing to sum-1 squashed
+        # Scheffler's honest 0.87 to ~0.011 on The Open's detail/ladder rail. With the
+        # mutually_exclusive=False gate the display pipeline leaves them UNTOUCHED.
+        make_cut = [
+            {"name": "Scottie Scheffler", "probability": 0.87},
+            {"name": "Rory McIlroy", "probability": 0.885},
+            {"name": "Matt Fitzpatrick", "probability": 0.84},
+            {"name": "Tommy Fleetwood", "probability": 0.44},
+            {"name": "Robert MacIntyre", "probability": 0.79},
+            {"name": "Ludvig Aberg", "probability": 0.685},
+        ]
+        normalize_display_probs(make_cut, mutually_exclusive=False)
+        assert make_cut[0]["probability"] == 0.87, "make-cut leader must stay honest"
+        assert make_cut[1]["probability"] == 0.885
+        assert sum(o["probability"] for o in make_cut) > 4.0, "not squashed to sum-1"
+
+    def test_make_cut_would_be_squashed_if_treated_as_mutually_exclusive(self):
+        # Guard the regression itself: the SAME make-cut field, if the ME gate is
+        # ever dropped (treated as mutually_exclusive=True), collapses to ~1% — the
+        # exact production bug. This documents why the gate must stay.
+        make_cut = [{"probability": 0.87}, {"probability": 0.885}, {"probability": 0.84}]
+        normalize_display_probs(make_cut, mutually_exclusive=True)
+        assert make_cut[0]["probability"] < 0.5, "confirms the un-gated squash"
+
+    def test_top_n_family_not_squashed(self):
+        # Top-5 / top-N: N outcomes are simultaneously true (mutually_exclusive=False).
+        # Raw per-golfer top-5 probabilities are meaningful; keep them.
+        top5 = [
+            {"name": "Scottie Scheffler", "probability": 0.335},
+            {"name": "Rory McIlroy", "probability": 0.245},
+            {"name": "Tommy Fleetwood", "probability": 0.23},
+            {"name": "Matt Fitzpatrick", "probability": 0.225},
+            {"name": "Jon Rahm", "probability": 0.175},
+        ]
+        normalize_display_probs(top5, mutually_exclusive=False)
+        assert top5[0]["probability"] == 0.335, "top-5 leader must stay honest"
+        assert sum(o["probability"] for o in top5) > 1.0, "not squashed to sum-1"
+
     def test_leader_pick_demotes_other(self):
         outs = [{"name": "Other", "probability": 0.52},
                 {"name": "Cleveland Cavaliers", "probability": 0.27}]

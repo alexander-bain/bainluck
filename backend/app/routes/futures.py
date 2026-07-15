@@ -3034,7 +3034,12 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     ]
     # #993: #23-normalize the displayed distribution + demote a generic
     # "Other/Field" from the headline (same rules as search).
-    normalize_display_probs(outcomes)
+    # #199: gate on mutual-exclusivity — golf make-cut/top-N (mutually_exclusive
+    # False) are NOT one-winner fields; normalizing them squashed an honest 86%
+    # make-cut down to ~1% on The Open's detail/ladder rail.
+    normalize_display_probs(
+        outcomes, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    )
     leader_pick_order(outcomes)
 
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
