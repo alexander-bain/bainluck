@@ -496,6 +496,13 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxeculpgame": "soccer_other",            # Ecuadorian league
     "kxvenfutvegame": "soccer_other",         # Venezuelan league
     "kxapfddhgame": "soccer_other",           # Dominican league
+    # #207: FIFA World Cup 2026 MATCH tickers — deterministic defense-in-depth so
+    # "Algeria vs Austria" is NOT LLM-mis-tagged baseball/basketball/hockey (it
+    # was, live 2026-07-15). kxwcgame is the moneyline match ticker; as a game
+    # ticker it also becomes matchable to WC events (World Cup concept, #205/L2-130).
+    "kxwcgame": "soccer_fifa_world_cup",      # WC 2026 match moneyline
+    "kxfifagame": "soccer",                   # FIFA match ("Bolivia vs Suriname")
+    "kxfifawgame": "soccer",                  # FIFA women's match ("Albania vs Montenegro")
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League
@@ -1069,6 +1076,12 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxwcregion": "soccer_fifa_world_cup",      # incl. kxwcregionko
     "kxwcgroup": "soccer_fifa_world_cup",       # incl. kxwcgroupbottom/grouporder
     "kxwcfurthest": "soccer_fifa_world_cup",    # furthest-advancing nation
+    # #207: chess — one prefix covers all Kalshi chess tickers (KXCHESSTOURNAMENT
+    # -26EWC, KXCHESSMATCH "Firouzja vs Gukesh", KXCHESSCANDIDATES, KXCHESSFIDERATING).
+    # Match/tournament tickers were LLM-mis-tagged baseball; the "WC" inside an
+    # Esports-World-Cup chess ticker must never route to soccer. Futures map (not
+    # game map): chess has no events table to match against.
+    "kxchess": "chess",
 }
 
 

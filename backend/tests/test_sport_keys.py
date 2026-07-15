@@ -625,3 +625,33 @@ class TestMotorsportsDumpingGroundFamilies:
             "KXNASCAR-26", "KXNASCARRACE-26",
         ]:
             assert self._category(ticker) == "motorsports", ticker
+
+
+class TestQueue207WcChessMappings:
+    """#207 Item 4 — deterministic defense-in-depth for World Cup match tickers and
+    chess, both of which the LLM was mis-tagging (baseball / soccer)."""
+
+    def _cat(self, ticker):
+        sk = get_sport_key_from_ticker(ticker)
+        return get_llm_category_for_prefix(sk) if sk else None
+
+    def test_wc_match_ticker_is_world_cup_soccer_not_baseball(self):
+        # "Algeria vs Austria" (KXWCGAME) was live-tagged baseball on 2026-07-15.
+        assert get_sport_key_from_ticker("KXWCGAME-26JUN15ALGAUT") == "soccer_fifa_world_cup"
+        assert get_sport_key_from_ticker("KXFIFAGAME-x") == "soccer"
+        assert get_sport_key_from_ticker("KXFIFAWGAME-x") == "soccer"
+
+    def test_wc_match_ticker_is_a_game_ticker(self):
+        # As a game ticker it becomes matchable to WC events (#205/L2-130).
+        from app.utils.sport_keys import is_kalshi_game_ticker
+        assert is_kalshi_game_ticker("KXWCGAME-26JUN15ALGAUT")
+
+    def test_chess_tickers_route_to_chess_never_soccer(self):
+        # The queue's exact target: an Esports-World-Cup chess ticker must NOT
+        # route to soccer on the embedded "WC".
+        assert get_sport_key_from_ticker("KXCHESSTOURNAMENT-26EWC") == "chess"
+        assert get_sport_key_from_ticker("KXCHESSMATCH-26x") == "chess"
+        assert get_sport_key_from_ticker("KXCHESSCANDIDATES-26") == "chess"
+        for t in ["KXCHESSTOURNAMENT-26EWC", "KXCHESSMATCH-26x"]:
+            assert self._cat(t) != "soccer"
+            assert self._cat(t) != "baseball"

@@ -2,6 +2,8 @@
 
 A self-reinforcing data quality loop. The goal: define a problem once, it's fixed forever. New issues get added to the quality definition so they're caught going forward.
 
+> **Doctrine — read-side exclusion protects metrics; it never closes an issue (Alex, Queue #207).** Filtering a bad class out of a metric or a surface (a curve exclusion, a display suppression, a `WATCH`-not-`RED` reclassification) stops it from lying to us — but the underlying defect is still live. Every excluded class MUST carry a fix-or-documented-loss follow-up: either the root cause is fixed, or the loss is quantified and written down (count + doc/ledger). "We stopped counting it" is never "we fixed it." (See #1112: the poly side-inversion was fixed at the source + the 74 corrupted blends corrected, not merely hidden from the Measure page.)
+
 ## The Script
 
 `backend/scripts/audit_matching_quality.py` — comprehensive page health audit with deterministic + LLM checks.

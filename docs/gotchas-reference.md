@@ -2,6 +2,8 @@
 
 CLAUDE.md carries a curated **hot list** (the ~47 rules that most often prevent production incidents or wasted agent time). This file is the full catalog for deep-dive reference. When a hot-list item is added or rotated out, keep its full-catalog form here so the reference stays complete while the hot list stays short.
 
+> **Doctrine (Alex, Queue #207): read-side exclusion protects metrics; it never closes an issue.** A curve exclusion, display suppression, or `WATCH`-not-`RED` reclassification stops a bad class from lying to a metric — but the defect is still live. Every excluded class carries a fix-or-documented-loss follow-up (root cause fixed, OR loss quantified: count + ledger). "Stopped counting it" ≠ "fixed it." Corollary for regrades: **verify-before-regrade, ledger-first** — quote the before/after ledger and confirm the class is what you think (e.g. #1112's Class-A vs the 15 stale-stat_model false positives that a blind pass would have corrupted) BEFORE the bulk write.
+
 ---
 
 ## Items 16-75 (overflow and deep-dive notes)
