@@ -13,6 +13,9 @@ Deliberately out of v1 scope (Alex's ruling): streaks, movers, resolutions.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
+
+from app.utils.market_staleness import is_title_implied_stale
 
 
 # Max digest items in a single push. iOS shows ~4-5 lines expanded.
@@ -54,6 +57,27 @@ class DigestPayload:
     items: list[dict] = field(default_factory=list)
 
 
+def is_stale_dated_bucket(
+    candidate: DigestCandidate, now: datetime
+) -> str | None:
+    """Reuse the feed's staleness classifier to reject a stale-dated bucket.
+
+    Returns a stale-reason string if the market's *title* implies its real-world
+    window has already passed, else ``None``. This is the digest's guard against
+    featuring what the feed itself drops — the "one content brain" rule — and it
+    reuses (never forks) ``is_title_implied_stale``, the same helper the feed
+    applies at serving time (``routes/feed.py``).
+
+    It closes the exact self-caught gap: "a May-dated bucket can never rank into
+    a July digest." The candidate SQL pool only drops a *past
+    ``resolution_date``*, but Kalshi's settlement date for a month-named market
+    lands ~2 weeks INTO the next month (gotcha #883), so a stale month-bucket
+    ("… in May 2026") slips through the query with a future ``resolution_date``
+    and must be caught here by title inference.
+    """
+    return is_title_implied_stale(candidate.name, candidate.category, now)
+
+
 def select_digest_candidates(
     candidates: list[DigestCandidate],
     *,
@@ -61,6 +85,7 @@ def select_digest_candidates(
     max_per_category: int = MAX_PER_CATEGORY,
     max_leader_prob: float = MAX_LEADER_PROB,
     category_affinities: dict[str, float] | None = None,
+    now: datetime | None = None,
 ) -> list[DigestCandidate]:
     """Rank candidates by interestingness, dedup, and cap per category.
 
@@ -69,6 +94,11 @@ def select_digest_candidates(
     interestingness score so a signed-in user's leanings tilt selection without
     a separate content pipeline (one content brain). Absent → global ranking,
     which is the v1 dogfood path.
+
+    ``now`` (optional) turns on the feed's dated-bucket staleness suppression via
+    :func:`is_stale_dated_bucket`. The task layer always passes the current time;
+    pure unit tests can pass a fixed ``now`` or omit it. When omitted, no
+    time-dependent filtering runs (kept opt-in so the ranker stays pure).
     """
     affinities = category_affinities or {}
 
@@ -79,7 +109,12 @@ def select_digest_candidates(
             score *= 1.0 + max(-0.5, min(0.5, affinities[c.category])) * 0.6
         return score
 
-    eligible = [c for c in candidates if c.leader_prob < max_leader_prob]
+    eligible = [
+        c
+        for c in candidates
+        if c.leader_prob < max_leader_prob
+        and not (now is not None and is_stale_dated_bucket(c, now))
+    ]
     ordered = sorted(
         eligible,
         key=lambda c: (_rank(c), c.volume_24h or 0.0),

@@ -135,7 +135,12 @@ async def _run_morning_digest(
 
     async with get_task_session() as db:
         candidates = await _gather_digest_candidates(db, redis)
-        selected = select_digest_candidates(candidates, limit=limit)
+        # Pass now so the feed's dated-bucket/quality suppression runs — a market
+        # whose title implies a past month (Kalshi settlement lands in the next
+        # month, gotcha #883) must never rank into today's digest.
+        selected = select_digest_candidates(
+            candidates, limit=limit, now=datetime.now(timezone.utc)
+        )
         payload = render_digest_payload(selected)
 
         summary: dict = {

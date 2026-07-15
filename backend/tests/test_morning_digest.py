@@ -1,7 +1,10 @@
 """Tests for Morning Digest v1 content selection + rendering (Queue #200)."""
 
+from datetime import datetime, timezone
+
 from app.utils.morning_digest import (
     DigestCandidate,
+    is_stale_dated_bucket,
     render_digest_payload,
     select_digest_candidates,
 )
@@ -110,3 +113,44 @@ def test_probability_clamped_and_rounded():
     items = [_cand(1, "Q", 1.5, 50.0, leader="Yes")]  # out-of-range prob
     payload = render_digest_payload(items)
     assert "100%" in payload.body
+
+
+# Queue #201 Item 2: dated-bucket staleness suppression. A market whose title
+# implies a past month must never rank into a later digest, even though the
+# candidate SQL pool only drops a *past resolution_date* (Kalshi's settlement
+# date for a month-named market lands ~2 weeks into the NEXT month — gotcha #883,
+# so the row survives the query with a future resolution_date). Seed at a fixed
+# hour (gotcha #44) — never datetime.now().
+_JULY_15 = datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_drops_stale_dated_bucket_when_now_passed():
+    cands = [
+        _cand(1, "Most rain in LA in May 2026", 0.60, 99.0, category="weather", dedup_key="a"),
+        _cand(2, "Who wins the 2026 election?", 0.55, 50.0, category="politics", dedup_key="b"),
+    ]
+    picked = select_digest_candidates(cands, limit=5, now=_JULY_15)
+    # The May-dated bucket is stale by July; only the fresh market survives.
+    assert [c.market_id for c in picked] == [2]
+
+
+def test_fresh_dated_market_survives():
+    cands = [
+        _cand(1, "Most rain in LA in September 2026", 0.60, 99.0, category="weather", dedup_key="a"),
+    ]
+    picked = select_digest_candidates(cands, limit=5, now=_JULY_15)
+    assert [c.market_id for c in picked] == [1]
+
+
+def test_staleness_is_opt_in_via_now():
+    # Backward compat: without `now`, no time-dependent filtering runs, so the
+    # pure ranker behaves exactly as before (the stale bucket is NOT dropped).
+    cands = [_cand(1, "Most rain in LA in May 2026", 0.60, 99.0, dedup_key="a")]
+    assert [c.market_id for c in select_digest_candidates(cands, limit=5)] == [1]
+
+
+def test_is_stale_dated_bucket_helper():
+    stale = _cand(1, "Rain in LA in May 2026", 0.5, 50.0, category="weather")
+    fresh = _cand(2, "Rain in LA in August 2026", 0.5, 50.0, category="weather")
+    assert is_stale_dated_bucket(stale, _JULY_15) == "stale_explicit_title_month"
+    assert is_stale_dated_bucket(fresh, _JULY_15) is None
