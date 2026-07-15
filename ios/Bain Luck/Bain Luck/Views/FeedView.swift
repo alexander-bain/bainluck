@@ -247,11 +247,15 @@ struct FeedView: View {
                 eventTime: item.eventTime
             )
         } else if item.type == "playoff_progression", let entityName = item.entityName, let stages = item.stages {
-            ProgressionLadderView(
-                entityName: entityName,
-                stages: stages,
+            // L2-123: one ladder component everywhere (kernel discipline). The feed's
+            // grouped playoff progression now renders on the shared LadderCardView "2b"
+            // primitive via the LadderRung(stage:) adapter — the compact
+            // ProgressionLadderView is retired.
+            LadderCardView(
+                title: entityName,
                 logoUrl: item.logoUrl,
-                teamColors: item.teamColors
+                teamColor: item.teamColors?.primary.map { Color(rgb: $0) } ?? DS.emeraldDark,
+                rungs: stages.prefix(5).map { LadderRung(stage: $0) }
             )
         }
     }

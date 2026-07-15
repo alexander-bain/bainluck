@@ -12,6 +12,25 @@ extension Color {
         )
     }
 
+    /// Parse an "R, G, B" (0–255) decimal-triplet string, e.g. team colors from the
+    /// feed ("85, 37, 130"). Falls back to blue when malformed. (Relocated from the
+    /// retired ProgressionLadderView in L2-123 so the shared LadderCardView primitive
+    /// can consume the same feed team colors.)
+    init(rgb: String) {
+        let components = rgb.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .compactMap { Double($0) }
+        if components.count >= 3 {
+            self.init(
+                red: components[0] / 255,
+                green: components[1] / 255,
+                blue: components[2] / 255
+            )
+        } else {
+            self.init(.blue)
+        }
+    }
+
     /// Returns a lighter version for backgrounds.
     func lightened(_ amount: Double = 0.3) -> Color {
         let resolved = self.resolve(in: EnvironmentValues())

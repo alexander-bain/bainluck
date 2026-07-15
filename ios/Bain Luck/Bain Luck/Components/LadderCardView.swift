@@ -7,10 +7,12 @@ import SwiftUI
 // Native Championship Grids handoff (docs/archive/designs/.../Native Championship Grids.dc.html,
 // Turn 3: "2b adopted as the ladder component").
 //
-// It supersedes the compact `ProgressionLadderView` (feed variant) for the full
-// per-team / per-prop context. Championship milestones and prop thresholds are the
-// same shape — "one component, two label modes" (design note 1g). League-screen
-// assembly (design 2c) is the follow-up (L2-123).
+// It is now the ONE ladder component everywhere (kernel discipline): the feed's
+// grouped playoff progression (via `LadderRung(stage:)`) and the league screen's
+// ranked per-team list (design 2c, via `LadderCardView(gridTeam:columns:)`) both
+// render on it; the compact `ProgressionLadderView` was retired in L2-123.
+// Championship milestones and prop thresholds are the same shape — "one component,
+// two label modes" (design note 1g).
 
 /// Settlement state of a single ladder rung. Drives the "settled chrome" (design 1f):
 /// clinched fills deep ink with a ✓ and drops the numeral; eliminated greys out with

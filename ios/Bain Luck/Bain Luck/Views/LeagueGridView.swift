@@ -132,23 +132,17 @@ struct LeagueGridView: View {
                 .listRowBackground(Color.clear)
             }
 
-            // Teams grid
+            // Teams — design 2c (native grids Phase 2): a ranked list of self-labeled
+            // per-team ladder cards built from the shipped LadderCardView "2b"
+            // primitive, replacing the dense web-style matrix that never worked on a
+            // phone. Each card carries its own milestone labels (in-cell), so no shared
+            // column rail is needed; sorted by championship probability.
             Section("Championship Probabilities") {
-                // Column headers
-                HStack {
-                    Text("Team")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    ForEach(grid.columns, id: \.key) { col in
-                        Text(col.label)
-                            .frame(width: columnWidth(grid.columns.count))
-                    }
-                }
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-
-                ForEach(viewModel.visibleTeams) { team in
-                    teamRow(team, columns: grid.columns)
+                ForEach(Array(rankedTeams(grid.columns).enumerated()), id: \.element.id) { index, team in
+                    LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
             }
 
@@ -246,70 +240,23 @@ struct LeagueGridView: View {
         .padding(.vertical, 2)
     }
 
-    // MARK: - Team Row
+    // MARK: - Ladder ordering (design 2c)
 
-    private func teamRow(_ team: GridTeam, columns: [GridColumn]) -> some View {
-        HStack {
-            // Team name with logo
-            HStack(spacing: 6) {
-                if let logoUrl = team.logoUrl, let url = URL(string: logoUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().aspectRatio(contentMode: .fit)
-                        default:
-                            teamColorDot(team.primaryColor)
-                        }
-                    }
-                    .frame(width: 20, height: 20)
-                } else {
-                    teamColorDot(team.primaryColor)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(team.shortName ?? team.name)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    if let record = team.record {
-                        Text(record)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Probability cells
-            ForEach(columns, id: \.key) { col in
-                let cell = team.cells[col.key]
-                probabilityCell(cell, columnCount: columns.count)
-                    .frame(width: columnWidth(columns.count))
-            }
-        }
-        .padding(.vertical, 2)
+    /// The championship column key — the widest-net milestone (highest column
+    /// `order`), used to rank the per-team ladder cards.
+    private func championshipColumnKey(_ columns: [GridColumn]) -> String? {
+        columns.max(by: { $0.order < $1.order })?.key
     }
 
-    private func probabilityCell(_ cell: GridCell?, columnCount: Int) -> some View {
-        Group {
-            if let prob = cell?.mergedProbability {
-                VStack(spacing: 1) {
-                    Text(formatProb(prob))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    if let trend = cell?.trend24H, abs(trend) >= 0.005 {
-                        HStack(spacing: 1) {
-                            Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 6))
-                            Text(formatProb(abs(trend)))
-                                .font(.system(size: 8))
-                        }
-                        .foregroundStyle(trend > 0 ? .green : .red)
-                    }
-                }
-            } else {
-                Text("-")
-                    .font(.caption)
-                    .foregroundStyle(.quaternary)
-            }
+    /// Visible teams ranked by championship probability (desc) — the design's
+    /// "sort by championship probability" for the ranked ladder list. Teams with no
+    /// championship cell sink to the bottom.
+    private func rankedTeams(_ columns: [GridColumn]) -> [GridTeam] {
+        let key = championshipColumnKey(columns)
+        return viewModel.visibleTeams.sorted { a, b in
+            let pa = key.flatMap { a.cells[$0]?.mergedProbability } ?? -1
+            let pb = key.flatMap { b.cells[$0]?.mergedProbability } ?? -1
+            return pa > pb
         }
     }
 
@@ -359,21 +306,4 @@ struct LeagueGridView: View {
         .overlay(Capsule().stroke(isUp ? Color.green.opacity(0.2) : Color.red.opacity(0.2), lineWidth: 1))
     }
 
-    private func teamColorDot(_ hex: String?) -> some View {
-        Circle()
-            .fill(hex.flatMap { Color(hex: $0) } ?? Color.secondary)
-            .frame(width: 12, height: 12)
-    }
-
-    private func columnWidth(_ count: Int) -> CGFloat {
-        count <= 3 ? 65 : count <= 5 ? 55 : 48
-    }
-
-    private func formatProb(_ p: Double) -> String {
-        let pct = p * 100
-        if pct >= 99.5 { return ">99%" }
-        if pct < 0.5 && pct > 0 { return "<1%" }
-        if pct >= 10 { return String(format: "%.0f%%", pct) }
-        return String(format: "%.1f%%", pct)
-    }
 }
