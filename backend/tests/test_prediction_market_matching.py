@@ -44,6 +44,8 @@ from app.utils.prediction_market_matching import combat_fighter_abbrevs
 from app.tasks.prediction_market_matching import (
     _score_candidates,
     _resolve_combat_opponent,
+    _check_and_fix_inversion,
+    _peer_consensus_side,
 )
 
 
@@ -2837,3 +2839,118 @@ class TestRelinkCollapsedGameMarkets:
         import inspect
         from app.tasks.prediction_market_matching import _match_prediction_markets
         assert "_relink_collapsed_game_markets(" in inspect.getsource(_match_prediction_markets)
+
+
+# =============================================================================
+# #1112 — polymarket/kalshi side-inversion: peer-consensus guard
+# =============================================================================
+
+
+class TestPeerConsensusSide:
+    """Pure decision logic for the #1112 peer-consensus fallback."""
+
+    def test_two_home_extreme_peers_unanimous_home(self):
+        wps = {"stat_model": 0.999, "espn": 1.0, "polymarket": 0.0005}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") == "home"
+
+    def test_two_away_extreme_peers_unanimous_away(self):
+        wps = {"stat_model": 0.001, "mlb": 0.05, "polymarket": 0.9995}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") == "away"
+
+    def test_one_extreme_peer_is_not_enough(self):
+        wps = {"stat_model": 0.999, "polymarket": 0.0005}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") is None
+
+    def test_split_peers_cancel_to_none(self):
+        # stat_model says home, mlb says away — no consensus.
+        wps = {"stat_model": 0.99, "mlb": 0.05, "espn": 0.99}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") is None
+
+    def test_excludes_the_source_itself(self):
+        # A stale prior polymarket value must never vote for its own orientation.
+        wps = {"polymarket": 0.9995, "stat_model": 0.001, "mlb": 0.02}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") == "away"
+
+    def test_kalshi_never_votes(self):
+        # kalshi can share the same inversion bug → not a peer source.
+        wps = {"kalshi": 0.999, "espn": 0.999}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") is None
+
+    def test_mid_range_peers_do_not_vote(self):
+        wps = {"stat_model": 0.6, "mlb": 0.55, "espn": 0.62}
+        assert _peer_consensus_side(wps, exclude_source="polymarket") is None
+
+
+class TestCheckAndFixInversionPeerConsensus:
+    """#1112 seeded cases: an inverted poly market is flipped when the sportsbook
+    consensus is stale (~0.5 / missing) but >=2 independent live peers are extreme."""
+
+    @staticmethod
+    def _session(*, snap_prob, opening, wps):
+        from unittest.mock import AsyncMock, MagicMock
+
+        event = SimpleNamespace(
+            opening_home_probability=opening,
+            win_probability_sources=wps,
+        )
+        session = AsyncMock()
+        session.get.return_value = event
+
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = snap_prob
+        session.execute.return_value = result
+        return session
+
+    @pytest.mark.asyncio
+    async def test_flips_inverted_poly_when_peers_extreme_home_and_line_missing(self):
+        # No odds snapshot, no opening line: the exact mid-game blind spot where
+        # the sportsbook check cannot fire. Peers unanimously extreme-home; poly
+        # is the mirror (0.0005) -> flip to 0.9995.
+        session = self._session(
+            snap_prob=None, opening=None,
+            wps={"stat_model": 0.999, "espn": 1.0},
+        )
+        out = await _check_and_fix_inversion(session, 1, 0.0005, "polymarket")
+        assert out == pytest.approx(0.9995)
+
+    @pytest.mark.asyncio
+    async def test_flips_inverted_poly_when_line_is_stale_half(self):
+        # Sportsbook consensus stuck at a stale pregame ~0.5: raw_diff and
+        # flipped_diff are both ~0.5 so the primary check never fires. Peer
+        # consensus rescues it.
+        session = self._session(
+            snap_prob=0.5, opening=0.5,
+            wps={"stat_model": 0.001, "mlb": 0.03},
+        )
+        out = await _check_and_fix_inversion(session, 1, 0.9995, "polymarket")
+        assert out == pytest.approx(0.0005)
+
+    @pytest.mark.asyncio
+    async def test_does_not_flip_when_poly_agrees_with_peers(self):
+        # Correctly-oriented poly: agrees with the extreme peers -> untouched.
+        session = self._session(
+            snap_prob=None, opening=None,
+            wps={"stat_model": 0.999, "espn": 1.0},
+        )
+        out = await _check_and_fix_inversion(session, 1, 0.997, "polymarket")
+        assert out == pytest.approx(0.997)
+
+    @pytest.mark.asyncio
+    async def test_does_not_flip_pregame_when_poly_not_extreme(self):
+        # Pregame-ish: poly ~0.5 is not a mirror; peers not extreme -> untouched.
+        session = self._session(
+            snap_prob=None, opening=None,
+            wps={"stat_model": 0.6, "mlb": 0.55},
+        )
+        out = await _check_and_fix_inversion(session, 1, 0.48, "polymarket")
+        assert out == pytest.approx(0.48)
+
+    @pytest.mark.asyncio
+    async def test_no_flip_without_peer_quorum(self):
+        # Only one extreme peer -> not enough to overturn; poly left as-is.
+        session = self._session(
+            snap_prob=None, opening=None,
+            wps={"stat_model": 0.999},
+        )
+        out = await _check_and_fix_inversion(session, 1, 0.0005, "polymarket")
+        assert out == pytest.approx(0.0005)

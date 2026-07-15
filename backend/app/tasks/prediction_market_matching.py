@@ -221,6 +221,45 @@ async def _check_duplicate_kalshi_linkage(
 
 INVERSION_THRESHOLD = 0.30  # 30% — if flipping brings it 30%+ closer to consensus
 
+# Peer-consensus fallback (#1112): when the sportsbook consensus is ambiguous
+# (~0.5) or missing — the mid-game case where the only OddsSnapshot is a stale
+# pregame line — consult already-written INDEPENDENT live sources on the event.
+# These sources derive from the game itself, not the prediction-market linkage,
+# so they cannot share the yes_is_home orientation bug we are guarding against.
+# Kalshi/polymarket are excluded: they can carry the SAME inversion.
+_PEER_CONSENSUS_SOURCES = ("stat_model", "mlb", "espn", "betting")
+_PEER_EXTREME_HI = 0.80
+_PEER_EXTREME_LO = 0.20
+_PEER_MIN_VOTES = 2  # require >=2 extreme peers agreeing before we trust them
+
+
+def _peer_consensus_side(win_probability_sources: dict, exclude_source: str):
+    """Return 'home' / 'away' if >=2 independent live peers are extreme and
+    unanimous on a side, else None. Peers on opposite extremes cancel to None."""
+    if not win_probability_sources:
+        return None
+    home_votes = 0
+    away_votes = 0
+    for ps in _PEER_CONSENSUS_SOURCES:
+        if ps == exclude_source:
+            continue
+        pv = win_probability_sources.get(ps)
+        if pv is None:
+            continue
+        try:
+            pv = float(pv)
+        except (TypeError, ValueError):
+            continue
+        if pv >= _PEER_EXTREME_HI:
+            home_votes += 1
+        elif pv <= _PEER_EXTREME_LO:
+            away_votes += 1
+    if home_votes >= _PEER_MIN_VOTES and away_votes == 0:
+        return "home"
+    if away_votes >= _PEER_MIN_VOTES and home_votes == 0:
+        return "away"
+    return None
+
 
 async def _check_and_fix_inversion(
     session, event_id: int, home_prob: float, source: str,
@@ -232,6 +271,14 @@ async def _check_and_fix_inversion(
 
     This catches systematic inversions from yes_is_home mismatches,
     outcome-order bugs, and matchup parsing errors.
+
+    Two independent checks:
+      1. Sportsbook consensus (primary): flip if flipping lands far closer to
+         the latest/opening OddsSnapshot line.
+      2. Peer consensus (#1112 fallback): when the sportsbook line is ambiguous
+         (~0.5) or missing — the mid-game stale-pregame case where check (1)
+         cannot fire — flip when this source is the extreme MIRROR of >=2
+         unanimous, independent live peers (stat_model/mlb/espn/betting).
     """
     from app.models.models import Event, OddsSnapshot
 
@@ -260,25 +307,46 @@ async def _check_and_fix_inversion(
     if consensus is None and event.opening_home_probability is not None:
         consensus = float(event.opening_home_probability)
 
-    if consensus is None or consensus <= 0.01 or consensus >= 0.99:
-        return home_prob  # No reliable consensus to compare against
+    # Primary check: sportsbook consensus (only when it is reliable, i.e. extreme
+    # enough to disambiguate a flip).
+    if consensus is not None and 0.01 < consensus < 0.99:
+        raw_diff = abs(home_prob - consensus)
+        flipped = 1.0 - home_prob
+        flipped_diff = abs(flipped - consensus)
 
-    # Compare: is the raw or flipped version closer to consensus?
-    raw_diff = abs(home_prob - consensus)
-    flipped = 1.0 - home_prob
-    flipped_diff = abs(flipped - consensus)
+        # Only flip if: (a) flipping brings it significantly closer, and
+        # (b) the raw value is far enough from consensus to be suspicious
+        if raw_diff > INVERSION_THRESHOLD and flipped_diff < raw_diff * 0.5:
+            logger.warning(
+                "Inversion detected for event %d source=%s: "
+                "raw=%.3f consensus=%.3f flipped=%.3f (raw_diff=%.3f > %.2f, "
+                "flipped_diff=%.3f). Using flipped value.",
+                event_id, source, home_prob, consensus, flipped,
+                raw_diff, INVERSION_THRESHOLD, flipped_diff,
+            )
+            return flipped
 
-    # Only flip if: (a) flipping brings it significantly closer, and
-    # (b) the raw value is far enough from consensus to be suspicious
-    if raw_diff > INVERSION_THRESHOLD and flipped_diff < raw_diff * 0.5:
-        logger.warning(
-            "Inversion detected for event %d source=%s: "
-            "raw=%.3f consensus=%.3f flipped=%.3f (raw_diff=%.3f > %.2f, "
-            "flipped_diff=%.3f). Using flipped value.",
-            event_id, source, home_prob, consensus, flipped,
-            raw_diff, INVERSION_THRESHOLD, flipped_diff,
+    # Fallback check: peer consensus (#1112). Only meaningful when THIS source is
+    # itself extreme — a mirror is an extreme value on the wrong side. This never
+    # fires pregame (peers are not extreme until the game decides).
+    if home_prob <= _PEER_EXTREME_LO or home_prob >= _PEER_EXTREME_HI:
+        peer_side = _peer_consensus_side(
+            event.win_probability_sources or {}, exclude_source=source,
         )
-        return flipped
+        if peer_side == "home" and home_prob <= _PEER_EXTREME_LO:
+            logger.warning(
+                "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
+                "mirror of >=2 unanimous home-extreme peers. Using flipped value.",
+                event_id, source, home_prob,
+            )
+            return 1.0 - home_prob
+        if peer_side == "away" and home_prob >= _PEER_EXTREME_HI:
+            logger.warning(
+                "Peer-consensus inversion for event %d source=%s: raw=%.3f is the "
+                "mirror of >=2 unanimous away-extreme peers. Using flipped value.",
+                event_id, source, home_prob,
+            )
+            return 1.0 - home_prob
 
     return home_prob
 
