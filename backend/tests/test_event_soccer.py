@@ -118,28 +118,45 @@ def _mk_market(mid, source, outcomes):
     return SimpleNamespace(id=mid, source=source, mutually_exclusive=True, outcomes=outcomes)
 
 
+def _odds_field(ts):
+    # A coherent, honest winner field (sums ~1.0, real spread).
+    return [
+        _mk_outcome("Spain", 0.54, ts),
+        _mk_outcome("England", 0.22, ts),
+        _mk_outcome("Argentina", 0.18, ts),
+        _mk_outcome("France", 0.06, ts),
+    ]
+
+
+def _kalshi_field(ts):
+    return [
+        _mk_outcome("Spain", 0.30, ts),
+        _mk_outcome("France", 0.28, ts),
+        _mk_outcome("Brazil", 0.22, ts),
+        _mk_outcome("England", 0.20, ts),
+    ]
+
+
 class TestSelectWinnerField:
-    def test_freshest_real_field_wins(self):
+    def test_freshest_coherent_field_wins(self):
         now = datetime.now(timezone.utc)
         stale = now - timedelta(days=30)
-        # Kalshi: real countries, but stale.
-        kalshi = _mk_market(
-            297, "kalshi",
-            [_mk_outcome("Spain", 0.14, stale), _mk_outcome("France", 0.13, stale)],
-        )
-        # odds_api: real countries, fresh → should win.
-        odds = _mk_market(
-            10, "odds_api",
-            [_mk_outcome("Spain", 0.54, now), _mk_outcome("England", 0.22, now)],
-        )
-        # Polymarket: anonymized placeholders, fresh but not real → must be skipped.
+        kalshi = _mk_market(297, "kalshi", _kalshi_field(stale))  # coherent but stale
+        odds = _mk_market(10, "odds_api", _odds_field(now))       # coherent + fresh → wins
         poly = _mk_market(
             112892, "polymarket",
             [_mk_outcome("Team AM", 0.08, now), _mk_outcome("Team AI", 0.08, now)],
         )
         market, real = _select_winner_field([kalshi, poly, odds])
         assert market is not None and market.id == 10
-        assert {o.name for o in real} == {"Spain", "England"}
+        assert {o.name for o in real} == {"Spain", "England", "Argentina", "France"}
+
+    def test_coherent_stale_wins_when_only_option(self):
+        # Kalshi (coherent, stale) is a valid fallback if odds_api is absent.
+        stale = datetime.now(timezone.utc) - timedelta(days=30)
+        kalshi = _mk_market(297, "kalshi", _kalshi_field(stale))
+        market, _ = _select_winner_field([kalshi])
+        assert market is not None and market.id == 297
 
     def test_poly_only_placeholders_yields_nothing(self):
         now = datetime.now(timezone.utc)
@@ -160,38 +177,44 @@ class TestSelectWinnerField:
         # only Spain is priced → < 2 real priced → not selected
         assert market is None
 
-    def test_flat_real_field_rejected_over_honest_stale(self):
-        # The "Peru 47%" bug: Polymarket's WC field is mostly anonymized, with a few
-        # live-polled real names all pinned flat at 0.082 (fresher than odds_api). It
-        # must be REJECTED (no spread) so the honest-spread odds_api field wins even
-        # though it's slightly staler.
+    def test_incoherent_broken_field_rejected_over_coherent_stale(self):
+        # The real "Peru 47%" bug: Polymarket's field is mostly stale ZEROS with a
+        # live-polled handful — real prices sum to ~0.17 (mass missing), so a
+        # hair-ahead Peru would normalize to a nonsense favorite. It must be REJECTED
+        # (incoherent) even though it is fresher than the coherent odds_api field.
         now = datetime.now(timezone.utc)
         older = now - timedelta(hours=3)
-        poly_flat = _mk_market(
+        poly_broken = _mk_market(
             112892, "polymarket",
             [
                 _mk_outcome("Team AM", 0.082, now),  # placeholder → filtered
-                _mk_outcome("Peru", 0.082, now),      # real name, flat
-                _mk_outcome("Chile", 0.082, now),     # real name, flat
-            ],
+                _mk_outcome("Peru", 0.082, now),      # fresh, but nonsense favorite
+                _mk_outcome("Spain", 0.048, now),
+                _mk_outcome("England", 0.019, now),
+                _mk_outcome("Germany", 0.0, now),     # stale zeros — mass is missing
+                _mk_outcome("Italy", 0.0, now),
+                _mk_outcome("USA", 0.0, now),
+            ],  # real sum ≈ 0.149 → incoherent
         )
-        odds = _mk_market(
-            10, "odds_api",
-            [_mk_outcome("Spain", 0.537, older), _mk_outcome("France", 0.066, older)],
-        )
-        market, real = _select_winner_field([poly_flat, odds])
+        odds = _mk_market(10, "odds_api", _odds_field(older))  # coherent
+        market, real = _select_winner_field([poly_broken, odds])
         assert market is not None and market.id == 10
-        assert {o.name for o in real} == {"Spain", "France"}
+        assert "Peru" not in {o.name for o in real}
 
-    def test_all_flat_yields_nothing(self):
-        # If the ONLY field is flat/degenerate, show no winner field (duels-only) —
+    def test_all_incoherent_yields_nothing(self):
+        # If the ONLY field is broken/incoherent, show no winner field (duels-only) —
         # never a fabricated favorite.
         now = datetime.now(timezone.utc)
-        poly_flat = _mk_market(
+        poly_broken = _mk_market(
             112892, "polymarket",
-            [_mk_outcome("Peru", 0.082, now), _mk_outcome("Chile", 0.082, now)],
+            [
+                _mk_outcome("Peru", 0.082, now),
+                _mk_outcome("Spain", 0.048, now),
+                _mk_outcome("Germany", 0.0, now),
+                _mk_outcome("Italy", 0.0, now),
+            ],  # sum ≈ 0.13
         )
-        market, real = _select_winner_field([poly_flat])
+        market, real = _select_winner_field([poly_broken])
         assert market is None and real == []
 
 

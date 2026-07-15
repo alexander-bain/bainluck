@@ -234,6 +234,15 @@ def _is_real_winner_outcome(name: str | None) -> bool:
 _MIN_FIELD_SPREAD_RATIO = 0.10
 
 
+# A genuine mutually-exclusive winner field's real prices sum to ~100% (odds_api WC
+# sums to ~1.0; Kalshi's to ~1.0 ± overround). The broken Polymarket field is mostly
+# stale zeros with a live-polled handful — its real prices sum to only ~0.17, so a
+# hair-ahead "Peru" (0.082) normalizes into a nonsense 47% favorite. A field whose
+# mass is largely MISSING is a stale/broken snapshot, not a real winner field.
+_FIELD_SUM_MIN = 0.70
+_FIELD_SUM_MAX = 1.60
+
+
 def _field_has_real_spread(real_outcomes: list) -> bool:
     """True when the real priced field has meaningful dispersion (a real favorite),
     False for a flat placeholder field (#199). Requires ≥2 priced outcomes."""
@@ -250,13 +259,26 @@ def _field_has_real_spread(real_outcomes: list) -> bool:
     return (mx - mn) / mx >= _MIN_FIELD_SPREAD_RATIO
 
 
+def _field_is_coherent(real_outcomes: list) -> bool:
+    """True when the real prices sum near 100% — a complete mutually-exclusive winner
+    field. Rejects a broken snapshot whose probability mass is mostly missing (stale
+    zeros), the real cause of the "Peru 47%" bug."""
+    total = sum(
+        float(o.current_probability)
+        for o in real_outcomes
+        if o.current_probability is not None
+    )
+    return _FIELD_SUM_MIN <= total <= _FIELD_SUM_MAX
+
+
 def _select_winner_field(markets: list):
     """Pick the best World Cup winner-field market: the FRESHEST market whose real
-    (non-placeholder) priced field has genuine spread. The spread gate rejects the
-    Polymarket flat/anonymized field (the "Peru 47%" bug) so a live-updated odds_api
-    field wins over a stale Kalshi one and a degenerate Poly one never wins. If NO
-    honest field exists, returns (None, []) — the concept renders duels-only rather
-    than a fabricated favorite. Returns (market, real_outcomes)."""
+    (non-placeholder) priced field has genuine spread AND sums to a coherent ~100%.
+    The spread + coherence gates reject the broken Polymarket field (the "Peru 47%"
+    bug — mostly stale zeros) so a live-updated odds_api field wins over a stale
+    Kalshi one and a broken Poly one never wins. If NO honest field exists, returns
+    (None, []) — the concept renders duels-only rather than a fabricated favorite.
+    Returns (market, real_outcomes)."""
     best = None
     best_key = None
     best_real: list = []
@@ -266,7 +288,11 @@ def _select_winner_field(markets: list):
             for o in (m.outcomes or [])
             if _is_real_winner_outcome(o.name) and o.current_probability is not None
         ]
-        if len(real) < 2 or not _field_has_real_spread(real):
+        if (
+            len(real) < 2
+            or not _field_has_real_spread(real)
+            or not _field_is_coherent(real)
+        ):
             continue
         freshness = max(
             (
