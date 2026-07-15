@@ -1,6 +1,11 @@
 import SwiftUI
 
 /// Compact grouped display for playoff progression markets — matches web ProgressionLadder.
+///
+/// This is the compact **feed** variant. The full per-team / per-prop ladder is now
+/// `LadderCardView` (the adopted "2b" design). Both share the `LadderRung` primitive —
+/// `LadderRung(stage:)` adapts this view's `[ProgressionStage]` onto it. Migrating the
+/// feed's grouped section to `LadderCardView` is the league-screen assembly step (L2-123).
 struct ProgressionLadderView: View {
     let entityName: String
     let stages: [ProgressionStage]
