@@ -188,7 +188,10 @@ export default function FixableInterestPanel({
         <div>
           <h2 className="text-sm font-semibold text-text-primary">Fixable Interest</h2>
           <p className="text-xs text-text-muted mt-1">
-            Clusters from “would be interesting if...” labels, grouped by fix type and story context.
+            Cards a reviewer flagged as &ldquo;would be interesting if&hellip;&rdquo; &mdash; grouped by
+            what would fix them (better data, headline, or ranking). Each cluster is a concrete,
+            actionable improvement: dismiss it, file it as a GitHub issue, or mark it as an
+            experiment. Empty = nothing flagged as fixable right now.
           </p>
         </div>
         <StatusPill tone={total ? "ok" : "muted"}>{`${total} open clusters`}</StatusPill>

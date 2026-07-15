@@ -1380,6 +1380,9 @@ export default function AdminDashboard() {
             status={(data.quota.budget.projected_surplus ?? 1) < 0 ? "warning" : "good"}
             summary={`${data.quota.current.pct_used}% used · ${Math.round(data.quota.budget.projected_surplus ?? 0).toLocaleString()} projected surplus`}
             ideal="Positive surplus projected through end of month."
+            action={(data.quota.budget.projected_surplus ?? 1) < 0
+              ? "Projected to overspend the 5M/mo Odds API quota. Do this: cut Tier-3 polling frequency in SPORT_POLLING_TIERS or tighten the circuit-breaker thresholds (LIVE_ONLY/FULL_STOP in tasks/redis_state.py), and check the burn chart for the task driving the spend. Quota bills per events×market_types×regions (gotcha #11)."
+              : undefined}
           >
           {/* Quota + burn charts */}
           <div className="grid md:grid-cols-2 gap-4">
@@ -1394,6 +1397,9 @@ export default function AdminDashboard() {
             status={data.database?.days_until_full !== null && (data.database?.days_until_full ?? 999) < 30 ? "warning" : "good"}
             summary={`DB: ${data.database?.db_size_mb ?? '?'}MB · ${data.database?.plan?.connections_limit ?? '?'} max connections`}
             ideal="Database growing sustainably, all markets linked."
+            action={data.database?.days_until_full !== null && (data.database?.days_until_full ?? 999) < 30
+              ? `Database is ~${data.database?.days_until_full} days from full at the current write rate. Do this: prune odds_snapshots / win_prob_snapshots retention or bump the Heroku Postgres plan. The Snapshots/hr and WinProb/hr tiles below show what's driving growth.`
+              : undefined}
           >
           {/* Database + coverage side by side */}
           <div className="grid md:grid-cols-2 gap-4">
@@ -1428,9 +1434,12 @@ export default function AdminDashboard() {
 
           <MetricSection
             question="Do we have data from all sources?"
-            status={data.source_coverage.some((s: Record<string, number>) => s.odds_api === 0 && s.total > 0) ? "warning" : "good"}
+            status={data.source_coverage.some((s: SourceCoverage) => s.odds_api === 0 && s.total > 0) ? "warning" : "good"}
             summary={`${data.source_coverage.length} sports tracked`}
             ideal="All expected sources reporting for each sport."
+            action={data.source_coverage.some((s: SourceCoverage) => s.odds_api === 0 && s.total > 0)
+              ? `Zero Odds API coverage for: ${data.source_coverage.filter((s: SourceCoverage) => s.odds_api === 0 && s.total > 0).map((s: SourceCoverage) => s.sport).join(", ") || "see the table below"}. Do this: check that sport's polling tier and the quota circuit breaker — a genuinely dark Odds API source means ingestion is dropping games, not a matching bug.`
+              : undefined}
           >
           <SourceCoverageTable data={data.source_coverage} />
           <FuturesCoverageTable data={data.futures_coverage} />
@@ -1456,7 +1465,11 @@ export default function AdminDashboard() {
             status={data.worker.overall_health === "critical" ? "critical" : data.worker.overall_health !== "healthy" ? "warning" : "good"}
             summary={`${data.worker.critical_tasks.length} critical · ${data.worker.degraded_tasks.length} degraded`}
             ideal="All essential tasks running successfully every cycle."
-            action={data.worker.critical_tasks.length > 0 ? `Critical: ${data.worker.critical_tasks.join(", ")}` : undefined}
+            action={data.worker.critical_tasks.length > 0
+              ? `Critical (no recent success): ${data.worker.critical_tasks.join(", ")}. Do this: check the Celery dashboard for the last error + a SIGKILL/soft-timeout (global task_time_limit=300, gotcha), and purge a backed-up queue if depth is high. The task table below shows last-run + success counts.`
+              : data.worker.degraded_tasks.length > 0
+                ? `Degraded (intermittent failures): ${data.worker.degraded_tasks.join(", ")}. Do this: check the task table below for each one's last error and success rate; a task run < once/24h is usually beat-schedule starvation, not a crash.`
+                : undefined}
           >
           <TasksTable tasks={data.worker.tasks} />
 

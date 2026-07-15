@@ -13,7 +13,10 @@ export default function DiagnosticTrendsPanel({ runs }: { runs: DiscoverDiagnost
         <div>
           <h2 className="text-sm font-semibold text-text-primary">Diagnostic Trend</h2>
           <p className="text-xs text-text-muted mt-1">
-            Recent persisted snapshots, grouped by source and triage bucket.
+            How many interesting markets our feed <em>missed</em> vs. what curator emails and
+            external sources surfaced, tracked over recent snapshots. A miss = something worth
+            showing that our ranking didn&rsquo;t. Fewer misses over time = the feed is catching
+            up to the best public picks.
           </p>
         </div>
         {latest && (

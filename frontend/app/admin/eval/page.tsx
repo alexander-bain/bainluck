@@ -21,6 +21,26 @@ interface GridSource {
   probability: number;
   market_name?: string;
   last_updated?: string;
+  // L2-128 Item 2e: market_id lets us link the raw market name to its page;
+  // the season is parsed from the market name so a cross-season pairing (the
+  // Spurs 47pp exhibit) is visible at a glance.
+  market_id?: number | null;
+  outcome_id?: number;
+  volume_24h?: number | null;
+}
+
+// L2-128 Item 2e: derive a season label from a market name. Matches hyphenated
+// seasons ("2024-25") first, then a standalone 4-digit year ("2026"). Returns
+// "current" when no year is present (most current-season markets omit it), so
+// both source cards always carry a comparable label and a cross-season mismatch
+// stands out.
+function seasonLabelFromName(name?: string): string {
+  if (!name) return "current";
+  const hyphen = name.match(/\b(20\d{2})[–\-/](\d{2})\b/);
+  if (hyphen) return `${hyphen[1]}-${hyphen[2]}`;
+  const year = name.match(/\b(20\d{2})\b/);
+  if (year) return year[1];
+  return "current";
 }
 
 interface GridCell {
@@ -319,6 +339,11 @@ function GridMatchCard({
   const highSource = cell.sources.reduce((a, b) => (a.probability > b.probability ? a : b));
   const lowSource = cell.sources.reduce((a, b) => (a.probability < b.probability ? a : b));
   const columnLabel = column.replace(/_/g, " ");
+  // L2-128 Item 2e: a gap between markets from different seasons isn't a real
+  // disagreement (the Spurs 47pp exhibit — #204 Item 3). Flag it so the reviewer
+  // doesn't mark a cross-season pairing as a bad merge.
+  const seasonLabels = Array.from(new Set(cell.sources.map((s) => seasonLabelFromName(s.market_name))));
+  const crossSeason = seasonLabels.length > 1;
 
   return (
     <div
@@ -403,15 +428,34 @@ className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-
               borderLeft: `3px solid ${s === highSource && spread > 0.15 ? "#3b82f6" : s === lowSource && spread > 0.15 ? "#ef4444" : "#3b82f6"}`,
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary, #111827)", textTransform: "capitalize" }}>
-                {s.source}
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2, alignItems: "center", gap: 6 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary, #111827)", textTransform: "capitalize" }}>
+                  {s.source}
+                </span>
+                {/* L2-128 Item 2e: season label on BOTH sides — makes a cross-season pairing obvious */}
+                {(() => {
+                  const season = seasonLabelFromName(s.market_name);
+                  return (
+                    <span style={{
+                      padding: "1px 6px",
+                      borderRadius: 5,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: 0.3,
+                      background: season === "current" ? "var(--surface-elevated, #F0F0F2)" : "#78350f",
+                      color: season === "current" ? "var(--text-muted, #9CA3AF)" : "#fcd34d",
+                    }}>
+                      {season === "current" ? "CURRENT" : season}
+                    </span>
+                  );
+                })()}
               </span>
               <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary, #111827)" }}>
                 {(s.probability * 100).toFixed(1)}%
               </span>
             </div>
-            {/* Raw market name + freshness */}
+            {/* Raw market name (links to its market page) + freshness */}
             {s.market_name && (
               <div style={{
                 fontSize: 11,
@@ -422,7 +466,18 @@ className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-
                 justifyContent: "space-between",
                 gap: 6,
               }}>
-                <span>&ldquo;{s.market_name}&rdquo;</span>
+                {s.market_id ? (
+                  <a
+                    href={`/futures/${s.market_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "var(--accent-brand, #10B981)", textDecoration: "underline" }}
+                  >
+                    &ldquo;{s.market_name}&rdquo;
+                  </a>
+                ) : (
+                  <span>&ldquo;{s.market_name}&rdquo;</span>
+                )}
                 {s.last_updated && (
                   <span style={{
                     flexShrink: 0,
@@ -587,6 +642,13 @@ className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-
             <strong style={{ color: "var(--accent-brand, #10B981)" }}>{columnLabel}</strong>.
             {" "}Look right?
           </>
+        )}
+        {crossSeason && spread > 0.15 && (
+          <div style={{ marginTop: 8, fontSize: 13, color: "#fcd34d" }}>
+            ⚠️ <strong>Cross-season pairing</strong> ({seasonLabels.join(" vs ")}) — a gap between
+            different seasons isn&rsquo;t a real disagreement. If these are different seasons, this is
+            a linkage/season-metadata fix, not a bad merge.
+          </div>
         )}
       </div>
 
@@ -1319,6 +1381,8 @@ function FuturesInterestingTab() {
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [page, setPage] = useState(1);
+  // L2-128 Item 2b: per-verdict result toast so the reviewer sees each decision land.
+  const [lastAction, setLastAction] = useState<{ type: "ok" | "bad" | "neutral"; msg: string } | null>(null);
 
   const loadMarkets = useCallback(
     async (pageNum: number) => {
@@ -1383,6 +1447,16 @@ function FuturesInterestingTab() {
     if (!market) return;
     const reason = `${market.source}: "${market.name}" (${market.llm_sport_category || "uncategorized"})${notes ? ` — ${notes}` : ""}`;
     await saveEvalDecision(`futures:${market.id}`, decision, "futures", reason);
+    if (decision === "interesting") {
+      setLastAction({ type: "ok", msg: "Labeled 🔥 Feature — recorded as a positive human label." });
+    } else if (decision === "never") {
+      setLastAction({ type: "bad", msg: "Labeled Never — recorded as a negative human label." });
+    } else {
+      setLastAction({ type: "neutral", msg: "Skipped — recorded as seen, no opinion." });
+    }
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => setLastAction(null), 2500);
+    }
     setCurrentIndex((i) => i + 1);
   };
 
@@ -1391,6 +1465,41 @@ function FuturesInterestingTab() {
 
   return (
     <div>
+      {/* L2-128 Item 2b: one-line exposition — what each verdict does. These are
+          recorded as human labels (the ground truth the Label Eval + scorer
+          calibration read), not a live per-market on/off switch. */}
+      <div style={{
+        fontSize: 13,
+        lineHeight: 1.5,
+        color: "var(--text-secondary, #6B7280)",
+        background: "var(--surface-elevated, #F0F0F2)",
+        border: "1px solid var(--surface-border, #E5E7EB)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        marginBottom: 12,
+      }}>
+        <strong style={{ color: "var(--accent-brand, #10B981)" }}>🔥 Feature</strong> = good pick (positive label) ·{" "}
+        <strong style={{ color: "var(--text-secondary, #6B7280)" }}>😐 Skip</strong> = seen, no opinion ·{" "}
+        <strong style={{ color: "var(--accent-danger, #EF4444)" }}>Never</strong> = bad pick (negative label).{" "}
+        These labels feed the Discover scorer&rsquo;s human-label eval &mdash; they train ranking over time, not this one card live.
+      </div>
+
+      {/* Per-verdict result toast */}
+      {lastAction && (
+        <div style={{
+          textAlign: "center",
+          padding: "8px 16px",
+          marginBottom: 8,
+          borderRadius: 8,
+          fontSize: 13,
+          fontWeight: 600,
+          background: lastAction.type === "ok" ? "#14532d" : lastAction.type === "bad" ? "#7f1d1d" : "#78350f",
+          color: lastAction.type === "ok" ? "#4ade80" : lastAction.type === "bad" ? "#fca5a5" : "#fcd34d",
+        }}>
+          {lastAction.msg}
+        </div>
+      )}
+
       {loading && (
         <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted, #9CA3AF)" }}>
           Loading non-sports futures...

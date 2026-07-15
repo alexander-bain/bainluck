@@ -42,6 +42,11 @@ export default function LabelEvalTrendPanel({
   triggering: boolean;
 }) {
   const latest = runs[0];
+  // L2-128 Item 2d: distinguish "no human labels yet" (starvation — ungraded, not
+  // failing) from a genuine regression. An empty history or a latest run with zero
+  // rows means nobody has graded picks in Review, so there's nothing to score — that
+  // should read as a to-do, not a red alarm.
+  const noLabels = !latest || (latest.row_count ?? 0) === 0;
 
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
@@ -49,7 +54,9 @@ export default function LabelEvalTrendPanel({
         <div>
           <h2 className="text-sm font-semibold text-text-primary">Label Eval History</h2>
           <p className="text-xs text-text-muted mt-1">
-            Persisted Discover human-label eval snapshots and run-over-run movement.
+            Grades recent Discover picks against human labels you record in the Review tab
+            (tapworthy? boring? duplicate?), and tracks whether each snapshot got better or
+            worse than the last. Empty = nobody has graded a batch yet, not a failing feed.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -162,7 +169,19 @@ export default function LabelEvalTrendPanel({
           </div>
         </>
       ) : (
-        <div className="text-sm text-text-muted">No label eval snapshots yet.</div>
+        <div className="rounded-lg border border-surface-border bg-surface-elevated/50 p-3 text-sm text-text-secondary">
+          <span className="font-medium text-text-primary">Ungraded, not failing.</span>{" "}
+          No human-label eval snapshots exist yet because no picks have been graded. Grade a
+          batch in the <span className="font-medium">Review</span> tab, then hit
+          &ldquo;Queue eval&rdquo; above — a scored run will appear here.
+        </div>
+      )}
+      {latest && noLabels && (
+        <div className="rounded-lg border border-surface-border bg-surface-elevated/50 p-3 text-xs text-text-secondary">
+          <span className="font-medium text-text-primary">Latest run scored 0 rows</span> —
+          that&rsquo;s ungraded, not failing. Record labels in the{" "}
+          <span className="font-medium">Review</span> tab so the next snapshot has something to grade.
+        </div>
       )}
     </div>
   );

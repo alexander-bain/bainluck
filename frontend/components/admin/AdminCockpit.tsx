@@ -146,6 +146,37 @@ function ContextBadge({ c }: { c: TileContext }) {
   );
 }
 
+// L2-128 Item 2c — THE ACTION RULE: no non-green tile is allowed to be a dead
+// end. Every amber/red/unknown tile gets a sentence — what it means + what to do
+// + the tracked issue if one exists. An untracked RED sub-signal is the true
+// four-alarm state and says so; "needs attention" with no pointer is banned.
+function tileAction(t: HealthTile): { text: string; tone: "danger" | "warn" | "muted" } | null {
+  if (t.status === "green") return null;
+  const ctx = t.context ?? [];
+  const tracked = ctx.filter((c) => c.kind === "tracked");
+  const untracked = ctx.filter((c) => c.kind === "untracked");
+  if (t.status === "unknown") {
+    return { text: `No data yet — open ${t.label} to confirm the source is reporting.`, tone: "muted" };
+  }
+  if (untracked.length > 0) {
+    return {
+      text: `Untracked: ${untracked.map((c) => `${c.label} ${c.value}`).join(", ")} — investigate and file an issue. This isn't explained yet.`,
+      tone: "danger",
+    };
+  }
+  if (tracked.length > 0) {
+    const refs = tracked.map((c) => c.ref).filter(Boolean).join(", ");
+    return {
+      text: `Being worked${refs ? ` — see ${refs} above` : " — see the tracked issue above"}.`,
+      tone: "warn",
+    };
+  }
+  return {
+    text: `${t.detail ? `${t.detail} — ` : ""}Open ${t.label} to investigate.`,
+    tone: t.status === "red" ? "danger" : "warn",
+  };
+}
+
 export default function AdminCockpit() {
   const { secret } = useAdminAuth();
   const { data, error, isLoading, mutate } = useSWR<CockpitData>(
@@ -219,6 +250,18 @@ export default function AdminCockpit() {
                 ))}
               </div>
             )}
+            {/* THE ACTION RULE (L2-128 Item 2c): non-green tiles always carry an action sentence. */}
+            {(() => {
+              const a = tileAction(t);
+              if (!a) return null;
+              const cls =
+                a.tone === "danger"
+                  ? "text-accent-danger"
+                  : a.tone === "warn"
+                    ? "text-yellow-600"
+                    : "text-text-muted";
+              return <div className={"mt-2 text-micro leading-relaxed " + cls}>{a.text}</div>;
+            })()}
           </div>
         ))}
       </div>

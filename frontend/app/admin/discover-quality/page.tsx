@@ -124,6 +124,14 @@ export default function DiscoverQualityPage() {
   const [triggeringLabelEval, setTriggeringLabelEval] = useState(false);
   const [updatingFixableClusterId, setUpdatingFixableClusterId] = useState<string | null>(null);
   const [triggeringCuratorImport, setTriggeringCuratorImport] = useState(false);
+  // L2-128 Item 2d: per-action toast so no trigger button is ever silent.
+  const [toast, setToast] = useState<{ tone: "ok" | "error"; message: string; taskId?: string } | null>(null);
+  const showToast = (tone: "ok" | "error", message: string, taskId?: string) => {
+    setToast({ tone, message, taskId });
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => setToast(null), tone === "ok" ? 8000 : 12000);
+    }
+  };
   const [engagementDays, setEngagementDays] = useState(7);
   const [selectedDiagnosticRunId, setSelectedDiagnosticRunId] = useState("");
   const [diagnosticSourceGroup, setDiagnosticSourceGroup] = useState("all");
@@ -407,7 +415,11 @@ export default function DiscoverQualityPage() {
         { method: "POST" }
       );
       if (!res.ok) throw new Error(`Trigger failed: ${res.status}`);
+      const body = await res.json().catch(() => ({}));
+      showToast("ok", "Queued 100 markets for hook enrichment (LLM headlines). Counts refresh over the next few minutes.", body?.task_id);
       await mutate(hookKey);
+    } catch (err) {
+      showToast("error", `Hook enrichment failed to queue: ${err instanceof Error ? err.message : "unknown error"}`);
     } finally {
       setTriggering(false);
     }
@@ -417,11 +429,14 @@ export default function DiscoverQualityPage() {
     if (!submittedSecret) return;
     setTriggeringDiagnostics(true);
     try {
-      await triggerDiscoverDiagnosticSnapshot(submittedSecret);
+      const res = await triggerDiscoverDiagnosticSnapshot(submittedSecret);
+      showToast("ok", "Queued a ground-truth diagnostic snapshot. A new run appears here in ~1-2 minutes.", res?.task_id);
       setTimeout(() => {
         mutate(diagnosticRunsKey);
         mutate(diagnosticTrendsKey);
       }, 5000);
+    } catch (err) {
+      showToast("error", `Diagnostic snapshot failed to queue: ${err instanceof Error ? err.message : "unknown error"}`);
     } finally {
       setTriggeringDiagnostics(false);
     }
@@ -431,10 +446,13 @@ export default function DiscoverQualityPage() {
     if (!submittedSecret) return;
     setTriggeringLabelEval(true);
     try {
-      await triggerDiscoverLabelEvalSnapshot(submittedSecret);
+      const res = await triggerDiscoverLabelEvalSnapshot(submittedSecret);
+      showToast("ok", "Queued a human-label eval snapshot. It grades recent Discover picks against human labels; a new run appears in ~1-2 minutes.", res?.task_id);
       setTimeout(() => {
         mutate(labelEvalTrendsKey);
       }, 5000);
+    } catch (err) {
+      showToast("error", `Label eval snapshot failed to queue: ${err instanceof Error ? err.message : "unknown error"}`);
     } finally {
       setTriggeringLabelEval(false);
     }
@@ -444,12 +462,15 @@ export default function DiscoverQualityPage() {
     if (!submittedSecret) return;
     setTriggeringCuratorImport(true);
     try {
-      await triggerExternalCuratorGroundTruthImport(submittedSecret);
+      const res = await triggerExternalCuratorGroundTruthImport(submittedSecret);
+      showToast("ok", "Queued an external-curator ground-truth import. The Curator Store counts refresh once it lands.", res?.task_id);
       setTimeout(() => {
         mutate(externalCuratorStatusKey);
         mutate(groundTruthHealthKey);
         mutate(debugKey);
       }, 5000);
+    } catch (err) {
+      showToast("error", `Curator import failed to queue: ${err instanceof Error ? err.message : "unknown error"}`);
     } finally {
       setTriggeringCuratorImport(false);
     }
@@ -559,6 +580,43 @@ export default function DiscoverQualityPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 pb-10">
+      {/* L2-128 Item 2d: action toast — every trigger button reports queued/failed. */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border px-4 py-3 shadow-lg text-sm ${
+            toast.tone === "ok"
+              ? "bg-surface-card border-accent-live/40 text-text-primary"
+              : "bg-surface-card border-accent-danger/50 text-accent-danger"
+          }`}
+          role="status"
+        >
+          <div className="flex items-start gap-2">
+            <span className={`mt-0.5 shrink-0 ${toast.tone === "ok" ? "text-accent-live" : "text-accent-danger"}`}>
+              {toast.tone === "ok" ? "✓" : "✕"}
+            </span>
+            <div className="min-w-0">
+              <div>{toast.message}</div>
+              {toast.taskId && (
+                <div className="mt-1 text-xs text-text-muted">
+                  Task <code className="bg-surface-elevated px-1 rounded">{toast.taskId}</code>{" "}
+                  &mdash;{" "}
+                  <a href="/admin" className="text-accent-brand hover:underline">
+                    watch the worker/task table on the Ops dashboard
+                  </a>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="ml-auto shrink-0 text-text-muted hover:text-text-primary"
+              aria-label="Dismiss"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-bold text-text-primary">Discover Quality</h1>
@@ -830,11 +888,13 @@ export default function DiscoverQualityPage() {
             <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-text-primary">Ground Truth Health</h2>
+                  <h2 className="text-sm font-semibold text-text-primary">Persisted Ground Truth</h2>
                   <div className="text-xs text-text-muted mt-1">
+                    Freshness of the curator/email &ldquo;correct answers&rdquo; we grade the feed
+                    against &mdash; how many rows loaded, how recent, and whether any source is stale.
                     {groundTruthHealth
-                      ? `${groundTruthHealth.issue_count} issue${groundTruthHealth.issue_count === 1 ? "" : "s"}`
-                      : "Loading source health..."}
+                      ? ` ${groundTruthHealth.issue_count} issue${groundTruthHealth.issue_count === 1 ? "" : "s"}.`
+                      : " Loading source health..."}
                   </div>
                 </div>
                 {groundTruthHealth && (

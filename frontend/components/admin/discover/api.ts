@@ -94,13 +94,23 @@ export async function fetchDiscoverDiagnosticRows(
   );
 }
 
-export async function triggerDiscoverDiagnosticSnapshot(secret: string): Promise<void> {
+// L2-128 Item 2d: trigger endpoints all return {queued, task_id}. Returning it
+// (instead of void) lets the page show a per-verdict toast with the task id so a
+// queued job is never a silent button.
+export interface TriggerResult {
+  queued?: boolean;
+  task_id?: string;
+  [key: string]: unknown;
+}
+
+export async function triggerDiscoverDiagnosticSnapshot(secret: string): Promise<TriggerResult> {
   const res = await adminFetch(
     "/api/admin/discover-ground-truth-diagnostics/snapshot?limit=50",
     secret,
     { method: "POST" }
   );
   if (!res.ok) throw new Error(`Diagnostic snapshot trigger failed: ${res.status}`);
+  return res.json().catch(() => ({}));
 }
 
 export async function fetchDiscoverLabelEvalRuns(secret: string): Promise<DiscoverLabelEvalRunsResponse> {
@@ -117,13 +127,14 @@ export async function fetchDiscoverLabelEvalTrends(secret: string): Promise<Disc
   );
 }
 
-export async function triggerDiscoverLabelEvalSnapshot(secret: string): Promise<void> {
+export async function triggerDiscoverLabelEvalSnapshot(secret: string): Promise<TriggerResult> {
   const res = await adminFetch(
     "/api/admin/discover-label-eval/snapshot?days=30&top_k=20&limit=5000",
     secret,
     { method: "POST" }
   );
   if (!res.ok) throw new Error(`Label eval snapshot trigger failed: ${res.status}`);
+  return res.json().catch(() => ({}));
 }
 
 export async function fetchDiscoverFixableInterestClusters(
@@ -173,13 +184,14 @@ export async function fetchGroundTruthHealth(secret: string): Promise<GroundTrut
   );
 }
 
-export async function triggerExternalCuratorGroundTruthImport(secret: string): Promise<void> {
+export async function triggerExternalCuratorGroundTruthImport(secret: string): Promise<TriggerResult> {
   const res = await adminFetch(
     "/api/admin/discover-external-curator-ground-truth/import",
     secret,
     { method: "POST" }
   );
   if (!res.ok) throw new Error(`Curator ground truth import failed: ${res.status}`);
+  return res.json().catch(() => ({}));
 }
 
 export async function updateDiscoverRuntimeConfig(
