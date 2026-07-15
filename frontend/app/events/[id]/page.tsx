@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
-import type { GameMarketsResponse } from "@/lib/api";
 import type { TeamProgressionResponse } from "@/lib/types";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
@@ -1048,17 +1047,17 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* THE SCRIPT → THE DIVERGENCE → WHAT HIT (L2-118 Phase 1, duel = first
-          consumer). The pregame-mark + graded fields ship with #195 as
-          gameMarkets.props_script; Phase 2 is a payload swap, not a rebuild.
-          Nothing renders until that field is present. */}
+          consumer). Now live on the #195 payload: gameMarkets.props_script is a
+          first-class GameMarketsResponse field carrying the PropMark contract.
+          The section self-gates on an empty array; PropsSection returns null when
+          items is empty. Forward-only marks render honest "pending" chips. */}
       {(() => {
-        const propsScript = (gameMarkets as (GameMarketsResponse & { props_script?: PropMark[] }) | undefined)
-          ?.props_script;
+        const propsScript = gameMarkets?.props_script;
         if (!Array.isArray(propsScript) || propsScript.length === 0) return null;
         return (
           <PropsSection
             eventStatus={event.status}
-            items={propsScript.map((p, i) => ({
+            items={propsScript.map((p, i): PropMark => ({
               key: p.key ?? i,
               label: p.label,
               pregame_mark: p.pregame_mark ?? null,

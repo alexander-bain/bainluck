@@ -85,6 +85,34 @@ function pct(p: number | null | undefined): string {
   return p == null ? "—" : `${Math.round(p * 100)}%`;
 }
 
+/**
+ * Absolute movement of a prop from its pregame mark to the current number, or
+ * null when either endpoint is missing (a forward-only mark that can't yet
+ * diverge). Used to rank THE DIVERGENCE biggest-mover-first.
+ */
+function absMovement(item: PropMark): number | null {
+  if (item.pregame_mark == null || item.current == null) return null;
+  return Math.abs(item.current - item.pregame_mark);
+}
+
+/**
+ * THE DIVERGENCE ranking: biggest mover (|current − pregame_mark|) first. Rows
+ * with no computable movement (missing mark or current) sink to the bottom,
+ * keeping their original relative order (stable). Non-mutating — returns a copy.
+ */
+function rankByDivergence(items: PropMark[]): PropMark[] {
+  return items
+    .map((item, i) => ({ item, i, mv: absMovement(item) }))
+    .sort((a, b) => {
+      if (a.mv == null && b.mv == null) return a.i - b.i;
+      if (a.mv == null) return 1;
+      if (b.mv == null) return -1;
+      if (b.mv !== a.mv) return b.mv - a.mv;
+      return a.i - b.i;
+    })
+    .map((x) => x.item);
+}
+
 function signedDelta(from: number | null | undefined, to: number | null | undefined): string | null {
   if (from == null || to == null) return null;
   const d = Math.round((to - from) * 100);
@@ -103,6 +131,10 @@ export default function PropsSection({
   const activeState = state ?? deriveState(eventStatus);
   const meta = STATE_META[activeState];
 
+  // THE DIVERGENCE ranks biggest-mover-first; SCRIPT and WHAT HIT keep the
+  // payload order (the endpoint already orders by prominence).
+  const rows = activeState === "divergence" ? rankByDivergence(items) : items;
+
   return (
     <section id="props-script" className="bg-surface-card rounded-card shadow-card p-6">
       <div className="flex items-baseline gap-2.5 mb-1">
@@ -114,7 +146,7 @@ export default function PropsSection({
       <p className="text-xs text-text-muted mb-4">{meta.blurb}</p>
 
       <div className="space-y-2">
-        {items.map((item) => (
+        {rows.map((item) => (
           <PropRow key={item.key} item={item} state={activeState} />
         ))}
       </div>

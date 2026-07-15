@@ -726,6 +726,10 @@ export interface GameMarketsResponse {
     hit?: boolean | null;
     is_winner?: boolean | null;
     resolution_source?: string | null;
+    // #195: THE SCRIPT baseline (pregame mark as over-probability) + the opening
+    // line it falls back to before the commence-time mark is pinned.
+    pregame_mark?: number | null;
+    opening_over_probability?: number | null;
   }[];
   team_totals: {
     threshold: number;
@@ -775,6 +779,17 @@ export interface GameMarketsResponse {
     fraction_elapsed: number;
     time_remaining_display: string;
   } | null;
+  // #195: THE SCRIPT → THE DIVERGENCE → WHAT HIT payload consumed by
+  // components/event/PropsSection.tsx (PropMark contract). Present (possibly
+  // empty) on every game-markets response; each row is a graded/priced prop.
+  props_script?: {
+    key: string;
+    label: string;
+    pregame_mark: number | null;
+    current: number | null;
+    graded_result?: "hit" | "miss" | "push" | null;
+    graded_label?: string | null;
+  }[];
 }
 
 export async function fetchGameMarkets(

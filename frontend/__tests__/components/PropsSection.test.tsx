@@ -78,3 +78,42 @@ describe("PropsSection rendering", () => {
     expect(html).not.toMatch(/[+-]\d{3,}/);
   });
 });
+
+describe("THE DIVERGENCE ranking (biggest mover first)", () => {
+  const UNSORTED: PropMark[] = [
+    { key: "small", label: "Small mover", pregame_mark: 0.5, current: 0.52 }, // 2
+    { key: "big", label: "Big mover", pregame_mark: 0.4, current: 0.72 }, // 32
+    { key: "mid", label: "Mid mover", pregame_mark: 0.5, current: 0.62 }, // 12
+  ];
+
+  test("divergence sorts by absolute movement, biggest first", () => {
+    const html = renderToStaticMarkup(<PropsSection items={UNSORTED} state="divergence" />);
+    const iBig = html.indexOf("Big mover");
+    const iMid = html.indexOf("Mid mover");
+    const iSmall = html.indexOf("Small mover");
+    expect(iBig).toBeGreaterThanOrEqual(0);
+    expect(iBig).toBeLessThan(iMid);
+    expect(iMid).toBeLessThan(iSmall);
+  });
+
+  test("rows with no computable movement sink below movers, keeping order", () => {
+    const withNulls: PropMark[] = [
+      { key: "pending-a", label: "Pending A", pregame_mark: null, current: 0.5 },
+      { key: "mover", label: "Real mover", pregame_mark: 0.4, current: 0.6 }, // 20
+      { key: "pending-b", label: "Pending B", pregame_mark: 0.5, current: null },
+    ];
+    const html = renderToStaticMarkup(<PropsSection items={withNulls} state="divergence" />);
+    const iMover = html.indexOf("Real mover");
+    const iA = html.indexOf("Pending A");
+    const iB = html.indexOf("Pending B");
+    expect(iMover).toBeLessThan(iA); // movers rank above null-movement rows
+    expect(iA).toBeLessThan(iB); // null rows keep original relative order (stable)
+  });
+
+  test("SCRIPT state preserves payload order (no divergence re-rank)", () => {
+    const html = renderToStaticMarkup(<PropsSection items={UNSORTED} state="script" />);
+    const iSmall = html.indexOf("Small mover");
+    const iBig = html.indexOf("Big mover");
+    expect(iSmall).toBeLessThan(iBig); // original order intact
+  });
+});

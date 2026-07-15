@@ -96,6 +96,34 @@ describe("QuantityGroup", () => {
     expect(html).not.toContain("≥ 95");
   });
 
+  // L2-120: the date-bucket feed card (Putin "by WHEN") passes `compact` AND an
+  // explicit maxRungs so the compact default (4) never silently crops the
+  // timeline. A 5-bucket date card where the TAIL bucket is the highest-
+  // probability rung must show all 5, or the card misleads.
+  test("explicit maxRungs overrides the compact default of 4 (no timeline crop)", () => {
+    const dateBuckets = [
+      { key: "jul", label: "Jul 2026", probability: 0.0045, value: 1 },
+      { key: "aug", label: "Aug 2026", probability: 0.02, value: 2 },
+      { key: "sep", label: "Sep 2026", probability: 0.043, value: 3 },
+      { key: "dec", label: "Dec 2026", probability: 0.095, value: 4 },
+      { key: "jun", label: "Jun 2027", probability: 0.18, value: 5 }, // modal tail bucket
+    ];
+    // Without an explicit maxRungs, compact silently truncates to 4 and hides
+    // the 18% tail bucket — the regression this guards against.
+    const cropped = renderToStaticMarkup(
+      <QuantityGroup rungs={dateBuckets} compact wideLabels sort={false} />,
+    );
+    expect(cropped).not.toContain("Jun 2027");
+    // With maxRungs pinned to the set length (how FuturesCard now calls it), the
+    // full timeline including the modal tail bucket renders.
+    const full = renderToStaticMarkup(
+      <QuantityGroup rungs={dateBuckets} compact wideLabels sort={false} maxRungs={dateBuckets.length} />,
+    );
+    expect(full).toContain("Jul 2026");
+    expect(full).toContain("Jun 2027"); // 18% modal bucket is no longer cropped
+    expect(full).toContain("18%");
+  });
+
   test("null probability renders an em dash, never throws", () => {
     const html = renderToStaticMarkup(
       <QuantityGroup rungs={[{ key: "x", label: "≥ 10", probability: null }]} />,

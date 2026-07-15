@@ -73,12 +73,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               cell grid used equal flex-1 columns, so long date labels ("2029 or
               later") wrapped and broke alignment against the fixed-height cells.
               The vertical ladder (QuantityGroup, wide-label variant) never wraps
-              its columns — one component covers "how MANY" and "by WHEN". */}
+              its columns — one component covers "how MANY" and "by WHEN".
+              L2-120: maxRungs is pinned to the sliced set so the `compact`
+              default (4) doesn't silently crop the timeline. Date buckets tell
+              their story in the TAIL (the modal/latest bucket is usually the
+              highest-probability rung); with every bucket often below 50% there
+              is no footer summary to carry a cropped rung, so a 5-bucket card
+              must show all 5 — not just the first 4. */}
           <QuantityGroup
             bare
             compact
             wideLabels
             sort={false}
+            maxRungs={shownCells.length}
             rungs={shownCells.map((row) => ({
               key: row.key,
               label: row.label,
