@@ -267,9 +267,15 @@ class EmailPreferencesResponse(BaseModel):
 
 
 class PushPreferencesResponse(BaseModel):
-    """Push notification preferences (all default True — opt-out model)."""
+    """Push notification preferences.
+
+    daily_challenge/big_moves are opt-out (default True). morning_digest
+    (Queue #200 notifications v1) is opt-IN (default False) — a user must
+    explicitly enable the daily digest.
+    """
     daily_challenge: bool = True
     big_moves: bool = True
+    morning_digest: bool = False
 
 
 class PreferencesResponse(BaseModel):
@@ -585,6 +591,7 @@ async def get_preferences(
     push_prefs = PushPreferencesResponse(
         daily_challenge=bool(raw_push_prefs.get("daily_challenge", True)),
         big_moves=bool(raw_push_prefs.get("big_moves", True)),
+        morning_digest=bool(raw_push_prefs.get("morning_digest", False)),
     )
 
     return PreferencesResponse(
@@ -1135,13 +1142,17 @@ async def update_email_preferences(
 # Push notification preferences
 # =============================================================================
 
+# Opt-out keys default True; opt-in keys default False (must be enabled).
 PUSH_PREF_KEYS = frozenset({"daily_challenge", "big_moves"})
+PUSH_PREF_OPTIN_KEYS = frozenset({"morning_digest"})
+ALL_PUSH_PREF_KEYS = PUSH_PREF_KEYS | PUSH_PREF_OPTIN_KEYS
 
 
 class UpdatePushPreferencesRequest(BaseModel):
     """Update push notification preferences."""
     daily_challenge: Optional[bool] = None
     big_moves: Optional[bool] = None
+    morning_digest: Optional[bool] = None
 
 
 @router.patch("/preferences/push")
@@ -1161,15 +1172,19 @@ async def update_push_preferences(
         updates["daily_challenge"] = body.daily_challenge
     if body.big_moves is not None:
         updates["big_moves"] = body.big_moves
+    if body.morning_digest is not None:
+        updates["morning_digest"] = body.morning_digest
 
     if not updates:
         return {"status": "no_changes"}
 
-    # Read current preferences (default True for all keys)
+    # Read current preferences. Opt-out keys default True; opt-in keys default False.
     current = user.push_preferences if isinstance(user.push_preferences, dict) else {}
     new_prefs = {key: current.get(key, True) for key in sorted(PUSH_PREF_KEYS)}
+    for key in sorted(PUSH_PREF_OPTIN_KEYS):
+        new_prefs[key] = current.get(key, False)
     for key, value in updates.items():
-        if key in PUSH_PREF_KEYS:
+        if key in ALL_PUSH_PREF_KEYS:
             new_prefs[key] = value
 
     # Use Core update to avoid JSONB ORM assignment issues (Gotcha #4)

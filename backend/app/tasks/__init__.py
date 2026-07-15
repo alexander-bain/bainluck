@@ -1733,6 +1733,15 @@ def send_big_move_alerts(self):
     return _tracked_run("big_move_alerts", _send_big_move_alerts())
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=300, name="app.tasks.send_morning_digest")
+def send_morning_digest(self):
+    """Morning Digest v1 (Queue #200): once daily (~7 AM PT) push the 3-5 most
+    interesting probabilities to opted-in device tokens. Reuses the cached
+    Discover interestingness scores (one content brain, cheap reads only)."""
+    from app.tasks.morning_digest import _run_morning_digest
+    return _tracked_run("morning_digest", _run_morning_digest())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
     """Precompute main /api/calibration response and cache in Redis (every 1h)."""
@@ -2491,6 +2500,15 @@ celery_app.conf.beat_schedule = {
     "big-move-alerts": {
         "task": "app.tasks.send_big_move_alerts",
         "schedule": crontab(minute="*/30"),  # Every 30 minutes
+        "options": {"queue": "background"},
+    },
+    "morning-digest-daily": {
+        # Queue #200: notifications v1 — one daily push of the 3-5 most
+        # interesting probabilities to opted-in device tokens. Reuses cached
+        # Discover interestingness (one content brain). 14:05 UTC = 7:05 AM PT
+        # (staggered 5 min after the daily-challenge push).
+        "task": "app.tasks.send_morning_digest",
+        "schedule": crontab(hour=14, minute=5),
         "options": {"queue": "background"},
     },
     "precompute-calibration-main": {

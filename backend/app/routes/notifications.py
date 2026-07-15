@@ -31,6 +31,18 @@ class TestNotificationRequest(BaseModel):
     body: Optional[str] = "Test notification from Bain Luck"
 
 
+class SendDigestRequest(BaseModel):
+    """Admin trigger for the Morning Digest (Queue #200)."""
+    # If set, send only to this token (bypasses opt-in — dogfood/test send).
+    device_token: Optional[str] = None
+
+
+class DigestOptInRequest(BaseModel):
+    """Enable/disable the morning-digest opt-in for a user (admin)."""
+    user_id: int
+    enabled: bool = True
+
+
 @router.post("/register")
 async def register_device_token(
     request: Request,
@@ -157,6 +169,66 @@ async def send_test_notification(
             "error": error_msg,
             "hint": hint,
         }
+
+
+@router.post("/admin/send-digest")
+async def send_morning_digest_admin(
+    request: Request,
+    body: SendDigestRequest = SendDigestRequest(),
+    secret: str = Query(None),
+    dry_run: bool = Query(True, description="Preview only (default). Set false to actually send."),
+):
+    """Morning Digest (Queue #200) admin trigger.
+
+    - ``dry_run=true`` (default): build + return the digest payload, send nothing.
+    - ``dry_run=false`` with ``device_token`` in the body: send to that one
+      device, bypassing opt-in (dogfood/test send).
+    - ``dry_run=false`` with no token: broadcast to every active device whose
+      user opted in via ``push_preferences["morning_digest"]``.
+
+    Content selection reuses the cached Discover interestingness scores — cheap
+    reads, no LLM on the send path (gotcha #39: bounded Redis client)."""
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.morning_digest import _run_morning_digest
+
+    return await _run_morning_digest(
+        dry_run=dry_run,
+        target_token=body.device_token,
+    )
+
+
+@router.post("/admin/digest-optin")
+async def set_digest_optin(
+    request: Request,
+    body: DigestOptInRequest,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Enable/disable the morning-digest opt-in for a specific user (admin).
+
+    Lets the digest reach a dogfood user via the scheduled beat without needing
+    the app's preferences UI. Merges the flag into ``User.push_preferences``
+    JSONB via Core update (gotcha #4)."""
+    _check_admin_secret(secret, request=request)
+
+    from sqlalchemy import update as sa_update
+
+    from app.models.models import User
+
+    result = await db.execute(select(User).where(User.id == body.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {body.user_id} not found")
+
+    current = user.push_preferences if isinstance(user.push_preferences, dict) else {}
+    new_prefs = {**current, "morning_digest": bool(body.enabled)}
+    await db.execute(
+        sa_update(User).where(User.id == body.user_id).values(push_preferences=new_prefs)
+    )
+    await db.commit()
+
+    return {"status": "ok", "user_id": body.user_id, "push_preferences": new_prefs}
 
 
 @router.get("/admin/tokens")
