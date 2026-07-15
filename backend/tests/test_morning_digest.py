@@ -95,6 +95,17 @@ def test_render_empty_is_graceful():
     assert payload.data["url"] == "/discover"
 
 
+def test_drops_near_certain_leaders():
+    cands = [
+        _cand(1, "Boring 100%", 1.0, 99.0, dedup_key="a"),
+        _cand(2, "Boring 98%", 0.98, 98.0, dedup_key="b"),
+        _cand(3, "Interesting", 0.62, 50.0, dedup_key="c"),
+    ]
+    picked = select_digest_candidates(cands, limit=5)
+    # Near-certain leaders (>=0.97) are dropped despite higher interestingness.
+    assert [c.market_id for c in picked] == [3]
+
+
 def test_probability_clamped_and_rounded():
     items = [_cand(1, "Q", 1.5, 50.0, leader="Yes")]  # out-of-range prob
     payload = render_digest_payload(items)

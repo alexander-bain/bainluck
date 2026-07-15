@@ -20,6 +20,10 @@ DEFAULT_DIGEST_LIMIT = 5
 # No more than this many items from one category, so a busy category (e.g. a
 # politics-heavy day) can't crowd out the rest of the world.
 MAX_PER_CATEGORY = 2
+# A near-certain leader (e.g. "Spain 100% to reach the final") is the opposite of
+# interesting — usually an illiquid single-source extreme. Drop it from a digest
+# whose whole promise is "the most interesting odds".
+MAX_LEADER_PROB = 0.97
 
 
 @dataclass
@@ -55,6 +59,7 @@ def select_digest_candidates(
     *,
     limit: int = DEFAULT_DIGEST_LIMIT,
     max_per_category: int = MAX_PER_CATEGORY,
+    max_leader_prob: float = MAX_LEADER_PROB,
     category_affinities: dict[str, float] | None = None,
 ) -> list[DigestCandidate]:
     """Rank candidates by interestingness, dedup, and cap per category.
@@ -74,8 +79,9 @@ def select_digest_candidates(
             score *= 1.0 + max(-0.5, min(0.5, affinities[c.category])) * 0.6
         return score
 
+    eligible = [c for c in candidates if c.leader_prob < max_leader_prob]
     ordered = sorted(
-        candidates,
+        eligible,
         key=lambda c: (_rank(c), c.volume_24h or 0.0),
         reverse=True,
     )
