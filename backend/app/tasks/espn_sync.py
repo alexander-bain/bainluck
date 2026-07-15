@@ -1375,17 +1375,24 @@ def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):
     return commence + timedelta(seconds=span * (index / (total - 1)))
 
 
-async def _backfill_espn_win_probability(limit: int = 200):
+async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = False):
     """Backfill ESPN win probability for completed events with sparse snapshots.
 
     The live sync captures probability every 60s, but if it misses a game
     (worker downtime, task starvation), that game's probability chart is lost.
     ESPN's /summary endpoint has the full play-by-play probability curve
     retroactively — this task fetches it for recently completed games.
+    (Probed 2026-07-15: ESPN still serves the winprobability array for a ~5-month-
+    old NBA game — 502 points — so the old tail IS recoverable, not aged out.)
 
     Processes ALL historical events (no time-window limit). Only processes
     events with espn_id (confirmed match) and fewer than 10
     win_prob_snapshots from the espn source.
+
+    `oldest_first=True` reverses the scan order to reach the OLD tail that the
+    default newest-first pass can never drain (gotcha #41: newer rows starve a
+    bounded run before it reaches what needs fixing). Wired as a separate daily
+    beat so both ends of the backlog make progress.
     """
     import asyncio as _asyncio
     from sqlalchemy import text
@@ -1415,7 +1422,7 @@ async def _backfill_espn_win_probability(limit: int = 200):
                     WHERE e.status IN ('completed', 'closed')
                       AND e.espn_id IS NOT NULL
                       AND snap_cnt.cnt < 10
-                    ORDER BY e.commence_time DESC
+                    ORDER BY e.commence_time """ + ("ASC" if oldest_first else "DESC") + """
                     LIMIT :limit
                 """),
                 {"limit": limit},

@@ -196,6 +196,32 @@ CHECKS: list[dict[str, Any]] = [
         "severity": "P1",
         "message": "Active Tier 1 events have sparse snapshot coverage (<10 in 48h)",
     },
+    # --- ESPN capture gap (P1) — granular per-live-game detector (#207 Item 2) ---
+    # espn_freshness (above) catches a GLOBAL ESPN outage; this catches a gap on a
+    # SPECIFIC live game while other games still flow. Scoped to the sports ESPN
+    # actually serves win-probability for — basketball / american football / ice
+    # hockey — NOT baseball (MLB win prob comes from the MLB Stats API, and ESPN's
+    # baseball summary returns an empty winprobability array; probed 2026-07-15).
+    # status='live' self-gates against off-season false alarms (no live games =>
+    # count 0 => pass). Recoverable after the fact via backfill_espn_win_prob.
+    {
+        "name": "espn_capture_gap",
+        "query": (
+            "SELECT COUNT(*) FROM events e "
+            "JOIN sports s ON s.id = e.sport_id "
+            "WHERE e.status = 'live' "
+            "AND e.espn_id IS NOT NULL "
+            "AND (s.key LIKE 'basketball%' OR s.key LIKE 'americanfootball%' "
+            "     OR s.key LIKE 'icehockey%') "
+            "AND (SELECT COUNT(*) FROM win_prob_snapshots wp "
+            "     WHERE wp.event_id = e.id AND wp.source = 'espn' "
+            "     AND wp.captured_at > NOW() - INTERVAL '15 minutes') = 0"
+        ),
+        "threshold": 0,
+        "comparison": "lte",
+        "severity": "P1",
+        "message": "A live NBA/NFL/NHL game has no ESPN win-probability snapshot in 15 min — live capture gap; its chart will lose the curve (recoverable via backfill_espn_win_prob)",
+    },
 ]
 
 

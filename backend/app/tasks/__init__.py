@@ -660,10 +660,13 @@ def backfill_espn_ids(self, limit: int = 1000):
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_espn_win_prob")
-def backfill_espn_win_prob(self, limit: int = 200):
-    """Backfill ESPN win probability history for completed events with sparse snapshots."""
+def backfill_espn_win_prob(self, limit: int = 200, oldest_first: bool = False):
+    """Backfill ESPN win probability history for completed events with sparse snapshots.
+
+    oldest_first=True reaches the OLD tail the newest-first pass starves (gotcha #41).
+    """
     from app.tasks.espn_sync import _backfill_espn_win_probability
-    return _tracked_run("espn_win_prob_backfill", _backfill_espn_win_probability(limit))
+    return _tracked_run("espn_win_prob_backfill", _backfill_espn_win_probability(limit, oldest_first))
 
 
 # --- Team Linking (Futures → Teams) ---
@@ -2443,6 +2446,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_espn_win_prob",
         "schedule": crontab(minute=0, hour="6,12,18,0"),  # Every 6h, offset from ESPN IDs
         "kwargs": {"limit": 200},
+        "options": {"queue": "background"},
+    },
+    "backfill-espn-win-prob-oldest": {
+        # #207 Item 2: oldest-first pass drains the OLD tail the newest-first run
+        # can never reach (gotcha #41). Daily so both ends make progress.
+        "task": "app.tasks.backfill_espn_win_prob",
+        "schedule": crontab(minute=20, hour=3),  # Daily 03:20 UTC, off-peak
+        "kwargs": {"limit": 200, "oldest_first": True},
         "options": {"queue": "background"},
     },
     "backfill-canonical-keys-daily": {

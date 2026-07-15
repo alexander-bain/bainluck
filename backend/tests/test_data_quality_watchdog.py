@@ -69,6 +69,7 @@ class TestCheckDefinitions:
             "kalshi_winner_coverage",
             "polymarket_winner_coverage",
             "odds_api_sparsity",
+            "espn_capture_gap",
         }
         missing = expected - names
         assert not missing, f"Expected checks missing: {missing}"
@@ -93,6 +94,21 @@ class TestCheckDefinitions:
         assert "odds_snapshots" in by_name["odds_api_freshness"]
         assert "win_prob_snapshots" in by_name["espn_freshness"]
         assert "score_snapshots" in by_name["statpal_freshness"]
+
+    def test_espn_capture_gap_scope(self):
+        """#207 Item 2: the granular per-live-game ESPN gap detector is scoped to
+        the sports ESPN actually serves win-probability for (basketball/football/
+        hockey), self-gated by status='live', and must NOT include baseball —
+        MLB win prob comes from the MLB Stats API, and ESPN's baseball summary
+        returns an empty winprobability array."""
+        by_name = {c["name"]: c["query"].lower() for c in CHECKS}
+        q = by_name["espn_capture_gap"]
+        assert "status = 'live'" in q            # self-gates off-season
+        assert "source = 'espn'" in q
+        assert "basketball%" in q and "americanfootball%" in q and "icehockey%" in q
+        assert "baseball" not in q                # MLB is not an ESPN winprob sport
+        gap = next(c for c in CHECKS if c["name"] == "espn_capture_gap")
+        assert gap["comparison"] == "lte" and gap["threshold"] == 0
 
 
 class TestPassesThreshold:

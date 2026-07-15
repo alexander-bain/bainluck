@@ -285,6 +285,7 @@ class TestBeatScheduleCompleteness:
         "compute-calibration-prices",
         "sync-polymarket-resolved-status",
         "backfill-espn-win-prob",
+        "backfill-espn-win-prob-oldest",
         "backfill-polymarket-winners",
         "clob-resolve-drain",
         "snapshot-coverage-metrics-daily",
