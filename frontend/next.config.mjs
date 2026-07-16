@@ -14,6 +14,22 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['recharts', 'date-fns'],
   },
+  async redirects() {
+    return [
+      // #213 surface unification: the bespoke golf tournament detail page is the
+      // old pre-concept surface. The Event Concept page (/event/golf/<slug>) is
+      // the canonical URL for a tournament (the URL law: concept = canonical).
+      // 308 (permanent) so bookmarks + indexed old links land on the one true
+      // page. The slug is passed through unchanged — it is the same DataGolf
+      // tournament slug both routes resolve against, so any slug the old page
+      // rendered resolves on the concept page too.
+      {
+        source: "/categories/golf/tournaments/:slug",
+        destination: "/event/golf/:slug",
+        permanent: true,
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       {

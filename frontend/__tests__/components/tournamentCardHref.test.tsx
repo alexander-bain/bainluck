@@ -1,7 +1,8 @@
-// #999 L2-66 Item 0: the shared golf TournamentCard links to the BESPOKE golf
-// tournament detail (/categories/golf/tournaments/[slug]) — NOT /event/[key]
-// (reverted during OPEN-SPRINT-1 until the event surface's live leaderboard
-// clears the bar) and NOT the generic /sport page (#926).
+// #213 surface unification: the shared golf TournamentCard now links to the
+// canonical Event Concept page (/event/golf/<slug>) — Alex ruled concept =
+// canonical after his live-day side-by-side on The Open (GOLF_DEFAULT_TO_EVENT_PAGE
+// flipped true). The old /categories/golf/tournaments/<slug> route 308s to the
+// same concept slug (next.config.mjs). Still NOT the generic /sport page (#926).
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
@@ -27,11 +28,11 @@ const tournament = {
   source_count: 2,
 } as unknown as GolfTournament;
 
-describe("shared TournamentCard href (L2-66 Item 0)", () => {
-  test("links to the bespoke golf tournament detail, not /event or /sport", () => {
+describe("shared TournamentCard href (#213 concept-canonical)", () => {
+  test("links to the canonical Event Concept page, not the old bespoke route or /sport", () => {
     const html = renderToStaticMarkup(<TournamentCard tournament={tournament} />);
-    expect(html).toContain('href="/categories/golf/tournaments/the-open-championship"');
-    expect(html).not.toContain("/event/");
+    expect(html).toContain('href="/event/golf/the-open-championship"');
+    expect(html).not.toContain("/categories/golf/tournaments/");
     expect(html).not.toContain("/sport/");
   });
 

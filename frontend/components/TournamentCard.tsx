@@ -4,14 +4,14 @@ import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
-// L2-78 Item 2 — golf-default flip PREP (Alex's pending glance, Scottish Open
-// weekend). Flip is ONE line: set true and golf tournament rows route to the
-// unified Event Concept page instead of the bespoke golf tournament detail page.
-// LEFT FALSE on purpose — his side-by-side phone comparison decides, not us.
-// Side-by-side for the glance (e.g. The Open):
-//   bespoke (current): /categories/golf/tournaments/the-open-championship
-//   event (flipped):   /event/event:golf:the-open-championship
-const GOLF_DEFAULT_TO_EVENT_PAGE = false;
+// L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
+// Event Concept page canonical (the URL law; concept = canonical) after his
+// live-day side-by-side on The Open, so golf tournament rows now route to the
+// unified /event/<domain>/<slug> surface instead of the bespoke golf tournament
+// detail page. The old /categories/golf/tournaments/<slug> route 308s to the
+// concept slug (see next.config.mjs) so bookmarks/indexed links follow. hrefOverride
+// still wins.
+const GOLF_DEFAULT_TO_EVENT_PAGE = true;
 
 // ============================================================================
 // Types

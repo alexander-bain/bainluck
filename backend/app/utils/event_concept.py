@@ -490,6 +490,57 @@ async def attach_competitor_history(
             c["outcome_id"] = entry["outcome_id"]
             c["history"] = entry["history"]
 
+    _reconcile_history_to_blend(competitors)
+
+
+def _reconcile_history_to_blend(competitors: list[dict]) -> None:
+    """#213 / #199 one-number reconciliation. Mutates each competitor's `history`
+    so its final point equals the blend the leaderboard shows next to it.
+
+    The history series comes from a SINGLE market — `evolution_market_id`, chosen
+    as the snapshot-richest winner market (for a major, the long-lived odds_api
+    futures, whose raw per-outcome probabilities carry the full bookmaker overround
+    and sum well above 1). The leaderboard "Win" column, by contrast, shows the
+    field-renormalized cross-source BLEND (`competitor["probability"]`) — the
+    house's honest number ("the blend is the product"). Left as-is they diverge on
+    the SAME page (The Open: Scheffler 24.5% on the Race chart vs 12.3% on the
+    leaderboard).
+
+    Anchor each competitor's series to its blend by scaling the whole series by
+    `blend / last_raw`. This preserves the movement/trend shape from the richest
+    snapshot source while guaranteeing the chart's current value == the leaderboard
+    value for every competitor — one question, one number, fixed at the payload so
+    no renderer can diverge again. For F1/tennis the leaderboard prob IS this same
+    raw series' current point, so the factor is ~1.0 (a no-op); the reconciliation
+    only bites the golf blend-vs-evolution-market mismatch.
+    """
+    for c in competitors:
+        hist = c.get("history")
+        blend = c.get("probability")
+        if not hist or not isinstance(blend, (int, float)) or blend <= 0:
+            continue
+        last_raw = None
+        for pt in reversed(hist):
+            p = pt.get("probability")
+            if p is not None:
+                last_raw = p
+                break
+        if not last_raw or last_raw <= 0:
+            continue
+        factor = blend / last_raw
+        if abs(factor - 1.0) < 1e-6:
+            continue
+        c["history"] = [
+            {
+                "timestamp": pt["timestamp"],
+                "probability": (
+                    round(pt["probability"] * factor, 4)
+                    if pt.get("probability") is not None else None
+                ),
+            }
+            for pt in hist
+        ]
+
 
 def _clean_prop_label(market_name: str | None, tournament_name: str | None) -> str:
     """Strip the tournament-name prefix off a prop market name so the PropsSection
