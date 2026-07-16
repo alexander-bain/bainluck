@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { markSearchDestination } from "@/lib/searchFunnel";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
@@ -112,6 +113,15 @@ function SearchContent() {
   useScrollDepth({ pageType: 'search' });
   useEngagementTime({ pageType: 'search' });
 
+  // SEARCH funnel step 1 (measurement_spec §2): fire once per mount when the
+  // search surface opens, noting whether it opened already carrying a query.
+  const searchOpenedRef = useRef(false);
+  useEffect(() => {
+    if (searchOpenedRef.current) return;
+    searchOpenedRef.current = true;
+    track('search_opened', { has_query: query.length >= 2, surface: 'search' });
+  }, [query, track]);
+
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +158,7 @@ function SearchContent() {
           query,
           results_count: data.results?.length ?? 0,
           futures_count: data.futures?.length ?? 0,
+          surface: 'search',
         });
       })
       .catch((err) => {
@@ -326,7 +337,10 @@ function SearchContent() {
               <Link
                 key={ec.key}
                 href={eventPath(ec.key)}
-                onClick={() => track("search_result_click", { query, result_type: "event_concept", result_id: ec.key, position: index })}
+                onClick={() => {
+                  track("search_result_click", { query, result_type: "event_concept", result_id: ec.key, position: index, surface: "search" });
+                  markSearchDestination({ query, result_type: "event_concept", result_id: ec.key, rank: index });
+                }}
                 className="flex items-center justify-between gap-2 rounded-card border border-surface-border bg-surface-card px-4 py-3 shadow-card hover:border-text-muted transition-colors group"
               >
                 <div className="min-w-0">
@@ -366,7 +380,9 @@ function SearchContent() {
                   result_type: 'event',
                   result_id: event.id,
                   position: index,
+                  surface: 'search',
                 });
+                markSearchDestination({ query, result_type: 'event', result_id: event.id, rank: index });
               }}>
                 <EventCard
                   event={event}
@@ -392,14 +408,16 @@ function SearchContent() {
               <SearchFamilyCard
                 key={family.family_key}
                 family={family}
-                onRowClick={(result_type, result_id) =>
+                onRowClick={(result_type, result_id) => {
                   track('search_result_click', {
                     query: query,
                     result_type,
                     result_id,
                     position: 0,
-                  })
-                }
+                    surface: 'search',
+                  });
+                  markSearchDestination({ query, result_type, result_id, rank: 0 });
+                }}
               />
             ))}
           </div>
@@ -418,7 +436,9 @@ function SearchContent() {
                   result_type: 'futures',
                   result_id: market.id,
                   position: index,
+                  surface: 'search',
                 });
+                markSearchDestination({ query, result_type: 'futures', result_id: market.id, rank: index });
               }}>
                 <FuturesCard
                   market={market}

@@ -203,6 +203,16 @@ export default function ChallengePage({ params }: ChallengePageProps) {
         market_id: challenge.market_id,
         guess: selectedGuess,
       });
+      // GUESS funnel step 4 (measurement_spec §2): the friend locked their pick,
+      // completing their side of the challenge (single question).
+      track("challenge_completed", {
+        challenge_type: "friend",
+        total_questions: 1,
+        correct: data.friend_correct === true ? 1 : 0,
+        streak: 0,
+        challenge_id: challenge.challenge_code,
+        surface: "friend_challenge",
+      });
     } catch {
       setSubmitMessage("Could not submit your pick.");
     } finally {

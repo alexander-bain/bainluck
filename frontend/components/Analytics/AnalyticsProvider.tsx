@@ -8,6 +8,8 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
+import { usePathname } from 'next/navigation';
+import { SEARCH_DEST_KEY, SEARCH_DEST_MAX_AGE_MS, type SearchDestCrumb } from '@/lib/searchFunnel';
 import {
   getStoredConsent,
   storeConsent,
@@ -76,6 +78,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const [consent, setConsentState] = useState<ConsentLevel>(null);
   const [showConsentBanner, setShowConsentBanner] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const pathname = usePathname();
 
   // Check for stored consent on mount
   useEffect(() => {
@@ -114,6 +117,61 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       }
     } catch { /* localStorage unavailable */ }
   }, []);
+
+  // SEARCH funnel step 4 (measurement_spec §2): the "Lisa metric". When the route
+  // changes to a non-search destination and a fresh search-click breadcrumb exists,
+  // emit `destination_engaged` once the user engages (first scroll, or a >=4s dwell).
+  // The breadcrumb is consumed immediately so a bounce (navigating away before
+  // engaging) correctly yields no event, and engagement is only ever attributed to
+  // the FIRST destination after the click.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!pathname || pathname.startsWith('/search')) return;
+
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(SEARCH_DEST_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+
+    try {
+      sessionStorage.removeItem(SEARCH_DEST_KEY);
+    } catch { /* ignore */ }
+
+    let crumb: SearchDestCrumb;
+    try {
+      crumb = JSON.parse(raw) as SearchDestCrumb;
+    } catch {
+      return;
+    }
+    if (Date.now() - (crumb.ts || 0) > SEARCH_DEST_MAX_AGE_MS) return;
+
+    const start = Date.now();
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      trackEvent('destination_engaged', {
+        query: crumb.query,
+        result_type: crumb.result_type,
+        result_id: crumb.result_id,
+        rank: crumb.rank,
+        dwell_ms: Date.now() - start,
+        surface: 'search',
+      }, { immediate: true });
+    };
+
+    const timer = window.setTimeout(fire, 4000);
+    const onScroll = () => fire();
+    window.addEventListener('scroll', onScroll, { passive: true, once: true });
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, [pathname]);
 
   // Handle consent change
   const setConsent = useCallback((level: 'all' | 'analytics' | 'none') => {

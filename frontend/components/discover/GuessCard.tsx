@@ -51,6 +51,14 @@ export function GuessCard({
   const category = (isEvent ? eventData!.sport_name : futuresData!.sport_name) || sportCat || "Markets";
   const catGradient = CATEGORY_GRADIENTS[sportCat.toLowerCase()] || "linear-gradient(135deg, #0f172a, #1e293b)";
 
+  // Funnel dimension (measurement_spec §1): lifecycle state of the underlying market.
+  const rawStatus = isEvent ? eventData!.status : futuresData!.status;
+  const archetypeState: "upcoming" | "live" | "settled" | undefined =
+    rawStatus === "scheduled" ? "upcoming"
+      : rawStatus === "live" ? "live"
+      : rawStatus === "completed" || rawStatus === "closed" ? "settled"
+      : undefined;
+
   const submitGuess = async (g: "higher" | "lower") => {
     setGuess(g);
     const isCorrect = g === "higher" ? actualPct > threshold : actualPct < threshold;
@@ -64,6 +72,7 @@ export function GuessCard({
       content_type: isEvent ? "event" : "futures",
       category: sportCat,
       surface: "discover",
+      archetype_state: archetypeState,
     }, { immediate: true });
     try {
       await fetch("/api/predictions", {
@@ -75,6 +84,18 @@ export function GuessCard({
       if (statsRes.ok) {
         const stats = await statsRes.json();
         setStreak(stats.current_streak);
+        // GUESS funnel step 3 (measurement_spec §2): a correct guess that
+        // extended the running streak (>= 2 in a row).
+        if (isCorrect && typeof stats.current_streak === "number" && stats.current_streak > 1) {
+          trackEvent("streak_continued", {
+            streak_length: stats.current_streak,
+            market_id: itemId,
+            content_type: isEvent ? "event" : "futures",
+            category: sportCat,
+            surface: "discover",
+            archetype_state: archetypeState,
+          }, { immediate: true });
+        }
       }
     } catch {}
   };

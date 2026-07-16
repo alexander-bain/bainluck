@@ -376,12 +376,13 @@ export interface OnboardingSkipParams {
   last_step_name: string;
 }
 
-export interface SearchResultClickParams {
+export interface SearchResultClickParams extends FunnelDimensions {
   query: string;
   // #993 L2-42: family_headline/family_member for composed family rows
   // #999 L2-65: event_concept for tournament concept pages
   result_type: 'event' | 'futures' | 'team' | 'family_headline' | 'family_member' | 'event_concept';
   result_id: number | string;
+  /** 0-indexed rank of the result within its section (the funnel "rank" dim). */
   position: number;
 }
 
@@ -438,7 +439,7 @@ export interface SharedLinkOpenParams {
   campaign?: string;
 }
 
-export interface PredictionSubmitParams {
+export interface PredictionSubmitParams extends FunnelDimensions {
   market_id: number;
   guess: 'higher' | 'lower';
   threshold: number;
@@ -446,10 +447,10 @@ export interface PredictionSubmitParams {
   correct: boolean;
   content_type: 'event' | 'futures';
   category: string;
-  surface: 'discover' | 'challenge';
+  surface: 'discover' | 'challenge' | 'daily';
 }
 
-export interface FeedCardImpressionParams {
+export interface FeedCardImpressionParams extends FunnelDimensions {
   content_type: 'event' | 'futures' | 'grid';
   item_id: number | string;
   category: string;
@@ -483,7 +484,7 @@ export interface FeedRefreshParams {
 // Search Events
 // ============================================================================
 
-export interface SearchSubmitParams {
+export interface SearchSubmitParams extends FunnelDimensions {
   query: string;
   results_count: number;
   futures_count: number;
@@ -533,6 +534,67 @@ export interface ProgressionStageClickParams {
   market_id: number;
   sport: string;
   page_type: string;
+}
+
+// ============================================================================
+// Funnel dimensions + funnel events (Queue L2-133 Item 2 — measurement_spec §2)
+// ============================================================================
+
+/**
+ * Shared custom dimensions attached to funnel events so every step is sliceable
+ * by the same taxonomy the product thinks in (measurement_spec.md §1). All
+ * optional — phase-1 populates what the emitting surface has on hand; `shape`
+ * comes from the market-shape classifier and is only present where the feed item
+ * carries it. Register these as event-scoped custom dimensions in GA4 admin.
+ */
+export interface FunnelDimensions {
+  /** Market shape from the classifier (#194). */
+  shape?: 'claim' | 'quantity' | 'duel' | 'field' | 'container';
+  /** Lifecycle state of the underlying market/event. */
+  archetype_state?: 'upcoming' | 'live' | 'settled';
+  category?: string;
+  concept_slug?: string;
+  card_angle?: string;
+  surface?: string;
+}
+
+/** GUESS funnel step 3: a correct guess extended the running streak. */
+export interface StreakContinuedParams extends FunnelDimensions {
+  /** Length of the streak AFTER this guess (>= 2 when a streak "continued"). */
+  streak_length: number;
+  market_id?: number | string;
+  content_type?: 'event' | 'futures';
+}
+
+/** GUESS funnel step 4: a challenge run finished (daily = all questions; friend = pick locked). */
+export interface ChallengeCompletedParams extends FunnelDimensions {
+  challenge_type: 'daily' | 'friend';
+  total_questions: number;
+  correct: number;
+  /** Running streak after completion (day-streak for daily; 0 when N/A). */
+  streak: number;
+  challenge_id?: string;
+}
+
+/** SEARCH funnel step 1: the search surface was opened. */
+export interface SearchOpenedParams extends FunnelDimensions {
+  /** Opened already carrying a query (deep link / typeahead) vs a blank zero-state. */
+  has_query: boolean;
+}
+
+/**
+ * SEARCH funnel step 4 (the "Lisa metric"): the user actually engaged with the
+ * destination they clicked from search — measured as an engaged dwell/scroll on
+ * the destination page, correlated back to the originating result via a
+ * short-lived breadcrumb.
+ */
+export interface DestinationEngagedParams extends FunnelDimensions {
+  query: string;
+  result_type: string;
+  result_id: number | string;
+  /** 0-indexed rank of the clicked result in its section. */
+  rank: number;
+  dwell_ms: number;
 }
 
 // ============================================================================
@@ -616,6 +678,12 @@ export interface AnalyticsEventMap {
   feed_card_impression: FeedCardImpressionParams;
   feed_card_action: FeedCardActionParams;
   feed_refresh: FeedRefreshParams;
+
+  // Funnel events (Phase 1 — Queue L2-133 Item 2, measurement_spec §2)
+  streak_continued: StreakContinuedParams;
+  challenge_completed: ChallengeCompletedParams;
+  search_opened: SearchOpenedParams;
+  destination_engaged: DestinationEngagedParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

@@ -370,6 +370,14 @@ export default function DailyPage() {
         const nextMeta = applyCompletion(meta, state.date);
         setMeta(nextMeta);
         writeJson(DAILY_META_KEY, nextMeta);
+        // GUESS funnel step 4 (measurement_spec §2): the daily run finished.
+        trackEvent("challenge_completed", {
+          challenge_type: "daily",
+          total_questions: questions.length,
+          correct: nextAnswers.filter((entry) => entry.correct).length,
+          streak: nextMeta.streak,
+          surface: "daily",
+        }, { immediate: true });
       }
 
       trackEvent("prediction_submit", {
