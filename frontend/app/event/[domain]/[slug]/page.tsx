@@ -162,6 +162,12 @@ export default function EventConceptPage() {
     .map((p, i) => ({
       key: p.key ?? i,
       label: p.label,
+      // Alex's ruling (The Open 2026): the SHAPE fields must reach PropsSection or
+      // every mark falls back to the legacy row. Thread kind/question/outcomes
+      // through — the map enumerates fields (no spread), so new ones need adding.
+      kind: p.kind ?? null,
+      question: p.question ?? null,
+      outcomes: p.outcomes ?? null,
       pregame_mark: p.pregame_mark ?? null,
       current: p.current ?? null,
       graded_result: p.graded_result ?? null,

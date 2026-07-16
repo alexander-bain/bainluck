@@ -105,6 +105,26 @@ const ENVELOPE = {
       graded_result: null,
       graded_label: null,
     },
+    {
+      // A field-shaped prop with named nominees (Alex's ruling, The Open 2026).
+      // The page must thread kind/question/outcomes into PropsSection so this
+      // renders as a named top-3 card, not a legacy row that shows only the
+      // favorite baked into the label.
+      key: 43,
+      market_id: 43,
+      label: "Top American Golfer: Scottie Scheffler",
+      kind: "field" as const,
+      question: "Top American Golfer",
+      outcomes: [
+        { name: "Scottie Scheffler", probability: 0.18, opening_probability: 0.18 },
+        { name: "Xander Schauffele", probability: 0.12, opening_probability: 0.11 },
+        { name: "Collin Morikawa", probability: 0.09, opening_probability: 0.1 },
+      ],
+      pregame_mark: 0.18,
+      current: 0.18,
+      graded_result: null,
+      graded_label: null,
+    },
   ],
   movers: [{ name: "Rory McIlroy", change: 0.03 }],
 };
@@ -198,6 +218,13 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain("The divergence");
     expect(html).toContain("Playoff");
     expect(html).toContain("Round 1 Leader: Scottie Scheffler");
+    // Field-prop card: the question header and its NON-favorite nominees render
+    // (guards the page→PropsSection wiring that must thread kind/question/
+    // outcomes — a legacy row would show only "…: Scottie Scheffler" and drop
+    // the rest of the field).
+    expect(html).toContain("Top American Golfer");
+    expect(html).toContain("Xander Schauffele");
+    expect(html).toContain("Collin Morikawa");
     // The round-leader prop child (market_id 42) is deduped out of the plain grid,
     // so the plain EventProps "By round" group must NOT also render it.
     expect(html).not.toContain("By round");
