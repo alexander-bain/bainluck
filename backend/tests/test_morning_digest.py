@@ -98,6 +98,33 @@ def test_render_empty_is_graceful():
     assert payload.data["url"] == "/discover"
 
 
+def test_payload_id_adds_open_tracking_to_deeplink():
+    """#209 rider (measurement_spec §2): the digest funnel's open-tracking params
+    ride the deep link, joined to push_sent via utm_campaign == payload_id."""
+    items = [_cand(42, "Will the Fed cut rates?", 0.64, 80.0, leader="Yes")]
+    payload = render_digest_payload(items, payload_id="digest-20260716")
+    assert payload.data["payload_id"] == "digest-20260716"
+    url = payload.data["url"]
+    assert url.startswith("/futures/42?")
+    assert "utm_source=push" in url
+    assert "utm_medium=morning_digest" in url
+    assert "utm_campaign=digest-20260716" in url
+
+
+def test_payload_id_tracking_on_default_discover_link():
+    payload = render_digest_payload([], payload_id="digest-20260716")
+    assert payload.data["url"].startswith("/discover?")
+    assert "utm_campaign=digest-20260716" in payload.data["url"]
+
+
+def test_no_payload_id_leaves_deeplink_clean():
+    """Backward compatible: without a payload_id the deep link is untouched."""
+    items = [_cand(42, "Q?", 0.64, 80.0)]
+    payload = render_digest_payload(items)
+    assert payload.data["url"] == "/futures/42"
+    assert "payload_id" not in payload.data
+
+
 def test_drops_near_certain_leaders():
     cands = [
         _cand(1, "Boring 100%", 1.0, 99.0, dedup_key="a"),

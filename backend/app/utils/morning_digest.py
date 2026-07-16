@@ -152,12 +152,34 @@ def _pct(prob: float) -> int:
     return int(round(max(0.0, min(1.0, prob)) * 100))
 
 
-def render_digest_payload(items: list[DigestCandidate]) -> DigestPayload:
+def _with_open_tracking(path: str, payload_id: str) -> str:
+    """Append the digest funnel's open-tracking params to a relative deep link.
+
+    The frontend's page-view tracking auto-captures UTM params into GA4, so a push
+    OPEN becomes the ``push_opened`` funnel step (measurement_spec.md §2), joined
+    back to the server-side ``push_sent`` via the shared ``utm_campaign`` =
+    ``payload_id``. Native reads the same id from ``data["payload_id"]``.
+    """
+    sep = "&" if "?" in path else "?"
+    return (
+        f"{path}{sep}utm_source=push&utm_medium=morning_digest"
+        f"&utm_campaign={payload_id}"
+    )
+
+
+def render_digest_payload(
+    items: list[DigestCandidate], payload_id: str | None = None
+) -> DigestPayload:
     """Render selected candidates into an APNS/FCM push payload.
 
     Title is a fixed brand hook; body lists each probability as
     ``Leader NN% — question`` on its own line. Data carries a deep link to the
     top item so a tap lands somewhere useful.
+
+    When ``payload_id`` is given, the deep link gains open-tracking UTM params and
+    ``data["payload_id"]`` carries the campaign id, so the digest funnel
+    (``push_sent`` → ``push_opened`` → ``card_engaged``) is measurable from the
+    first send (measurement_spec.md §2).
     """
     title = "\U0001f340 Today's most interesting odds"
     lines: list[str] = []
@@ -183,5 +205,8 @@ def render_digest_payload(items: list[DigestCandidate]) -> DigestPayload:
     if items:
         data["market_id"] = str(items[0].market_id)
         data["url"] = f"/futures/{items[0].market_id}"
+    if payload_id:
+        data["payload_id"] = payload_id
+        data["url"] = _with_open_tracking(data["url"], payload_id)
 
     return DigestPayload(title=title, body=body, data=data, items=rendered_items)

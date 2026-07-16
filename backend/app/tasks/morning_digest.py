@@ -156,10 +156,13 @@ async def _run_morning_digest(
         # Pass now so the feed's dated-bucket/quality suppression runs — a market
         # whose title implies a past month (Kalshi settlement lands in the next
         # month, gotcha #883) must never rank into today's digest.
-        selected = select_digest_candidates(
-            candidates, limit=limit, now=datetime.now(timezone.utc)
-        )
-        payload = render_digest_payload(selected)
+        now = datetime.now(timezone.utc)
+        selected = select_digest_candidates(candidates, limit=limit, now=now)
+        # Campaign id for the digest funnel (measurement_spec.md §2): one per daily
+        # send, carried in the deep link (utm_campaign) + FCM data.payload_id so
+        # push_opened/card_engaged join back to the server-side push_sent.
+        payload_id = f"digest-{now:%Y%m%d}"
+        payload = render_digest_payload(selected, payload_id=payload_id)
 
         summary: dict = {
             "status": "ok",
@@ -221,6 +224,24 @@ async def _run_morning_digest(
         summary["recipients"] = len(recipient_tokens)
         summary["sent"] = sent
         summary["failed"] = failed
+        summary["payload_id"] = payload_id
+
+        # Digest funnel step 1 (measurement_spec.md §2): emit push_sent server-side
+        # so the 7:05 send is measurable from day one. Best-effort — never blocks
+        # or fails the send if GA is slow / the MP secret isn't set yet.
+        if sent > 0:
+            from app.utils.measurement import emit_ga4_event
+
+            summary["push_sent_emitted"] = await emit_ga4_event(
+                "push_sent",
+                {
+                    "payload_id": payload_id,
+                    "surface": "digest",
+                    "recipients": sent,
+                    "items": len(selected),
+                    "top_market_id": str(selected[0].market_id) if selected else "",
+                },
+            )
 
     logger.info(
         "Morning digest (%s): candidates=%d selected=%d sent=%d failed=%d",
