@@ -54,6 +54,12 @@ interface FuturesChartProps {
    *  honestly proportional). Default false preserves the auto-scaled behavior
    *  other surfaces (e.g. golf) rely on. */
   fixedYAxis?: boolean;
+  /** L2-135: vertical state markers giving the time axis a real sense of time —
+   *  golf round boundaries (R1/R2/R3/R4), the settled-page state-marker language
+   *  applied to the evolution chart. Each marker is a dashed line + top label,
+   *  clipped to the chart's visible [minTime, maxTime] window. Opt-in: undefined
+   *  = no markers (every non-golf surface is unaffected). Times are epoch ms. */
+  timeMarkers?: { time: number; label: string }[];
 }
 
 export function FuturesChart({
@@ -69,6 +75,7 @@ export function FuturesChart({
   className,
   stepInterpolation = false,
   fixedYAxis = false,
+  timeMarkers,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -298,6 +305,36 @@ export function FuturesChart({
                 </g>
               ));
             })()}
+
+          {/* L2-135: round/state boundary markers — dashed verticals + top labels
+              (R1/R2/R3/R4) giving the axis a real sense of time. Clipped to the
+              visible window; skipped in mini mode. */}
+          {!mini &&
+            effectiveShowAxes &&
+            timeMarkers?.map((m, i) =>
+              m.time < minTime || m.time > maxTime ? null : (
+                <g key={`marker-${i}`}>
+                  <line
+                    x1={xScale(m.time)}
+                    y1={padding.top}
+                    x2={xScale(m.time)}
+                    y2={padding.top + innerHeight}
+                    stroke="#cbd5e1"
+                    strokeDasharray="4 3"
+                    strokeWidth={1}
+                  />
+                  <text
+                    x={xScale(m.time) + 3}
+                    y={padding.top + 10}
+                    textAnchor="start"
+                    className="fill-slate"
+                    style={{ fontSize: "9px", fontWeight: 600 }}
+                  >
+                    {m.label}
+                  </text>
+                </g>
+              ),
+            )}
 
           {/* Lines */}
           {displayedOutcomes.map((outcome, idx) => {

@@ -20,6 +20,7 @@ import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types"
 import Sparkline from "./Sparkline";
 import FreshnessChip from "./FreshnessChip";
 import { TeamCrest } from "./MatchupDuel";
+import EntityImage from "@/components/EntityImage";
 
 interface EventLeaderboardProps {
   competitors: EventConceptCompetitor[];
@@ -35,6 +36,25 @@ interface EventLeaderboardProps {
   settled?: boolean;
   /** L2-66: freshness stamp — drives the "as of" chip in golf live mode. */
   asOf?: string | null;
+  /** L2-135: event domain. When "golf" the person-field rows carry a Wikipedia
+   *  headshot avatar (the fighter pattern — golfers inherit it); soccer keeps the
+   *  team crest. Absent/other domains render text-only as before. */
+  domain?: string | null;
+}
+
+/** L2-135: golfer/person avatar for leaderboard rows — the shared Wikipedia image
+ *  path (lib/images via EntityImage), localStorage-cached with an initials-circle
+ *  fallback. Only mounted for the golf person-field so non-person domains are
+ *  unaffected. */
+function PlayerAvatar({ name, size = 22 }: { name: string; size?: number }) {
+  return (
+    <EntityImage
+      type="wikipedia"
+      name={name}
+      size={size}
+      className="shrink-0"
+    />
+  );
 }
 
 /** Score-to-par display: E / -N / +N. */
@@ -75,10 +95,12 @@ function GolfRow({
   c,
   index,
   cut = false,
+  avatar = false,
 }: {
   c: EventConceptCompetitor;
   index: number;
   cut?: boolean;
+  avatar?: boolean;
 }) {
   // L2-69: prefer the true in-play win-prob delta ("who's charging"); it's in
   // POINTS, so pass /100 through the shared points formatter. Fall back to the 24h
@@ -102,7 +124,10 @@ function GolfRow({
           c.position || index + 1
         )}
       </span>
-      <span className="flex-1 min-w-0 truncate text-text-primary">{c.name}</span>
+      <span className="flex-1 min-w-0 flex items-center gap-2">
+        {avatar && <PlayerAvatar name={c.name} size={22} />}
+        <span className="min-w-0 truncate text-text-primary">{c.name}</span>
+      </span>
       <span className={`w-12 text-right shrink-0 font-mono tabular-nums ${parClass}`}>
         {fmtToPar(toPar)}
       </span>
@@ -142,6 +167,7 @@ function WinnerFieldRow({
   showSparkline,
   historyOutcomes,
   out,
+  avatar = false,
 }: {
   c: EventConceptCompetitor;
   rank: number;
@@ -150,6 +176,7 @@ function WinnerFieldRow({
   showSparkline: boolean;
   historyOutcomes?: FuturesOutcomeHistory[];
   out: boolean;
+  avatar?: boolean;
 }) {
   const seed = (c as Record<string, unknown>).seed;
   const pct = c.probability != null ? Math.round(c.probability * 100) : null;
@@ -182,6 +209,11 @@ function WinnerFieldRow({
         ) : (
           <span className="shrink-0" style={{ width: 22, height: 22 }} />
         ))}
+
+      {/* L2-135: golfer headshot (Wikipedia) for the person field. Dead/OUT rows
+          stay dimmed via the row opacity; the avatar keeps its own initials
+          fallback so an unmatched name never leaves a blank slot. */}
+      {avatar && !anyCrest && <PlayerAvatar name={c.name} size={22} />}
 
       {/* Name + chips + bar */}
       <div className="min-w-0 flex-1">
@@ -255,7 +287,10 @@ export default function EventLeaderboard({
   live = false,
   settled = false,
   asOf = null,
+  domain = null,
 }: EventLeaderboardProps) {
+  // L2-135: golf person-field rows carry a Wikipedia headshot avatar.
+  const golfAvatar = domain === "golf";
   // L2-81 settled winner-field: once the event concludes, showing a normalized
   // field ("champion 30%, runner-up 25%") reads as a live prediction and is
   // dishonest. Render the champion with a "Won" chip and NO stale percentages;
@@ -350,7 +385,7 @@ export default function EventLeaderboard({
         </div>
         <div className="divide-y divide-surface-border/40">
           {active.map((c, i) => (
-            <GolfRow key={`${c.name}-${i}`} c={c} index={i} />
+            <GolfRow key={`${c.name}-${i}`} c={c} index={i} avatar={golfAvatar} />
           ))}
         </div>
         {cutPlayers.length > 0 && (
@@ -360,7 +395,7 @@ export default function EventLeaderboard({
             </summary>
             <div className="divide-y divide-surface-border/40 mt-2">
               {cutPlayers.map((c, i) => (
-                <GolfRow key={`cut-${c.name}-${i}`} c={c} index={i} cut />
+                <GolfRow key={`cut-${c.name}-${i}`} c={c} index={i} cut avatar={golfAvatar} />
               ))}
             </div>
           </details>
@@ -400,6 +435,7 @@ export default function EventLeaderboard({
             showSparkline={showSparkline}
             historyOutcomes={historyOutcomes}
             out={false}
+            avatar={golfAvatar}
           />
         ))}
       </div>
@@ -419,6 +455,7 @@ export default function EventLeaderboard({
                 showSparkline={showSparkline}
                 historyOutcomes={historyOutcomes}
                 out={isEliminatedCompetitor(c)}
+                avatar={golfAvatar}
               />
             ))}
           </div>

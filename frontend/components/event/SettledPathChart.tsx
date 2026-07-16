@@ -9,13 +9,22 @@ import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
+import { golfRoundMarkers } from "@/lib/golfRounds";
 
 interface SettledPathChartProps {
   marketId: number;
   domain?: string;
+  /** L2-135: tournament start/end — golf's settled path gets R1..R4 markers. */
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
-export default function SettledPathChart({ marketId, domain }: SettledPathChartProps) {
+export default function SettledPathChart({
+  marketId,
+  domain,
+  startDate,
+  endDate,
+}: SettledPathChartProps) {
   // Widest window — a settled event's path spans the whole run.
   const { data, isLoading } = useSWR(
     ["event-settled-path", marketId],
@@ -29,6 +38,10 @@ export default function SettledPathChart({ marketId, domain }: SettledPathChartP
   );
 
   if (!isLoading && !hasHistory) return null;
+
+  // For a settled event, cap markers at the event end (now-cap doesn't apply).
+  const timeMarkers =
+    domain === "golf" ? golfRoundMarkers(startDate, endDate, Date.now()) : undefined;
 
   return (
     <section id="path" className="bg-surface-card rounded-card shadow-card p-6">
@@ -46,6 +59,7 @@ export default function SettledPathChart({ marketId, domain }: SettledPathChartP
           showLegend={false}
           height={260}
           greenTheme={domain === "golf"}
+          timeMarkers={timeMarkers}
         />
       )}
     </section>

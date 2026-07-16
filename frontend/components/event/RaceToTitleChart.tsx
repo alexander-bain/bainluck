@@ -12,12 +12,16 @@ import { useMemo, useState } from "react";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import { competitorsToOutcomeHistory } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
+import { golfRoundMarkers } from "@/lib/golfRounds";
 
 interface RaceToTitleChartProps {
   /** Envelope competitors carrying per-competitor `history` (L2-71). */
   competitors: EventConceptCompetitor[];
   /** Golf tints the leader gold; other domains use the default palette. */
   domain?: string;
+  /** L2-135: tournament start/end — golf gets R1..R4 round markers on the axis. */
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 const RANGES: { label: string; hours: number }[] = [
@@ -36,9 +40,20 @@ function lastProb(o: FuturesOutcomeHistory): number {
   return -1;
 }
 
-export default function RaceToTitleChart({ competitors, domain }: RaceToTitleChartProps) {
+export default function RaceToTitleChart({
+  competitors,
+  domain,
+  startDate,
+  endDate,
+}: RaceToTitleChartProps) {
   const [hours, setHours] = useState(168);
   const [topN, setTopN] = useState(5);
+
+  // L2-135: golf round markers (R1..R4) give the axis a real sense of time.
+  const timeMarkers = useMemo(
+    () => (domain === "golf" ? golfRoundMarkers(startDate, endDate) : undefined),
+    [domain, startDate, endDate],
+  );
 
   // Built from the envelope's per-competitor history; the range switch filters
   // points client-side (no refetch).
@@ -110,6 +125,7 @@ export default function RaceToTitleChart({ competitors, domain }: RaceToTitleCha
           showLegend={false}
           height={280}
           greenTheme={domain === "golf"}
+          timeMarkers={timeMarkers}
         />
       ) : (
         <div className="h-40 flex flex-col items-center justify-center gap-1 text-sm text-text-secondary">

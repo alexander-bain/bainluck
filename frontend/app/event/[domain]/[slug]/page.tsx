@@ -33,6 +33,11 @@ import PropsSection, { type PropMark } from "@/components/event/PropsSection";
 import FinishPositionLadder from "@/components/event/FinishPositionLadder";
 import SettledPathChart from "@/components/event/SettledPathChart";
 import WinnerEvolutionChart from "@/components/event/WinnerEvolutionChart";
+import BubbleWatch from "@/components/event/BubbleWatch";
+import ScoringRecordsLadders, {
+  scoringRecordChildren,
+  scoringRecordMarketIds,
+} from "@/components/event/ScoringRecordsLadders";
 
 // Design tweaks (queue L2-64): global on/off for per-row sparklines and the
 // today's-movers strip. Sparklines still degrade to nothing per-row when a
@@ -148,17 +153,25 @@ export default function EventConceptPage() {
   // "don't double-render" — the finish-position ladder is separate, reading
   // `sections`/competitor fields, not `children`). No marks (settled, or a domain
   // that doesn't emit them) → graceful fallback to EventProps.
-  const propMarks: PropMark[] = (data.props_script ?? []).map((p, i) => ({
-    key: p.key ?? i,
-    label: p.label,
-    pregame_mark: p.pregame_mark ?? null,
-    current: p.current ?? null,
-    graded_result: p.graded_result ?? null,
-    graded_label: p.graded_label ?? null,
-    // L2-123 / #199: honest pending label for degenerate (unpriced) prop families.
-    pending_label: p.pending_label ?? null,
-  }));
+  // L2-135 Item 3: the scoring/records families render as QuantityGroup ladders in
+  // their own section, so drop their single-row props-script marks here — one
+  // question, one place ("don't double-render").
+  const scoringIds = scoringRecordMarketIds(data.children);
+  const scoringFamilyCount = scoringRecordChildren(data.children).length;
+  const propMarks: PropMark[] = (data.props_script ?? [])
+    .filter((p) => !(typeof p.market_id === "number" && scoringIds.has(p.market_id)))
+    .map((p, i) => ({
+      key: p.key ?? i,
+      label: p.label,
+      pregame_mark: p.pregame_mark ?? null,
+      current: p.current ?? null,
+      graded_result: p.graded_result ?? null,
+      graded_label: p.graded_label ?? null,
+      // L2-123 / #199: honest pending label for degenerate (unpriced) prop families.
+      pending_label: p.pending_label ?? null,
+    }));
   const hasPropsScript = propMarks.length > 0;
+  const hasScoringRecords = scoringFamilyCount > 0;
   const propScriptIds = new Set(
     (data.props_script ?? [])
       .map((p) => p.market_id ?? p.key)
@@ -204,6 +217,17 @@ export default function EventConceptPage() {
   // Mounted while live/upcoming; settled events get SettledPathChart instead.
   const showWinnerEvolution =
     isSoccer && hasWinnerField && !isSettled && typeof evolutionId === "number";
+  // L2-135: golf cut-line Bubble Watch — live, rounds 1–2 only (a cut is only a
+  // live question before it's made). Reads make_cut_prob off the competitors; the
+  // component self-suppresses when no golfer sits near the cut. Renders BELOW the
+  // leaderboard (Alex's ruling: the leaderboard is the page's spine).
+  const golfCurrentRound =
+    competitors.find((c) => c.current_round != null)?.current_round ?? null;
+  const showBubbleWatch =
+    isLive &&
+    event.domain === "golf" &&
+    golfCurrentRound != null &&
+    golfCurrentRound <= 2;
 
   // Section nav — only the sections that will actually render.
   const nav: { id: string; label: string }[] = [];
@@ -212,12 +236,14 @@ export default function EventConceptPage() {
     nav.push({ id: "race", label: "Race" });
   if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
+  if (showBubbleWatch) nav.push({ id: "bubble-watch", label: "Bubble Watch" });
   if (showWinnerEvolution) nav.push({ id: "evolution", label: "Evolution" });
   if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
   if (fightChildren.length > 0)
     nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
   if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
   else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
+  if (hasScoringRecords) nav.push({ id: "scoring-records", label: "Scoring" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
   return (
@@ -255,7 +281,14 @@ export default function EventConceptPage() {
         <SoccerContainerHero matchups={fightChildren} />
       ) : (
         hasWinnerField &&
-        !isSettled && <RaceToTitleChart competitors={competitors} domain={event.domain} />
+        !isSettled && (
+          <RaceToTitleChart
+            competitors={competitors}
+            domain={event.domain}
+            startDate={event.start_date}
+            endDate={event.end_date}
+          />
+        )
       )}
 
       {hasWinnerField && (
@@ -266,6 +299,16 @@ export default function EventConceptPage() {
           live={isLive}
           settled={isSettled}
           asOf={event.as_of}
+          domain={event.domain}
+        />
+      )}
+
+      {/* L2-135: Bubble Watch sits directly below the leaderboard spine. */}
+      {showBubbleWatch && (
+        <BubbleWatch
+          competitors={competitors}
+          currentRound={golfCurrentRound}
+          domain={event.domain}
         />
       )}
 
@@ -291,8 +334,19 @@ export default function EventConceptPage() {
         <EventProps items={propChildren} />
       )}
 
+      {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,
+          not a wall of numbers. Suppressed once settled (settled-means-settled). */}
+      {hasScoringRecords && !isSettled && (
+        <ScoringRecordsLadders items={data.children} />
+      )}
+
       {isSettled && evolutionId && (
-        <SettledPathChart marketId={evolutionId} domain={event.domain} />
+        <SettledPathChart
+          marketId={evolutionId}
+          domain={event.domain}
+          startDate={event.start_date}
+          endDate={event.end_date}
+        />
       )}
     </div>
   );
