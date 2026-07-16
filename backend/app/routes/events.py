@@ -4002,7 +4002,14 @@ def _build_props_script(player_props, event_is_finished):
         graded_label = None
         if event_is_finished:
             hit = pp.get("hit")
-            if hit is None:
+            if hit is None and pp.get("resolution_source"):
+                # is_winner is a non-nullable Boolean defaulting to False, so an
+                # UNRESOLVED outcome carries is_winner=False (not None) — trusting
+                # it here rendered ungraded props as a confident "miss" (observed
+                # live: WNBA player props with resolution_source=None all showed
+                # graded_result="miss"). Only fall back to is_winner when the
+                # outcome is authoritatively resolved (resolution_source set); a
+                # box-score-derived hit above never needs this gate.
                 is_win = pp.get("is_winner")
                 if is_win is not None:
                     hit = bool(is_win)

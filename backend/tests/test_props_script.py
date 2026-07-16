@@ -85,12 +85,35 @@ class TestBuildPropsScript:
         assert row["graded_label"] == "0 — miss"
 
     def test_graded_falls_back_to_is_winner_when_no_boxscore_hit(self):
+        # Fallback only fires when authoritatively resolved (resolution_source set).
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.9,
-                  "pregame_mark": 0.5, "is_winner": True}]
+                  "pregame_mark": 0.5, "is_winner": True,
+                  "resolution_source": "api_settlement"}]
         row = _build_props_script(props, event_is_finished=True)[0]
         assert row["graded_result"] == "hit"
         # No box-score actual → no numeric label.
         assert row["graded_label"] is None
+
+    def test_ungraded_prop_does_not_render_as_miss(self):
+        # is_winner defaults to False on UNRESOLVED outcomes (non-nullable column).
+        # Without a resolution_source, the prop is not graded and must NOT render
+        # as a confident "miss" (the live WNBA regression: Cardoso 6+/8+/10+ all
+        # showed graded_result="miss" with resolution_source=None, actual=None).
+        props = [{"market_name": "M", "outcome_name": "Kamilla Cardoso: 6+",
+                  "over_probability": 0.8, "pregame_mark": 0.5,
+                  "hit": None, "is_winner": False, "resolution_source": None,
+                  "actual": None}]
+        row = _build_props_script(props, event_is_finished=True)[0]
+        assert row["graded_result"] is None
+        assert row["graded_label"] is None
+
+    def test_authoritative_loss_still_renders_as_miss(self):
+        # A real resolved loss (resolution_source set, is_winner False) DOES grade.
+        props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.2,
+                  "pregame_mark": 0.5, "is_winner": False,
+                  "resolution_source": "api_settlement"}]
+        row = _build_props_script(props, event_is_finished=True)[0]
+        assert row["graded_result"] == "miss"
 
     def test_not_finished_never_grades_even_with_hit_present(self):
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.9,
