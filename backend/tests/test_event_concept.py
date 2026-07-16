@@ -11,6 +11,7 @@ from app.utils.event_concept import (
     golf_live_deltas,
     downsample_points,
     build_golf_props_script,
+    classify_prop_kind,
     _clean_prop_label,
     _golf_leaderboard_has_live_rows,
     _golf_within_play_window,
@@ -660,3 +661,135 @@ class TestGolfLiveFallback:
         now = datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc)
         assert not _golf_leaderboard_is_fresh(None, now)
         assert not _golf_leaderboard_is_fresh("not-a-date", now)
+
+
+class TestClassifyPropKind:
+    """Prop archetype classification (Alex's ruling, The Open 2026): the shape
+    decides the visual — binary → divergence bar, ladder → QuantityGroup rungs,
+    field → named top-N (never a probability without a name)."""
+
+    def test_single_outcome_is_binary(self):
+        assert classify_prop_kind([{"name": "Yes", "probability": 0.18}]) == "binary"
+
+    def test_yes_no_family_is_binary(self):
+        outs = [{"name": "Yes", "probability": 0.6}, {"name": "No", "probability": 0.4}]
+        assert classify_prop_kind(outs) == "binary"
+
+    def test_threshold_rungs_are_a_ladder(self):
+        outs = [
+            {"name": "Under 67.5", "probability": 0.92},
+            {"name": "Under 66.5", "probability": 0.88},
+            {"name": "Under 65.5", "probability": 0.815},
+        ]
+        assert classify_prop_kind(outs) == "ladder"
+
+    def test_count_rungs_are_a_ladder(self):
+        outs = [
+            {"name": "1+ holes-in-one", "probability": 0.525},
+            {"name": "2+ holes-in-one", "probability": 0.175},
+            {"name": "3+ holes-in-one", "probability": 0.045},
+        ]
+        assert classify_prop_kind(outs) == "ladder"
+
+    def test_exactly_rungs_are_a_ladder(self):
+        outs = [
+            {"name": "Exactly 2 strokes", "probability": 0.295},
+            {"name": "Exactly 1 stroke", "probability": 0.27},
+            {"name": "Exactly 0 strokes", "probability": 0.2},
+        ]
+        assert classify_prop_kind(outs) == "ladder"
+
+    def test_named_entities_are_a_field(self):
+        outs = [
+            {"name": "Min Woo Lee", "probability": 0.125},
+            {"name": "Si Woo Kim", "probability": 0.12},
+            {"name": "Adam Scott", "probability": 0.09},
+        ]
+        assert classify_prop_kind(outs) == "field"
+
+    def test_name_first_threshold_labels_stay_a_field(self):
+        # "R1: Alex Fitzpatrick under 70.5 strokes" carries a NAME first — a
+        # ladder of unrelated golfers would be dishonest. Anchored patterns keep
+        # these a field so the names render.
+        outs = [
+            {"name": "R1: Alex Fitzpatrick under 70.5 strokes", "probability": 0.81},
+            {"name": "R1: Matt Wallace under 71.5 strokes", "probability": 0.8},
+            {"name": "R1: Nick Taylor under 70.5 strokes", "probability": 0.775},
+        ]
+        assert classify_prop_kind(outs) == "field"
+
+
+class TestPropsScriptArchetypeFields:
+    def _field_child(self):
+        return {
+            "market_id": 91,
+            "market_name": "The Open Championship: Top Asian/Oceanic Golfer",
+            "outcomes": [
+                {"name": "Min Woo Lee", "probability": 0.125, "opening_probability": 0.125},
+                {"name": "Si Woo Kim", "probability": 0.12, "opening_probability": 0.12},
+                {"name": "Adam Scott", "probability": 0.09, "opening_probability": None},
+                {"name": "Tom Kim", "probability": 0.085, "opening_probability": 0.085},
+            ],
+        }
+
+    def test_field_mark_names_its_favorite_in_the_label(self):
+        # The original bug: "Top Asian/Oceanic Golfer — 12.5%" with no name. A
+        # field mark's legacy label must carry the favorite; the visual renderer
+        # reads `question` + `outcomes` instead.
+        marks = build_golf_props_script([self._field_child()], "The Open Championship", "upcoming")
+        m = marks[0]
+        assert m["kind"] == "field"
+        assert m["label"] == "Top Asian/Oceanic Golfer: Min Woo Lee"
+        assert m["question"] == "Top Asian/Oceanic Golfer"
+
+    def test_field_mark_carries_top3_named_outcomes(self):
+        marks = build_golf_props_script([self._field_child()], "The Open Championship", "upcoming")
+        outs = marks[0]["outcomes"]
+        assert [o["name"] for o in outs] == ["Min Woo Lee", "Si Woo Kim", "Adam Scott"]
+        assert outs[0]["probability"] == 0.125
+        assert outs[0]["opening_probability"] == 0.125
+        assert outs[2]["opening_probability"] is None  # honest null, no fabrication
+
+    def test_binary_mark_keeps_question_label_and_empty_outcomes(self):
+        children = [{
+            "market_id": 92,
+            "market_name": "The Open Championship: Playoff",
+            "outcomes": [{"name": "Yes", "probability": 0.18, "opening_probability": 0.28}],
+        }]
+        m = build_golf_props_script(children, "The Open Championship", "upcoming")[0]
+        assert m["kind"] == "binary"
+        assert m["label"] == "Playoff"
+        assert m["outcomes"] == []
+
+    def test_ladder_mark_carries_its_rungs(self):
+        children = [{
+            "market_id": 93,
+            "market_name": "The Open Championship: Bogey-Free Round",
+            "outcomes": [
+                {"name": f"{i}+ Bogey-Free Rounds", "probability": 0.9 - i * 0.05,
+                 "opening_probability": None}
+                for i in range(1, 6)
+            ],
+        }]
+        m = build_golf_props_script(children, "The Open Championship", "upcoming")[0]
+        assert m["kind"] == "ladder"
+        assert m["question"] == "Bogey-Free Round"
+        assert len(m["outcomes"]) == 5
+        assert m["outcomes"][0]["name"] == "1+ Bogey-Free Rounds"
+
+    def test_pending_mark_still_classifies_and_carries_no_outcomes(self):
+        children = [{
+            "market_id": 94,
+            "market_name": "Round 2 Leader",
+            "kind": "prop",
+            "prop_type": "round",
+            "round": 2,
+            "outcomes": [
+                {"name": f"Golfer {i}", "probability": 0.24, "opening_probability": None}
+                for i in range(10)
+            ],
+        }]
+        m = build_golf_props_script(children, "The Open Championship", "upcoming")[0]
+        assert m["pending_label"] == "Opens after Round 1"
+        assert m["kind"] == "field"
+        assert m["outcomes"] == []

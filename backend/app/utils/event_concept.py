@@ -593,6 +593,74 @@ def _is_degenerate_placeholder(outs: list[dict]) -> bool:
     return spread <= _DEGENERATE_TIED_EPS or (spread / mx) <= _DEGENERATE_FLAT_RATIO
 
 
+# ---------------------------------------------------------------------------
+# Prop archetype classification (Alex's ruling, The Open 2026: "the divergence
+# box is still just a wall of numbers … some rows have a probability but not a
+# name"). Every prop family is one of three SHAPES, and the shape decides the
+# visual: a BINARY is one question (Playoff? Albatross?) → divergence bar; a
+# LADDER's outcomes are threshold rungs ("Under 63.5", "Exactly 2 strokes",
+# "1+ holes-in-one") → the QuantityGroup heat ladder Alex likes; a FIELD's
+# outcomes are named entities (Top American Golfer, Region to Win — or an Emmy
+# category's nominees) → named top-N mini-race, NEVER a number without a name.
+# Shape-based (not name-regex) so the same classification carries to any future
+# prop-heavy event: majors, award shows, elections.
+# ---------------------------------------------------------------------------
+
+_LADDER_OUTCOME_RE = re.compile(r"^\s*(?:under|over|exactly)\b|^\s*\d+\s*\+", re.IGNORECASE)
+_BINARY_OUTCOME_RE = re.compile(r"^\s*(?:yes|no)\s*$", re.IGNORECASE)
+
+# Outcome-slice caps: a field shows its top contenders (3 of possibly 150+); a
+# ladder shows its rungs (families run 3–10).
+_FIELD_OUTCOME_CAP = 3
+_LADDER_OUTCOME_CAP = 8
+
+
+def classify_prop_kind(outcomes: list[dict]) -> str:
+    """The prop family's shape: ``binary`` | ``ladder`` | ``field``.
+
+    Pure + shape-based: a single outcome or an all-Yes/No family is binary; a
+    family whose names are mostly anchored threshold labels ("Under 67.5",
+    "Exactly 2 strokes", "2+ holes-in-one") is a ladder; anything else — named
+    entities — is a field. Anchored patterns matter: "R1: Alex Fitzpatrick under
+    70.5 strokes" carries a name FIRST, so it stays a field (the name is the
+    information; a ladder of unrelated golfers would be dishonest)."""
+    named = [str(o.get("name") or "") for o in (outcomes or []) if o.get("name")]
+    if len(named) <= 1:
+        return "binary"
+    if all(_BINARY_OUTCOME_RE.match(n) for n in named):
+        return "binary"
+    ladderish = sum(1 for n in named if _LADDER_OUTCOME_RE.search(n))
+    if ladderish >= max(2, int(round(0.7 * len(named)))):
+        return "ladder"
+    return "field"
+
+
+def _prop_outcome_slice(outcomes: list[dict], kind: str) -> list[dict]:
+    """Top priced outcomes for the props section — {name, probability,
+    opening_probability} only (probability-only rule; no odds, no source names).
+    Field → top 3 by probability; ladder → up to 8 rungs. Empty for binary (its
+    single number already rides the mark's current/pregame fields)."""
+    if kind == "binary":
+        return []
+    priced = [
+        o for o in (outcomes or [])
+        if isinstance(o.get("probability"), (int, float)) and o.get("name")
+    ]
+    priced.sort(key=lambda o: o["probability"], reverse=True)
+    cap = _LADDER_OUTCOME_CAP if kind == "ladder" else _FIELD_OUTCOME_CAP
+    out = []
+    for o in priced[:cap]:
+        opening = o.get("opening_probability")
+        out.append(
+            {
+                "name": o.get("name"),
+                "probability": o.get("probability"),
+                "opening_probability": opening if isinstance(opening, (int, float)) else None,
+            }
+        )
+    return out
+
+
 def build_golf_props_script(
     children: list[dict],
     tournament_name: str | None,
@@ -645,6 +713,9 @@ def build_golf_props_script(
                     "key": mid,
                     "market_id": mid,
                     "label": base,
+                    "question": base,
+                    "kind": classify_prop_kind(outs),
+                    "outcomes": [],
                     "pregame_mark": None,
                     "current": None,
                     "graded_result": None,
@@ -662,7 +733,14 @@ def build_golf_props_script(
                 leader = o
         if leader is None or not isinstance(leader.get("probability"), (int, float)):
             continue
+        kind = classify_prop_kind(outs)
         if c.get("prop_type") == "round" and leader.get("name"):
+            label = f"{base}: {leader['name']}"
+        elif kind == "field" and leader.get("name"):
+            # A field mark's number belongs to a NAME — a probability without one
+            # is the "Top Asian/Oceanic golfer has a probability but not a name"
+            # bug (Alex, The Open 2026). The legacy label carries the favorite;
+            # the visual renderer uses `question` + `outcomes` instead.
             label = f"{base}: {leader['name']}"
         else:
             label = base
@@ -672,6 +750,9 @@ def build_golf_props_script(
                 "key": mid,
                 "market_id": mid,
                 "label": label,
+                "question": base,
+                "kind": kind,
+                "outcomes": _prop_outcome_slice(outs, kind),
                 "pregame_mark": opening if isinstance(opening, (int, float)) else None,
                 "current": leader.get("probability"),
                 "graded_result": None,

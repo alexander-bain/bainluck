@@ -33,6 +33,9 @@ class TestRoundTopCollision:
         assert _detect_market_type("U.S. Open: Top 5 Finishers")[0] == "top_5"
         assert _detect_market_type("U.S. Open: Top 10")[0] == "top_10"
         assert _detect_market_type("U.S. Open: Top 20")[0] == "top_20"
+        # Alex's ruling (The Open 2026): Top 40 is a placement column, not "other".
+        assert _detect_market_type("The Open Championship: Top 40 Finishers")[0] == "top_40"
+        assert _detect_market_type("U.S. Open: Round 1 Top 40 Finishers")[0] == "round_top"
 
     def test_round_leader_still_classified(self):
         # The round_top guard must NOT swallow "Round N Leader".

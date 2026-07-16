@@ -1117,6 +1117,7 @@ export interface GolfGolfer {
   top_5_prob?: number | null;
   top_10_prob?: number | null;
   top_20_prob?: number | null;
+  top_40_prob?: number | null;
   make_cut_prob?: number | null;
   round_leader_prob?: number | null;
 }
@@ -1866,6 +1867,21 @@ export interface EventConceptResponse {
     key: string | number;
     market_id?: number;
     label: string;
+    // Prop archetype (Alex's ruling, The Open 2026): the SHAPE decides the
+    // visual — binary → divergence bar, ladder → QuantityGroup rungs, field →
+    // named top-N mini-race (never a probability without a name). Absent on
+    // domains that haven't adopted it (game props) → legacy row rendering.
+    kind?: "binary" | "ladder" | "field" | null;
+    // The bare question ("Top American Golfer") — the label may bake in the
+    // favorite's name for legacy rendering.
+    question?: string | null;
+    // Top priced outcomes: field → top 3 by probability, ladder → its rungs,
+    // binary → []. Probability-only ({name, probability, opening_probability}).
+    outcomes?: {
+      name: string | null;
+      probability: number | null;
+      opening_probability?: number | null;
+    }[] | null;
     pregame_mark: number | null;
     current: number | null;
     graded_result?: "hit" | "miss" | "push" | null;

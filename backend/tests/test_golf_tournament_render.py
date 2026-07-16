@@ -104,5 +104,10 @@ class TestTournamentMarketType:
         # The reclass only touches "winner"-typed markets; placement families are
         # detected before it and pass through unchanged.
         assert _tournament_market_type("The Open Championship: Top 5 Finishers")[0] == "top_5"
+        # Alex's ruling (The Open 2026): Top 40 is a per-golfer placement column
+        # in the ONE golfer grid, not an "other" wall in Related Futures.
+        assert _tournament_market_type("The Open Championship: Top 40 Finishers")[0] == "top_40"
+        # Round-scoped Top 40 must still classify round_top, never the grid column.
+        assert _tournament_market_type("The Open: Round 2 Top 40 Finishers")[0] == "round_top"
         assert _tournament_market_type("The Open Championship: To Make the Cut")[0] == "make_cut"
         assert _tournament_market_type("The Open Championship End of Round 1 Leader")[0] == "round_leader"

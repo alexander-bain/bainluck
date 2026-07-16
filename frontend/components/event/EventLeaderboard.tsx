@@ -40,6 +40,76 @@ interface EventLeaderboardProps {
    *  headshot avatar (the fighter pattern — golfers inherit it); soccer keeps the
    *  team crest. Absent/other domains render text-only as before. */
   domain?: string | null;
+  /** Alex's ruling (The Open 2026): the golfer grid is ONE box. The rendered
+   *  placement columns (Top 5 … Top 40 … Make cut, from renderedFinishColumns)
+   *  append to each leaderboard row instead of splitting into a separate
+   *  "Finish position" section. Values are the 0–100 POINT probabilities fused
+   *  onto competitors by the golf aggregation — no extra fetch. Empty/absent →
+   *  the leaderboard renders exactly as before. */
+  finishColumns?: FinishColumnDef[];
+}
+
+/** A placement column appended to the leaderboard grid. */
+export interface FinishColumnDef {
+  /** Competitor field carrying this column's probability (0–100 points). */
+  key: string;
+  /** Short header label, e.g. "Top 5". */
+  label: string;
+}
+
+/** Format a 0–100 point placement probability as a whole-percent, "—" absent. */
+function fmtPts(v: number | null): string {
+  return v == null ? "—" : `${Math.round(v)}%`;
+}
+
+/** Colour a placement probability like the win column: confident end bright,
+ *  long shots muted — a light heat gradient without raw palette (moved here
+ *  from the retired FinishPositionLadder, unchanged). */
+function ptsClass(v: number | null): string {
+  if (v == null) return "text-text-muted";
+  if (v >= 50) return "text-text-primary font-semibold";
+  if (v >= 15) return "text-text-primary";
+  return "text-text-secondary";
+}
+
+/** Read a competitor's 0–100 placement value for a column key, or null. */
+function finishValueOf(c: EventConceptCompetitor, key: string): number | null {
+  const raw = (c as Record<string, unknown>)[key];
+  return typeof raw === "number" && !Number.isNaN(raw) ? raw : null;
+}
+
+/** The trailing placement cells for one row. `muted` (cut/OUT rows) renders
+ *  honest dashes — a cut player has no live placement odds worth showing. */
+function FinishCells({
+  c,
+  columns,
+  muted = false,
+}: {
+  c: EventConceptCompetitor;
+  columns: FinishColumnDef[];
+  muted?: boolean;
+}) {
+  return (
+    <>
+      {columns.map((col) => {
+        const v = muted ? null : finishValueOf(c, col.key);
+        return (
+          <span
+            key={col.key}
+            className={`w-14 text-right shrink-0 font-mono text-xs tabular-nums ${ptsClass(v)}`}
+          >
+            {fmtPts(v)}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/** Min-width (rem) that keeps a row's fixed columns legible before horizontal
+ *  scroll kicks in — base row + 3.5rem per placement column. */
+function gridMinWidth(base: number, columns: FinishColumnDef[]): string | undefined {
+  return columns.length > 0 ? `${base + columns.length * 3.5}rem` : undefined;
 }
 
 /** L2-135: golfer/person avatar for leaderboard rows — the shared Wikipedia image
@@ -96,11 +166,13 @@ function GolfRow({
   index,
   cut = false,
   avatar = false,
+  finishColumns = [],
 }: {
   c: EventConceptCompetitor;
   index: number;
   cut?: boolean;
   avatar?: boolean;
+  finishColumns?: FinishColumnDef[];
 }) {
   // L2-69: prefer the true in-play win-prob delta ("who's charging"); it's in
   // POINTS, so pass /100 through the shared points formatter. Fall back to the 24h
@@ -149,6 +221,9 @@ function GolfRow({
           {cut ? "—" : formatProbability(c.probability)}
         </span>
       </span>
+      {finishColumns.length > 0 && (
+        <FinishCells c={c} columns={finishColumns} muted={cut} />
+      )}
     </div>
   );
 }
@@ -168,6 +243,7 @@ function WinnerFieldRow({
   historyOutcomes,
   out,
   avatar = false,
+  finishColumns = [],
 }: {
   c: EventConceptCompetitor;
   rank: number;
@@ -177,6 +253,7 @@ function WinnerFieldRow({
   historyOutcomes?: FuturesOutcomeHistory[];
   out: boolean;
   avatar?: boolean;
+  finishColumns?: FinishColumnDef[];
 }) {
   const seed = (c as Record<string, unknown>).seed;
   const pct = c.probability != null ? Math.round(c.probability * 100) : null;
@@ -184,9 +261,10 @@ function WinnerFieldRow({
   const dim = out || zero;
   // Dead/zero rows carry no movement/sparkline — there is no live story to tell.
   const mv = dim ? null : formatMovement(competitorMovement(c));
-  const ownSeries = showSparkline && !dim ? seriesFromCompetitor(c) : [];
+  const hasFinish = finishColumns.length > 0;
+  const ownSeries = showSparkline && !dim && !hasFinish ? seriesFromCompetitor(c) : [];
   const series =
-    !showSparkline || dim
+    !showSparkline || dim || hasFinish
       ? []
       : ownSeries.length >= 2
         ? ownSeries
@@ -258,8 +336,9 @@ function WinnerFieldRow({
         </div>
       )}
 
-      {/* 24h movement */}
-      {mv && (
+      {/* 24h movement. When placement columns render, the slot is RESERVED even
+          without a move so the trailing grid columns stay aligned row-to-row. */}
+      {mv ? (
         <span
           className={`font-mono text-[11px] tabular-nums shrink-0 w-12 text-right ${
             mv.dir === "up" ? "text-accent-brand" : "text-accent-danger"
@@ -268,12 +347,15 @@ function WinnerFieldRow({
           {mv.dir === "up" ? "▲" : "▼"}
           {mv.text}
         </span>
+      ) : (
+        hasFinish && <span className="shrink-0 w-12" />
       )}
 
       {/* Big probability — OUT rows never show a stale live % (reads 0%). */}
       <span className="font-mono text-base font-semibold text-text-primary tabular-nums shrink-0 w-14 text-right">
         {formatProbability(out ? 0 : c.probability)}
       </span>
+      {hasFinish && <FinishCells c={c} columns={finishColumns} muted={out} />}
     </div>
   );
 }
@@ -288,6 +370,7 @@ export default function EventLeaderboard({
   settled = false,
   asOf = null,
   domain = null,
+  finishColumns = [],
 }: EventLeaderboardProps) {
   // L2-135: golf person-field rows carry a Wikipedia headshot avatar.
   const golfAvatar = domain === "golf";
@@ -375,31 +458,55 @@ export default function EventLeaderboard({
           <h2 className="text-title-3 font-semibold text-text-primary">{label || "Leaderboard"}</h2>
           <FreshnessChip asOf={asOf} />
         </div>
-        {/* Column header */}
-        <div className="flex items-center gap-2 px-1 pb-1.5 text-[10px] uppercase tracking-wide text-text-muted">
-          <span className="w-8 shrink-0">Pos</span>
-          <span className="flex-1 min-w-0">Player</span>
-          <span className="w-12 text-right shrink-0">To&nbsp;par</span>
-          <span className="w-12 text-right shrink-0">Thru</span>
-          <span className="w-20 text-right shrink-0">Win</span>
-        </div>
-        <div className="divide-y divide-surface-border/40">
-          {active.map((c, i) => (
-            <GolfRow key={`${c.name}-${i}`} c={c} index={i} avatar={golfAvatar} />
-          ))}
-        </div>
-        {cutPlayers.length > 0 && (
-          <details className="mt-4">
-            <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
-              Missed cut ({cutPlayers.length})
-            </summary>
-            <div className="divide-y divide-surface-border/40 mt-2">
-              {cutPlayers.map((c, i) => (
-                <GolfRow key={`cut-${c.name}-${i}`} c={c} index={i} cut avatar={golfAvatar} />
+        {/* One golfer grid (Alex's ruling): win + placement columns in the same
+            box. Horizontal scroll on mobile when placement columns render. */}
+        <div className="overflow-x-auto -mx-2 px-2">
+          <div style={{ minWidth: gridMinWidth(26, finishColumns) }}>
+            {/* Column header */}
+            <div className="flex items-center gap-2 px-1 pb-1.5 text-[10px] uppercase tracking-wide text-text-muted">
+              <span className="w-8 shrink-0">Pos</span>
+              <span className="flex-1 min-w-0">Player</span>
+              <span className="w-12 text-right shrink-0">To&nbsp;par</span>
+              <span className="w-12 text-right shrink-0">Thru</span>
+              <span className="w-20 text-right shrink-0">Win</span>
+              {finishColumns.map((col) => (
+                <span key={col.key} className="w-14 text-right shrink-0">
+                  {col.label}
+                </span>
               ))}
             </div>
-          </details>
-        )}
+            <div className="divide-y divide-surface-border/40">
+              {active.map((c, i) => (
+                <GolfRow
+                  key={`${c.name}-${i}`}
+                  c={c}
+                  index={i}
+                  avatar={golfAvatar}
+                  finishColumns={finishColumns}
+                />
+              ))}
+            </div>
+            {cutPlayers.length > 0 && (
+              <details className="mt-4">
+                <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+                  Missed cut ({cutPlayers.length})
+                </summary>
+                <div className="divide-y divide-surface-border/40 mt-2">
+                  {cutPlayers.map((c, i) => (
+                    <GolfRow
+                      key={`cut-${c.name}-${i}`}
+                      c={c}
+                      index={i}
+                      cut
+                      avatar={golfAvatar}
+                      finishColumns={finishColumns}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        </div>
       </section>
     );
   }
@@ -424,43 +531,67 @@ export default function EventLeaderboard({
         <h2 className="text-title-3 font-semibold text-text-primary">{label || "Winner"}</h2>
         {live && <FreshnessChip asOf={asOf} />}
       </div>
-      <div className="space-y-0.5">
-        {visible.map((c, i) => (
-          <WinnerFieldRow
-            key={`${c.name}-${i}`}
-            c={c}
-            rank={i + 1}
-            anyCrest={anyCrest}
-            live={live}
-            showSparkline={showSparkline}
-            historyOutcomes={historyOutcomes}
-            out={false}
-            avatar={golfAvatar}
-          />
-        ))}
-      </div>
-      {rest.length > 0 && (
-        <details className="mt-3">
-          <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
-            Show all {competitors.length}
-          </summary>
-          <div className="space-y-0.5 mt-2">
-            {rest.map((c, i) => (
+      <div className="overflow-x-auto -mx-2 px-2">
+        <div style={{ minWidth: gridMinWidth(24, finishColumns) }}>
+          {finishColumns.length > 0 && (
+            /* One golfer grid (Alex's ruling): the placement columns share the
+               leaderboard box, so it earns a header row naming them. */
+            <div className="flex items-center gap-3 pb-1.5 text-[10px] uppercase tracking-wide text-text-muted">
+              <span className="w-5 shrink-0" />
+              {(anyCrest || golfAvatar) && (
+                <span className="shrink-0" style={{ width: 22 }} />
+              )}
+              <span className="flex-1 min-w-0">Player</span>
+              <span className="w-12 shrink-0" />
+              <span className="w-14 text-right shrink-0">Win</span>
+              {finishColumns.map((col) => (
+                <span key={col.key} className="w-14 text-right shrink-0">
+                  {col.label}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {visible.map((c, i) => (
               <WinnerFieldRow
-                key={`rest-${c.name}-${i}`}
+                key={`${c.name}-${i}`}
                 c={c}
-                rank={visible.length + i + 1}
+                rank={i + 1}
                 anyCrest={anyCrest}
                 live={live}
                 showSparkline={showSparkline}
                 historyOutcomes={historyOutcomes}
-                out={isEliminatedCompetitor(c)}
+                out={false}
                 avatar={golfAvatar}
+                finishColumns={finishColumns}
               />
             ))}
           </div>
-        </details>
-      )}
+          {rest.length > 0 && (
+            <details className="mt-3">
+              <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+                Show all {competitors.length}
+              </summary>
+              <div className="space-y-0.5 mt-2">
+                {rest.map((c, i) => (
+                  <WinnerFieldRow
+                    key={`rest-${c.name}-${i}`}
+                    c={c}
+                    rank={visible.length + i + 1}
+                    anyCrest={anyCrest}
+                    live={live}
+                    showSparkline={showSparkline}
+                    historyOutcomes={historyOutcomes}
+                    out={isEliminatedCompetitor(c)}
+                    avatar={golfAvatar}
+                    finishColumns={finishColumns}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

@@ -269,6 +269,9 @@ export const FINISH_POSITION_COLUMNS: FinishPositionColumn[] = [
   { type: "top_5", key: "top_5_prob", label: "Top 5" },
   { type: "top_10", key: "top_10_prob", label: "Top 10" },
   { type: "top_20", key: "top_20_prob", label: "Top 20" },
+  // Alex's ruling (The Open 2026): every per-golfer placement market the backend
+  // fuses becomes a column in the ONE golfer grid — Top 40 joins the ladder.
+  { type: "top_40", key: "top_40_prob", label: "Top 40" },
   { type: "make_cut", key: "make_cut_prob", label: "Make cut" },
 ];
 

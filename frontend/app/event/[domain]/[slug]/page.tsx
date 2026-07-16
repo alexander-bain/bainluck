@@ -30,7 +30,6 @@ import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
 import EventProps from "@/components/event/EventProps";
 import PropsSection, { type PropMark } from "@/components/event/PropsSection";
-import FinishPositionLadder from "@/components/event/FinishPositionLadder";
 import SettledPathChart from "@/components/event/SettledPathChart";
 import WinnerEvolutionChart from "@/components/event/WinnerEvolutionChart";
 import BubbleWatch from "@/components/event/BubbleWatch";
@@ -203,12 +202,17 @@ export default function EventConceptPage() {
   const isSoccer = event.domain === "soccer";
   const soccerHero =
     isSoccer && !isSettled ? headlinerMatchup(fightChildren) : null;
-  // L2-116: finish-position ladder (golf Top 5/10/20/Make cut) renders only when
-  // its markets exist AND competitors carry the odds. Suppressed once settled —
-  // a concluded field shows the champion, not stale placement percentages
-  // (settled-means-settled). This must match `marketsTracked`'s count exactly.
-  const showFinishLadder =
-    hasWinnerField && !isSettled && renderedFinishColumns(data).length > 0;
+  // L2-116 → Alex's ruling (The Open 2026): the golfer grid is ONE box. The
+  // finish-position columns (Top 5 … Top 40 … Make cut) no longer render as a
+  // separate "Finish position" section — they append to the leaderboard rows.
+  // Same single source of truth (`renderedFinishColumns`), so `marketsTracked`'s
+  // count still matches exactly what renders. Suppressed once settled — a
+  // concluded field shows the champion, not stale placement percentages
+  // (settled-means-settled).
+  const finishColumns =
+    hasWinnerField && !isSettled
+      ? renderedFinishColumns(data).map((c) => ({ key: c.key, label: c.label }))
+      : [];
   // L2-132: the WINNER EVOLUTION chart — the winner field's probability path so
   // far (the tournament's story to date). Soccer (World Cup) has no useful race
   // chart: its winner-field competitors carry no per-outcome history, and the
@@ -238,7 +242,6 @@ export default function EventConceptPage() {
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
   if (showBubbleWatch) nav.push({ id: "bubble-watch", label: "Bubble Watch" });
   if (showWinnerEvolution) nav.push({ id: "evolution", label: "Evolution" });
-  if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
   if (fightChildren.length > 0)
     nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
   if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
@@ -300,6 +303,7 @@ export default function EventConceptPage() {
           settled={isSettled}
           asOf={event.as_of}
           domain={event.domain}
+          finishColumns={finishColumns}
         />
       )}
 
@@ -319,8 +323,6 @@ export default function EventConceptPage() {
           live={isLive}
         />
       )}
-
-      {showFinishLadder && <FinishPositionLadder data={data} />}
 
       <MatchupsRail
         items={fightChildren}

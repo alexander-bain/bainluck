@@ -181,9 +181,9 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain("Rory McIlroy");
     // matchups rail
     expect(html).toContain("H2H: Scheffler vs McIlroy");
-    // L2-116 finish-position ladder — the counted-but-formerly-invisible markets
-    // now render (renders without throwing under SSR is the guard's whole point).
-    expect(html).toContain("Finish position");
+    // L2-116 → Alex's ruling (The Open 2026): the finish-position columns render
+    // INSIDE the one golfer grid (the leaderboard), not as a separate section.
+    expect(html).not.toContain("Finish position");
     expect(html).toContain("Top 5");
     expect(html).toContain("Make cut");
     // probability-only: no American-odds moneyline strings

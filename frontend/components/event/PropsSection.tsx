@@ -7,30 +7,60 @@
  * Queue L2-118 Phase 1, from strategy_event_page_primitives.md ("The shared
  * body … Props section — three states: THE SCRIPT (pregame expectation set) /
  * THE DIVERGENCE (movement vs pregame marks) / WHAT HIT (graded)"). This is the
- * ONE component under all three heroes (duel / field / container) — the duel
- * event page is its first consumer.
+ * ONE component under all three heroes (duel / field / container).
  *
  * State machine (the settled-means-settled dimension):
  *   upcoming  → THE SCRIPT      what the market expects before the event
  *   live      → THE DIVERGENCE  how far reality has moved from that script
  *   settled   → WHAT HIT        the script, graded
  *
- * Phase-1 honesty rule: the pregame-mark and graded fields (`pregame_mark`,
- * `graded_result`) are shipped by #195 (Wednesday). Until they arrive they are
- * null, and this component renders an explicit, quiet "pending" line BEHIND the
- * same interface — never a fabricated number. Phase 2 (Friday) is a payload
- * swap: fill the fields, the chrome is already here. The parent page decides
- * whether to MOUNT this section (gate on payload presence) so nothing
- * half-populated reaches production before #195.
+ * Alex's ruling (The Open 2026): the section stops being a wall of numbers.
+ * Marks that carry a `kind` (golf today; any prop-heavy event tomorrow —
+ * majors, award shows) route to a SHAPE-appropriate visual:
+ *   binary → a divergence bar: the pregame mark is a tick on the track, the
+ *            current probability is the fill — the gap IS the story, visible
+ *            without reading a number.
+ *   field  → a named top-3 mini-race (question + named outcomes with heat
+ *            bars). NEVER a probability without a name — the "Top Asian/
+ *            Oceanic golfer has a probability but no name" bug class.
+ *   ladder → the shared QuantityGroup heat ladder (the same visual as the
+ *            Scoring & Records section Alex called out as great).
+ * Marks WITHOUT a kind (game props from routes/events.py) render exactly the
+ * legacy rows — nothing regresses behind this change.
+ *
+ * Honesty rules carried forward unchanged: null pregame/graded fields render an
+ * explicit quiet "pending" line, never a fabricated number; `pending_label`
+ * (L2-123 / #199 — the wide-spread/no-trade capture class) wins over any stray
+ * price and renders the honest state, never blank.
  */
 
+import QuantityGroup, { type QuantityRung } from "@/components/QuantityGroup";
+import { probabilityHeat } from "@/lib/probabilityColors";
+
 export type PropsState = "script" | "divergence" | "graded";
+
+/** A named outcome riding on a field/ladder mark (probability-only). */
+export interface PropMarkOutcome {
+  name: string | null;
+  probability: number | null;
+  opening_probability?: number | null;
+}
 
 export interface PropMark {
   /** Stable key. */
   key: string | number;
   /** Prop label, e.g. "LeBron James 25+ points". */
   label: string;
+  /**
+   * Prop archetype — decides the visual (see header). Absent → legacy row
+   * rendering (game props that predate the shape contract).
+   */
+  kind?: "binary" | "ladder" | "field" | null;
+  /** The bare question ("Top American Golfer") — `label` may bake the favorite
+   *  in for legacy rendering; the visual renderers use this. */
+  question?: string | null;
+  /** Top priced outcomes: field → top 3, ladder → its rungs, binary → []. */
+  outcomes?: PropMarkOutcome[] | null;
   /**
    * THE SCRIPT: pregame expectation as a probability (0–1). #195 field — null
    * until the pregame-mark backend lands.
@@ -127,6 +157,24 @@ function signedDelta(from: number | null | undefined, to: number | null | undefi
   return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
 }
 
+/** A card mark carries a shape-appropriate visual: a field or ladder with ≥2
+ *  named outcomes and no pending state. Everything else renders as a row. */
+function isCardMark(item: PropMark): boolean {
+  if (item.pending_label?.trim()) return false;
+  if (item.kind !== "field" && item.kind !== "ladder") return false;
+  const outs = (item.outcomes ?? []).filter(
+    (o) => o.name && typeof o.probability === "number",
+  );
+  return outs.length >= 2;
+}
+
+/** A binary mark with a live number renders the divergence-bar row. */
+function isBinaryBarMark(item: PropMark): boolean {
+  return (
+    item.kind === "binary" && !item.pending_label?.trim() && item.current != null
+  );
+}
+
 export default function PropsSection({
   items,
   state,
@@ -139,8 +187,11 @@ export default function PropsSection({
   const meta = STATE_META[activeState];
 
   // THE DIVERGENCE ranks biggest-mover-first; SCRIPT and WHAT HIT keep the
-  // payload order (the endpoint already orders by prominence).
-  const rows = activeState === "divergence" ? rankByDivergence(items) : items;
+  // payload order (the endpoint already orders by prominence). Cards and rows
+  // partition AFTER ranking so both halves keep the movement order.
+  const ranked = activeState === "divergence" ? rankByDivergence(items) : items;
+  const cards = ranked.filter(isCardMark);
+  const rows = ranked.filter((item) => !isCardMark(item));
 
   return (
     <section id="props-script" className="bg-surface-card rounded-card shadow-card p-6">
@@ -152,14 +203,36 @@ export default function PropsSection({
       </div>
       <p className="text-xs text-text-muted mb-4">{meta.blurb}</p>
 
-      <div className="space-y-2">
-        {rows.map((item) => (
-          <PropRow key={item.key} item={item} state={activeState} />
-        ))}
-      </div>
+      {rows.length > 0 && (
+        <div className="space-y-2">
+          {rows.map((item) =>
+            isBinaryBarMark(item) ? (
+              <BinaryBarRow key={item.key} item={item} state={activeState} />
+            ) : (
+              <PropRow key={item.key} item={item} state={activeState} />
+            ),
+          )}
+        </div>
+      )}
+
+      {cards.length > 0 && (
+        <div className={`grid gap-3 sm:grid-cols-2 ${rows.length > 0 ? "mt-4" : ""}`}>
+          {cards.map((item) =>
+            item.kind === "ladder" ? (
+              <LadderPropCard key={item.key} item={item} />
+            ) : (
+              <FieldPropCard key={item.key} item={item} />
+            ),
+          )}
+        </div>
+      )}
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Rows — legacy contract, unchanged (game props + pending + no-price marks).
+// ---------------------------------------------------------------------------
 
 function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
   // L2-123 / #199: a family with no honest price renders one quiet pending label
@@ -255,5 +328,138 @@ function GradedValue({ item }: { item: PropMark }) {
     >
       {item.graded_label ?? (isHit ? "Hit" : isPush ? "Push" : "Miss")}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Binary — the divergence bar. The pregame mark is a tick on the track, the
+// current probability is the fill: the gap between them IS the divergence,
+// visible without reading a number.
+// ---------------------------------------------------------------------------
+
+function BinaryBarRow({ item, state }: { item: PropMark; state: PropsState }) {
+  const cur = item.current;
+  const mark = item.pregame_mark;
+  const heat = probabilityHeat(cur);
+  const fillPct = cur != null ? Math.max(2, Math.round(cur * 100)) : 0;
+  const tickPct = mark != null ? Math.round(mark * 100) : null;
+  return (
+    <div className="py-2 border-b border-surface-elevated last:border-0">
+      <div className="flex items-center gap-3">
+        <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+          {item.question ?? item.label}
+        </span>
+        {state === "graded" ? (
+          <GradedValue item={item} />
+        ) : (
+          <DivergenceValue item={item} />
+        )}
+      </div>
+      <div className="relative mt-1.5 h-2 rounded-full bg-surface-elevated overflow-hidden">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full ${heat.bar}`}
+          style={{ width: `${fillPct}%` }}
+        />
+        {tickPct != null && (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-text-muted"
+            style={{ left: `${Math.min(99, Math.max(0, tickPct))}%` }}
+            aria-hidden
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Field — a named top-3 mini-race. The question is the header; every number
+// sits NEXT TO its name (the "probability with no name" bug class can't
+// recur). The favorite carries the opening → current arc.
+// ---------------------------------------------------------------------------
+
+function FieldPropCard({ item }: { item: PropMark }) {
+  const outs = (item.outcomes ?? []).filter(
+    (o) => o.name && typeof o.probability === "number",
+  );
+  return (
+    <div className="rounded-lg border border-surface-elevated p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
+        {item.question ?? item.label}
+      </div>
+      <div className="space-y-1.5">
+        {outs.map((o, i) => {
+          const heat = probabilityHeat(o.probability);
+          const w = Math.max(2, Math.round((o.probability ?? 0) * 100));
+          const delta =
+            i === 0 ? signedDelta(o.opening_probability, o.probability) : null;
+          const up = delta?.startsWith("↑");
+          const flat = delta === "±0";
+          return (
+            <div key={`${o.name}-${i}`}>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+                  {o.name}
+                </span>
+                {delta && !flat && (
+                  <span
+                    className={[
+                      "font-mono text-[10px] font-bold tabular-nums px-1 py-0.5 rounded-full",
+                      up
+                        ? "text-accent-brand bg-accent-brand/15"
+                        : "text-accent-danger bg-accent-danger/15",
+                    ].join(" ")}
+                  >
+                    {delta}
+                  </span>
+                )}
+                <span
+                  className={`font-mono text-sm font-semibold tabular-nums shrink-0 ${heat.text}`}
+                >
+                  {pct(o.probability)}
+                </span>
+              </div>
+              <div className="mt-0.5 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${heat.bar}`}
+                  style={{ width: `${w}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ladder — the shared QuantityGroup heat ladder (same visual language as the
+// Scoring & Records section): one question, its rungs, heat top-to-bottom.
+// ---------------------------------------------------------------------------
+
+/** First number in an outcome label ("Under 63.5" → 63.5, "2+ …" → 2) for the
+ *  ladder's ascending sort. */
+function rungValue(name: string): number | undefined {
+  const m = name.match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : undefined;
+}
+
+function LadderPropCard({ item }: { item: PropMark }) {
+  const rungs: QuantityRung[] = (item.outcomes ?? [])
+    .filter((o) => o.name && typeof o.probability === "number")
+    .map((o) => ({
+      key: o.name as string,
+      label: o.name as string,
+      probability: o.probability,
+      value: rungValue(o.name as string),
+    }));
+  return (
+    <div className="rounded-lg border border-surface-elevated p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-1">
+        {item.question ?? item.label}
+      </div>
+      <QuantityGroup bare rungs={rungs} wideLabels />
+    </div>
   );
 }

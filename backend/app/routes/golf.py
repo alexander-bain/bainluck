@@ -1802,6 +1802,11 @@ _MARKET_TYPE_PATTERNS = [
     (re.compile(r"\bTop\s+5\b", re.I), "top_5", "Top 5"),
     (re.compile(r"\bTop\s+10\b", re.I), "top_10", "Top 10"),
     (re.compile(r"\bTop\s+20\b", re.I), "top_20", "Top 20"),
+    # Alex's ruling (The Open 2026): every per-golfer placement market becomes a
+    # column in the ONE golfer grid — "Top 40 Finishers" (Kalshi, 150+ outcomes)
+    # was classifying "other" and rendering as a wall of numbers in Related
+    # Futures instead of a fused per-golfer column.
+    (re.compile(r"\bTop\s+40\b", re.I), "top_40", "Top 40"),
     (re.compile(r"\bMa[dk]e\s+(?:the\s+)?Cut\b", re.I), "make_cut", "Make Cut"),
     (re.compile(r"\bRound\s+\d+\s+Leader\b", re.I), "round_leader", "Round Leader"),
 ]
@@ -2068,8 +2073,8 @@ async def get_golf_tournament(
         market_groups[type_key]["market_ids"].append(mid)
         market_groups[type_key]["market_names"].append(mname)
 
-    # Order: winner first, then top_5/10/20, make_cut, round_leader, other
-    type_order = ["winner", "top_5", "top_10", "top_20", "make_cut", "round_leader", "other"]
+    # Order: winner first, then top_5/10/20/40, make_cut, round_leader, other
+    type_order = ["winner", "top_5", "top_10", "top_20", "top_40", "make_cut", "round_leader", "other"]
     sorted_groups = sorted(
         market_groups.values(),
         key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
@@ -2130,7 +2135,7 @@ async def get_golf_tournament(
 
     placement_market_ids: dict[str, list[int]] = {}  # type_key -> [market_ids]
     for g in sorted_groups:
-        if g["type"] in ("top_5", "top_10", "top_20", "make_cut", "round_leader"):
+        if g["type"] in ("top_5", "top_10", "top_20", "top_40", "make_cut", "round_leader"):
             placement_market_ids[g["type"]] = g["market_ids"]
 
     if placement_market_ids:
@@ -2198,11 +2203,12 @@ async def get_golf_tournament(
                 g["top_5_prob"] = round(probs["top_5"] * 100, 1) if "top_5" in probs else None
                 g["top_10_prob"] = round(probs["top_10"] * 100, 1) if "top_10" in probs else None
                 g["top_20_prob"] = round(probs["top_20"] * 100, 1) if "top_20" in probs else None
+                g["top_40_prob"] = round(probs["top_40"] * 100, 1) if "top_40" in probs else None
                 g["make_cut_prob"] = round(probs["make_cut"] * 100, 1) if "make_cut" in probs else None
                 g["round_leader_prob"] = round(probs["round_leader"] * 100, 1) if "round_leader" in probs else None
-                # Enforce cross-column monotonicity: Win <= Top5 <= Top10 <= Top20 <= MakeCut
+                # Enforce cross-column monotonicity: Win <= Top5 <= Top10 <= Top20 <= Top40 <= MakeCut
                 win = g.get("win_prob") or 0
-                for col in ["top_5_prob", "top_10_prob", "top_20_prob", "make_cut_prob"]:
+                for col in ["top_5_prob", "top_10_prob", "top_20_prob", "top_40_prob", "make_cut_prob"]:
                     if g.get(col) is not None and g[col] < win:
                         g[col] = win
                     if g.get(col) is not None:
