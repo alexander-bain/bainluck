@@ -408,7 +408,18 @@ def _match_is_real(g) -> bool:
     NULL scores (stale scheduled duplicates — verified live 2026-07-15: "Panama vs
     England" 07-11, "Jordan vs Argentina" 07-12, an "Avalanche vs Trail Blazers"
     mis-link) that would otherwise pollute the history. The real-score gate drops
-    them without needing round/stage metadata the events table doesn't carry."""
+    them without needing round/stage metadata the events table doesn't carry.
+
+    It ALSO drops MATCHING-CREATED PLACEHOLDERS: a mislinked Kalshi prop can spawn
+    a teamless or wrong-date event that carries NO schedule-source id and NO
+    win-prob data (verified live 2026-07-16: 25 teamless 06-25..07-15 rows each
+    holding one mislinked market; a 07-29 "England vs Argentina" built from the
+    07-15 semifinal's corner markets). Real WC fixtures come from the odds/schedule
+    source (external_id set) and accrue win-prob; a row with neither is a phantom.
+    """
+    wps = getattr(g, "win_probability_sources", None)
+    if getattr(g, "external_id", None) is None and not wps:
+        return False
     st = (getattr(g, "status", None) or "").lower()
     if st in ("live", "scheduled"):
         return True
@@ -500,6 +511,52 @@ def compute_nation_elimination(games: list) -> dict[str, dict]:
     return out
 
 
+def _drop_slot_duplicate_phantoms(games: list, elim: dict[str, dict]) -> list:
+    """Drop stale projected-final DUPLICATES from the match grid.
+
+    When the bracket firms up, the source can leave behind scheduled placeholder
+    fixtures for finals that can no longer happen: verified live 2026-07-19 the WC
+    final slot carried three scheduled rows — the real Spain vs Argentina beside a
+    stale Spain vs England and France vs England (England & France already knocked
+    out). An ELIMINATED nation cannot play a future match (#210: elimination is a
+    bracket FACT, not a price), so among matches sharing a commence slot we drop
+    the ones with an eliminated side WHEN a both-alive match exists for that slot.
+
+    Deliberately narrow to be false-drop-proof: it acts ONLY on a slot that has
+    ≥2 scheduled/live rows AND a clean both-alive alternative — so it can never
+    remove a unique real fixture (no group-stage exit mislabel can drop a lone
+    scheduled match), and it never touches completed history. Fail-open when a
+    slot has no all-alive row (keep all). Pairs with ``_match_is_real`` (the
+    NULL-score phantom gate) as layered defense-in-depth."""
+    from collections import defaultdict
+
+    def _is_elim(nm) -> bool:
+        return bool(elim.get(_norm(nm), {}).get("eliminated"))
+
+    slots: dict = defaultdict(list)
+    for g in games:
+        if (getattr(g, "status", None) or "").lower() in ("live", "scheduled"):
+            slots[getattr(g, "commence_time", None)].append(g)
+
+    drop = set()
+    for slot, gs in slots.items():
+        if slot is None or len(gs) < 2:
+            continue
+        has_alive = any(
+            not _is_elim(getattr(g, "home_team_name", None))
+            and not _is_elim(getattr(g, "away_team_name", None))
+            for g in gs
+        )
+        if not has_alive:
+            continue  # fail-open: no clean alternative at this slot
+        for g in gs:
+            if _is_elim(getattr(g, "home_team_name", None)) or _is_elim(
+                getattr(g, "away_team_name", None)
+            ):
+                drop.add(id(g))
+    return [g for g in games if id(g) not in drop]
+
+
 class SoccerEventAdapter:
     """Event-concept adapter for soccer tournaments (winner_field). Resolves
     ``event:soccer:<slug>`` into the generic envelope: the trophy WINNER field as the
@@ -543,6 +600,12 @@ class SoccerEventAdapter:
         # the evidence that grades stale winner-field prices on dead entrants to
         # TRUE 0 (Item 1b).
         elim = compute_nation_elimination(games)
+
+        # Defense-in-depth: drop stale projected-final duplicates — an eliminated
+        # side scheduled in the same slot as the real final (Spain-England /
+        # France-England beside Spain-Argentina). Computed AFTER elim so the
+        # bracket evidence is intact; filtered games feed everything downstream.
+        games = _drop_slot_duplicate_phantoms(games, elim)
 
         # Nations still to play a match (live or scheduled) — the only reason a
         # zero-priced competitor is still "alive". A 0% nation with no game left

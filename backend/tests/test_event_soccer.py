@@ -275,7 +275,11 @@ class TestConfig:
 # ---------------------------------------------------------------------------
 
 
-def _mk_match(mid, home, away, hs, as_, status, dt):
+def _mk_match(mid, home, away, hs, as_, status, dt,
+              external_id="odds-hex", win_probability_sources=None):
+    # Real fixtures come from the odds/schedule source (external_id set) and accrue
+    # win-prob; the defaults model that so _match_is_real's matching-created-
+    # placeholder gate (external_id None AND no win-prob) doesn't drop them.
     return SimpleNamespace(
         id=mid,
         home_team_name=home,
@@ -284,6 +288,11 @@ def _mk_match(mid, home, away, hs, as_, status, dt):
         away_score=as_,
         status=status,
         commence_time=dt,
+        external_id=external_id,
+        win_probability_sources=(
+            win_probability_sources if win_probability_sources is not None
+            else {"espn": 0.5}
+        ),
     )
 
 
