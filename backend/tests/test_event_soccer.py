@@ -330,13 +330,21 @@ class TestNationElimination:
 
     def test_beaten_semifinalists_eliminated(self):
         elim = compute_nation_elimination(self._bracket())
-        assert elim[_norm("France")]["eliminated"] is True
-        assert elim[_norm("England")]["eliminated"] is True
+        assert elim[_norm("France")]["out"] is True
+        assert elim[_norm("England")]["out"] is True
 
     def test_finalists_alive(self):
         elim = compute_nation_elimination(self._bracket())
-        assert elim[_norm("Spain")]["eliminated"] is False
-        assert elim[_norm("Argentina")]["eliminated"] is False
+        assert elim[_norm("Spain")]["out"] is False
+        assert elim[_norm("Argentina")]["out"] is False
+
+    def test_eliminated_round_recorded(self):
+        # #210: the exit round is recorded from STRUCTURE (match count). France
+        # played 2 completed matches in this fixture (QF win + SF loss) so its
+        # recorded exit round reflects its match count, never a price.
+        elim = compute_nation_elimination(self._bracket())
+        assert elim[_norm("France")]["round"] is not None
+        assert elim[_norm("Spain")]["round"] is None  # alive → no exit round
 
     def test_eliminated_by_evidence(self):
         elim = compute_nation_elimination(self._bracket())
@@ -345,6 +353,7 @@ class TestNationElimination:
         assert _norm(by["opponent"]) == _norm("Spain")
         assert by["score"] == "0-2"  # from France's perspective
         assert by["event_id"] == 102
+        assert by["round"] == elim[_norm("France")]["round"]
 
     def test_win_then_no_loss_is_alive(self):
         # A nation whose most recent completed match was a win is never eliminated.
@@ -353,7 +362,7 @@ class TestNationElimination:
             _mk_match(1, "Spain", "Portugal", 1, 0, "completed", d(6)),
             _mk_match(2, "Spain", "France", 2, 0, "completed", d(14)),
         ]
-        assert compute_nation_elimination(games)[_norm("Spain")]["eliminated"] is False
+        assert compute_nation_elimination(games)[_norm("Spain")]["out"] is False
 
     def test_completed_result_perspective(self):
         d = datetime(2026, 7, 14, tzinfo=timezone.utc)
@@ -361,6 +370,26 @@ class TestNationElimination:
         assert _completed_result(m, _norm("France")) == "loss"
         assert _completed_result(m, _norm("Spain")) == "win"
         assert _completed_result(m, _norm("Brazil")) is None  # didn't play
+
+
+class TestWcRoundForMatchCount:
+    def test_group_stage(self):
+        from app.utils.event_soccer import _wc_round_for_match_count
+        assert _wc_round_for_match_count(1) == "Group Stage"
+        assert _wc_round_for_match_count(3) == "Group Stage"
+
+    def test_knockout_rounds(self):
+        from app.utils.event_soccer import _wc_round_for_match_count
+        assert _wc_round_for_match_count(4) == "Round of 32"
+        assert _wc_round_for_match_count(5) == "Round of 16"
+        assert _wc_round_for_match_count(6) == "Quarterfinal"
+        assert _wc_round_for_match_count(7) == "Semifinal"
+        assert _wc_round_for_match_count(8) == "Final"
+
+    def test_out_of_range_is_honest_none(self):
+        from app.utils.event_soccer import _wc_round_for_match_count
+        assert _wc_round_for_match_count(0) is None
+        assert _wc_round_for_match_count(9) is None
 
 
 # ---------------------------------------------------------------------------

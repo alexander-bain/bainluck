@@ -526,3 +526,48 @@ class TestCrossSourceEventMatching:
         assert existing.away_team_name == "Golden State Warriors"
         assert session.added == []
         assert session.flushed == 1
+
+
+class TestTeamlessCreationGuard:
+    """#210 / gotcha #32: never fabricate a teamless placeholder event."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("home,away", [
+        ("", "Argentina"),
+        ("England", ""),
+        (None, None),
+        ("   ", "Spain"),
+    ])
+    async def test_refuses_to_create_teamless_event(self, home, away):
+        session = _FakeRegistrySession()  # no existing matches → would reach Step 4
+        _sport_id_cache.clear()
+        with pytest.raises(ValueError, match="teamless"):
+            await find_or_create_event(
+                session,
+                EventIdentity(
+                    sport_key="soccer_fifa_world_cup",
+                    home_team_name=home,
+                    away_team_name=away,
+                    commence_time=datetime(2026, 7, 29, 19, 0, tzinfo=timezone.utc),
+                    claim=EventClaim("kalshi", "KXWCGAME-corner-phantom"),
+                ),
+            )
+        assert session.added == []  # nothing fabricated
+
+    @pytest.mark.asyncio
+    async def test_creates_when_both_teams_present(self):
+        session = _FakeRegistrySession()
+        _sport_id_cache.clear()
+        event, was_created = await find_or_create_event(
+            session,
+            EventIdentity(
+                sport_key="soccer_fifa_world_cup",
+                home_team_name="Spain",
+                away_team_name="Argentina",
+                commence_time=datetime(2026, 7, 19, 19, 0, tzinfo=timezone.utc),
+                claim=EventClaim("odds_api", "wc-final-real"),
+            ),
+        )
+        assert was_created is True
+        assert event.home_team_name == "Spain"
+        assert len(session.added) == 1

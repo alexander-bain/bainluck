@@ -102,6 +102,25 @@ async def find_or_create_event(
                 await session.flush()
                 return event, False
 
+            # #210 / gotcha #32: never CREATE a teamless placeholder event. A
+            # mislinked prediction-market prop (e.g. a World Cup corner/round
+            # market) can arrive with blank team names; fabricating an event for
+            # it spawns the teamless phantom rows the WC concept page then has to
+            # filter out at render time (#209 Item 3's _match_is_real). Refuse the
+            # CREATE — the prediction-market auto-create caller catches ValueError
+            # and skips linking. Steps 1-3 above may still ATTACH such a claim to
+            # a REAL event by source id; only fabrication of a new teamless row is
+            # blocked here.
+            if (
+                not (identity.home_team_name or "").strip()
+                or not (identity.away_team_name or "").strip()
+            ):
+                raise ValueError(
+                    "refusing to create teamless event "
+                    f"(home={identity.home_team_name!r} away={identity.away_team_name!r}, "
+                    f"source={identity.claim.source})"
+                )
+
             # Step 4: Create new event
             status = identity.status or "scheduled"
             event = Event(

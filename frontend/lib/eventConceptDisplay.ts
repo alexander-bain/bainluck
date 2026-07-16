@@ -102,12 +102,26 @@ export function settledChampion(
 // A `won` champion is never in the tail and never OUT.
 // ---------------------------------------------------------------------------
 
-/** L2-132: is this winner-field competitor OUT — eliminated? Authoritative
- *  adapter `eliminated` flag ONLY (never inferred from a 0% longshot price). The
- *  settled champion (`won`) is never out. */
+/** L2-132 / #210: is this winner-field competitor OUT — eliminated? Authoritative
+ *  adapter elimination signal ONLY (never inferred from a 0% longshot price). The
+ *  settled champion (`won`) is never out. Accepts BOTH the #210 structure shape
+ *  `{ out, round }` and the legacy boolean (a pre-#210 cached envelope). */
 export function isEliminatedCompetitor(c: EventConceptCompetitor): boolean {
   if (c.won === true) return false;
-  return (c as Record<string, unknown>).eliminated === true;
+  const e = (c as Record<string, unknown>).eliminated;
+  if (e && typeof e === "object") return (e as { out?: unknown }).out === true;
+  return e === true;
+}
+
+/** #210: the round a competitor exited in ("Semifinal", "Group Stage", …), or
+ *  null. Only meaningful when isEliminatedCompetitor(c) is true. */
+export function eliminatedRound(c: EventConceptCompetitor): string | null {
+  const e = (c as Record<string, unknown>).eliminated;
+  if (e && typeof e === "object") {
+    const r = (e as { round?: unknown }).round;
+    return typeof r === "string" ? r : null;
+  }
+  return null;
 }
 
 /** Probability under which a winner-field row rounds to 0% — the trailing tail. */

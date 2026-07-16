@@ -1766,7 +1766,20 @@ export interface EventConceptCompetitor {
   // leaderboard (soccer World Cup). Present only where a competitor resolves to a
   // known team; absent (honest gap) otherwise.
   team?: EventConceptTeamRef | null;
+  // #210: elimination FROM STRUCTURE — `{ out, round }` (settled knockout loss or
+  // group non-advancer; price never decides). The legacy `boolean` shape may
+  // still arrive from a pre-#210 cached envelope during rollout — consumers
+  // (isEliminatedCompetitor) accept both.
+  eliminated?: EventConceptElimination | boolean | null;
   [k: string]: unknown;
+}
+
+// #210: structure-based elimination envelope. `out` is the authoritative OUT
+// signal; `round` is the round the competitor exited in (e.g. "Semifinal",
+// "Group Stage"), or null when not derivable.
+export interface EventConceptElimination {
+  out: boolean;
+  round?: string | null;
 }
 
 // L2-130: a resolved team-identity ref (crest + canonical name) carried on soccer

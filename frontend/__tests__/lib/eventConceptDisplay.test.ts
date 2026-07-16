@@ -22,6 +22,7 @@ import {
   headlinerMatchup,
   matchupKickoffLabel,
   isEliminatedCompetitor,
+  eliminatedRound,
   isZeroTailCompetitor,
   partitionWinnerField,
   latestOutcomeProb,
@@ -548,6 +549,39 @@ describe("isEliminatedCompetitor / isZeroTailCompetitor / partitionWinnerField (
         c({ eliminated: true, probability: 0.02 } as Partial<EventConceptCompetitor>),
       ),
     ).toBe(true);
+  });
+
+  test("#210: accepts the structure `{ out, round }` shape AND legacy boolean", () => {
+    // New structure shape (settled knockout loss / group non-advancer).
+    expect(
+      isEliminatedCompetitor(
+        c({ eliminated: { out: true, round: "Semifinal" } } as Partial<EventConceptCompetitor>),
+      ),
+    ).toBe(true);
+    // out:false is alive even if the object is present.
+    expect(
+      isEliminatedCompetitor(
+        c({ eliminated: { out: false, round: null } } as Partial<EventConceptCompetitor>),
+      ),
+    ).toBe(false);
+    // Legacy boolean still honored (pre-#210 cached envelope during rollout).
+    expect(
+      isEliminatedCompetitor(c({ eliminated: true } as Partial<EventConceptCompetitor>)),
+    ).toBe(true);
+    // A `won` competitor is never OUT even with a stale structure flag.
+    expect(
+      isEliminatedCompetitor(
+        c({ won: true, eliminated: { out: true, round: "Final" } } as Partial<EventConceptCompetitor>),
+      ),
+    ).toBe(false);
+  });
+
+  test("#210: eliminatedRound reads the structure round, null for legacy/absent", () => {
+    expect(
+      eliminatedRound(c({ eliminated: { out: true, round: "Quarterfinal" } } as Partial<EventConceptCompetitor>)),
+    ).toBe("Quarterfinal");
+    expect(eliminatedRound(c({ eliminated: true } as Partial<EventConceptCompetitor>))).toBeNull();
+    expect(eliminatedRound(c({}))).toBeNull();
   });
 
   test("a `won` competitor is never OUT and never tail, even at a stale 0%", () => {

@@ -59,7 +59,7 @@ FINAL = datetime(2026, 7, 19, 19, 0, tzinfo=timezone.utc)
 
 
 def _elim(*nations):
-    return {_norm(n): {"eliminated": True} for n in nations}
+    return {_norm(n): {"out": True, "round": "Semifinal"} for n in nations}
 
 
 def test_drops_phantom_finals_keeps_real():

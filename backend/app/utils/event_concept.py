@@ -24,6 +24,20 @@ Envelope shape (domain-agnostic — every adapter returns this):
       "children": [...]   # matchup / prop / progression child markets
       "movers":   [...]   # biggest 24h movers within the event
     }
+
+ELIMINATION FROM STRUCTURE (#210 — Alex's ruling; the bracketed-Container contract):
+    A `winner_field` competitor in a BRACKETED container (knockout / group→knockout
+    tournament) carries an `eliminated` envelope:
+        "eliminated": {"out": bool, "round": str | None}
+    `out` is TRUE only from STRUCTURE — a settled knockout loss, or a group-stage
+    non-advancer (played out, no upcoming game while the tournament continues).
+    PRICE NEVER DECIDES: a 0% competitor pre-kickoff is a longshot, not eliminated.
+    `round` records the round the competitor exited in ("Semifinal", "Group Stage",
+    …), or null when not derivable. The soccer World Cup adapter is the reference
+    implementation (`event_soccer.compute_nation_elimination` + build_event); other
+    bracketed adapters (tennis/F1/UFC brackets) converge on this same shape as they
+    gain settled-result structure. Frontend `isEliminatedCompetitor` accepts both
+    this shape and a legacy boolean (pre-#210 cached envelopes).
 """
 
 from __future__ import annotations

@@ -55,11 +55,6 @@ _COMPETITOR_CAP = 48
 # WC is 104 matches — cap generously so the whole bracket surfaces.
 _MATCH_CAP = 160
 
-# A winner-field price at/below this (after normalization) is treated as zero when
-# deciding whether a nation is still a live contender — a hair of stale dust, not a
-# real chance.
-_ALIVE_PRICE_EPS = 0.001
-
 
 @dataclass(frozen=True)
 class SoccerTournamentConfig:
@@ -454,20 +449,50 @@ def _completed_result(g, nation_norm: str) -> str | None:
     return "draw"
 
 
+# WC-2026 round by a nation's cumulative match count. 48 teams / 12 groups of 4:
+# 3 group games, then top-2 + 8-best-thirds → Round of 32 → R16 → QF → SF → Final.
+# The round a nation EXITS in is the round of its Nth (last) completed match. This
+# is a pure STRUCTURE signal (match count), never a price. (#210 Item 3.)
+_WC_ROUND_BY_MATCH_COUNT = {
+    1: "Group Stage",
+    2: "Group Stage",
+    3: "Group Stage",
+    4: "Round of 32",
+    5: "Round of 16",
+    6: "Quarterfinal",
+    7: "Semifinal",
+    8: "Final",
+}
+
+
+def _wc_round_for_match_count(n: int) -> str | None:
+    """The WC round a nation is in on its Nth match. <=3 is always Group Stage;
+    beyond the known bracket depth returns None (honest-unknown, never guessed)."""
+    if n <= 0:
+        return None
+    if n <= 3:
+        return "Group Stage"
+    return _WC_ROUND_BY_MATCH_COUNT.get(n)
+
+
 def compute_nation_elimination(games: list) -> dict[str, dict]:
     """For each nation appearing in ``games``, derive its knockout survival state
-    from the bracket results — the EVIDENCE for #208 Item 1b (grade eliminated
-    nations to TRUE 0). Returns ``{nation_norm: {"eliminated": bool,
+    from the bracket results — STRUCTURE, never price (Alex's #210 ruling: a
+    settled knockout loss is OUT, the round is recorded, price never decides).
+
+    Returns ``{nation_norm: {"out": bool, "round": str | None,
     "eliminated_by": {opponent, score, date, event_id} | None}}``.
 
-    A nation is ELIMINATED when its MOST-RECENT completed match was a LOSS: in the
+    A nation is OUT when its MOST-RECENT completed match was a LOSS: in the
     knockout stage your last game is your exit if you lost, and a still-alive side's
     last completed game was a win (it advanced) or it has yet to play. This is exact
     for the contenders that matter — the finalists' last games are wins, the beaten
     semi-finalists' are losses — and never false-eliminates a live team on a stale
-    winner-field price (the "England 29% / France 7% after they lost" bug). Group-
-    stage-only exits keep their zero prices regardless, so mislabeling them can never
-    move a displayed probability."""
+    winner-field price (the "England 29% / France 7% after they lost" bug). ``round``
+    is the round of that losing match, derived from the nation's cumulative match
+    count (pure structure). Group-stage non-advancers whose last match was NOT a
+    loss are handled by the caller's structure signal (played-out + no upcoming
+    game), also without price."""
     # Bucket completed matches per nation, newest first.
     per_nation: dict[str, list] = {}
     for g in games:
@@ -491,7 +516,9 @@ def compute_nation_elimination(games: list) -> dict[str, dict]:
         res = _completed_result(last, k)
         eliminated = res == "loss"
         by = None
+        rnd = None
         if eliminated:
+            rnd = _wc_round_for_match_count(len(gs))
             home = _norm(getattr(last, "home_team_name", None))
             opp = (
                 getattr(last, "away_team_name", None)
@@ -506,8 +533,9 @@ def compute_nation_elimination(games: list) -> dict[str, dict]:
                 "score": f"{mine}-{theirs}",
                 "date": ct.isoformat() if ct else None,
                 "event_id": getattr(last, "id", None),
+                "round": rnd,
             }
-        out[k] = {"eliminated": eliminated, "eliminated_by": by}
+        out[k] = {"out": eliminated, "round": rnd, "eliminated_by": by}
     return out
 
 
@@ -531,7 +559,7 @@ def _drop_slot_duplicate_phantoms(games: list, elim: dict[str, dict]) -> list:
     from collections import defaultdict
 
     def _is_elim(nm) -> bool:
-        return bool(elim.get(_norm(nm), {}).get("eliminated"))
+        return bool(elim.get(_norm(nm), {}).get("out"))
 
     slots: dict = defaultdict(list)
     for g in games:
@@ -607,10 +635,11 @@ class SoccerEventAdapter:
         # bracket evidence is intact; filtered games feed everything downstream.
         games = _drop_slot_duplicate_phantoms(games, elim)
 
-        # Nations still to play a match (live or scheduled) — the only reason a
-        # zero-priced competitor is still "alive". A 0% nation with no game left
-        # (never qualified, or exited in the group stage on points) is out, even if
-        # its last completed match wasn't a loss (Item 1b's zero-or-exclude).
+        # Nations still to play a match (live or scheduled). A nation that has
+        # PLAYED but has NO upcoming game while the tournament continues is out on
+        # structure (a group non-advancer) — never inferred from a 0% price
+        # (Alex's #210 ruling). We track played nations + their match counts (for
+        # the exit round) and whether the tournament is still ongoing.
         upcoming_nations = {
             _norm(nm)
             for g in games
@@ -618,6 +647,18 @@ class SoccerEventAdapter:
             for nm in (getattr(g, "home_team_name", None), getattr(g, "away_team_name", None))
             if _norm(nm)
         }
+        played_match_counts: dict[str, int] = {}
+        for g in games:
+            if (getattr(g, "status", None) or "").lower() not in ("completed", "closed"):
+                continue
+            if getattr(g, "home_score", None) is None or getattr(g, "away_score", None) is None:
+                continue
+            for nm in (getattr(g, "home_team_name", None), getattr(g, "away_team_name", None)):
+                k = _norm(nm)
+                if k:
+                    played_match_counts[k] = played_match_counts.get(k, 0) + 1
+        played_nations = set(played_match_counts)
+        tournament_ongoing = bool(upcoming_nations)
 
         # --- Winner field (trophy) from futures ----------------------------------
         win_q = (
@@ -659,18 +700,29 @@ class SoccerEventAdapter:
                 nnorm = _norm(nm)
                 team = team_lut.get(nnorm)
                 state = elim.get(nnorm, {})
-                prob_val = (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else 0.0
-                )
-                # Eliminated when the LAST completed match was a loss (a stale live
-                # price on a knocked-out side — England 29% / France 7% after they
-                # lost → TRUE 0), OR when the price is ~0 and no game remains (never
-                # qualified / group-stage exit — Iceland/Italy showing "alive 0%").
-                eliminated = bool(state.get("eliminated")) or (
-                    prob_val <= _ALIVE_PRICE_EPS and nnorm not in upcoming_nations
-                )
+                # ELIMINATION FROM STRUCTURE — price NEVER decides (Alex, #210).
+                # (1) settled knockout loss = OUT (round already recorded by
+                #     compute_nation_elimination); (2) group non-advancer = OUT:
+                #     the nation has played (has completed matches) but has NO
+                #     upcoming live/scheduled game while the tournament continues
+                #     for others — a structure fact (played-out + no next game),
+                #     not a 0% price. We require its last result was NOT a win, so
+                #     a side that advanced but whose next fixture isn't scheduled
+                #     yet is never falsely knocked out.
+                elim_out = bool(state.get("out"))
+                elim_round = state.get("round")
+                won = bool(getattr(o, "is_winner", False))
+                if (
+                    not elim_out
+                    and not won
+                    and nnorm in played_nations
+                    and nnorm not in upcoming_nations
+                    and tournament_ongoing
+                ):
+                    elim_out = True
+                    elim_round = _wc_round_for_match_count(
+                        played_match_counts.get(nnorm, 3)
+                    ) or "Group Stage"
                 display_name = team.name if team is not None else nm
                 comp = {
                     "name": display_name,
@@ -679,10 +731,10 @@ class SoccerEventAdapter:
                         if o.current_probability is not None
                         else None
                     ),
-                    "won": bool(getattr(o, "is_winner", False)),
+                    "won": won,
                     "team": _team_ref(team),
                     "is_nation": nation_is_nation(display_name) or nation_is_nation(nm),
-                    "eliminated": eliminated,
+                    "eliminated": {"out": elim_out, "round": elim_round},
                     "eliminated_by": state.get("eliminated_by"),
                 }
                 # Read-side flag (Item 1c): the nation's crest is its flag; fill the
@@ -697,16 +749,16 @@ class SoccerEventAdapter:
             # Grade eliminated nations to TRUE 0, then renormalize the STILL-ALIVE
             # field so the surviving contenders sum to ~100% (Spain/Argentina for the
             # final) instead of leaving mass stranded on dead entrants.
-            alive = [c for c in competitors if not c["eliminated"]]
+            alive = [c for c in competitors if not c["eliminated"]["out"]]
             for c in competitors:
-                if c["eliminated"]:
+                if c["eliminated"]["out"]:
                     c["probability"] = 0.0
             normalize_display_probs(
                 alive, mutually_exclusive=bool(winner_market.mutually_exclusive)
             )
             # alive first (by prob desc), then eliminated (all zero, ranked as-was).
             competitors.sort(
-                key=lambda c: (0 if not c["eliminated"] else 1, -(c["probability"] or 0))
+                key=lambda c: (0 if not c["eliminated"]["out"] else 1, -(c["probability"] or 0))
             )
             as_of = max(
                 (
@@ -803,7 +855,7 @@ class SoccerEventAdapter:
 
         sections = []
         if competitors:
-            alive_n = sum(1 for c in competitors if not c["eliminated"])
+            alive_n = sum(1 for c in competitors if not c["eliminated"]["out"])
             sections.append(
                 {
                     "type": "winner_field",
