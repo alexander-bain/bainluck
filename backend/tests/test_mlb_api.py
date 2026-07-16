@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 
 class _FakeResponse:
@@ -370,6 +371,41 @@ class TestMLBSyncInternals:
     def test_match_function_exists(self):
         from app.tasks.mlb_sync import _match_mlb_game_to_event
         assert callable(_match_mlb_game_to_event)
+
+    def _mlb_game(self, home, away):
+        from datetime import datetime, timezone
+        return SimpleNamespace(
+            home_team=home, away_team=away,
+            home_win_probability=0.98, away_win_probability=0.02,
+            home_score=3, away_score=9, game_pk=1, inning=9, inning_half="bottom",
+            game_datetime=datetime(2026, 7, 11, 2, tzinfo=timezone.utc).isoformat(),
+        )
+
+    def _our_event(self, home, away):
+        from datetime import datetime, timezone
+        return SimpleNamespace(
+            id=14970356, home_team_name=home, away_team_name=away,
+            commence_time=datetime(2026, 7, 11, 2, tzinfo=timezone.utc),
+        )
+
+    def test_match_aligned_orientation_not_inverted(self):
+        # MLB home == our home → aligned, no swap needed.
+        from app.tasks.mlb_sync import _match_mlb_game_to_event
+        g = self._mlb_game("Houston Astros", "Texas Rangers")
+        ev = self._our_event("Houston Astros", "Texas Rangers")
+        match, inverted = _match_mlb_game_to_event(g, [ev], {})
+        assert match is ev
+        assert inverted is False
+
+    def test_match_flipped_orientation_reports_inverted(self):
+        # #208/#207 root cause: our home == MLB's AWAY. Exhibit 14970356 — the
+        # Rangers were OUR home but MLB had them away; the writer must swap.
+        from app.tasks.mlb_sync import _match_mlb_game_to_event
+        g = self._mlb_game("Houston Astros", "Texas Rangers")
+        ev = self._our_event("Texas Rangers", "Houston Astros")
+        match, inverted = _match_mlb_game_to_event(g, [ev], {})
+        assert match is ev
+        assert inverted is True
 
 
 # =============================================================================

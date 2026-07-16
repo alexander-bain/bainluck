@@ -98,7 +98,7 @@ async def _sync_mlb_win_probability():
             for mlb_game in live_games:
                 try:
                     # Try to match to our event
-                    event = _match_mlb_game_to_event(
+                    event, inverted = _match_mlb_game_to_event(
                         mlb_game, our_events, event_lookup
                     )
                     if event is None:
@@ -109,6 +109,26 @@ async def _sync_mlb_win_probability():
                         continue
 
                     stats["events_matched"] += 1
+
+                    # Side-mapping guard (#208/#207): when the match inverted (our home
+                    # == MLB's away), MLB's home_* fields describe OUR away team — swap
+                    # so every downstream write is aligned to OUR home/away. Without
+                    # this, mlb stored the away side (exhibit event 14970356).
+                    if inverted:
+                        home_wp = round(mlb_game.away_win_probability, 4)
+                        away_wp = round(mlb_game.home_win_probability, 4)
+                        home_sc = mlb_game.away_score
+                        away_sc = mlb_game.home_score
+                        logger.info(
+                            "MLB sync: inverted-orientation match for event %s "
+                            "(our home %s == MLB away %s) — swapping home/away.",
+                            event.id, event.home_team_name, mlb_game.away_team,
+                        )
+                    else:
+                        home_wp = round(mlb_game.home_win_probability, 4)
+                        away_wp = round(mlb_game.away_win_probability, 4)
+                        home_sc = mlb_game.home_score
+                        away_sc = mlb_game.away_score
 
                     # Build game state for the snapshot
                     game_state = {}
@@ -122,10 +142,10 @@ async def _sync_mlb_win_probability():
                         ordinals = {1: "1st", 2: "2nd", 3: "3rd"}
                         ord_str = ordinals.get(mlb_game.inning, f"{mlb_game.inning}th")
                         game_state["period"] = f"{mlb_game.inning_half.capitalize()} {ord_str}"
-                    if mlb_game.home_score is not None:
-                        game_state["home_score"] = mlb_game.home_score
-                    if mlb_game.away_score is not None:
-                        game_state["away_score"] = mlb_game.away_score
+                    if home_sc is not None:
+                        game_state["home_score"] = home_sc
+                    if away_sc is not None:
+                        game_state["away_score"] = away_sc
                     game_state["mlb_game_pk"] = mlb_game.game_pk
 
                     # Write win probability snapshot
@@ -133,8 +153,8 @@ async def _sync_mlb_win_probability():
                         session,
                         event_id=event.id,
                         source=WIN_PROB_SOURCE_KEY,
-                        home_win_probability=round(mlb_game.home_win_probability, 4),
-                        away_win_probability=round(mlb_game.away_win_probability, 4),
+                        home_win_probability=home_wp,
+                        away_win_probability=away_wp,
                         game_state=game_state if game_state else None,
                     )
 
@@ -151,7 +171,7 @@ async def _sync_mlb_win_probability():
                         _sql_sel(Event.win_probability_sources).where(Event.id == event.id)
                     )
                     _mlb_wps = _mlb_r.scalar_one_or_none() or {}
-                    _mlb_wps[WIN_PROB_SOURCE_KEY] = round(mlb_game.home_win_probability, 4)
+                    _mlb_wps[WIN_PROB_SOURCE_KEY] = home_wp
                     await session.execute(
                         _sql_upd(Event)
                         .where(Event.id == event.id)
@@ -200,6 +220,15 @@ def _match_mlb_game_to_event(mlb_game, our_events, event_lookup):
     Strategy:
     1. Direct team name match (substring matching)
     2. Commence time proximity (within ±4 hours)
+
+    Returns ``(event, inverted)``. ``inverted`` is True when the match was found in
+    the FLIPPED orientation — our home team == MLB's AWAY team (and vice versa). The
+    caller MUST swap MLB's home/away probabilities + scores in that case: MLB's
+    ``home_win_probability`` is MLB-home's chance, which is OUR away team when the
+    match inverted. Writing it as our home prob is the #208/#207 peer-source
+    inversion (exhibit event 14970356: mlb stored the Astros' win prob against the
+    Rangers, who were the recorded home team). ESPN/stat_model don't have this bug
+    because their match is orientation-locked (home-to-home only).
     """
     from app.services.mlb_api import _name_matches
 
@@ -207,6 +236,7 @@ def _match_mlb_game_to_event(mlb_game, our_events, event_lookup):
     mlb_away = mlb_game.away_team.lower()
 
     best_match = None
+    best_inverted = False
     best_score = 0
 
     for ev in our_events:
@@ -219,9 +249,12 @@ def _match_mlb_game_to_event(mlb_game, our_events, event_lookup):
         home_away = _name_matches(our_home, mlb_away)
         away_home = _name_matches(our_away, mlb_home)
 
-        name_match = (home_home and away_away) or (home_away and away_home)
-        if not name_match:
+        aligned = home_home and away_away
+        flipped = home_away and away_home
+        if not (aligned or flipped):
             continue
+        # Prefer the aligned orientation when both could match (identical names).
+        inverted = flipped and not aligned
 
         # Check time proximity
         if mlb_game.game_datetime:
@@ -242,5 +275,6 @@ def _match_mlb_game_to_event(mlb_game, our_events, event_lookup):
         if score > best_score:
             best_score = score
             best_match = ev
+            best_inverted = inverted
 
-    return best_match
+    return best_match, best_inverted
