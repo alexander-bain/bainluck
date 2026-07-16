@@ -544,6 +544,18 @@ class SoccerEventAdapter:
         # TRUE 0 (Item 1b).
         elim = compute_nation_elimination(games)
 
+        # Nations still to play a match (live or scheduled) — the only reason a
+        # zero-priced competitor is still "alive". A 0% nation with no game left
+        # (never qualified, or exited in the group stage on points) is out, even if
+        # its last completed match wasn't a loss (Item 1b's zero-or-exclude).
+        upcoming_nations = {
+            _norm(nm)
+            for g in games
+            if (getattr(g, "status", None) or "").lower() in ("live", "scheduled")
+            for nm in (getattr(g, "home_team_name", None), getattr(g, "away_team_name", None))
+            if _norm(nm)
+        }
+
         # --- Winner field (trophy) from futures ----------------------------------
         win_q = (
             select(FuturesMarket)
@@ -584,10 +596,18 @@ class SoccerEventAdapter:
                 nnorm = _norm(nm)
                 team = team_lut.get(nnorm)
                 state = elim.get(nnorm, {})
-                # Elimination is only asserted for a nation whose LAST completed
-                # match was a loss; a live winner-field price on a knocked-out side
-                # (England 29% / France 7% after they lost) is stale dust → TRUE 0.
-                eliminated = bool(state.get("eliminated"))
+                prob_val = (
+                    float(o.current_probability)
+                    if o.current_probability is not None
+                    else 0.0
+                )
+                # Eliminated when the LAST completed match was a loss (a stale live
+                # price on a knocked-out side — England 29% / France 7% after they
+                # lost → TRUE 0), OR when the price is ~0 and no game remains (never
+                # qualified / group-stage exit — Iceland/Italy showing "alive 0%").
+                eliminated = bool(state.get("eliminated")) or (
+                    prob_val <= _ALIVE_PRICE_EPS and nnorm not in upcoming_nations
+                )
                 display_name = team.name if team is not None else nm
                 comp = {
                     "name": display_name,
