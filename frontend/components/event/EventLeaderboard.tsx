@@ -13,6 +13,8 @@ import {
   formatMovement,
   seriesForName,
   seriesFromCompetitor,
+  partitionWinnerField,
+  isEliminatedCompetitor,
 } from "@/lib/eventConceptDisplay";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
 import Sparkline from "./Sparkline";
@@ -121,6 +123,125 @@ function GolfRow({
         <span className="font-mono font-semibold text-text-primary tabular-nums">
           {cut ? "—" : formatProbability(c.probability)}
         </span>
+      </span>
+    </div>
+  );
+}
+
+/** One winner-field leaderboard row (live/upcoming). Contenders show a green
+ *  probability bar + big %; eliminated rows (`out`) render with NO green (a
+ *  true-0 empty track), an "OUT" chip, and muted styling — never a stale % next
+ *  to an OUT badge implying they're still alive (L2-132). */
+function WinnerFieldRow({
+  c,
+  rank,
+  anyCrest,
+  live,
+  showSparkline,
+  historyOutcomes,
+  out,
+}: {
+  c: EventConceptCompetitor;
+  rank: number;
+  anyCrest: boolean;
+  live: boolean;
+  showSparkline: boolean;
+  historyOutcomes?: FuturesOutcomeHistory[];
+  out: boolean;
+}) {
+  const seed = (c as Record<string, unknown>).seed;
+  // Out rows carry no movement/sparkline — the story is over for them.
+  const mv = out ? null : formatMovement(competitorMovement(c));
+  const ownSeries = showSparkline && !out ? seriesFromCompetitor(c) : [];
+  const series =
+    !showSparkline || out
+      ? []
+      : ownSeries.length >= 2
+        ? ownSeries
+        : seriesForName(historyOutcomes, c.name);
+  const pct = c.probability != null ? Math.round(c.probability * 100) : null;
+  return (
+    <div
+      className={`flex items-center gap-3 py-2 border-b border-surface-border/40 last:border-0 ${
+        out ? "opacity-55" : ""
+      }`}
+    >
+      {/* Rank */}
+      <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
+        {rank}
+      </span>
+
+      {/* Team crest (soccer) — reserved slot so rows stay aligned. */}
+      {anyCrest &&
+        (c.team ? (
+          <TeamCrest side={c.team} size={22} />
+        ) : (
+          <span className="shrink-0" style={{ width: 22, height: 22 }} />
+        ))}
+
+      {/* Name + chips + bar */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-text-primary truncate">{c.name}</span>
+          {typeof seed === "number" && (
+            <span className="text-[10px] text-text-muted font-mono shrink-0">
+              #{seed}
+            </span>
+          )}
+          {out ? (
+            <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-text-muted/15 text-text-secondary shrink-0">
+              Out
+            </span>
+          ) : (
+            live &&
+            rank === 1 && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-accent-live/15 text-accent-live shrink-0">
+                Leader
+              </span>
+            )
+          )}
+        </div>
+        {/* Bar: contenders show a green fill; OUT rows show a true-0 empty track
+            (no green) so elimination reads as zero, not a min-width stub. */}
+        {out ? (
+          <div
+            className="mt-1 h-1.5 rounded-full bg-surface-elevated overflow-hidden"
+            aria-label="0 percent"
+          />
+        ) : (
+          pct != null && (
+            <div className="mt-1 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
+              <div
+                className="h-full rounded-full bg-accent-brand"
+                style={{ width: `${Math.max(2, pct)}%` }}
+              />
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Sparkline (real history only) */}
+      {series.length >= 2 && (
+        <div className="hidden sm:block shrink-0">
+          <Sparkline series={series} />
+        </div>
+      )}
+
+      {/* 24h movement */}
+      {mv && (
+        <span
+          className={`font-mono text-[11px] tabular-nums shrink-0 w-12 text-right ${
+            mv.dir === "up" ? "text-accent-brand" : "text-accent-danger"
+          }`}
+        >
+          {mv.dir === "up" ? "▲" : "▼"}
+          {mv.text}
+        </span>
+      )}
+
+      {/* Big probability — OUT rows never show a stale live % (reads 0%). */}
+      <span className="font-mono text-base font-semibold text-text-primary tabular-nums shrink-0 w-14 text-right">
+        {formatProbability(out ? 0 : c.probability)}
       </span>
     </div>
   );
@@ -249,11 +370,19 @@ export default function EventLeaderboard({
     );
   }
 
-  const ranked = fieldOrder(competitors).slice(0, limit);
-  if (ranked.length === 0) return null;
+  // L2-132: split the winner field into still-alive contenders and the OUT tail.
+  // Contenders render with bars (top `limit` shown); everything below — low-ranked
+  // survivors AND the eliminated 0% tail (48-nation World Cup) — collapses behind a
+  // "Show all N" expander so the main view isn't a wall of dead entrants. Eliminated
+  // rows render honestly (no green, true-0 bar, an OUT chip). See
+  // partitionWinnerField / isEliminatedCompetitor.
+  const { contenders, eliminated } = partitionWinnerField(competitors);
+  if (contenders.length === 0 && eliminated.length === 0) return null;
   // L2-130: reserve a crest slot only when at least one competitor resolved to a
   // team (soccer World Cup) — golf/tennis/F1 fields stay text-only and unshifted.
-  const anyCrest = ranked.some((c) => c.team);
+  const anyCrest = competitors.some((c) => c.team);
+  const visible = contenders.slice(0, limit);
+  const rest = [...contenders.slice(limit), ...eliminated];
 
   return (
     <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
@@ -262,88 +391,40 @@ export default function EventLeaderboard({
         {live && <FreshnessChip asOf={asOf} />}
       </div>
       <div className="space-y-0.5">
-        {ranked.map((c, i) => {
-          const seed = (c as Record<string, unknown>).seed;
-          const mv = formatMovement(competitorMovement(c));
-          // L2-71: prefer the competitor's own envelope history; fall back to the
-          // name-matched shared history (pre-L2-71 payloads).
-          const ownSeries = showSparkline ? seriesFromCompetitor(c) : [];
-          const series = !showSparkline
-            ? []
-            : ownSeries.length >= 2
-              ? ownSeries
-              : seriesForName(historyOutcomes, c.name);
-          const pct = c.probability != null ? Math.round(c.probability * 100) : null;
-          return (
-            <div
-              key={`${c.name}-${i}`}
-              className="flex items-center gap-3 py-2 border-b border-surface-border/40 last:border-0"
-            >
-              {/* Rank */}
-              <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
-                {i + 1}
-              </span>
-
-              {/* Team crest (soccer) — reserved slot so rows stay aligned. */}
-              {anyCrest &&
-                (c.team ? (
-                  <TeamCrest side={c.team} size={22} />
-                ) : (
-                  <span className="shrink-0" style={{ width: 22, height: 22 }} />
-                ))}
-
-              {/* Name + chips + bar */}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-text-primary truncate">{c.name}</span>
-                  {typeof seed === "number" && (
-                    <span className="text-[10px] text-text-muted font-mono shrink-0">
-                      #{seed}
-                    </span>
-                  )}
-                  {live && i === 0 && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-accent-live/15 text-accent-live shrink-0">
-                      Leader
-                    </span>
-                  )}
-                </div>
-                {pct != null && (
-                  <div className="mt-1 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-accent-brand"
-                      style={{ width: `${Math.max(2, pct)}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Sparkline (real history only) */}
-              {series.length >= 2 && (
-                <div className="hidden sm:block shrink-0">
-                  <Sparkline series={series} />
-                </div>
-              )}
-
-              {/* 24h movement */}
-              {mv && (
-                <span
-                  className={`font-mono text-[11px] tabular-nums shrink-0 w-12 text-right ${
-                    mv.dir === "up" ? "text-accent-brand" : "text-accent-danger"
-                  }`}
-                >
-                  {mv.dir === "up" ? "▲" : "▼"}
-                  {mv.text}
-                </span>
-              )}
-
-              {/* Big probability */}
-              <span className="font-mono text-base font-semibold text-text-primary tabular-nums shrink-0 w-14 text-right">
-                {formatProbability(c.probability)}
-              </span>
-            </div>
-          );
-        })}
+        {visible.map((c, i) => (
+          <WinnerFieldRow
+            key={`${c.name}-${i}`}
+            c={c}
+            rank={i + 1}
+            anyCrest={anyCrest}
+            live={live}
+            showSparkline={showSparkline}
+            historyOutcomes={historyOutcomes}
+            out={false}
+          />
+        ))}
       </div>
+      {rest.length > 0 && (
+        <details className="mt-3">
+          <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+            Show all {competitors.length}
+          </summary>
+          <div className="space-y-0.5 mt-2">
+            {rest.map((c, i) => (
+              <WinnerFieldRow
+                key={`rest-${c.name}-${i}`}
+                c={c}
+                rank={visible.length + i + 1}
+                anyCrest={anyCrest}
+                live={live}
+                showSparkline={showSparkline}
+                historyOutcomes={historyOutcomes}
+                out={isEliminatedCompetitor(c)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }

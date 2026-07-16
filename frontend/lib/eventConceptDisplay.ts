@@ -80,6 +80,48 @@ export function settledChampion(
 }
 
 // ---------------------------------------------------------------------------
+// Eliminated-entrant chrome (L2-132 — WC winner field).
+//
+// A live/upcoming winner field (World Cup: 48 nations) carries a long tail of
+// entrants that are OUT of contention. The AUTHORITATIVE signal is the adapter's
+// `eliminated` flag — #208 grades dead entrants to a TRUE 0 with a settled/
+// eliminated state. Until that lands we render honestly from the price: a true-0
+// (all-but-0) probability is the only defensible "out" signal we have on hand. A
+// tight floor so a stale 1–2% green on a dead entrant is NOT prematurely crowned
+// "out" here — zeroing that residual is the adapter's grading job (#208 Item 1b),
+// not the renderer's. We only trim the genuine 0% tail. A `won` row is never out.
+// ---------------------------------------------------------------------------
+
+/** Probability at/under which a winner-field entrant is treated as out when no
+ *  explicit `eliminated` flag is present. 0.5% — trims only the true-0 tail. */
+export const ELIMINATED_PROB_FLOOR = 0.005;
+
+/** L2-132: is this winner-field competitor OUT of contention? Prefers the
+ *  adapter's `eliminated` flag (consumed automatically once #208 sets it); falls
+ *  back to a true-0 price. Never treats the settled champion (`won`) as out. */
+export function isEliminatedCompetitor(c: EventConceptCompetitor): boolean {
+  if (c.won === true) return false;
+  if ((c as Record<string, unknown>).eliminated === true) return true;
+  const p = c.probability;
+  return p != null && p <= ELIMINATED_PROB_FLOOR;
+}
+
+/** L2-132: split a live/upcoming winner field into still-alive contenders and the
+ *  eliminated/out tail, both preserving field (probability-desc) order. The
+ *  leaderboard renders contenders with bars and collapses the out tail behind a
+ *  "show all" expander (eliminated rows: no green, true-0 bar, an OUT chip). */
+export function partitionWinnerField(
+  competitors: EventConceptCompetitor[],
+): { contenders: EventConceptCompetitor[]; eliminated: EventConceptCompetitor[] } {
+  const contenders: EventConceptCompetitor[] = [];
+  const eliminated: EventConceptCompetitor[] = [];
+  for (const c of fieldOrder(competitors)) {
+    (isEliminatedCompetitor(c) ? eliminated : contenders).push(c);
+  }
+  return { contenders, eliminated };
+}
+
+// ---------------------------------------------------------------------------
 // Matchup duels (L2-130 — soccer World Cup bracket games as team duels).
 //
 // The soccer adapter is the first to fuse the events data-plane into concept

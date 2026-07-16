@@ -21,7 +21,10 @@ import {
   childReactKey,
   headlinerMatchup,
   matchupKickoffLabel,
+  isEliminatedCompetitor,
+  partitionWinnerField,
 } from "../../lib/eventConceptDisplay";
+import type { EventConceptCompetitor } from "../../lib/types";
 
 describe("daysUntilStart / countdownLabel (L2-78 pre-tournament countdown)", () => {
   const now = new Date("2026-07-09T21:44:00Z").getTime();
@@ -522,5 +525,49 @@ describe("marketsTracked counts soccer games by event_id", () => {
     };
     // 1 winner market + 2 games = 3.
     expect(marketsTracked(data)).toBe(3);
+  });
+});
+
+describe("isEliminatedCompetitor / partitionWinnerField (L2-132 WC eliminated chrome)", () => {
+  const c = (over: Partial<EventConceptCompetitor>): EventConceptCompetitor => ({
+    name: "X",
+    probability: 0.1,
+    ...over,
+  });
+
+  test("explicit adapter `eliminated` flag wins (consumed once #208 sets it)", () => {
+    // Even a stale non-zero green is OUT when the adapter says so.
+    expect(
+      isEliminatedCompetitor(c({ eliminated: true, probability: 0.02 } as Partial<EventConceptCompetitor>)),
+    ).toBe(true);
+  });
+
+  test("true-0 (all-but-0) price is out; a real contender is not", () => {
+    expect(isEliminatedCompetitor(c({ probability: 0 }))).toBe(true);
+    expect(isEliminatedCompetitor(c({ probability: 0.004 }))).toBe(true); // <= 0.5% floor
+    expect(isEliminatedCompetitor(c({ probability: 0.01 }))).toBe(false); // 1% stale stays alive
+    expect(isEliminatedCompetitor(c({ probability: 0.3 }))).toBe(false);
+  });
+
+  test("a `won` competitor is never treated as out, even at a stale 0%", () => {
+    expect(isEliminatedCompetitor(c({ won: true, probability: 0 }))).toBe(false);
+  });
+
+  test("null probability is not eliminated (no honest signal to zero it)", () => {
+    expect(isEliminatedCompetitor(c({ probability: null }))).toBe(false);
+  });
+
+  test("partitionWinnerField splits into field-ordered contenders + out tail", () => {
+    const field: EventConceptCompetitor[] = [
+      c({ name: "Brazil", probability: 0.22 }),
+      c({ name: "Iceland", probability: 0 }),
+      c({ name: "France", probability: 0.18 }),
+      c({ name: "Vanuatu", probability: 0.002 }),
+    ];
+    const { contenders, eliminated } = partitionWinnerField(field);
+    expect(contenders.map((x) => x.name)).toEqual(["Brazil", "France"]);
+    expect(eliminated.map((x) => x.name).sort()).toEqual(["Iceland", "Vanuatu"]);
+    // contenders stay in probability-desc order.
+    expect((contenders[0].probability ?? 0) >= (contenders[1].probability ?? 0)).toBe(true);
   });
 });

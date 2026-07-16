@@ -32,6 +32,7 @@ import EventProps from "@/components/event/EventProps";
 import PropsSection, { type PropMark } from "@/components/event/PropsSection";
 import FinishPositionLadder from "@/components/event/FinishPositionLadder";
 import SettledPathChart from "@/components/event/SettledPathChart";
+import WinnerEvolutionChart from "@/components/event/WinnerEvolutionChart";
 
 // Design tweaks (queue L2-64): global on/off for per-row sparklines and the
 // today's-movers strip. Sparklines still degrade to nothing per-row when a
@@ -195,6 +196,14 @@ export default function EventConceptPage() {
   // (settled-means-settled). This must match `marketsTracked`'s count exactly.
   const showFinishLadder =
     hasWinnerField && !isSettled && renderedFinishColumns(data).length > 0;
+  // L2-132: the WINNER EVOLUTION chart — the winner field's probability path so
+  // far (the tournament's story to date). Soccer (World Cup) has no useful race
+  // chart: its winner-field competitors carry no per-outcome history, and the
+  // container hero shows the next match, not the title race. So this fetched-by-
+  // evolution_market_id chart is the page's view of how the title picture moved.
+  // Mounted while live/upcoming; settled events get SettledPathChart instead.
+  const showWinnerEvolution =
+    isSoccer && hasWinnerField && !isSettled && typeof evolutionId === "number";
 
   // Section nav — only the sections that will actually render.
   const nav: { id: string; label: string }[] = [];
@@ -203,6 +212,7 @@ export default function EventConceptPage() {
     nav.push({ id: "race", label: "Race" });
   if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
+  if (showWinnerEvolution) nav.push({ id: "evolution", label: "Evolution" });
   if (showFinishLadder) nav.push({ id: "finish", label: "Finish position" });
   if (fightChildren.length > 0)
     nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
@@ -256,6 +266,14 @@ export default function EventConceptPage() {
           live={isLive}
           settled={isSettled}
           asOf={event.as_of}
+        />
+      )}
+
+      {showWinnerEvolution && typeof evolutionId === "number" && (
+        <WinnerEvolutionChart
+          marketId={evolutionId}
+          domain={event.domain}
+          live={isLive}
         />
       )}
 
