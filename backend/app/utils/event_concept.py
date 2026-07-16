@@ -751,24 +751,55 @@ class GolfEventAdapter:
         # authoritative proof of play → flip status to LIVE and fuse. Read-only DB
         # (PK lookup on the win market) — NEVER re-poll DataGolf on the request path.
         if envelope["event"]["status"] != "settled":
+            # L2-125: the live-leaderboard flip must read the market that actually
+            # CARRIES the leaderboard. The DataGolf in-play poll writes
+            # market_metadata["leaderboard"] onto the DATAGOLF win market, but
+            # evolution_market_id is picked by snapshot richness — for majors that
+            # is the long-lived odds_api winner futures market (open for months),
+            # which never receives a leaderboard. The two diverge, so a PK lookup on
+            # evolution_market_id alone left The Open stuck on "upcoming" 8h into
+            # round 1 with the leaders already through 16 holes. Scan every
+            # winner-group market and use the one with a live leaderboard (freshest
+            # wins), keeping evolution_market_id only as a fallback candidate.
+            candidate_ids: list[int] = []
             evo_id = data.get("evolution_market_id")
             if evo_id:
+                candidate_ids.append(evo_id)
+            for grp in data.get("markets") or []:
+                if grp.get("type") == "winner":
+                    for mid in grp.get("market_ids") or []:
+                        if mid and mid not in candidate_ids:
+                            candidate_ids.append(mid)
+            if candidate_ids:
                 try:
                     from sqlalchemy import select
                     from app.models import FuturesMarket
 
-                    row = (
+                    rows = (
                         await db.execute(
                             select(
                                 FuturesMarket.external_id,
                                 FuturesMarket.market_metadata,
-                            ).where(FuturesMarket.id == evo_id)
+                            ).where(FuturesMarket.id.in_(candidate_ids))
                         )
-                    ).first()
-                    ext_id = row[0] if row else None
-                    meta = (row[1] if row else None) or {}
-                    leaderboard = meta.get("leaderboard") or []
-                    updated_at = meta.get("leaderboard_updated_at")
+                    ).all()
+                    # Pick the winner market carrying a live leaderboard; ISO
+                    # timestamps sort lexically so the freshest stamp wins ties.
+                    ext_id = None
+                    leaderboard: list = []
+                    updated_at = None
+                    best_ts = None
+                    for r_ext, r_meta in rows:
+                        m = r_meta or {}
+                        lb = m.get("leaderboard") or []
+                        if not _golf_leaderboard_has_live_rows(lb):
+                            continue
+                        ts = m.get("leaderboard_updated_at")
+                        if best_ts is None or (ts and ts > best_ts):
+                            best_ts = ts
+                            ext_id = r_ext
+                            leaderboard = lb
+                            updated_at = ts
                     now = datetime.now(timezone.utc)
                     if _golf_leaderboard_has_live_rows(leaderboard) and (
                         _golf_within_play_window(

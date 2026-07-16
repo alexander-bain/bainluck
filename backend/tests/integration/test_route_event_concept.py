@@ -28,6 +28,26 @@ def _golf_detail():
     }
 
 
+def _golf_detail_leaderboard_mismatch():
+    """L2-125: evolution_market_id (id=1, the richest-snapshot odds_api winner
+    futures market) carries NO leaderboard; the sibling DataGolf win market
+    (id=2) in the same winner group carries the live one. No schedule_status /
+    dates → _golf_status stays 'upcoming', so the flip depends entirely on the
+    stored leaderboard being found on the SIBLING, not the evolution market."""
+    return {
+        "tournament": {
+            "name": "The Open Championship",
+            "key": "the-open-championship",
+            "is_major": True,
+        },
+        "golfers": [{"name": "Scottie Scheffler", "probability": 0.20}],
+        "markets": [{"type": "winner", "label": "Winner", "market_ids": [1, 2]}],
+        "related_futures": [],
+        "evolution_market_id": 1,
+        "biggest_movers": [],
+    }
+
+
 class TestEventConceptRoute:
     async def test_golf_event_parity_envelope(self, client, monkeypatch):
         async def _fake_get_golf_tournament(slug, db):
@@ -46,6 +66,47 @@ class TestEventConceptRoute:
         assert body["primary"]["competitors"][0]["name"] == "Scottie Scheffler"
         assert body["sections"][0]["type"] == "winner"
         assert body["children"][0]["market_name"] == "H2H: X vs Y"
+
+    async def test_live_flip_reads_leaderboard_from_winner_sibling(
+        self, client, mock_db, monkeypatch
+    ):
+        """L2-125 regression: The Open sat 'upcoming' 8h into round 1 because the
+        live flip only read evolution_market_id's leaderboard, but that market is
+        the long-lived odds_api winner futures (empty leaderboard) — the DataGolf
+        in-play poll writes the leaderboard onto a DIFFERENT winner-group market.
+        The flip must scan the whole winner group and fuse from whichever sibling
+        carries a live leaderboard."""
+        from datetime import datetime, timezone
+        from tests.integration.test_route_weather import _query_result
+
+        async def _fake(slug, db):
+            return _golf_detail_leaderboard_mismatch()
+
+        monkeypatch.setattr("app.routes.golf.get_golf_tournament", _fake)
+
+        fresh = datetime.now(timezone.utc).isoformat()
+        # The winner-group IN() query returns both markets; only the datagolf
+        # sibling (id=2) carries a live leaderboard.
+        mock_db.execute.return_value = _query_result([
+            ("odds_api:the_open:winner", {}),  # id=1 evolution market, EMPTY
+            ("datagolf:pga:100:win", {          # id=2 sibling, live leaderboard
+                "leaderboard": [
+                    {"name": "Scottie Scheffler", "position": "T4", "thru": 16,
+                     "total_score": -3, "today_score": -3, "current_round": 1},
+                ],
+                "leaderboard_updated_at": fresh,
+            }),
+        ])
+
+        resp = await client.get("/api/event/event:golf:the-open-championship")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["status"] == "live"  # flipped via the sibling
+        assert body["event"]["live_mode"] == "golf_leaderboard"
+        comp = body["primary"]["competitors"][0]
+        assert comp["name"] == "Scottie Scheffler"
+        assert comp.get("position") == "T4"       # fused from the datagolf sibling
+        assert comp.get("score_to_par") == -3
 
     async def test_unknown_event_404(self, client, monkeypatch):
         async def _none(slug, db):
