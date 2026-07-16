@@ -142,6 +142,63 @@ async def _register_market_team_identities(session, event_id, matchup, market):
 # event, producing alternating probabilities in win_prob_snapshots.
 
 
+def _is_game_winner_kalshi_prefix(prefix: str) -> bool:
+    """A Kalshi ticker prefix whose per-market granularity is a single game or
+    esports map — the level at which two DIFFERENT-dated markets sharing one
+    event signal a wrong-game linkage.
+
+    Covers traditional ``…game`` prefixes (kxnbagame, kxncaambgame, …) plus
+    esports per-map winners (kxcs2map, kxlolmap, kxvalorantmap, and the
+    explicit kxcs2mapwinner). The plural ``…maps`` total-count props
+    (kxcs2totalmaps, kxloltotalmaps) are over/under props, NOT per-game
+    markers, and are correctly excluded — ``endswith("map")`` does not match
+    ``…maps`` (#210 Item 1b: the old ``endswith("game")`` gate silently
+    exempted every esports map ticker from the duplicate-linkage guard).
+    """
+    return (
+        prefix.endswith("game")
+        or prefix.endswith("map")
+        or prefix.endswith("mapwinner")
+    )
+
+
+# Kalshi game/map WINNER ticker prefixes — the per-match granularity at which a
+# different-dated ticker sharing one event means a DIFFERENT game (not a prop of
+# the same game). Props (spread/total/mention/totalmaps) legitimately share the
+# game's date and must never be date-unlinked, so they are intentionally absent.
+# #210 Item 1e adds NCAAMB / college basketball (same-day doubleheaders) and
+# esports (teamless tournament-dump different-day matches). Combat prefixes are
+# absent by design — their date-only tickers legitimately sit up to ~28h off
+# (gotcha #14).
+WRONG_GAME_PREFIXES = frozenset({
+    # Traditional single-game sports
+    "kxnbagame", "kxnhlgame", "kxmlbgame", "kxnflgame",
+    "kxwnbagame", "kxmlsgame", "kxsoccergame", "kxsocgame",
+    # College basketball (NCAAMB + siblings) — same-day doubleheaders
+    "kxncaambgame", "kxncaabbgame", "kxncaabgame", "kxncaawbgame",
+    # Esports game/map winners — teamless tournament-dump wrong-games
+    "kxcs2game", "kxcs2map", "kxcs2mapwinner",
+    "kxlolgame", "kxlolmap",
+    "kxvalorantgame", "kxvalorantmap",
+})
+
+
+def _ticker_date_far_from_event(ticker_date, event_commence) -> bool:
+    """True when a Kalshi ticker's game date is far enough from the event's
+    commence_time to be a DIFFERENT game.
+
+    HHMM-aware (#210 Item 1d): ±3h when the ticker carries a start time
+    (separates doubleheaders ~5h apart), ±18h for date-only tickers. Returns
+    False when either input is missing (no signal to unlink on).
+    """
+    if not ticker_date or not event_commence:
+        return False
+    d = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
+    ec = event_commence if event_commence.tzinfo else event_commence.replace(tzinfo=timezone.utc)
+    max_diff_hours = 3 if (d.hour or d.minute) else 18
+    return abs((d - ec).total_seconds()) / 3600 > max_diff_hours
+
+
 async def _check_duplicate_kalshi_linkage(
     session, event_id: int, market, ticker_game_date,
 ) -> bool:
@@ -160,8 +217,8 @@ async def _check_duplicate_kalshi_linkage(
 
     ext = (market.external_id or "").lower()
     prefix = ext.split("-")[0] if "-" in ext else ext
-    if not prefix.endswith("game"):
-        return True  # Only guard game-level markets
+    if not _is_game_winner_kalshi_prefix(prefix):
+        return True  # Only guard game/map-level markets
 
     # Find existing Kalshi game markets already linked to this event
     existing_result = await session.execute(
@@ -180,7 +237,7 @@ async def _check_duplicate_kalshi_linkage(
     for row in existing:
         existing_ext = (row.external_id or "").lower()
         existing_prefix = existing_ext.split("-")[0] if "-" in existing_ext else existing_ext
-        if not existing_prefix.endswith("game"):
+        if not _is_game_winner_kalshi_prefix(existing_prefix):
             continue  # Skip non-game markets (props, totals, etc.)
 
         # Both are game markets — compare ticker dates
@@ -802,7 +859,22 @@ async def _phase15_revalidate(
                 game_date_override=ticker_game_date,
             )
 
+            # #210 Item 1c: Phase 1.5's relink previously bypassed the
+            # duplicate-linkage guard, letting a re-validated market land on an
+            # event that already holds a different-dated game market. Route the
+            # relink through the same guard the forward path (_try_link_market)
+            # uses. If blocked, the elif chain below unlinks a genuinely
+            # mismatched market rather than moving the wrong-game link.
+            relink_blocked = False
             if better_match and better_match["event_id"] != linked_event.id:
+                if not await _check_duplicate_kalshi_linkage(
+                    session, better_match["event_id"], market, ticker_game_date,
+                ):
+                    relink_blocked = True
+                    stats["funnel"].setdefault("phase15_duplicate_linkage_blocked", 0)
+                    stats["funnel"]["phase15_duplicate_linkage_blocked"] += 1
+
+            if better_match and better_match["event_id"] != linked_event.id and not relink_blocked:
                 logger.info(
                     "Re-linking %s '%s' from %s event %d -> event %d",
                     market.source, market.name, reason,
@@ -984,14 +1056,25 @@ async def _match_prediction_markets(limit: int = 500):
                 all_per_event_source[key] = []
             all_per_event_source[key].append(market_ref)
 
-        # ── Wrong-game detection: unlink Kalshi game markets whose ticker
-        # date is far from the event's commence_time. Only for traditional
-        # sports (NBA/NHL/MLB/NFL) where each game is a distinct event.
-        # NOT for esports — tournament events legitimately span multiple days.
-        _WRONG_GAME_PREFIXES = frozenset({
-            "kxnbagame", "kxnhlgame", "kxmlbgame", "kxnflgame",
-            "kxwnbagame", "kxmlsgame", "kxsoccergame", "kxsocgame",
-        })
+        # ── Wrong-game detection: unlink Kalshi game/map markets whose ticker
+        # date is far from the event's commence_time. Each of these prefixes is
+        # a per-game (or per-esports-map) winner, so a different-dated ticker on
+        # one event is a different match, not a prop of the same game.
+        #
+        # #210 Item 1e: the set now covers NCAAMB / college basketball (the
+        # same-day doubleheader wrong-game class from #209) and esports (the
+        # teamless tournament-dump class where different-day matches pile onto
+        # one event). Only game/map WINNERS are listed — props (spread, total,
+        # mention, totalmaps) legitimately share the game's date and must never
+        # be date-unlinked.
+        #
+        # #210 Item 1d: this loop runs over EVERY linked market in EVERY group
+        # (not just the dedup primary + blend-feeding tickers the Phase-2 primary
+        # loop below covers), and uses the SAME precise HHMM-aware threshold via
+        # _ticker_date_far_from_event (±3h with a start time, ±18h date-only)
+        # instead of the old flat 30h — so same-day doubleheader mislinks
+        # (~5h apart) are caught too. The prefix allowlist (WRONG_GAME_PREFIXES)
+        # is module-level (#210 Item 1e) and combat is skipped defensively.
         stats["funnel"].setdefault("phase2_multi_game_unlinked", 0)
         for key, group in list(all_per_event_source.items()):
             if key[1] != "kalshi" or not group:
@@ -1005,25 +1088,29 @@ async def _match_prediction_markets(limit: int = 500):
             for m in list(group):
                 ext = (m.external_id or "").lower()
                 prefix = ext.split("-")[0] if "-" in ext else ext
-                if prefix not in _WRONG_GAME_PREFIXES:
+                if prefix not in WRONG_GAME_PREFIXES:
+                    continue
+                # Combat fights are date-disambiguated by fighter names, not
+                # dates — never date-unlink them (defense-in-depth; combat
+                # prefixes are not in the set, but a shared token could alias).
+                if is_combat_fight_ticker(m.external_id):
                     continue
                 td = extract_game_date_from_ticker(m.external_id)
-                if not td:
+                if not _ticker_date_far_from_event(td, ec):
                     continue
                 d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
                 diff_hours = abs((d - ec).total_seconds()) / 3600
-                if diff_hours > 30:
-                    logger.warning(
-                        "Phase 2 wrong-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
-                        m.external_id, d.date(), diff_hours, ev_ref.event_id, ec.date(),
-                    )
-                    await session.execute(
-                        update(FuturesMarket)
-                        .where(FuturesMarket.id == m.market_id)
-                        .values(event_id=None)
-                    )
-                    stats["funnel"]["phase2_multi_game_unlinked"] += 1
-                    group[:] = [gm for gm in group if gm.market_id != m.market_id]
+                logger.warning(
+                    "Phase 2 wrong-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
+                    m.external_id, d.date(), diff_hours, ev_ref.event_id, ec.date(),
+                )
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == m.market_id)
+                    .values(event_id=None)
+                )
+                stats["funnel"]["phase2_multi_game_unlinked"] += 1
+                group[:] = [gm for gm in group if gm.market_id != m.market_id]
 
             await session.commit()
 
@@ -1075,31 +1162,25 @@ async def _match_prediction_markets(limit: int = 500):
                     # which the ±18h date-only threshold would wrongly unlink.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
                     if (
-                        ticker_date
-                        and market.event_commence_time
-                        and not is_combat_fight_ticker(market.external_id)
+                        not is_combat_fight_ticker(market.external_id)
+                        and _ticker_date_far_from_event(ticker_date, market.event_commence_time)
                     ):
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = market.event_commence_time if market.event_commence_time.tzinfo else market.event_commence_time.replace(tzinfo=timezone.utc)
-                        # Use tight threshold when HHMM was parsed (non-midnight),
-                        # loose threshold for date-only tickers.
-                        # ±3h separates double-headers (~5h apart); ±18h for date-only.
-                        _max_diff = 3 * 3600 if (_td.hour or _td.minute) else 18 * 3600
-                        if abs((_td - _ec).total_seconds()) > _max_diff:
-                            logger.warning(
-                                "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
-                                market.external_id, _td.date(), _ec.date(),
-                                abs((_td - _ec).total_seconds()) / 3600,
-                            )
-                            await session.execute(
-                                update(FuturesMarket)
-                                .where(FuturesMarket.id == market.market_id)
-                                .values(event_id=None)
-                            )
-                            await session.commit()
-                            stats["funnel"].setdefault("phase2_date_unlinked", 0)
-                            stats["funnel"]["phase2_date_unlinked"] += 1
-                            continue
+                        logger.warning(
+                            "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
+                            market.external_id, _td.date(), _ec.date(),
+                            abs((_td - _ec).total_seconds()) / 3600,
+                        )
+                        await session.execute(
+                            update(FuturesMarket)
+                            .where(FuturesMarket.id == market.market_id)
+                            .values(event_id=None)
+                        )
+                        await session.commit()
+                        stats["funnel"].setdefault("phase2_date_unlinked", 0)
+                        stats["funnel"]["phase2_date_unlinked"] += 1
+                        continue
 
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
@@ -1543,8 +1624,30 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
     candidates = event_result.scalars().all()
 
     if len(candidates) == 1:
-        # Unambiguous match — exactly one event in that sport + time window
+        # Unambiguous COUNT — exactly one event in that sport + time window.
+        # But an unambiguous count is NOT proof of the right teams: the window
+        # is as wide as ±48h for date-less Kalshi tickers, so a lone candidate
+        # can easily be a DIFFERENT game (the wrong-game link class, #210 1a).
+        # Team gate: when the ticker yields two team fragments, reject the link
+        # if they match NEITHER of the candidate's teams (score 0). Un-parseable
+        # tickers keep the prior behavior — there is no team signal to gate on,
+        # and the single-candidate + tight-window case is reasonably safe.
         event = candidates[0]
+        fragments = extract_ticker_fragments(market.external_id)
+        if fragments:
+            abbrev_a, abbrev_b, _ = fragments
+            gate_score = _score_fragment_match(
+                abbrev_a, abbrev_b,
+                event.home_team_name or "", event.away_team_name or "",
+            )
+            if gate_score == 0:
+                logger.info(
+                    "Sport+time fallback REJECTED %s '%s' → event %d (%s vs %s): "
+                    "ticker fragments %s/%s match neither team (wrong-game gate)",
+                    market.external_id, market.name, event.id,
+                    event.home_team_name, event.away_team_name, abbrev_a, abbrev_b,
+                )
+                return None
         logger.info(
             "Sport+time fallback matched %s '%s' → event %d (%s vs %s)",
             market.external_id, market.name, event.id,
@@ -2643,6 +2746,24 @@ async def _backfill_historical_links(batch_size: int = 100):
                 matched = await _find_historical_event(
                     session, matchup, market, ref_time,
                 )
+                # #210 Item 1c: the historical backfill also bypassed the
+                # duplicate-linkage guard. Route it through the same check so a
+                # past-game market can't pile onto an event that already holds a
+                # different-dated game market. Kalshi ref_time IS the ticker game
+                # date; polymarket short-circuits to True inside the guard.
+                if matched and not await _check_duplicate_kalshi_linkage(
+                    session, matched["event_id"], market,
+                    ref_time if src == "kalshi" else None,
+                ):
+                    logger.info(
+                        "Backfill duplicate-linkage blocked: %s %s would collide "
+                        "with a different-dated game on event %d",
+                        src, market.external_id or market.name[:40],
+                        matched["event_id"],
+                    )
+                    await _mark_backfill_failed(session, market)
+                    stats["no_match"] += 1
+                    matched = None
                 if matched:
                     eid = matched["event_id"]
                     await session.execute(
