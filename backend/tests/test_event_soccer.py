@@ -12,13 +12,20 @@ from types import SimpleNamespace
 
 from app.utils.event_soccer import (
     SOCCER_TOURNAMENTS,
+    _completed_result,
     _is_real_winner_outcome,
+    _match_is_real,
+    _norm,
     _select_winner_field,
+    build_props_list,
     build_team_lookup,
+    compute_nation_elimination,
     derive_soccer_concept,
+    is_wc_prop_market,
     is_wc_winner_field_market,
     parse_soccer_slug,
 )
+from app.utils.nation_flags import flag_url, is_nation, nation_iso
 
 
 class TestParseSoccerSlug:
@@ -261,3 +268,167 @@ class TestConfig:
         for cfg in SOCCER_TOURNAMENTS.values():
             assert 2020 <= cfg.edition <= 2100
             assert cfg.display and cfg.sport_key
+
+
+# ---------------------------------------------------------------------------
+# #208 Item 1a/1b: match join + elimination grading.
+# ---------------------------------------------------------------------------
+
+
+def _mk_match(mid, home, away, hs, as_, status, dt):
+    return SimpleNamespace(
+        id=mid,
+        home_team_name=home,
+        away_team_name=away,
+        home_score=hs,
+        away_score=as_,
+        status=status,
+        commence_time=dt,
+    )
+
+
+class TestMatchIsReal:
+    def test_live_and_scheduled_always_real(self):
+        t = datetime.now(timezone.utc)
+        assert _match_is_real(_mk_match(1, "Spain", "Argentina", None, None, "scheduled", t))
+        assert _match_is_real(_mk_match(2, "Mexico", "USA", None, None, "live", t))
+
+    def test_completed_needs_scores(self):
+        t = datetime.now(timezone.utc)
+        assert _match_is_real(_mk_match(3, "France", "Spain", 0, 2, "completed", t))
+        # phantom closed row with NULL scores (the "Panama vs England" / mis-linked
+        # NHL rows) is dropped
+        assert not _match_is_real(_mk_match(4, "Panama", "England", None, None, "closed", t))
+        assert not _match_is_real(
+            _mk_match(5, "Avalanche", "Trail Blazers", None, None, "closed", t)
+        )
+
+
+class TestNationElimination:
+    def _bracket(self):
+        # The real 2026 semifinal week: France & England LOST their semis, Spain &
+        # Argentina WON theirs and meet in the final.
+        d = lambda day: datetime(2026, 7, day, 19, tzinfo=timezone.utc)
+        return [
+            _mk_match(101, "France", "Morocco", 2, 0, "completed", d(9)),   # France won QF
+            _mk_match(102, "France", "Spain", 0, 2, "completed", d(14)),    # France lost SF
+            _mk_match(103, "England", "Argentina", 1, 2, "completed", d(15)),  # Eng lost SF
+            _mk_match(104, "Portugal", "Spain", 0, 1, "completed", d(6)),   # Spain won
+            _mk_match(105, "Spain", "France", 2, 0, "completed", d(14)),    # Spain won SF
+            _mk_match(106, "Argentina", "England", 2, 1, "completed", d(15)),  # Arg won SF
+            _mk_match(107, "Spain", "Argentina", None, None, "scheduled", d(19)),  # FINAL
+        ]
+
+    def test_beaten_semifinalists_eliminated(self):
+        elim = compute_nation_elimination(self._bracket())
+        assert elim[_norm("France")]["eliminated"] is True
+        assert elim[_norm("England")]["eliminated"] is True
+
+    def test_finalists_alive(self):
+        elim = compute_nation_elimination(self._bracket())
+        assert elim[_norm("Spain")]["eliminated"] is False
+        assert elim[_norm("Argentina")]["eliminated"] is False
+
+    def test_eliminated_by_evidence(self):
+        elim = compute_nation_elimination(self._bracket())
+        by = elim[_norm("France")]["eliminated_by"]
+        assert by is not None
+        assert _norm(by["opponent"]) == _norm("Spain")
+        assert by["score"] == "0-2"  # from France's perspective
+        assert by["event_id"] == 102
+
+    def test_win_then_no_loss_is_alive(self):
+        # A nation whose most recent completed match was a win is never eliminated.
+        d = lambda day: datetime(2026, 7, day, tzinfo=timezone.utc)
+        games = [
+            _mk_match(1, "Spain", "Portugal", 1, 0, "completed", d(6)),
+            _mk_match(2, "Spain", "France", 2, 0, "completed", d(14)),
+        ]
+        assert compute_nation_elimination(games)[_norm("Spain")]["eliminated"] is False
+
+    def test_completed_result_perspective(self):
+        d = datetime(2026, 7, 14, tzinfo=timezone.utc)
+        m = _mk_match(1, "France", "Spain", 0, 2, "completed", d)
+        assert _completed_result(m, _norm("France")) == "loss"
+        assert _completed_result(m, _norm("Spain")) == "win"
+        assert _completed_result(m, _norm("Brazil")) is None  # didn't play
+
+
+# ---------------------------------------------------------------------------
+# #208 Item 1c: nation flags (clubs untouched).
+# ---------------------------------------------------------------------------
+
+
+class TestNationFlags:
+    def test_known_nations_resolve(self):
+        assert nation_iso("Spain") == "es"
+        assert nation_iso("Argentina") == "ar"
+        assert flag_url("Spain") == "https://flagcdn.com/w160/es.png"
+
+    def test_uk_home_nations_use_subdivision_codes(self):
+        assert nation_iso("England") == "gb-eng"
+        assert nation_iso("Scotland") == "gb-sct"
+        assert nation_iso("Wales") == "gb-wls"
+
+    def test_diacritics_and_alternates(self):
+        assert nation_iso("Côte d'Ivoire") == "ci"
+        assert nation_iso("Ivory Coast") == "ci"
+        assert nation_iso("Türkiye") == "tr"
+        assert nation_iso("USA") == "us"
+        assert nation_iso("United States") == "us"
+
+    def test_clubs_untouched(self):
+        # The whole safety of a curated map: a club NEVER gets a flag.
+        for club in ("Real Madrid", "Boca Juniors", "Manchester United", "PSG"):
+            assert nation_iso(club) is None
+            assert flag_url(club) is None
+            assert is_nation(club) is False
+
+    def test_is_nation(self):
+        assert is_nation("Brazil") is True
+        assert is_nation(None) is False
+
+
+# ---------------------------------------------------------------------------
+# #208 Item 1d: fun props census.
+# ---------------------------------------------------------------------------
+
+
+class TestWcPropMarket:
+    def test_fun_props_qualify(self):
+        assert is_wc_prop_market("World Cup Final Halftime Show: Songs")
+        assert is_wc_prop_market("FIFA World Cup: Total Goals")
+        assert is_wc_prop_market("World Cup: Longest Penalty Shootout")
+        assert is_wc_prop_market("World Cup: Third-Place Finisher")
+
+    def test_winner_field_is_not_a_prop(self):
+        assert not is_wc_prop_market("FIFA World Cup Winner")
+        assert not is_wc_prop_market("2026 Men's World Cup Winner")
+
+    def test_qualifier_ladders_and_other_code_excluded(self):
+        assert not is_wc_prop_market("World Cup Round of 16 Qualifiers")
+        assert not is_wc_prop_market("FIFA World Cup Semifinals Qualifiers")
+        assert not is_wc_prop_market("Esports World Cup Chess Finals Winner")
+        assert not is_wc_prop_market("Women's T20 World Cup Final: Australia vs England")
+
+    def test_build_props_list_ranks_and_shapes(self):
+        m1 = SimpleNamespace(
+            id=1, source="kalshi", name="World Cup: Total Goals",
+            outcomes=[_mk_outcome("Over 150", 0.6, None), _mk_outcome("Under 150", 0.4, None)],
+            volume_24h=100.0, volume=500.0, resolution_date=None,
+        )
+        m2 = SimpleNamespace(
+            id=2, source="kalshi", name="World Cup Final Halftime Show: Songs",
+            outcomes=[_mk_outcome("Song A", 0.3, None)],
+            volume_24h=999.0, volume=10.0, resolution_date=None,
+        )
+        winner = SimpleNamespace(
+            id=3, source="odds_api", name="FIFA World Cup Winner",
+            outcomes=[_mk_outcome("Spain", 0.5, None)],
+            volume_24h=5000.0, volume=5000.0, resolution_date=None,
+        )
+        props = build_props_list([m1, m2, winner])
+        ids = [p["market_id"] for p in props]
+        assert 3 not in ids  # winner field excluded
+        assert ids[0] == 2  # higher volume_24h ranks first
+        assert props[0]["top_outcomes"][0]["name"] == "Song A"

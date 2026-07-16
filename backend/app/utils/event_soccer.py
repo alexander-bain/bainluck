@@ -33,24 +33,32 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.nation_flags import flag_url as nation_flag_url
+from app.utils.nation_flags import is_nation as nation_is_nation
+
 # Raw price at/above which a SETTLED winner-field team is the crowned champion during
 # the is_winner grading-lag window (parity with awards/election/tennis — display only).
 _WON_PRICE_THRESHOLD = 0.97
 
-# How far back a completed game still shows as a RESULT duel (settled-means-settled,
-# but the final week's just-played games are the story). Live + scheduled always show.
-_RESULT_LOOKBACK_DAYS = 4
-
 # Winner-field competitor cap (the trophy field is ~48 nations; the UI renders the
 # contenders — the rest are eliminated/null-priced and filtered out anyway).
 _COMPETITOR_CAP = 48
-_DUEL_CAP = 32
+
+# The matches section is the tournament's HISTORY, not just its future (#208 Item 1a:
+# join ALL played group-stage/knockout matches, not just the last few days). A 48-team
+# WC is 104 matches — cap generously so the whole bracket surfaces.
+_MATCH_CAP = 160
+
+# A winner-field price at/below this (after normalization) is treated as zero when
+# deciding whether a nation is still a live contender — a hair of stale dust, not a
+# real chance.
+_ALIVE_PRICE_EPS = 0.001
 
 
 @dataclass(frozen=True)
@@ -145,6 +153,76 @@ def is_wc_winner_field_market(name: str | None) -> bool:
     if not re.search(r"\bwinner\b|\bchampion\b|\bto\s+win\b", n, re.I):
         return False
     return not _NON_WINNER_FIELD_RE.search(n)
+
+
+# #208 Item 1d: the FUN props section. WC-named open markets that are NOT the trophy
+# winner field and NOT the qualifier/round ladders (those belong to the bracket, not
+# the props reel), and are NOT another-code "World Cup" (chess/cricket/rugby/women's/
+# T20/club) that only rides the phrase. What survives is the genuinely fun stuff:
+# halftime show, songs, announcer bingo, total goals, penalty shootouts, attendance,
+# top-scorer / golden-boot awards, third place, Messi streaks.
+_PROP_EXCLUDE_RE = re.compile(
+    r"\bqualif\w+|\besports?\b|\bchess\b|\bcricket\b|\brugby\b|\bnetball\b"
+    r"|\bwomen'?s?\b|\bu-?\s?(?:17|19|20|21|23)\b|\bclub\s+world\s+cup\b"
+    r"|\bround\s+of\s+16\b|\bsemifinal\s+qualif\w+|\bquarterfinal\s+qualif\w+",
+    re.I,
+)
+
+
+def is_wc_prop_market(name: str | None) -> bool:
+    """True when a WC-named open market is a surface-worthy FUN prop (Item 1d):
+    world-cup named, NOT the trophy winner field, NOT a qualifier/round ladder, NOT
+    an other-code World Cup. Clubs/derivative ladders never qualify."""
+    n = name or ""
+    if not re.search(r"world\s*cup", n, re.I):
+        return False
+    if is_wc_winner_field_market(n):
+        return False
+    return not _PROP_EXCLUDE_RE.search(n)
+
+
+def build_props_list(markets: list, cap: int = 14) -> list[dict]:
+    """Curate the fun-props reel from open WC markets (Item 1d). Each entry carries
+    the market identity + its top priced outcomes so Lane 2 can render a card without
+    a second fetch. Ranked by 24h volume then total volume (the liveliest props
+    first). Markets with no priced outcome are dropped (nothing to show)."""
+    out: list[dict] = []
+    for m in markets:
+        if not is_wc_prop_market(getattr(m, "name", None)):
+            continue
+        priced = [
+            o
+            for o in (getattr(m, "outcomes", None) or [])
+            if getattr(o, "current_probability", None) is not None
+        ]
+        if not priced:
+            continue
+        priced.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
+        top = [
+            {
+                "name": o.name,
+                "probability": round(float(o.current_probability), 4),
+            }
+            for o in priced[:5]
+        ]
+        out.append(
+            {
+                "market_id": getattr(m, "id", None),
+                "source": getattr(m, "source", None),
+                "name": (getattr(m, "name", None) or "").strip(),
+                "outcome_count": len(priced),
+                "top_outcomes": top,
+                "volume_24h": float(getattr(m, "volume_24h", None) or 0),
+                "volume": float(getattr(m, "volume", None) or 0),
+                "resolution_date": (
+                    m.resolution_date.isoformat()
+                    if getattr(m, "resolution_date", None) is not None
+                    else None
+                ),
+            }
+        )
+    out.sort(key=lambda p: (p["volume_24h"], p["volume"]), reverse=True)
+    return out[:cap]
 
 
 def derive_soccer_concept(
@@ -322,6 +400,106 @@ def _select_winner_field(markets: list):
     return best, best_real
 
 
+def _match_is_real(g) -> bool:
+    """True for a match worth surfacing. Live/scheduled always count; a
+    completed/closed match counts only when it carries a real score on BOTH sides.
+
+    The ``soccer_fifa_world_cup`` sport key collects PHANTOM ``closed`` rows with
+    NULL scores (stale scheduled duplicates — verified live 2026-07-15: "Panama vs
+    England" 07-11, "Jordan vs Argentina" 07-12, an "Avalanche vs Trail Blazers"
+    mis-link) that would otherwise pollute the history. The real-score gate drops
+    them without needing round/stage metadata the events table doesn't carry."""
+    st = (getattr(g, "status", None) or "").lower()
+    if st in ("live", "scheduled"):
+        return True
+    if st in ("completed", "closed"):
+        return getattr(g, "home_score", None) is not None and (
+            getattr(g, "away_score", None) is not None
+        )
+    return False
+
+
+def _completed_result(g, nation_norm: str) -> str | None:
+    """Result ('win'/'loss'/'draw') of a completed match FROM ``nation_norm``'s
+    perspective, or None if the nation didn't play it / it isn't a scored result."""
+    st = (getattr(g, "status", None) or "").lower()
+    if st not in ("completed", "closed"):
+        return None
+    hs, as_ = getattr(g, "home_score", None), getattr(g, "away_score", None)
+    if hs is None or as_ is None:
+        return None
+    home = _norm(getattr(g, "home_team_name", None))
+    away = _norm(getattr(g, "away_team_name", None))
+    if nation_norm == home:
+        mine, theirs = hs, as_
+    elif nation_norm == away:
+        mine, theirs = as_, hs
+    else:
+        return None
+    if mine > theirs:
+        return "win"
+    if mine < theirs:
+        return "loss"
+    return "draw"
+
+
+def compute_nation_elimination(games: list) -> dict[str, dict]:
+    """For each nation appearing in ``games``, derive its knockout survival state
+    from the bracket results — the EVIDENCE for #208 Item 1b (grade eliminated
+    nations to TRUE 0). Returns ``{nation_norm: {"eliminated": bool,
+    "eliminated_by": {opponent, score, date, event_id} | None}}``.
+
+    A nation is ELIMINATED when its MOST-RECENT completed match was a LOSS: in the
+    knockout stage your last game is your exit if you lost, and a still-alive side's
+    last completed game was a win (it advanced) or it has yet to play. This is exact
+    for the contenders that matter — the finalists' last games are wins, the beaten
+    semi-finalists' are losses — and never false-eliminates a live team on a stale
+    winner-field price (the "England 29% / France 7% after they lost" bug). Group-
+    stage-only exits keep their zero prices regardless, so mislabeling them can never
+    move a displayed probability."""
+    # Bucket completed matches per nation, newest first.
+    per_nation: dict[str, list] = {}
+    for g in games:
+        st = (getattr(g, "status", None) or "").lower()
+        if st not in ("completed", "closed"):
+            continue
+        if getattr(g, "home_score", None) is None or getattr(g, "away_score", None) is None:
+            continue
+        for nm in (getattr(g, "home_team_name", None), getattr(g, "away_team_name", None)):
+            k = _norm(nm)
+            if k:
+                per_nation.setdefault(k, []).append(g)
+
+    out: dict[str, dict] = {}
+    for k, gs in per_nation.items():
+        gs.sort(
+            key=lambda g: (getattr(g, "commence_time", None) or datetime.min.replace(tzinfo=timezone.utc)),
+            reverse=True,
+        )
+        last = gs[0]
+        res = _completed_result(last, k)
+        eliminated = res == "loss"
+        by = None
+        if eliminated:
+            home = _norm(getattr(last, "home_team_name", None))
+            opp = (
+                getattr(last, "away_team_name", None)
+                if k == home
+                else getattr(last, "home_team_name", None)
+            )
+            hs, as_ = getattr(last, "home_score", None), getattr(last, "away_score", None)
+            mine, theirs = (hs, as_) if k == home else (as_, hs)
+            ct = getattr(last, "commence_time", None)
+            by = {
+                "opponent": opp,
+                "score": f"{mine}-{theirs}",
+                "date": ct.isoformat() if ct else None,
+                "event_id": getattr(last, "id", None),
+            }
+        out[k] = {"eliminated": eliminated, "eliminated_by": by}
+    return out
+
+
 class SoccerEventAdapter:
     """Event-concept adapter for soccer tournaments (winner_field). Resolves
     ``event:soccer:<slug>`` into the generic envelope: the trophy WINNER field as the
@@ -341,7 +519,10 @@ class SoccerEventAdapter:
         now = datetime.now(timezone.utc)
 
         # --- Bracket games (duels) from the events table -------------------------
-        cutoff = now - timedelta(days=_RESULT_LOOKBACK_DAYS)
+        # #208 Item 1a: the matches section is the tournament's HISTORY — join ALL
+        # played group-stage + knockout matches, not just the final week's. Phantom
+        # ``closed`` rows with NULL scores (stale scheduled dups, a stray mis-linked
+        # NHL row) are dropped by _match_is_real, so no round/stage metadata needed.
         game_q = (
             select(Event)
             .options(
@@ -352,11 +533,16 @@ class SoccerEventAdapter:
             .where(
                 Sport.key == cfg.sport_key,
                 Event.status.in_(["live", "scheduled", "completed", "closed"]),
-                Event.commence_time >= cutoff,
             )
             .order_by(Event.commence_time)
         )
-        games = list((await db.execute(game_q)).scalars().unique().all())
+        all_games = list((await db.execute(game_q)).scalars().unique().all())
+        games = [g for g in all_games if _match_is_real(g)]
+
+        # Derive each nation's knockout survival state from the bracket results —
+        # the evidence that grades stale winner-field prices on dead entrants to
+        # TRUE 0 (Item 1b).
+        elim = compute_nation_elimination(games)
 
         # --- Winner field (trophy) from futures ----------------------------------
         win_q = (
@@ -367,10 +553,9 @@ class SoccerEventAdapter:
                 FuturesMarket.name.ilike("%world cup%"),
             )
         )
+        all_wc_markets = list((await db.execute(win_q)).scalars().unique().all())
         candidate_markets = [
-            m
-            for m in (await db.execute(win_q)).scalars().unique().all()
-            if is_wc_winner_field_market(m.name)
+            m for m in all_wc_markets if is_wc_winner_field_market(m.name)
         ]
         winner_market, winner_outcomes = _select_winner_field(candidate_markets)
 
@@ -395,23 +580,51 @@ class SoccerEventAdapter:
                 reverse=True,
             )[:_COMPETITOR_CAP]
             for o in ranked:
-                team = team_lut.get(_norm(o.name))
-                competitors.append(
-                    {
-                        "name": (team.name if team is not None else o.name),
-                        "probability": (
-                            round(float(o.current_probability), 4)
-                            if o.current_probability is not None
-                            else None
-                        ),
-                        "won": bool(getattr(o, "is_winner", False)),
-                        "team": _team_ref(team),
-                    }
-                )
+                nm = o.name
+                nnorm = _norm(nm)
+                team = team_lut.get(nnorm)
+                state = elim.get(nnorm, {})
+                # Elimination is only asserted for a nation whose LAST completed
+                # match was a loss; a live winner-field price on a knocked-out side
+                # (England 29% / France 7% after they lost) is stale dust → TRUE 0.
+                eliminated = bool(state.get("eliminated"))
+                display_name = team.name if team is not None else nm
+                comp = {
+                    "name": display_name,
+                    "probability": (
+                        round(float(o.current_probability), 4)
+                        if o.current_probability is not None
+                        else None
+                    ),
+                    "won": bool(getattr(o, "is_winner", False)),
+                    "team": _team_ref(team),
+                    "is_nation": nation_is_nation(display_name) or nation_is_nation(nm),
+                    "eliminated": eliminated,
+                    "eliminated_by": state.get("eliminated_by"),
+                }
+                # Read-side flag (Item 1c): the nation's crest is its flag; fill the
+                # team ref's logo when the teams row has none (they all did, live).
+                fl = nation_flag_url(display_name) or nation_flag_url(nm)
+                if fl:
+                    comp["flag"] = fl
+                    if comp["team"] is not None and not comp["team"].get("logo"):
+                        comp["team"]["logo"] = fl
+                competitors.append(comp)
+
+            # Grade eliminated nations to TRUE 0, then renormalize the STILL-ALIVE
+            # field so the surviving contenders sum to ~100% (Spain/Argentina for the
+            # final) instead of leaving mass stranded on dead entrants.
+            alive = [c for c in competitors if not c["eliminated"]]
+            for c in competitors:
+                if c["eliminated"]:
+                    c["probability"] = 0.0
             normalize_display_probs(
-                competitors, mutually_exclusive=bool(winner_market.mutually_exclusive)
+                alive, mutually_exclusive=bool(winner_market.mutually_exclusive)
             )
-            competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
+            # alive first (by prob desc), then eliminated (all zero, ranked as-was).
+            competitors.sort(
+                key=lambda c: (0 if not c["eliminated"] else 1, -(c["probability"] or 0))
+            )
             as_of = max(
                 (
                     o.last_updated
@@ -434,7 +647,22 @@ class SoccerEventAdapter:
         children: list[dict] = []
         upcoming_or_live = 0
         any_live = False
-        for g in sorted(games, key=_game_rank)[:_DUEL_CAP]:
+
+        def _side(name, team, prob):
+            ref = {} if team is None else dict(_team_ref(team))
+            fl = nation_flag_url(name) or (
+                nation_flag_url(team.name) if team is not None else None
+            )
+            if fl and not ref.get("logo"):
+                ref["logo"] = fl
+            return {
+                **ref,
+                "name": name,
+                "probability": round(float(prob), 4) if prob is not None else None,
+                "flag": fl,
+            }
+
+        for g in sorted(games, key=_game_rank)[:_MATCH_CAP]:
             st = (g.status or "").lower()
             settled = st in ("completed", "closed")
             if st == "live":
@@ -442,6 +670,7 @@ class SoccerEventAdapter:
             if st in ("live", "scheduled"):
                 upcoming_or_live += 1
             home_prob = compute_aggregate_probability(g, g.status)
+            away_prob = (1 - float(home_prob)) if home_prob is not None else None
             home_name = getattr(g, "home_team_name", None)
             away_name = getattr(g, "away_team_name", None)
             home_team = getattr(g, "home_team", None) or team_lut.get(_norm(home_name))
@@ -450,8 +679,12 @@ class SoccerEventAdapter:
             if home_prob is not None:
                 outcomes = [
                     {"name": home_name, "probability": round(float(home_prob), 4)},
-                    {"name": away_name, "probability": round(1 - float(home_prob), 4)},
+                    {"name": away_name, "probability": round(float(away_prob), 4)},
                 ]
+            home_side = _side(home_name, home_team, home_prob)
+            home_side["score"] = getattr(g, "home_score", None)
+            away_side = _side(away_name, away_team, away_prob)
+            away_side["score"] = getattr(g, "away_score", None)
             children.append(
                 {
                     "kind": "matchup",
@@ -462,24 +695,8 @@ class SoccerEventAdapter:
                     "commence_time": (
                         g.commence_time.isoformat() if g.commence_time else None
                     ),
-                    "home": {
-                        **({} if home_team is None else _team_ref(home_team)),
-                        "name": home_name,
-                        "probability": (
-                            round(float(home_prob), 4) if home_prob is not None else None
-                        ),
-                        "score": getattr(g, "home_score", None),
-                    },
-                    "away": {
-                        **({} if away_team is None else _team_ref(away_team)),
-                        "name": away_name,
-                        "probability": (
-                            round(1 - float(home_prob), 4)
-                            if home_prob is not None
-                            else None
-                        ),
-                        "score": getattr(g, "away_score", None),
-                    },
+                    "home": home_side,
+                    "away": away_side,
                     "outcomes": outcomes,
                 }
             )
@@ -498,14 +715,19 @@ class SoccerEventAdapter:
             if (top.get("probability") or 0) >= _WON_PRICE_THRESHOLD:
                 top["won"] = True
 
+        # --- Fun props (Item 1d): census the WC prop markets, publish what exists -
+        props = build_props_list(all_wc_markets)
+
         sections = []
         if competitors:
+            alive_n = sum(1 for c in competitors if not c["eliminated"])
             sections.append(
                 {
                     "type": "winner_field",
                     "label": "Winner",
                     "market_ids": [winner_market.id],
                     "total": len(competitors),
+                    "still_alive": alive_n,
                 }
             )
         match_ids = [c["event_id"] for c in children]
@@ -515,7 +737,16 @@ class SoccerEventAdapter:
                     "type": "matches",
                     "label": "Matches",
                     "event_ids": match_ids,
-                    "total": len(games),
+                    "total": len(children),
+                }
+            )
+        if props:
+            sections.append(
+                {
+                    "type": "props",
+                    "label": "Props",
+                    "market_ids": [p["market_id"] for p in props],
+                    "total": len(props),
                 }
             )
 
@@ -543,6 +774,7 @@ class SoccerEventAdapter:
             },
             "sections": sections,
             "children": children,
+            "props": props,
             "props_script": [],
             "movers": [],
         }
