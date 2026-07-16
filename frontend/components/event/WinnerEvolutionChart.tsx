@@ -11,6 +11,7 @@
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
 
 interface WinnerEvolutionChartProps {
@@ -33,7 +34,11 @@ export default function WinnerEvolutionChart({
     { revalidateOnFocus: false, refreshInterval: live ? 60000 : 0 },
   );
 
-  const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
+  // The history endpoint returns outcomes in a volume-ish order, not by win
+  // probability (the WC payload leads with Egypt, trails with England). FuturesChart
+  // draws the first 5, so order by each outcome's LATEST real probability desc — the
+  // chart then plots the actual title contenders' paths, not 5 flat-0% longshots.
+  const outcomes: FuturesOutcomeHistory[] = outcomesByLatestProb(data?.outcomes ?? []);
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
   );

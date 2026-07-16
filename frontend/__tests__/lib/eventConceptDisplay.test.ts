@@ -24,6 +24,8 @@ import {
   isEliminatedCompetitor,
   isZeroTailCompetitor,
   partitionWinnerField,
+  latestOutcomeProb,
+  outcomesByLatestProb,
 } from "../../lib/eventConceptDisplay";
 import type { EventConceptCompetitor } from "../../lib/types";
 
@@ -574,5 +576,48 @@ describe("isEliminatedCompetitor / isZeroTailCompetitor / partitionWinnerField (
     expect(tail.map((x) => x.name).sort()).toEqual(["Ghana", "Iceland", "Vanuatu"]);
     // contenders stay in probability-desc order.
     expect((contenders[0].probability ?? 0) >= (contenders[1].probability ?? 0)).toBe(true);
+  });
+});
+
+describe("outcomesByLatestProb (L2-132 winner-evolution chart ordering)", () => {
+  const mk = (name: string, ...probs: (number | null)[]) => ({
+    outcome_id: name.length,
+    name,
+    history: probs.map((probability, i) => ({
+      timestamp: `2026-07-1${i}T00:00:00Z`,
+      probability,
+      american_odds: null,
+      bookmaker: "aggregate",
+    })),
+  });
+
+  test("latestOutcomeProb reads the last non-null point (ignores a sparse tail)", () => {
+    expect(latestOutcomeProb(mk("A", 0.1, 0.24, null))).toBeCloseTo(0.24);
+    expect(latestOutcomeProb(mk("Empty", null, null))).toBe(-1);
+    expect(latestOutcomeProb(mk("None"))).toBe(-1);
+  });
+
+  test("orders by LATEST probability desc — real contenders lead, not the endpoint order", () => {
+    // The bug: the history endpoint led with Egypt (0%) and trailed with England
+    // (24%), so the chart drew 5 flat longshots and omitted England.
+    const fromEndpoint = [
+      mk("Egypt", 0, 0),
+      mk("Spain", 0.4, 0.44),
+      mk("Argentina", 0.3, 0.32),
+      mk("New Zealand", 0, 0),
+      mk("England", 0.2, 0.24),
+    ];
+    const ordered = outcomesByLatestProb(fromEndpoint).map((o) => o.name);
+    // Top 5 the chart draws now lead with the real title race.
+    expect(ordered.slice(0, 3)).toEqual(["Spain", "Argentina", "England"]);
+    // England (a 24% contender) is NEVER pushed below a 0% longshot.
+    expect(ordered.indexOf("England")).toBeLessThan(ordered.indexOf("Egypt"));
+    expect(ordered.indexOf("England")).toBeLessThan(ordered.indexOf("New Zealand"));
+  });
+
+  test("does not mutate the input array", () => {
+    const input = [mk("A", 0.1), mk("B", 0.9)];
+    outcomesByLatestProb(input);
+    expect(input.map((o) => o.name)).toEqual(["A", "B"]);
   });
 });

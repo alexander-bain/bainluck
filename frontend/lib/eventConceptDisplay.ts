@@ -426,6 +426,30 @@ export function seriesFromCompetitor(c: EventConceptCompetitor): number[] {
     .map((p) => p.probability);
 }
 
+/** The latest (most recent) non-null probability in an outcome's history, or -1
+ *  when it has none. Walks from the end so sparse tails don't hide the last real
+ *  price. */
+export function latestOutcomeProb(o: FuturesOutcomeHistory): number {
+  for (let i = o.history.length - 1; i >= 0; i--) {
+    const p = o.history[i]?.probability;
+    if (p != null) return p;
+  }
+  return -1;
+}
+
+/** L2-132: order fetched history outcomes by their LATEST win probability, desc.
+ *  The futures-history endpoint returns outcomes in a volume-ish order, not by win
+ *  probability (the World Cup payload leads with Egypt and trails with England).
+ *  The WinnerEvolutionChart draws the top 5, so without this it would plot flat-0%
+ *  longshots and omit the real contenders. Pure so the ordering is unit-tested. */
+export function outcomesByLatestProb(
+  outcomes: FuturesOutcomeHistory[],
+): FuturesOutcomeHistory[] {
+  return [...(outcomes || [])].sort(
+    (a, b) => latestOutcomeProb(b) - latestOutcomeProb(a),
+  );
+}
+
 /** L2-71: build FuturesOutcomeHistory[] from the envelope competitors that carry
  *  history, so the RaceToTitleChart draws from the envelope (no extra fetch).
  *  Optionally filter each series to the last `hours` (client-side range switch). */
