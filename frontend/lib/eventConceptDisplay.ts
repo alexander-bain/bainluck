@@ -82,43 +82,61 @@ export function settledChampion(
 // ---------------------------------------------------------------------------
 // Eliminated-entrant chrome (L2-132 — WC winner field).
 //
-// A live/upcoming winner field (World Cup: 48 nations) carries a long tail of
-// entrants that are OUT of contention. The AUTHORITATIVE signal is the adapter's
-// `eliminated` flag — #208 grades dead entrants to a TRUE 0 with a settled/
-// eliminated state. Until that lands we render honestly from the price: a true-0
-// (all-but-0) probability is the only defensible "out" signal we have on hand. A
-// tight floor so a stale 1–2% green on a dead entrant is NOT prematurely crowned
-// "out" here — zeroing that residual is the adapter's grading job (#208 Item 1b),
-// not the renderer's. We only trim the genuine 0% tail. A `won` row is never out.
+// A live/upcoming winner field (World Cup: 48 nations) has a long trailing tail
+// of entrants whose win probability rounds to 0% (today: 45 of 48 — only Spain /
+// Argentina / England price above 0.5% pre-tournament). Two DISTINCT ideas, kept
+// separate so we never lie about the tournament state:
+//
+//   • ELIMINATED (OUT chip, no green, muted) — the AUTHORITATIVE signal is the
+//     adapter's `eliminated` flag (#208 grades dead entrants to a settled/
+//     eliminated state as knockout rounds resolve). We do NOT infer elimination
+//     from a 0% price: before kickoff a 0% nation is a LONGSHOT, not eliminated —
+//     inferring OUT from price alone would falsely knock out 45/48 nations pre-
+//     tournament. Consumed automatically once #208 sets the flag.
+//
+//   • ZERO TAIL (collapse behind the "show all" expander) — a row whose
+//     probability rounds to 0%. Collapsed so the main leaderboard isn't a wall of
+//     zeros, but rendered honestly (reads "0%", no OUT chip) unless it is ALSO
+//     adapter-eliminated. This is the L2-130 "trim the trailing all-0% tail" ask.
+//
+// A `won` champion is never in the tail and never OUT.
 // ---------------------------------------------------------------------------
 
-/** Probability at/under which a winner-field entrant is treated as out when no
- *  explicit `eliminated` flag is present. 0.5% — trims only the true-0 tail. */
-export const ELIMINATED_PROB_FLOOR = 0.005;
-
-/** L2-132: is this winner-field competitor OUT of contention? Prefers the
- *  adapter's `eliminated` flag (consumed automatically once #208 sets it); falls
- *  back to a true-0 price. Never treats the settled champion (`won`) as out. */
+/** L2-132: is this winner-field competitor OUT — eliminated? Authoritative
+ *  adapter `eliminated` flag ONLY (never inferred from a 0% longshot price). The
+ *  settled champion (`won`) is never out. */
 export function isEliminatedCompetitor(c: EventConceptCompetitor): boolean {
   if (c.won === true) return false;
-  if ((c as Record<string, unknown>).eliminated === true) return true;
-  const p = c.probability;
-  return p != null && p <= ELIMINATED_PROB_FLOOR;
+  return (c as Record<string, unknown>).eliminated === true;
 }
 
-/** L2-132: split a live/upcoming winner field into still-alive contenders and the
- *  eliminated/out tail, both preserving field (probability-desc) order. The
- *  leaderboard renders contenders with bars and collapses the out tail behind a
- *  "show all" expander (eliminated rows: no green, true-0 bar, an OUT chip). */
+/** Probability under which a winner-field row rounds to 0% — the trailing tail. */
+export const ZERO_TAIL_PROB_FLOOR = 0.005;
+
+/** L2-132: a zero-probability longshot (rounds to 0%) — collapsed into the "show
+ *  all" tail, but NOT labeled OUT unless separately eliminated. A `won` row is
+ *  never tail. */
+export function isZeroTailCompetitor(c: EventConceptCompetitor): boolean {
+  if (c.won === true) return false;
+  const p = c.probability;
+  return p != null && p < ZERO_TAIL_PROB_FLOOR;
+}
+
+/** L2-132: split a live/upcoming winner field into the contenders shown up-front
+ *  and the collapsed tail (zero-probability longshots + adapter-eliminated rows),
+ *  both preserving field (probability-desc) order. The leaderboard renders
+ *  contenders with green bars and collapses the tail behind a "Show all N"
+ *  expander; within the tail, eliminated rows carry an OUT chip while longshots
+ *  simply read 0%. */
 export function partitionWinnerField(
   competitors: EventConceptCompetitor[],
-): { contenders: EventConceptCompetitor[]; eliminated: EventConceptCompetitor[] } {
+): { contenders: EventConceptCompetitor[]; tail: EventConceptCompetitor[] } {
   const contenders: EventConceptCompetitor[] = [];
-  const eliminated: EventConceptCompetitor[] = [];
+  const tail: EventConceptCompetitor[] = [];
   for (const c of fieldOrder(competitors)) {
-    (isEliminatedCompetitor(c) ? eliminated : contenders).push(c);
+    (isZeroTailCompetitor(c) || isEliminatedCompetitor(c) ? tail : contenders).push(c);
   }
-  return { contenders, eliminated };
+  return { contenders, tail };
 }
 
 // ---------------------------------------------------------------------------

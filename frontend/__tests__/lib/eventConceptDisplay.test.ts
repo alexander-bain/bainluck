@@ -22,6 +22,7 @@ import {
   headlinerMatchup,
   matchupKickoffLabel,
   isEliminatedCompetitor,
+  isZeroTailCompetitor,
   partitionWinnerField,
 } from "../../lib/eventConceptDisplay";
 import type { EventConceptCompetitor } from "../../lib/types";
@@ -528,45 +529,49 @@ describe("marketsTracked counts soccer games by event_id", () => {
   });
 });
 
-describe("isEliminatedCompetitor / partitionWinnerField (L2-132 WC eliminated chrome)", () => {
+describe("isEliminatedCompetitor / isZeroTailCompetitor / partitionWinnerField (L2-132 WC chrome)", () => {
   const c = (over: Partial<EventConceptCompetitor>): EventConceptCompetitor => ({
     name: "X",
     probability: 0.1,
     ...over,
   });
 
-  test("explicit adapter `eliminated` flag wins (consumed once #208 sets it)", () => {
-    // Even a stale non-zero green is OUT when the adapter says so.
+  test("OUT is the adapter flag ONLY — never inferred from a 0% longshot price", () => {
+    // The honesty bar: pre-kickoff a 0% nation is a LONGSHOT, not eliminated.
+    expect(isEliminatedCompetitor(c({ probability: 0 }))).toBe(false);
+    expect(isEliminatedCompetitor(c({ probability: 0.002 }))).toBe(false);
+    // The adapter flag (#208) is authoritative — even at a stale non-zero price.
     expect(
-      isEliminatedCompetitor(c({ eliminated: true, probability: 0.02 } as Partial<EventConceptCompetitor>)),
+      isEliminatedCompetitor(
+        c({ eliminated: true, probability: 0.02 } as Partial<EventConceptCompetitor>),
+      ),
     ).toBe(true);
   });
 
-  test("true-0 (all-but-0) price is out; a real contender is not", () => {
-    expect(isEliminatedCompetitor(c({ probability: 0 }))).toBe(true);
-    expect(isEliminatedCompetitor(c({ probability: 0.004 }))).toBe(true); // <= 0.5% floor
-    expect(isEliminatedCompetitor(c({ probability: 0.01 }))).toBe(false); // 1% stale stays alive
-    expect(isEliminatedCompetitor(c({ probability: 0.3 }))).toBe(false);
-  });
-
-  test("a `won` competitor is never treated as out, even at a stale 0%", () => {
+  test("a `won` competitor is never OUT and never tail, even at a stale 0%", () => {
     expect(isEliminatedCompetitor(c({ won: true, probability: 0 }))).toBe(false);
+    expect(isZeroTailCompetitor(c({ won: true, probability: 0 }))).toBe(false);
   });
 
-  test("null probability is not eliminated (no honest signal to zero it)", () => {
-    expect(isEliminatedCompetitor(c({ probability: null }))).toBe(false);
+  test("zero tail = rounds to 0% (longshot); a real contender is not tail", () => {
+    expect(isZeroTailCompetitor(c({ probability: 0 }))).toBe(true);
+    expect(isZeroTailCompetitor(c({ probability: 0.004 }))).toBe(true); // < 0.5%
+    expect(isZeroTailCompetitor(c({ probability: 0.01 }))).toBe(false); // 1% shows a bar
+    expect(isZeroTailCompetitor(c({ probability: 0.3 }))).toBe(false);
+    expect(isZeroTailCompetitor(c({ probability: null }))).toBe(false);
   });
 
-  test("partitionWinnerField splits into field-ordered contenders + out tail", () => {
+  test("partitionWinnerField splits into field-ordered contenders + collapsed tail", () => {
     const field: EventConceptCompetitor[] = [
       c({ name: "Brazil", probability: 0.22 }),
-      c({ name: "Iceland", probability: 0 }),
+      c({ name: "Iceland", probability: 0 }), // zero tail (longshot)
       c({ name: "France", probability: 0.18 }),
-      c({ name: "Vanuatu", probability: 0.002 }),
+      c({ name: "Vanuatu", probability: 0.002 }), // zero tail (longshot)
+      c({ name: "Ghana", probability: 0.05, eliminated: true } as Partial<EventConceptCompetitor>), // OUT despite 5%
     ];
-    const { contenders, eliminated } = partitionWinnerField(field);
+    const { contenders, tail } = partitionWinnerField(field);
     expect(contenders.map((x) => x.name)).toEqual(["Brazil", "France"]);
-    expect(eliminated.map((x) => x.name).sort()).toEqual(["Iceland", "Vanuatu"]);
+    expect(tail.map((x) => x.name).sort()).toEqual(["Ghana", "Iceland", "Vanuatu"]);
     // contenders stay in probability-desc order.
     expect((contenders[0].probability ?? 0) >= (contenders[1].probability ?? 0)).toBe(true);
   });
