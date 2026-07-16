@@ -1091,6 +1091,86 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
         return None
 
 
+# The <YYMONDD>[HHMM]<TEAMS> game-id token embedded in a Kalshi game ticker.
+# Unlike extract_teams_from_ticker (which needs the pro-only _KALSHI_TEAM_ABBREVS
+# map), these are pure string extractions, so they work for college / esports /
+# tennis tickers whose team codes are unmapped — precisely the classes that
+# mislink onto a foreign event (the settled-page "foreign props" bug).
+_KALSHI_GAME_ID_RE = re.compile(r"(\d{2}[A-Za-z]{3}\d{1,2}(?:\d{4})?[A-Za-z][A-Za-z0-9]*)")
+# Same token, capturing the TEAM-code portion only (date + optional HHMM stripped).
+_KALSHI_GAME_TEAMS_RE = re.compile(r"\d{2}[A-Za-z]{3}\d{1,2}(?:\d{4})?([A-Za-z][A-Za-z0-9]*)")
+
+
+def kalshi_game_id(external_id: Optional[str]) -> Optional[str]:
+    """Return the uppercase <YYMONDD>[HHMM]<TEAMS> game-id of a Kalshi game
+    ticker, or None when absent.
+
+    Examples:
+        "KXNCAAMBGAME-26FEB22IOWAWIS" → "26FEB22IOWAWIS"
+        "KXCS2MAP-26FEB24OMEACE-1"    → "26FEB24OMEACE"
+        "KXMLBGAME-26APR291840COLCIN" → "26APR291840COLCIN"
+    """
+    if not external_id:
+        return None
+    m = _KALSHI_GAME_ID_RE.search(external_id)
+    return m.group(1).upper() if m else None
+
+
+def kalshi_game_teams(external_id: Optional[str]) -> Optional[str]:
+    """Return the uppercase TEAM-code of a Kalshi game ticker (the game-id with
+    its date + optional HHMM stripped), or None when absent.
+
+    Examples:
+        "KXNCAAMBGAME-26FEB22IOWAWIS" → "IOWAWIS"
+        "KXNBAMENTION-26FEB20BOSGSW"  → "BOSGSW"   (same teams, diff date)
+        "KXMLBGAME-26APR291840COLCIN" → "COLCIN"
+    """
+    if not external_id:
+        return None
+    m = _KALSHI_GAME_TEAMS_RE.search(external_id)
+    return m.group(1).upper() if m else None
+
+
+def filter_foreign_game_markets(markets, event_date):
+    """Defense-in-depth: keep only the markets belonging to the event's TRUE
+    Kalshi game.
+
+    A matching-pass gap can set a market's ``event_id`` to a DIFFERENT game's
+    event (the settled-page "foreign props" bug). The signal is the ticker
+    TEAM-code: foreign markets carry a different matchup's team-code. The event's
+    true team-code(s) are those whose ticker DATE matches ``event_date``; markets
+    whose team-code is not in that set are dropped. Team-code is used (not the
+    full date+teams game-id) so that legitimate same-matchup markets with a
+    shifted resolution-date ticker (e.g. ``KXNBAMENTION`` dated +1 day) are kept.
+    Markets with no parseable team-code (Polymarket / non-dated) are always kept.
+
+    Fail-open by design: if ``event_date`` is unknown, only one team-code is
+    present, or NO linked team-code's ticker date matches the event date (e.g. a
+    timezone roll on a late game), return ``markets`` unchanged — never empty a
+    page on ambiguity.
+    """
+    if not event_date:
+        return markets
+    info = []  # (market, team_code, ticker_date_matches_event)
+    for m in markets:
+        ext = getattr(m, "external_id", None)
+        tc = kalshi_game_teams(ext)
+        date_match = False
+        if tc:
+            d = extract_game_date_from_ticker(ext or "")
+            date_match = bool(d) and d.date() == event_date
+        info.append((m, tc, date_match))
+
+    team_codes = {tc for _, tc, _ in info if tc}
+    if len(team_codes) <= 1:
+        return markets
+
+    true_codes = {tc for _, tc, dm in info if tc and dm}
+    if not true_codes:
+        return markets  # fail-open — can't establish the true game
+    return [m for m, tc, _ in info if tc is None or tc in true_codes]
+
+
 # Combat fight-winner market names carry a leading CARD prefix that defeats the
 # anchored matchup regexes, so "A vs B" never parses out. Three observed shapes:
 #   "329: Saint-Denis vs Pimblett"            (bare sport_id number)

@@ -4185,6 +4185,15 @@ async def get_game_markets(
     market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
 
+    # Defense-in-depth against foreign-prop mislinks: the linked query trusts
+    # event_id, but a matching-pass gap can set it to a DIFFERENT game's event
+    # (a foreign game's Kalshi ticker attaching to this event). Keep only the
+    # markets whose ticker game-id belongs to THIS event's game. Fail-open: never
+    # empties a page on ambiguity (see filter_foreign_game_markets).
+    if event.commence_time:
+        from app.utils.prediction_market_matching import filter_foreign_game_markets
+        markets = filter_foreign_game_markets(markets, event.commence_time.date())
+
     # Status filter — only used for the FALLBACK (unlinked) query below.
     status_filter = (
         FuturesMarket.status.in_(("open", "resolved", "closed"))
