@@ -792,6 +792,23 @@ def _completed_round_ceiling(
     return max(completed) if completed else 0
 
 
+def _round_scoped_market_complete(name: str | None, max_completed_round: int) -> bool:
+    """True when a round-scoped RELATED market belongs to a round already over.
+
+    The Open 2026 p0 follow-up. "Round 1 Scores", "Round 2 Lowest Score" and
+    friends encode their round in the name; once that round is over they must not
+    keep showing live odds (settled-means-settled). The round-complete signal is
+    the same cross-market ceiling the round groups use (`_completed_round_ceiling`
+    — highest round whose leader is graded). Tournament-wide markets with no round
+    number ("Lowest Round Score") and the live/future round ("End of Round 4 …"
+    while round 4 is in play) return False — only settled PAST rounds are hidden.
+    """
+    m = re.search(r"Round\s+(\d+)", name or "", re.I)
+    if not m:
+        return False
+    return int(m.group(1)) <= max_completed_round
+
+
 def _round_outcome_in_field(
     name: str | None, is_winner: bool, field_keys: set[str], apply_filter: bool
 ) -> bool:
@@ -2273,6 +2290,10 @@ async def get_golf_tournament(
     # grid-key collision.
     # ------------------------------------------------------------------
     round_top_groups: list[dict] = []
+    # Last completed round (0 = none). Computed inside the round block from the
+    # graded leaders; hoisted here so the related-futures build below can settle
+    # round-scoped scoring props ("Round 1 Scores", "Round 2 Lowest Score") too.
+    max_completed_round = 0
     rt_group = next((g for g in sorted_groups if g["type"] == "round_top"), None)
     rl_group = next((g for g in sorted_groups if g["type"] == "round_leader"), None)
     round_market_kinds: dict[int, str] = {}
@@ -2481,6 +2502,15 @@ async def get_golf_tournament(
             if mid not in outcomes_by_market:
                 continue
             mname = id_to_name.get(mid, "")
+            # Settled-means-settled: a round-scoped scoring prop ("Round 1
+            # Scores", "Round 2 Lowest Score") for a round that is already over
+            # must not keep showing live odds. These are multi-winner fields /
+            # ladders with no single gradeable result, so drop them entirely
+            # (they'd otherwise render live in Props and Scoring & Records). The
+            # live/future round ("End of Round 4 …") and tournament-wide records
+            # ("Lowest Round Score") carry no completed-round match and survive.
+            if _round_scoped_market_complete(mname, max_completed_round):
+                continue
             src = other_mid_to_source.get(mid, "unknown")
             key = _related_dedup_key(mname)
             entry = {

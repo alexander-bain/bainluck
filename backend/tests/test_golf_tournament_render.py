@@ -17,6 +17,7 @@ from app.routes.golf import (
     _tournament_market_type,
     _round_outcome_in_field,
     _completed_round_ceiling,
+    _round_scoped_market_complete,
     _match_key,
 )
 
@@ -193,3 +194,37 @@ class TestCompletedRoundCeiling:
 
     def test_empty_is_zero(self):
         assert _completed_round_ceiling([]) == 0
+
+
+class TestRoundScopedMarketComplete:
+    """The Open 2026 p0 follow-up: round-scoped SCORING props ("Round 1 Scores",
+    "Round 2 Lowest Score") settle by the same completed-round ceiling — a
+    finished round's score prop must not keep showing live odds. Live/future
+    rounds and tournament-wide records survive."""
+
+    def test_past_round_scoring_props_complete(self):
+        # Ceiling 3 (R1–R3 done). Every round <= 3 scoring prop is settled.
+        for name in (
+            "The Open Championship: Round 1 Scores",
+            "The Open Championship: Round 1 Lowest Score",
+            "The Open Championship: Round 2 Scores",
+            "The Open Championship: Round 3 Lowest Score",
+        ):
+            assert _round_scoped_market_complete(name, 3) is True, name
+
+    def test_live_round_survives(self):
+        # Round 4 is in play (> ceiling 3) — its props stay live.
+        assert _round_scoped_market_complete("The Open Championship: End of Round 4 Stroke Margin", 3) is False
+
+    def test_tournament_wide_record_survives(self):
+        # No round number → tournament-wide, never a completed-round prop.
+        assert _round_scoped_market_complete("The Open Championship: Lowest Round Score", 3) is False
+        assert _round_scoped_market_complete("The Open Championship: Hole-in-One", 3) is False
+
+    def test_nothing_completed_settles_nothing(self):
+        # Ceiling 0 (pre-tournament / no round graded) → nothing settles.
+        assert _round_scoped_market_complete("The Open Championship: Round 1 Scores", 0) is False
+
+    def test_empty_name_is_safe(self):
+        assert _round_scoped_market_complete("", 3) is False
+        assert _round_scoped_market_complete(None, 3) is False
