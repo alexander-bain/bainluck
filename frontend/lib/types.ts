@@ -1891,4 +1891,13 @@ export interface EventConceptResponse {
     pending_label?: string | null;
   }[];
   movers: { name?: string; change?: number | null; [k: string]: unknown }[];
+  // Same-day live feature (2026-07-19): AI-generated live commentary box, present
+  // ONLY on The Open Championship page while play is LIVE. Grounded strictly in
+  // the leaderboard/win-probability numbers; absent (no box) otherwise or when
+  // generation is unavailable — never a broken/empty box.
+  commentary?: {
+    text: string;
+    generated_at?: string | null;
+    as_of?: string | null;
+  } | null;
 }

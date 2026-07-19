@@ -1790,6 +1790,15 @@ def precompute_category_pages(self):
     return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
 
 
+@celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.refresh_open_commentary")
+def refresh_open_commentary(self):
+    """Refresh the live AI commentary box for The Open Championship (Open-only,
+    live-only). Cheap Redis-gated skip off-tournament; one OpenAI call per run
+    while live. See app/tasks/golf_commentary.py."""
+    from app.tasks.golf_commentary import _refresh_open_commentary
+    return _tracked_run("refresh_open_commentary", _refresh_open_commentary())
+
+
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_admin_audit_all")
 def precompute_admin_audit_all(self):
     """Precompute /api/admin/audit/all (4 grid subprocesses) into Redis (L2-90)."""
@@ -1872,6 +1881,15 @@ celery_app.conf.beat_schedule = {
         # (near-zero cost). Realtime queue for the fast cadence.
         "task": "app.tasks.poll_datagolf_inplay",
         "schedule": 90.0,
+    },
+    "refresh-open-commentary": {
+        # Same-day live feature (2026-07-19): AI commentary box for The Open
+        # Championship. Self-gates on the golf in-play window (cheap Redis skip
+        # off-tournament) and generates only while The Open is LIVE — one OpenAI
+        # call per run, at most. Background queue (runs the full golf aggregation).
+        "task": "app.tasks.refresh_open_commentary",
+        "schedule": 180.0,
+        "options": {"queue": "background"},
     },
     "poll-mlb-pregame": {
         # MLB-only pre-game tier (issue #892): fills the T-48h..T-2h dark

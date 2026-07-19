@@ -1236,6 +1236,58 @@ def generate_line_movement_explanation(prompt: str) -> Optional[str]:
         return None
 
 
+def generate_golf_live_commentary(prompt: str) -> Optional[str]:
+    """Generate a short, strictly-grounded live-commentary blurb for a golf
+    tournament event page.
+
+    The caller (``app.utils.golf_commentary``) builds a numeric-only prompt from
+    the live leaderboard/win-probability data — this function only sends it. The
+    system prompt hard-enforces the product's honesty rules: use ONLY the numbers
+    provided, never invent scores/names/positions, never give betting advice, and
+    refer to the numbers as win probabilities (not odds). A low temperature keeps
+    it factual.
+
+    Returns a 2-3 sentence string, or None if the LLM is unavailable or errors —
+    the caller degrades to NO commentary box (never a broken/empty box).
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    system_prompt = (
+        "You write a very short live update for a golf tournament tracker that "
+        "shows probabilities, not betting odds. STRICT RULES:\n"
+        "- Use ONLY the numbers and names in the user's data. Do NOT invent or "
+        "infer any score, position, hole, name, or event not explicitly given.\n"
+        "- The percentages are model WIN PROBABILITIES. Call them 'win "
+        "probability' or 'chances' — never 'odds', 'lines', or betting terms.\n"
+        "- No betting advice, no predictions beyond what the numbers state.\n"
+        "- Focus on who is moving: a golfer whose win probability jumped, or a "
+        "notable position/score. Be specific with the actual numbers.\n"
+        "- 2-3 tight sentences, plain and factual. No preamble, no hype, no "
+        "generic filler like 'it's shaping up to be exciting'.\n"
+        "- Start directly with the update."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=180,
+            temperature=0.2,
+        )
+        result = response.choices[0].message.content.strip()
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result or None
+    except Exception as e:
+        logger.error(f"Golf live commentary error: {e}")
+        return None
+
+
 def generate_market_disagreement_explanation(
     home_team: str,
     away_team: str,

@@ -22,6 +22,7 @@ import {
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import EventHeader from "@/components/event/EventHeader";
+import CommentaryBox from "@/components/event/CommentaryBox";
 import MoversStrip from "@/components/event/MoversStrip";
 import RaceToTitleChart from "@/components/event/RaceToTitleChart";
 import TwoSidedTimeline from "@/components/event/TwoSidedTimeline";
@@ -274,6 +275,11 @@ export default function EventConceptPage() {
         nav={nav}
         fallbackName={decodedKey}
       />
+
+      {/* Same-day live feature (2026-07-19): AI live-commentary box — TOP of page,
+          The Open Championship only, LIVE only. Backend emits `commentary` solely
+          for that scoped, in-play case; honest-empty otherwise. */}
+      <CommentaryBox commentary={data.commentary} live={isLive} />
 
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
 

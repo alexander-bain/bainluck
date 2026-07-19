@@ -1016,6 +1016,41 @@ class GolfEventAdapter:
         except Exception:
             pass
 
+        # Live AI commentary box — THE OPEN CHAMPIONSHIP only, LIVE only (same-day
+        # feature 2026-07-19). The request path NEVER calls OpenAI: the background
+        # task app.tasks.golf_commentary generates and caches the blurb in Redis;
+        # here we only READ that key and attach it. Double-gated on status==live
+        # (this envelope's own status AND the writer's), so it never shows on a
+        # settled/upcoming page. Best-effort: any failure → no box.
+        try:
+            from app.utils.golf_commentary import (
+                is_open_championship,
+                commentary_redis_key,
+            )
+
+            if envelope["event"]["status"] == "live" and is_open_championship(
+                slug, envelope["event"].get("name")
+            ):
+                from app.tasks.redis_state import get_redis_client
+
+                rc = get_redis_client()
+                raw = rc.get(commentary_redis_key(slug))
+                if raw:
+                    import json as _json
+
+                    parsed = _json.loads(
+                        raw.decode() if isinstance(raw, bytes) else raw
+                    )
+                    text = (parsed or {}).get("text")
+                    if text:
+                        envelope["commentary"] = {
+                            "text": text,
+                            "generated_at": parsed.get("generated_at"),
+                            "as_of": parsed.get("as_of"),
+                        }
+        except Exception:
+            pass
+
         return envelope
 
 

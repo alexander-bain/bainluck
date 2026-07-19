@@ -278,6 +278,7 @@ class TestBeatScheduleCompleteness:
         "backfill-polymarket-matchups",
         "recover-datagolf-participation",
         "poll-datagolf-inplay",
+        "refresh-open-commentary",
         "regrade-polymarket-under-signflip",
         "unresolve-datagolf-premature",
         "null-impossible-both-sides-openings",
