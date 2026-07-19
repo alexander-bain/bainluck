@@ -519,6 +519,50 @@ class TestBuildGolfPropsScript:
         assert marks[0]["graded_label"] == "Sam Burns led"
         assert marks[0].get("pending_label") is None
 
+    def test_settled_topn_without_winner_is_suppressed(self):
+        # A completed round's Top-N projection: settled (the round is over) but
+        # NO single gradeable winner. Settled-means-settled — it must not show
+        # live odds, and we can't grade a Top-N field here, so it is suppressed
+        # (no mark at all), never rendered live.
+        children = [
+            {
+                "market_id": 92,
+                "market_name": "Round 1: Top 10 Finishers",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 1,
+                "settled": True,
+                "graded_winner": None,
+                "outcomes": [
+                    {"name": "Scottie Scheffler", "probability": 0.31, "opening_probability": None},
+                    {"name": "Rory McIlroy", "probability": 0.28, "opening_probability": None},
+                ],
+            }
+        ]
+        assert build_golf_props_script(children, "The Open Championship", "live") == []
+
+    def test_live_topn_still_renders(self):
+        # The current (in-progress) round's Top-N is NOT settled → renders live.
+        children = [
+            {
+                "market_id": 93,
+                "market_name": "Round 4: Top 10 Finishers",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 4,
+                "settled": False,
+                "graded_winner": None,
+                "outcomes": [
+                    {"name": "Sam Burns", "probability": 0.42, "opening_probability": 0.30},
+                    {"name": "Ryan Fox", "probability": 0.11, "opening_probability": 0.08},
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "live")
+        assert len(marks) == 1
+        assert marks[0]["settled"] is False
+        assert marks[0]["current"] == 0.42
+
     def test_live_round_marks_are_not_settled(self):
         # Regression guard: a live (ungraded) round leader keeps the live path —
         # settled must be False, current populated. (The whole point is that only

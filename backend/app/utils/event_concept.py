@@ -710,18 +710,26 @@ def build_golf_props_script(
         # a completed round can never show live odds on an in-progress event.
         if c.get("settled"):
             winner = c.get("graded_winner")
+            if not winner:
+                # A completed round's Top-N projection ("Round 1 Top 10
+                # Finishers") — the round is over (inferred from the round
+                # leaders) but this market carries no single gradeable winner.
+                # Settled-means-settled: it must not show live odds, and we
+                # can't grade a Top-N field here (that's the deferred #887 /
+                # L2-121 Item 3 backend), so suppress it rather than lie.
+                continue
             marks.append(
                 {
                     "key": mid,
                     "market_id": mid,
-                    "label": f"{base}: {winner}" if winner else base,
+                    "label": f"{base}: {winner}",
                     "question": base,
                     "kind": None,  # graded row, not a live card/bar
                     "outcomes": [],
                     "pregame_mark": None,
                     "current": None,
                     "graded_result": "hit",
-                    "graded_label": f"{winner} led" if winner else "Settled",
+                    "graded_label": f"{winner} led",
                     "pending_label": None,
                     "settled": True,
                 }

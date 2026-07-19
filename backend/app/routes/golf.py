@@ -771,6 +771,27 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
     return golfer_data
 
 
+def _completed_round_ceiling(
+    round_markets: list[tuple[str, int | None, bool]],
+) -> int:
+    """Last completed round, inferred from round-market signals (The Open 2026 p0).
+
+    Each tuple is (kind, round_number, has_graded_winner). A round is complete
+    when its LEADER market is graded (`is_winner` set on the actual leader) —
+    Kalshi leaves the market status='open' (gotcha #33), so is_winner, not
+    status, is the round-complete signal. Top-N projection markets never grade
+    themselves, so they are settled purely by inference: every round <= this
+    ceiling is over. A graded Top-N market does NOT count (only leaders mark a
+    round done). Returns 0 when no round has concluded (nothing settles).
+    """
+    completed = [
+        rnd
+        for (kind, rnd, has_winner) in round_markets
+        if kind == "leader" and has_winner and isinstance(rnd, int)
+    ]
+    return max(completed) if completed else 0
+
+
 def _round_outcome_in_field(
     name: str | None, is_winner: bool, field_keys: set[str], apply_filter: bool
 ) -> bool:
@@ -2299,18 +2320,43 @@ async def get_golf_tournament(
             )
         )
         rt_src = {row[0]: row[1] for row in rt_src_result.all()}
+
+        # Which rounds are OVER — derived from the data itself, no live call.
+        # The highest graded-leader round is the last completed round; every
+        # round <= it is over. Top-N projection markets carry NO is_winner, so
+        # they can only be settled by this cross-market inference, not their own
+        # grade. Round leaders self-settle via their own is_winner below.
+        def _round_of(_mid: int) -> int | None:
+            _m = re.search(r"Round\s+(\d+)", id_to_name.get(_mid, ""), re.I)
+            return int(_m.group(1)) if _m else None
+
+        max_completed_round = _completed_round_ceiling(
+            [
+                (
+                    round_market_kinds.get(_mid, ""),
+                    _round_of(_mid),
+                    any(bool(_o.is_winner) for _o in _outs),
+                )
+                for _mid, _outs in rt_by_market.items()
+            ]
+        )
+
         for mid in rt_ids:
             outs = rt_by_market.get(mid)
             if not outs:
                 continue  # false-positive-safe: never surface an empty group
-            # Settled-means-settled: once a round concludes, its leader market
-            # is graded (is_winner set on the actual leader). Kalshi leaves the
-            # market status='open' (gotcha #33), so is_winner — NOT market
-            # status — is the authoritative round-complete signal. A settled
-            # round must render as WHAT HIT (the graded leader), never a live
-            # divergence with stale losers still showing odds.
-            settled = any(bool(o.is_winner) for o in outs)
+            # Settled-means-settled. A round is done when it carries its own
+            # graded winner (leader markets) OR its number is <= the last
+            # completed round (Top-N projection markets, which never grade
+            # themselves — inferred complete from the leaders). A done round must
+            # never show live odds on an in-progress tournament: leaders render
+            # WHAT HIT (the graded leader); Top-N projections have no single
+            # gradeable winner, so the props body suppresses them.
+            _mid_name = id_to_name.get(mid, "")
+            _mid_round = _round_of(mid)
             graded_winner = next((o.name for o in outs if o.is_winner), None)
+            round_is_over = _mid_round is not None and _mid_round <= max_completed_round
+            settled = bool(graded_winner) or round_is_over
             # Drop out-of-field candidates (never the graded winner, which is
             # authoritative even if a name key somehow misses the roster).
             field_outs = [
@@ -2321,10 +2367,9 @@ async def get_golf_tournament(
             ]
             if not field_outs:
                 continue  # whole group was out-of-field noise — surface nothing
-            name = id_to_name.get(mid, "")
+            name = _mid_name
             kind = round_market_kinds[mid]
-            rnd_m = re.search(r"Round\s+(\d+)", name, re.I)
-            rnd = int(rnd_m.group(1)) if rnd_m else None
+            rnd = _mid_round
             if kind == "top":
                 tn_m = re.search(r"Top\s+(\d+)", name, re.I)
                 top_n = int(tn_m.group(1)) if tn_m else None

@@ -16,6 +16,7 @@ from app.routes.golf import (
     _detect_market_type,
     _tournament_market_type,
     _round_outcome_in_field,
+    _completed_round_ceiling,
     _match_key,
 )
 
@@ -159,3 +160,36 @@ class TestRoundOutcomeFieldFilter:
         # removing a real entrant we can't verify against an authoritative roster).
         assert _round_outcome_in_field("Tiger Woods", False, set(), False) is True
         assert _round_outcome_in_field("Anyone At All", False, {"scottie scheffler"}, False) is True
+
+
+class TestCompletedRoundCeiling:
+    """The Open 2026 p0: completed rounds are inferred from the round LEADERS
+    (graded via is_winner) so Top-N projection markets — which never carry their
+    own is_winner — settle by round number instead of showing stale live odds."""
+
+    def test_highest_graded_leader_is_the_ceiling(self):
+        # The Open live state: R1/R2/R3 leaders graded, R4 in progress.
+        rows = [
+            ("leader", 1, True), ("leader", 2, True), ("leader", 3, True),
+            ("leader", 4, False),                       # round 4 still live
+            ("top", 1, False), ("top", 2, False), ("top", 3, False),
+        ]
+        assert _completed_round_ceiling(rows) == 3
+
+    def test_no_graded_leader_settles_nothing(self):
+        # Nothing graded yet → ceiling 0 → no round settles (all stay live).
+        rows = [("leader", 1, False), ("top", 1, False), ("top", 2, False)]
+        assert _completed_round_ceiling(rows) == 0
+
+    def test_graded_topn_does_not_count(self):
+        # Only a LEADER marks a round done. A graded Top-N must NOT lift the
+        # ceiling (guards against a stray is_winner on a projection market).
+        rows = [("top", 2, True), ("leader", 1, True)]
+        assert _completed_round_ceiling(rows) == 1
+
+    def test_partial_completion(self):
+        rows = [("leader", 1, True), ("leader", 2, False)]
+        assert _completed_round_ceiling(rows) == 1
+
+    def test_empty_is_zero(self):
+        assert _completed_round_ceiling([]) == 0
