@@ -82,3 +82,15 @@ class TestReconcileHistoryToBlend:
         _reconcile_history_to_blend(comps)
         assert comps[0]["history"][-1]["probability"] == 0.123
         assert comps[1]["history"][-1]["probability"] == 0.069
+
+    def test_scaled_series_never_exceeds_100pct(self):
+        # #1139 Cameron Young: an early raw peak (0.56) with a collapsed current
+        # (blend 0.126, last_raw ~0.035 → factor ~3.6) scaled to 202.9%. Clamp to
+        # [0,1]: the early point clips to 1.0, the anchor still equals the blend.
+        comp = {"name": "Cameron Young", "probability": 0.126,
+                "history": _hist(0.56, 0.30, 0.035)}
+        _reconcile_history_to_blend([comp])
+        probs = [p["probability"] for p in comp["history"]]
+        assert all(p <= 1.0 for p in probs)
+        assert max(probs) == 1.0  # the 0.56 early peak clamped, not left at 2.03
+        assert comp["history"][-1]["probability"] == 0.126  # anchor preserved

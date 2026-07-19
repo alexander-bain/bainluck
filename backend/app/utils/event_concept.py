@@ -358,7 +358,7 @@ async def attach_competitor_history(
     *,
     hours: int = 168,
     top_n: int = 40,
-    target_points: int = 25,
+    target_points: int = 150,
 ) -> None:
     """Attach a compact, downsampled probability series to the TOP-N competitors
     of a winner-field event (L2-71), so the leaderboard sparklines + the
@@ -378,7 +378,7 @@ async def attach_competitor_history(
         return
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import select
-    from app.models import FuturesOutcome, FuturesOddsSnapshot
+    from app.models import FuturesOutcome, FuturesOddsSnapshot, FuturesMarket
 
     # Top-N outcomes by current probability — the only ones the UI draws.
     out_rows = (
@@ -398,7 +398,22 @@ async def attach_competitor_history(
     id_to_name = {r[0]: r[1] for r in out_rows}
     outcome_ids = list(id_to_name.keys())
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
+    # #1138: pin the series start to the tournament start ("since the event
+    # started") once play is underway, so the chart isn't padded with a flat
+    # pre-event dead zone that crushes intra-round movement. Pre-tournament
+    # (commence in the future) keeps the hours-based window so the pre-event
+    # futures drift still shows.
+    mkt_start = (
+        await db.execute(
+            select(FuturesMarket.commence_time).where(
+                FuturesMarket.id == evolution_market_id
+            )
+        )
+    ).scalar_one_or_none()
+    if mkt_start and now >= mkt_start and mkt_start > cutoff:
+        cutoff = mkt_start
     snap_rows = (
         await db.execute(
             select(
@@ -530,11 +545,17 @@ def _reconcile_history_to_blend(competitors: list[dict]) -> None:
         factor = blend / last_raw
         if abs(factor - 1.0) < 1e-6:
             continue
+        # #1139: the whole-series multiplicative rescale can push an early
+        # high-raw point above 1.0 when a competitor's probability later
+        # collapsed (large factor) — e.g. Cameron Young's 202.9% on the live
+        # Open page. A probability > 100% is impossible and renders as a glitch,
+        # so clamp every scaled point to [0, 1]. The anchor point (== blend ≤ 1)
+        # is unaffected; only the improbable, overround-inflated peaks clip.
         c["history"] = [
             {
                 "timestamp": pt["timestamp"],
                 "probability": (
-                    round(pt["probability"] * factor, 4)
+                    round(min(max(pt["probability"] * factor, 0.0), 1.0), 4)
                     if pt.get("probability") is not None else None
                 ),
             }

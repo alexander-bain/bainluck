@@ -2289,7 +2289,24 @@ async def get_probability_timeline(
 
     requested_hours = hours
     actual_hours = hours
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
+
+    # #1138: for a live in-play market (golf major, etc.), pin the window's left
+    # edge to the event start ("since the event started" — Kalshi's LIVE view).
+    # The fixed now-Nh lookback otherwise pads the x-axis with a flat pre-event
+    # dead zone (The Open: ~3 of 7 days), which visually crushes real intra-round
+    # movement into a sliver. Clamping to commence_time makes the tournament fill
+    # the frame at full resolution.
+    in_play = bool(market.commence_time and now >= market.commence_time)
+    # Only clamp (and skip the extend below) when the start is INSIDE the
+    # requested window — i.e. a recently-started short event like a 4-day golf
+    # tournament. A season-long futures that commenced months ago
+    # (commence_time < cutoff) is left on its normal window + extend behavior.
+    clamped_to_start = in_play and market.commence_time > cutoff
+    if clamped_to_start:
+        cutoff = market.commence_time
+        actual_hours = max(1, int((now - cutoff).total_seconds() // 3600))
 
     # Get ALL outcome IDs (we need them all to compute Field)
     all_outcome_ids = [o.id for o in market.outcomes]
@@ -2318,8 +2335,11 @@ async def get_probability_timeline(
     result = await db.execute(snapshot_query)
     snapshots = list(result.scalars().all())
 
-    # Auto-extend for sparse markets (same logic as /history endpoint)
-    _TIMELINE_EXTEND_TIERS = [
+    # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
+    # for in-play markets (#1138): those are pinned to the event start above and
+    # are snapshot-dense, so extending would only re-introduce the pre-event dead
+    # zone the clamp exists to remove.
+    _TIMELINE_EXTEND_TIERS = [] if clamped_to_start else [
         (20, 720),   # <20 snapshots -> try 30 days
         (10, 2160),  # <10 snapshots -> try 90 days
     ]
@@ -2353,9 +2373,8 @@ async def get_probability_timeline(
 
     # Determine bucket size based on market state.
     # If commence_time is set and we're past it, use 15-min buckets.
-    # Otherwise use 1-hour buckets.
-    now = datetime.now(timezone.utc)
-    if market.commence_time and now >= market.commence_time:
+    # Otherwise use 1-hour buckets. (`now`/`in_play` computed above.)
+    if in_play:
         bucket_seconds = 900  # 15 minutes
     else:
         bucket_seconds = 3600  # 1 hour
@@ -2410,9 +2429,11 @@ async def get_probability_timeline(
             else:
                 field_prob += med_prob
 
-        # Add Field if there are outcomes outside the top N
+        # Add Field if there are outcomes outside the top N. Cap at 1.0 (#1139):
+        # independent binaries carry bookmaker overround and can sum >100%
+        # (gotcha #23), which renders as an impossible >100% line.
         if len(market.outcomes) > top:
-            entry["outcomes"]["Field"] = round(field_prob, 6)
+            entry["outcomes"]["Field"] = round(min(field_prob, 1.0), 6)
 
         timeline.append(entry)
 

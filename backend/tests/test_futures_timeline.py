@@ -203,6 +203,44 @@ class TestOutcomeMetadata:
         assert sorted_outcomes[2].name == "B"
 
 
+class TestFieldNeverExceeds100:
+    """#1139: the synthetic Field line must never render above 100%, even when
+    independent binaries carry overround and sum >1.0 (gotcha #23)."""
+
+    async def test_field_capped_at_one_for_overround_field(self):
+        now = datetime.now(timezone.utc)
+        commence = now - timedelta(hours=2)  # in-play
+        captured = now - timedelta(hours=1)
+        # top 3 leaders + 3 non-top each 0.40 → raw Field 1.20 must cap to 1.0.
+        outcomes = [
+            _make_outcome(1, "Leader A", 0.50),
+            _make_outcome(2, "Leader B", 0.45),
+            _make_outcome(3, "Leader C", 0.42),
+            _make_outcome(4, "Field X", 0.40),
+            _make_outcome(5, "Field Y", 0.40),
+            _make_outcome(6, "Field Z", 0.40),
+        ]
+        market = _make_market(1, "Overround Field", outcomes, commence_time=commence)
+        snaps = [_make_snapshot(o.id, o.current_probability, captured) for o in outcomes]
+
+        market_result = MagicMock()
+        market_result.scalar_one_or_none.return_value = market
+        snap_result = MagicMock()
+        snap_result.scalars.return_value.all.return_value = snaps
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[market_result, snap_result])
+
+        resp = await get_probability_timeline(market_id=1, top=3, hours=168, db=db)
+
+        assert resp["timeline"], "expected at least one timeline bucket"
+        for entry in resp["timeline"]:
+            field = entry["outcomes"].get("Field")
+            if field is not None:
+                assert field <= 1.0, f"Field {field} exceeds 100%"
+        # the overround field (1.20 raw) is present and clamped to exactly 1.0
+        assert any(e["outcomes"].get("Field") == 1.0 for e in resp["timeline"])
+
+
 class TestResponseShape:
     """Test the expected response structure."""
 
