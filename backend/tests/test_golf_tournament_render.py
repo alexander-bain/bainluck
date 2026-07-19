@@ -15,6 +15,8 @@ from app.routes.golf import (
     _NON_CONTENDER_WINNER_RE,
     _detect_market_type,
     _tournament_market_type,
+    _round_outcome_in_field,
+    _match_key,
 )
 
 
@@ -111,3 +113,49 @@ class TestTournamentMarketType:
         assert _tournament_market_type("The Open: Round 2 Top 40 Finishers")[0] == "round_top"
         assert _tournament_market_type("The Open Championship: To Make the Cut")[0] == "make_cut"
         assert _tournament_market_type("The Open Championship End of Round 1 Leader")[0] == "round_leader"
+
+
+class TestRoundOutcomeFieldFilter:
+    """The Open 2026 p0: Kalshi round-leader markets carry a ~165-name candidate
+    roster padded with players NOT in the field (Tiger Woods, Phil Mickelson,
+    John Daly, Ernie Els). They must never render as live round-leader outcomes.
+    `_round_outcome_in_field` is the guard the round-group builder applies."""
+
+    def _open_field(self):
+        # A realistic slice of the actual 2026 Open field (via `_match_key`) —
+        # NONE of Tiger Woods / Phil Mickelson / John Daly / Ernie Els are in it.
+        return {
+            _match_key(n)
+            for n in ("Sam Burns", "Jackson Suber", "Lucas Herbert",
+                      "Scottie Scheffler", "Rory McIlroy", "Tiger Christensen")
+        }
+
+    def test_out_of_field_name_dropped(self):
+        # The exact reported bug: Tiger Woods is not in the field and must be
+        # dropped even though the Kalshi outcome carries a (phantom) probability.
+        field = self._open_field()
+        for name in ("Tiger Woods", "Phil Mickelson", "John Daly", "Ernie Els", "Zach Johnson"):
+            assert _round_outcome_in_field(name, False, field, True) is False, name
+
+    def test_field_competitor_kept(self):
+        field = self._open_field()
+        for name in ("Sam Burns", "Jackson Suber", "Lucas Herbert", "Rory McIlroy"):
+            assert _round_outcome_in_field(name, False, field, True) is True, name
+
+    def test_tiger_christensen_kept_tiger_woods_dropped(self):
+        # A real amateur named "Tiger" IS in the field; the celebrity "Tiger
+        # Woods" is not. The guard must distinguish them, not blanket-match "Tiger".
+        field = self._open_field()
+        assert _round_outcome_in_field("Tiger Christensen", False, field, True) is True
+        assert _round_outcome_in_field("Tiger Woods", False, field, True) is False
+
+    def test_graded_winner_never_dropped(self):
+        # The authoritative round winner is kept even if its name key somehow
+        # misses the roster — a settled result is never filtered away.
+        assert _round_outcome_in_field("Some Qualifier", True, self._open_field(), True) is True
+
+    def test_no_authoritative_field_is_a_no_op(self):
+        # No DataGolf field → filter OFF → nothing is dropped (we must not risk
+        # removing a real entrant we can't verify against an authoritative roster).
+        assert _round_outcome_in_field("Tiger Woods", False, set(), False) is True
+        assert _round_outcome_in_field("Anyone At All", False, {"scottie scheffler"}, False) is True

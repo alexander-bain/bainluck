@@ -75,6 +75,13 @@ export interface PropMark {
   /** Optional human-readable result, e.g. "31 pts — hit". */
   graded_label?: string | null;
   /**
+   * The Open 2026 p0 (settled-means-settled): this mark is individually graded
+   * even while the section as a whole is live (a completed round on an
+   * in-progress tournament). When true the row renders WHAT HIT regardless of
+   * the section state — a completed round can never show live odds.
+   */
+  settled?: boolean | null;
+  /**
    * L2-123 / #199 honesty seam: when set, this prop family carries NO honest price
    * (the wide-spread/no-trade capture class — e.g. a not-yet-live round leader). The
    * row renders this quiet label ("Opens after Round 1", "No market yet") instead of
@@ -239,6 +246,10 @@ function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
   // ("Opens after Round N" / "No market yet") in every state — never a fabricated
   // number, never a crowned arbitrary leader, never blank.
   const pending = item.pending_label?.trim();
+  // The Open 2026 p0: a mark that is individually settled (a completed round on a
+  // still-live tournament) renders WHAT HIT even though the section is otherwise
+  // live — settled-means-settled, no live odds for a concluded round.
+  const rowState: PropsState = item.settled ? "graded" : state;
   return (
     <div className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0">
       <span className="flex-1 min-w-0 text-sm text-text-primary truncate">{item.label}</span>
@@ -246,9 +257,9 @@ function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
         <Pending note={pending} />
       ) : (
         <>
-          {state === "script" && <ScriptValue item={item} />}
-          {state === "divergence" && <DivergenceValue item={item} />}
-          {state === "graded" && <GradedValue item={item} />}
+          {rowState === "script" && <ScriptValue item={item} />}
+          {rowState === "divergence" && <DivergenceValue item={item} />}
+          {rowState === "graded" && <GradedValue item={item} />}
         </>
       )}
     </div>

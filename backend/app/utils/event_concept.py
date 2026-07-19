@@ -701,6 +701,32 @@ def build_golf_props_script(
             continue  # null/empty child — nothing to render (Item 3 territory)
         mid = c.get("market_id")
         base = _clean_prop_label(c.get("market_name") or c.get("name"), tournament_name)
+        # Settled-means-settled (The Open 2026 p0): a concluded round's leader
+        # market is graded upstream (routes/golf sets `settled`/`graded_winner`
+        # from is_winner once the round ends; Kalshi leaves status='open',
+        # gotcha #33, so is_winner is the round-complete signal — not status).
+        # It renders as WHAT HIT: the graded round leader, with NO live losers
+        # and NO divergence. Takes precedence over the live-leader path below so
+        # a completed round can never show live odds on an in-progress event.
+        if c.get("settled"):
+            winner = c.get("graded_winner")
+            marks.append(
+                {
+                    "key": mid,
+                    "market_id": mid,
+                    "label": f"{base}: {winner}" if winner else base,
+                    "question": base,
+                    "kind": None,  # graded row, not a live card/bar
+                    "outcomes": [],
+                    "pregame_mark": None,
+                    "current": None,
+                    "graded_result": "hit",
+                    "graded_label": f"{winner} led" if winner else "Settled",
+                    "pending_label": None,
+                    "settled": True,
+                }
+            )
+            continue
         # #199 degenerate family → honest pending row (no fake flat, no false leader).
         if _is_degenerate_placeholder(outs):
             rnd = c.get("round")
@@ -721,6 +747,7 @@ def build_golf_props_script(
                     "graded_result": None,
                     "graded_label": None,
                     "pending_label": pending,
+                    "settled": False,
                 }
             )
             continue
@@ -758,6 +785,7 @@ def build_golf_props_script(
                 "graded_result": None,
                 "graded_label": None,
                 "pending_label": None,
+                "settled": False,
             }
         )
 
@@ -805,6 +833,12 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             # L2-123: carry the round number so build_golf_props_script can label a
             # degenerate (not-yet-live) round-leader family "Opens after Round N-1".
             "round": g.get("round"),
+            # The Open 2026 p0: a concluded round's leader market is graded
+            # upstream (routes/golf sets these once is_winner lands). Carry the
+            # signal so the props body renders WHAT HIT — the round leader,
+            # graded — instead of a live divergence with stale losers.
+            "settled": bool(g.get("settled")),
+            "graded_winner": g.get("graded_winner"),
         }
         for g in (data.get("round_top_groups") or [])
     ]

@@ -461,6 +461,102 @@ class TestBuildGolfPropsScript:
         assert marks[0]["current"] == 0.09
         assert marks[0]["label"] == "Round 1 Leader: Fav"
 
+    # ---- The Open 2026 p0: settled-means-settled for completed rounds ----
+
+    def test_settled_round_renders_graded_not_live(self):
+        # A completed round on a still-live tournament: the leader is graded
+        # upstream (routes/golf sets settled/graded_winner). It must render WHAT
+        # HIT — the graded leader — and NEVER a live current/pregame number.
+        children = [
+            {
+                "market_id": 88,
+                "market_name": "Round 1 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 1,
+                "settled": True,
+                "graded_winner": "Jackson Suber",
+                "outcomes": [
+                    {"name": "Jackson Suber", "probability": 0.999, "opening_probability": None},
+                ],
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "live")
+        assert len(marks) == 1
+        m = marks[0]
+        assert m["settled"] is True
+        assert m["graded_result"] == "hit"
+        assert m["graded_label"] == "Jackson Suber led"
+        assert m["label"] == "Round 1 Leader: Jackson Suber"
+        # The defect being fixed: NO live number for a completed round.
+        assert m["current"] is None
+        assert m["pregame_mark"] is None
+        # A graded row, not a live field card/bar.
+        assert m["kind"] is None
+
+    def test_settled_round_takes_precedence_over_degenerate_losers(self):
+        # Even if the losers look like the #199 degenerate all-tied placeholder
+        # class, a graded round is settled — it renders the winner, not a pending
+        # "Opens after Round N" row.
+        children = [
+            {
+                "market_id": 89,
+                "market_name": "Round 3 Leader",
+                "kind": "prop",
+                "prop_type": "round",
+                "round": 3,
+                "settled": True,
+                "graded_winner": "Sam Burns",
+                "outcomes": (
+                    [{"name": "Sam Burns", "probability": 0.99, "opening_probability": None}]
+                    + [{"name": f"G{i}", "probability": 0.30, "opening_probability": None} for i in range(8)]
+                ),
+            }
+        ]
+        marks = build_golf_props_script(children, "The Open Championship", "live")
+        assert len(marks) == 1
+        assert marks[0]["settled"] is True
+        assert marks[0]["graded_label"] == "Sam Burns led"
+        assert marks[0].get("pending_label") is None
+
+    def test_live_round_marks_are_not_settled(self):
+        # Regression guard: a live (ungraded) round leader keeps the live path —
+        # settled must be False, current populated. (The whole point is that only
+        # graded rounds flip to WHAT HIT.)
+        marks = build_golf_props_script(self._children(), "The Open Championship", "live")
+        by_id = {m["market_id"]: m for m in marks}
+        assert by_id[11]["settled"] is False
+        assert by_id[11]["current"] == 0.044
+
+    def test_envelope_threads_settled_and_graded_winner(self):
+        # golf_detail_to_envelope must forward settled/graded_winner from
+        # round_top_groups onto round children so a completed round grades.
+        f = _golf_fixture()
+        f["tournament"]["schedule_status"] = "live"
+        f["tournament"]["start_date"] = None
+        f["tournament"]["end_date"] = None
+        f["round_top_groups"] = [
+            {
+                "market_id": 91,
+                "kind": "leader",
+                "round": 3,
+                "settled": True,
+                "graded_winner": "Sam Burns",
+                "outcomes": [
+                    {"name": "Sam Burns", "probability": 0.99, "opening_probability": None},
+                ],
+            }
+        ]
+        env = golf_detail_to_envelope("event:golf:x", "x", f)
+        child = next(c for c in env["children"] if c.get("market_id") == 91)
+        assert child["settled"] is True
+        assert child["graded_winner"] == "Sam Burns"
+        ps = [p for p in env["props_script"] if p["market_id"] == 91]
+        assert len(ps) == 1
+        assert ps[0]["settled"] is True
+        assert ps[0]["graded_result"] == "hit"
+        assert ps[0]["current"] is None
+
     def test_envelope_round_children_carry_round_and_pending(self):
         # golf_detail_to_envelope must forward `round` onto round children so the
         # degenerate-family label can say "Opens after Round N".

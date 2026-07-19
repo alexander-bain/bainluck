@@ -771,6 +771,31 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
     return golfer_data
 
 
+def _round_outcome_in_field(
+    name: str | None, is_winner: bool, field_keys: set[str], apply_filter: bool
+) -> bool:
+    """Field-membership guard for a round-scoped prop outcome (The Open 2026 p0).
+
+    Kalshi "End of Round N Leader" markets carry a ~165-name speculative candidate
+    roster that includes players who are NOT in the field — past champions and
+    celebrities (Tiger Woods, Phil Mickelson, John Daly, Ernie Els). Rendered
+    verbatim, they appeared as live round-leader outcomes. Keep an outcome only
+    when:
+      * the filter is OFF (no DataGolf-authoritative field for this event — the
+        golfer list IS the padded source list, so filtering would be a no-op and
+        we must not risk dropping a real entrant), OR
+      * it is the graded round winner (authoritative even if its name key somehow
+        misses the roster — never drop a settled winner), OR
+      * its name matches a field competitor (same `_match_key` the placement grid
+        already uses to line Kalshi outcomes up with the DataGolf field).
+    """
+    if not apply_filter:
+        return True
+    if is_winner:
+        return True
+    return _match_key(name or "") in field_keys
+
+
 def _match_key(name: str) -> str:
     """
     Create a matching key from a golfer name for cross-source dedup.
@@ -2235,6 +2260,29 @@ async def get_golf_tournament(
     for mid in (rl_group or {}).get("market_ids", []):
         round_market_kinds[mid] = "leader"
     if round_market_kinds:
+        # ------------------------------------------------------------------
+        # Field-membership guard (The Open 2026 p0 — the "Tiger Woods" bug).
+        # Kalshi "End of Round N Leader" markets carry a ~165-name speculative
+        # candidate roster that includes players who are NOT in the field —
+        # past champions and celebrities (Tiger Woods, Phil Mickelson, John
+        # Daly, Ernie Els) — each floated at a phantom ~0.30 with no opening.
+        # The WINNER grid is already protected by the DataGolf invitee filter
+        # (`_build_tournament_entry`, has_datagolf branch); the round groups
+        # were NOT, so out-of-field names rendered as live round-leader
+        # outcomes. `golfers` (== `_all_golfers`) is that same invitee-filtered
+        # field, so its `_match_key` set is the authoritative roster. Only
+        # trust the filter when DataGolf actually supplied the field (otherwise
+        # `golfers` IS the padded source list and filtering is a safe no-op)
+        # and the set is non-trivially sized. `_match_key` is the SAME name key
+        # the placement-grid merge already uses to line Kalshi outcomes up with
+        # DataGolf golfers, so field members key-match reliably.
+        # ------------------------------------------------------------------
+        has_authoritative_field = "datagolf" in (tournament.get("market_sources") or [])
+        field_keys: set[str] = set()
+        if has_authoritative_field:
+            field_keys = {k for k in (_match_key(g.get("name", "")) for g in golfers) if k}
+        apply_field_filter = has_authoritative_field and len(field_keys) >= 20
+
         rt_ids = list(round_market_kinds.keys())
         rt_out_result = await db.execute(
             select(FuturesOutcome).where(
@@ -2255,6 +2303,24 @@ async def get_golf_tournament(
             outs = rt_by_market.get(mid)
             if not outs:
                 continue  # false-positive-safe: never surface an empty group
+            # Settled-means-settled: once a round concludes, its leader market
+            # is graded (is_winner set on the actual leader). Kalshi leaves the
+            # market status='open' (gotcha #33), so is_winner — NOT market
+            # status — is the authoritative round-complete signal. A settled
+            # round must render as WHAT HIT (the graded leader), never a live
+            # divergence with stale losers still showing odds.
+            settled = any(bool(o.is_winner) for o in outs)
+            graded_winner = next((o.name for o in outs if o.is_winner), None)
+            # Drop out-of-field candidates (never the graded winner, which is
+            # authoritative even if a name key somehow misses the roster).
+            field_outs = [
+                o for o in outs
+                if _round_outcome_in_field(
+                    o.name, bool(o.is_winner), field_keys, apply_field_filter
+                )
+            ]
+            if not field_outs:
+                continue  # whole group was out-of-field noise — surface nothing
             name = id_to_name.get(mid, "")
             kind = round_market_kinds[mid]
             rnd_m = re.search(r"Round\s+(\d+)", name, re.I)
@@ -2281,7 +2347,7 @@ async def get_golf_tournament(
                             else None
                         ),
                     }
-                    for o in outs
+                    for o in field_outs
                 ),
                 key=lambda x: x["probability"],
                 reverse=True,
@@ -2296,6 +2362,8 @@ async def get_golf_tournament(
                     "label": label,
                     "source": "datagolf_model" if rt_src.get(mid) == "datagolf" else rt_src.get(mid, ""),
                     "outcomes": outcomes,
+                    "settled": settled,
+                    "graded_winner": graded_winner,
                 }
             )
         # Within a round: leader field first, then Top-N ascending.

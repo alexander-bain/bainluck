@@ -173,6 +173,10 @@ export default function EventConceptPage() {
       current: p.current ?? null,
       graded_result: p.graded_result ?? null,
       graded_label: p.graded_label ?? null,
+      // The Open 2026 p0: a graded completed-round mark renders WHAT HIT even
+      // while the section is live. Must be threaded here — the map enumerates
+      // fields (no spread), so a new field is dropped without this (2f6844a5).
+      settled: p.settled ?? false,
       // L2-123 / #199: honest pending label for degenerate (unpriced) prop families.
       pending_label: p.pending_label ?? null,
     }));

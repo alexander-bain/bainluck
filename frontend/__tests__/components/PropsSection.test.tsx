@@ -96,6 +96,35 @@ describe("PropsSection rendering", () => {
     expect(html).toContain("What hit");
   });
 
+  test("The Open 2026 p0: a settled mark renders graded even while the section is live", () => {
+    // A completed round on a still-live tournament. The whole section is in the
+    // DIVERGENCE (live) state, but this individual mark is settled → it must show
+    // WHAT HIT (the graded leader), NEVER a live number for a concluded round.
+    const items: PropMark[] = [
+      { key: 1, label: "Round 1 Leader: Jackson Suber", pregame_mark: null, current: null,
+        graded_result: "hit", graded_label: "Jackson Suber led", settled: true },
+      // A genuinely live sibling in the same live section still diverges.
+      { key: 2, label: "Playoff", pregame_mark: 0.28, current: 0.2, settled: false },
+    ];
+    const html = renderToStaticMarkup(<PropsSection items={items} state="divergence" />);
+    expect(html).toContain("Jackson Suber led"); // graded, not live
+    expect(html).not.toContain("grading pending"); // it IS graded, not a #195 seam
+    // The live sibling still shows its divergence number — the override is per-mark.
+    expect(html).toContain("20%");
+  });
+
+  test("The Open 2026 p0: a settled mark never shows live odds even with a stray current", () => {
+    // Defense in depth: a completed round must not leak a live probability.
+    const items: PropMark[] = [
+      { key: 3, label: "Round 3 Leader: Sam Burns", pregame_mark: 0.05, current: 0.99,
+        graded_result: "hit", graded_label: "Sam Burns led", settled: true },
+    ];
+    const html = renderToStaticMarkup(<PropsSection items={items} state="divergence" />);
+    expect(html).toContain("Sam Burns led");
+    expect(html).not.toContain("99%"); // no live number for a settled round
+    expect(html).not.toContain("→"); // no divergence arrow
+  });
+
   test("empty items render nothing", () => {
     expect(renderToStaticMarkup(<PropsSection items={[]} />)).toBe("");
   });

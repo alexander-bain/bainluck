@@ -1886,6 +1886,11 @@ export interface EventConceptResponse {
     current: number | null;
     graded_result?: "hit" | "miss" | "push" | null;
     graded_label?: string | null;
+    // The Open 2026 p0 (settled-means-settled): a concluded round's leader prop
+    // is graded even while the tournament is live. When true the mark renders as
+    // WHAT HIT regardless of the section's overall state — never live odds for a
+    // completed round.
+    settled?: boolean | null;
     // L2-123 / #199: honest pending label for a family with no real price
     // ("Opens after Round N" / "No market yet") — no fabricated flat, never blank.
     pending_label?: string | null;
