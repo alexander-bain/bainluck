@@ -115,16 +115,38 @@ CHECKS: list[dict[str, Any]] = [
     {
         "name": "espn_freshness",
         # #1000/#1001: events has no updated_at. ESPN freshness is measured by
-        # its win-probability snapshots (source='espn'). 12h window absorbs
-        # overnight/off-hours gaps between live games (dedup caps any alert to 1/24h).
+        # its win-probability snapshots (source='espn').
+        #
+        # #215E (2026-07-20): the old unconditional "0 espn snapshots in 12h"
+        # form cried wolf EVERY day. ESPN win-prob is captured ONLY for live
+        # ESPN-matched games (_sync_espn_live_events returns 'no_live_games' and
+        # writes nothing when the slate is empty), so any 12h window with no live
+        # games — every overnight/daytime gap, and ALL of an off-season — trips a
+        # P0 that only means "no games were on." It fired a false P0 today (#1149)
+        # while capture was fully healthy (realtime worker alive, fresh odds on the
+        # same queue). Now LIVE-GATED: it fails ONLY when a coverable game (any
+        # ESPN-matched event — espn_id NOT NULL — that is live or completed within
+        # the window) existed AND zero espn snapshots landed. Season-agnostic:
+        # espn_id, not a hardcoded sport list (the live ESPN-winprob sports are
+        # baseball_mlb + basketball_wnba in July, NBA/NFL/NHL in-season — probed
+        # 2026-07-20). Returns 1 (real gap) / 0 (nothing to capture, or healthy).
         "query": (
-            "SELECT COUNT(*) FROM win_prob_snapshots "
-            "WHERE source = 'espn' AND captured_at > NOW() - INTERVAL '12 hours'"
+            "SELECT CASE WHEN EXISTS ("
+            "  SELECT 1 FROM events e"
+            "  WHERE e.espn_id IS NOT NULL"
+            "    AND e.commence_time <= NOW()"
+            "    AND (e.status = 'live'"
+            "         OR (e.status IN ('completed', 'closed')"
+            "             AND e.commence_time > NOW() - INTERVAL '12 hours'))"
+            ") AND (SELECT COUNT(*) FROM win_prob_snapshots"
+            "       WHERE source = 'espn'"
+            "       AND captured_at > NOW() - INTERVAL '12 hours') = 0"
+            " THEN 1 ELSE 0 END"
         ),
-        "threshold": 1,
-        "comparison": "gte",
+        "threshold": 0,
+        "comparison": "lte",
         "severity": "P0",
-        "message": "No ESPN win-probability snapshots in 12 hours — live scores, win probability, and Score Differential chart not updating",
+        "message": "A live/recent ESPN-matched game produced NO ESPN win-probability snapshots in 12 hours — live scores, win probability, and Score Differential chart not updating (live-gated: fires only when there were games to capture)",
     },
     # --- StatPal freshness (P1) ---
     {
@@ -171,22 +193,49 @@ CHECKS: list[dict[str, Any]] = [
     # --- MLB win probability freshness (P1) ---
     {
         "name": "mlb_win_prob_freshness",
+        # #215E (2026-07-20): same crying-wolf class as espn_freshness. MLB win
+        # prob (source='mlb', MLB Stats API) is captured only during live MLB
+        # games, so the daily daytime gap between last night's finale and tonight's
+        # first pitch (e.g. 23:33Z 7/19 → 22:40Z 7/20, a ~23h no-game window) trips
+        # the old "0 in 12h" form as a false P1 (#1150). Now LIVE-GATED: fails only
+        # when a baseball_mlb game was live or completed within the window AND zero
+        # mlb snapshots landed. Returns 1 (real gap) / 0 (no games / healthy).
         "query": (
-            "SELECT COUNT(*) FROM win_prob_snapshots "
-            "WHERE source = 'mlb' AND captured_at > NOW() - INTERVAL '12 hours'"
+            "SELECT CASE WHEN EXISTS ("
+            "  SELECT 1 FROM events e JOIN sports s ON s.id = e.sport_id"
+            "  WHERE s.key = 'baseball_mlb'"
+            "    AND e.commence_time <= NOW()"
+            "    AND (e.status = 'live'"
+            "         OR (e.status IN ('completed', 'closed')"
+            "             AND e.commence_time > NOW() - INTERVAL '12 hours'))"
+            ") AND (SELECT COUNT(*) FROM win_prob_snapshots"
+            "       WHERE source = 'mlb'"
+            "       AND captured_at > NOW() - INTERVAL '12 hours') = 0"
+            " THEN 1 ELSE 0 END"
         ),
-        "threshold": 1,
-        "comparison": "gte",
+        "threshold": 0,
+        "comparison": "lte",
         "severity": "P1",
-        "message": "No MLB win probability snapshots in 12 hours — baseball live charts not updating",
+        "message": "A live/recent MLB game produced NO win-probability snapshots in 12 hours — baseball live charts not updating (live-gated: fires only when there were games to capture)",
     },
     # --- Snapshot sparsity (P1) ---
     {
         "name": "odds_api_sparsity",
+        # #215E (2026-07-20): the message says "Tier 1" but the old query counted
+        # EVERY sport, so it paged on upstream gaps the Odds API simply doesn't
+        # cover (esports/NPB/off-brand) and on stale-status events months in the
+        # past — not our bug (#1151 was 1 esports + 1 pre-game MLB). Now scoped to
+        # the actual Tier-1 leagues (CLAUDE.md SPORT_POLLING_TIERS) and to a
+        # recently-active window (started within 12h or starting within 1h) so a
+        # genuinely under-covered Tier-1 game is the only thing that fires.
         "query": (
             "SELECT COUNT(*) FROM events e "
+            "JOIN sports s ON s.id = e.sport_id "
             "WHERE e.status IN ('live', 'scheduled') "
+            "AND s.key IN ('baseball_mlb', 'basketball_nba', "
+            "              'americanfootball_nfl', 'icehockey_nhl', 'basketball_ncaab') "
             "AND e.commence_time < NOW() + INTERVAL '1 hour' "
+            "AND e.commence_time > NOW() - INTERVAL '12 hours' "
             "AND (SELECT COUNT(*) FROM odds_snapshots os "
             "     WHERE os.event_id = e.id "
             "     AND os.captured_at > NOW() - INTERVAL '48 hours') < 10"
@@ -249,117 +298,171 @@ def passes_threshold(value: Any, check: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# LLM diagnosis
+# Diagnosis
+#
+# #215E (2026-07-20): the diagnosis was GPT-4o-mini given only the check name +
+# value with NO real schema — so it hallucinated fake tables (`espn_data`),
+# fake endpoints (`/api/admin/logs?service=espn`), placeholder URLs
+# (`http://<your-platform-url>/...`), and the wrong ESPN API. That garbage
+# shipped verbatim into both the alert email AND the GitHub issue body (#1149),
+# actively misleading whoever picked up the alert. The LLM added zero signal
+# over a deterministic template and one real failure mode (hallucination), so
+# the LLM call is REMOVED. Diagnoses are now deterministic, per-check, and cite
+# only REAL admin endpoints/tables/runbooks (all verified 2026-07-20).
 # ---------------------------------------------------------------------------
 
-_DIAGNOSIS_PROMPT = """\
-You are a data pipeline engineer for Bain Luck, a prediction market platform.
+# Real, verified admin surface — safe to cite in alert bodies.
+_CELERY_DEBUG = "curl -s -H \"Authorization: Bearer $ADMIN_TOKEN\" \"$BAINLUCK_API/api/admin/celery-debug\""
+_QUOTA = "curl -s -H \"Authorization: Bearer $ADMIN_TOKEN\" \"$BAINLUCK_API/api/admin/dashboard\"  # quota block"
+_LINK_RATE = "curl -s -H \"Authorization: Bearer $ADMIN_TOKEN\" \"$BAINLUCK_API/api/admin/prediction-markets/link-rate\""
 
-A data quality check failed:
-- Check: {name}
-- Current value: {value}
-- Threshold: {threshold}
-- Severity: {severity}
 
-Based on the check name and value, provide:
-1. Most likely root cause (1-2 sentences)
-2. Investigation steps (numbered list, 3-5 steps with specific curl commands or SQL queries)
-3. A Claude Code prompt that an agent can paste to investigate and fix the issue
-
-Be specific — reference actual API endpoints like /api/admin/celery-debug, \
-/api/admin/backfill-winners/status, etc.\
-"""
+def _dbq(sql: str) -> str:
+    """Render a real /api/admin/db-query POST for the given read-only SQL."""
+    return (
+        "curl -s -H \"Authorization: Bearer $ADMIN_TOKEN\" -H \"Content-Type: application/json\" "
+        f"-X POST \"$BAINLUCK_API/api/admin/db-query\" -d '{{\"sql\":\"{sql}\"}}'"
+    )
 
 
 def _deterministic_fallback(check: dict[str, Any], value: Any) -> str:
-    """Generate a deterministic diagnosis when OpenAI is unavailable."""
+    """Generate a deterministic, real-endpoint diagnosis for a failed check.
+
+    (Named `_deterministic_fallback` for back-compat; it is now the ONLY path.)
+    Cites only verified admin endpoints/tables — never an LLM guess.
+    """
     name = check["name"]
     severity = check["severity"]
 
-    if "freshness" in name:
-        source = name.replace("_freshness", "").replace("odds_api", "Odds API")
+    # ESPN / MLB win-prob freshness are LIVE-GATED (#215E): they fire only when a
+    # coverable game existed but produced no snapshots — so this is a REAL capture
+    # gap, not an empty slate. Point the responder at the realtime worker + the
+    # specific polling task rather than "the slate is quiet."
+    if name in ("espn_freshness", "mlb_win_prob_freshness"):
+        src = "espn" if name.startswith("espn") else "mlb"
+        task = "sync_espn_live_events" if src == "espn" else "sync_mlb_win_probability"
+        cadence = "60s" if src == "espn" else "120s"
+        upstream = "ESPN" if src == "espn" else "MLB Stats API"
+        coverable = "ESPN-matched" if src == "espn" else "MLB"
+        gap_sql = _dbq(
+            "SELECT source, MAX(captured_at) FROM win_prob_snapshots "
+            f"WHERE source='{src}' GROUP BY source"
+        )
+        odds_sql = _dbq(
+            "SELECT COUNT(*), MAX(captured_at) FROM odds_snapshots "
+            "WHERE captured_at > NOW() - INTERVAL '1 hour'"
+        )
         return (
-            f"**Root cause:** {source} ingestion has not updated any records in 6+ hours. "
-            f"The polling task may have failed, the upstream API may be down, or Celery "
-            f"workers may be unhealthy.\n\n"
+            f"**Root cause:** This check is LIVE-GATED — it fired because a live/recent "
+            f"{coverable} game existed in the last 12h but ZERO `{src}` rows landed in "
+            f"`win_prob_snapshots`. That is a real capture gap (not an empty slate). "
+            f"Likely: the `{task}` task ({cadence}, realtime queue) is failing/stuck, the "
+            f"realtime worker is down, or the upstream ({upstream}) changed/errored. "
+            f"Recoverable after the fact via backfill.\n\n"
             f"**Investigation steps:**\n"
-            f"1. Check Celery queue health: `curl -s \"https://api.bainluck.com/api/admin/celery-debug?secret=$ADMIN_TOKEN\"`\n"
-            f"2. Check Heroku worker logs: `heroku logs --tail -a bainluck --dyno worker`\n"
-            f"3. Check Sentry for recent task errors\n"
-            f"4. Manually trigger the polling task via admin endpoint\n\n"
-            f"**Claude Code prompt:** Investigate why {source} ingestion stopped. "
-            f"Check Celery task logs, Sentry errors, and upstream API status. "
-            f"The watchdog detected 0 updates in 6 hours ({severity})."
+            f"1. Realtime worker + queue depth (if odds are also stale, the whole realtime "
+            f"worker is down): `{_CELERY_DEBUG}`\n"
+            f"2. Confirm the gap and which games lacked capture:\n   `{gap_sql}`\n"
+            f"3. Cross-check odds capture on the same realtime queue is alive:\n   `{odds_sql}`\n"
+            f"4. Check Sentry for `{task}` errors; check the Heroku worker-realtime dyno.\n\n"
+            f"**Claude Code prompt:** A live-gated {src} win-prob freshness alert ({severity}) "
+            f"fired — a coverable game produced no snapshots. Verify the realtime worker is up "
+            f"(fresh odds_snapshots => worker fine => suspect `{task}` specifically), check "
+            f"Sentry for that task, then backfill the gap window."
+        )
+
+    if "freshness" in name:
+        # Derive the real window from the query rather than hardcoding "6+ hours".
+        q = check.get("query", "")
+        window = "the configured window"
+        for hrs in ("48 hours", "24 hours", "12 hours", "6 hours"):
+            if hrs in q:
+                window = hrs
+                break
+        source = name.replace("_freshness", "").replace("odds_api", "Odds API")
+        confirm_sql = _dbq(
+            "SELECT COUNT(*), MAX(updated_at) FROM futures_markets WHERE source = ..."
+        )
+        return (
+            f"**Root cause:** {source} ingestion wrote no rows in {window}. The polling "
+            f"task may be failing, the upstream API may be down, or the Celery worker may "
+            f"be unhealthy (note gotchas #38/#39 — GIL/Redis hangs can SIGKILL a poll "
+            f"before commit).\n\n"
+            f"**Investigation steps:**\n"
+            f"1. Celery queue/worker health: `{_CELERY_DEBUG}`\n"
+            f"2. Confirm the freshness gap directly:\n   `{confirm_sql}`\n"
+            f"3. Check Sentry for recent task errors; check the relevant Heroku worker dyno.\n"
+            f"4. Manually trigger the polling task via its admin endpoint if the worker is up.\n\n"
+            f"**Claude Code prompt:** Investigate why {source} ingestion stopped ({severity}); "
+            f"the watchdog saw 0 updates in {window}. Check Celery health, Sentry, upstream API."
         )
     elif "winner_coverage" in name:
         source = name.replace("_winner_coverage", "")
+        backfill_status = (
+            "curl -s -H \"Authorization: Bearer $ADMIN_TOKEN\" "
+            "\"$BAINLUCK_API/api/admin/backfill-winners/status\""
+        )
+        gap_sql = _dbq(
+            "SELECT ROUND(100.0*COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL)"
+            "/NULLIF(COUNT(*),0),1) FROM futures_outcomes fo "
+            "JOIN futures_markets fm ON fo.market_id=fm.id "
+            f"WHERE fm.source='{source}' AND fm.status='resolved'"
+        )
         return (
             f"**Root cause:** {source} winner resolution coverage dropped below 99%. "
             f"The backfill_winners task may be failing or the resolution source may "
             f"have changed its API.\n\n"
             f"**Investigation steps:**\n"
-            f"1. Check backfill status: `curl -s \"https://api.bainluck.com/api/admin/backfill-winners/status?secret=$ADMIN_TOKEN\"`\n"
-            f"2. Check Celery task history for backfill_winners failures\n"
-            f"3. Verify {source} API is returning resolution data\n"
-            f"4. Run manual backfill: `POST /api/admin/backfill-winners/probability-only`\n\n"
-            f"**Claude Code prompt:** Investigate why {source} winner coverage dropped. "
-            f"Check backfill_winners task logs and resolution data sources."
+            f"1. Backfill status: `{backfill_status}`\n"
+            f"2. Celery task health / recent failures: `{_CELERY_DEBUG}`\n"
+            f"3. Verify {source} API is returning resolution data.\n"
+            f"4. Confirm the gap: `{gap_sql}`\n\n"
+            f"**Claude Code prompt:** Investigate why {source} winner coverage dropped "
+            f"({severity}). Check backfill_winners logs and resolution data sources."
         )
     elif "sparsity" in name:
+        sparse_sql = _dbq(
+            "SELECT e.id, s.key, e.status, e.commence_time, "
+            "(SELECT COUNT(*) FROM odds_snapshots os WHERE os.event_id=e.id "
+            "AND os.captured_at > NOW() - INTERVAL '48 hours') AS n "
+            "FROM events e JOIN sports s ON s.id=e.sport_id "
+            "WHERE e.status IN ('live','scheduled') "
+            "AND e.commence_time BETWEEN NOW()-INTERVAL '12 hours' "
+            "AND NOW()+INTERVAL '1 hour' ORDER BY n"
+        )
         return (
-            f"**Root cause:** Some active events near start time have fewer than 10 "
-            f"odds snapshots in 48 hours. The odds polling task may be throttled, "
-            f"or quota conservation mode may be too aggressive.\n\n"
+            f"**Root cause:** A Tier-1 event active in the last 12h has <10 odds snapshots "
+            f"in 48h. Either odds polling is throttled (quota LIVE_ONLY/FULL_STOP), the "
+            f"realtime worker is degraded, or the event is unlinked/duplicated so its "
+            f"snapshots landed on a sibling event (distinguish our bug from an upstream gap "
+            f"— esports/NPB/off-brand are excluded by design).\n\n"
             f"**Investigation steps:**\n"
-            f"1. Check quota status: `curl -s \"https://api.bainluck.com/api/admin/quota?secret=$ADMIN_TOKEN\"`\n"
-            f"2. Check Celery queue health: `curl -s \"https://api.bainluck.com/api/admin/celery-debug?secret=$ADMIN_TOKEN\"`\n"
-            f"3. Look for LIVE_ONLY or FULL_STOP mode in Redis state\n"
-            f"4. Check sparsity details: `curl -s \"https://api.bainluck.com/api/admin/snapshot-sparsity?secret=$ADMIN_TOKEN\"`\n\n"
-            f"**Claude Code prompt:** Investigate sparse snapshot coverage on active events. "
-            f"Check Odds API quota state, polling mode, and whether the circuit breaker is engaged."
+            f"1. Quota / circuit-breaker mode: `{_QUOTA}`\n"
+            f"2. Realtime queue health: `{_CELERY_DEBUG}`\n"
+            f"3. Identify the sparse events + snapshot counts:\n   `{sparse_sql}`\n"
+            f"4. If a Tier-1 game has 0 lines, check it isn't a duplicate/unlinked event: `{_LINK_RATE}`\n\n"
+            f"**Claude Code prompt:** Investigate sparse odds coverage on an active Tier-1 event "
+            f"({severity}). Check quota/circuit-breaker, realtime worker, and event linkage."
         )
     else:
         return (
             f"**Root cause:** Data quality check '{name}' failed with value {value} "
-            f"(threshold: {check['threshold']}).\n\n"
+            f"(threshold: {check.get('threshold')}, {check.get('comparison', 'gte')}).\n\n"
             f"**Investigation steps:**\n"
-            f"1. Check Celery queue health\n"
-            f"2. Review Sentry for related errors\n"
-            f"3. Examine recent task run history\n\n"
-            f"**Claude Code prompt:** Investigate data quality check '{name}' failure."
+            f"1. Celery queue/worker health: `{_CELERY_DEBUG}`\n"
+            f"2. Review Sentry for related errors.\n"
+            f"3. Re-run the check's query via `$BAINLUCK_API/api/admin/db-query` to confirm.\n\n"
+            f"**Claude Code prompt:** Investigate data quality check '{name}' failure ({severity})."
         )
 
 
 def get_llm_diagnosis(check: dict[str, Any], value: Any) -> str:
-    """Get an LLM-generated diagnosis, falling back to deterministic template."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        logger.info("OPENAI_API_KEY not set, using deterministic diagnosis")
-        return _deterministic_fallback(check, value)
+    """Return a deterministic, real-endpoint diagnosis.
 
-    try:
-        import openai
-
-        client = openai.OpenAI(api_key=api_key)
-        prompt = _DIAGNOSIS_PROMPT.format(
-            name=check["name"],
-            value=value,
-            threshold=check["threshold"],
-            severity=check["severity"],
-        )
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a data pipeline engineer."},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=500,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as exc:
-        logger.warning("OpenAI diagnosis failed, using fallback: %s", exc)
-        return _deterministic_fallback(check, value)
+    Kept for back-compat; the LLM path was removed in #215E (it hallucinated fake
+    schema/URLs into live alerts — see the module comment above).
+    """
+    return _deterministic_fallback(check, value)
 
 
 # ---------------------------------------------------------------------------

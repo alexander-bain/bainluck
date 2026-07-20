@@ -110,6 +110,38 @@ class TestCheckDefinitions:
         gap = next(c for c in CHECKS if c["name"] == "espn_capture_gap")
         assert gap["comparison"] == "lte" and gap["threshold"] == 0
 
+    def test_espn_and_mlb_freshness_are_live_gated(self):
+        """#215E: the coarse espn/mlb win-prob freshness checks must be LIVE-GATED —
+        they fire only when a coverable game existed AND produced no snapshots, not
+        merely because the slate was empty (the daily/off-season crying-wolf class
+        that fired false P0 #1149 + false P1 #1150 while capture was healthy)."""
+        by_name = {c["name"]: c for c in CHECKS}
+
+        espn = by_name["espn_freshness"]
+        q = espn["query"].lower()
+        assert espn["comparison"] == "lte" and espn["threshold"] == 0
+        assert "win_prob_snapshots" in q and "source = 'espn'" in q
+        assert "espn_id is not null" in q          # season-agnostic coverable-game gate
+        assert "exists" in q                        # only fires if a game existed
+        assert "e.status = 'live'" in q             # live or recently-completed
+
+        mlb = by_name["mlb_win_prob_freshness"]
+        q = mlb["query"].lower()
+        assert mlb["comparison"] == "lte" and mlb["threshold"] == 0
+        assert "win_prob_snapshots" in q and "source = 'mlb'" in q
+        assert "baseball_mlb" in q                  # gated on a real MLB game existing
+        assert "exists" in q
+
+    def test_odds_sparsity_is_tier1_scoped(self):
+        """#215E: the sparsity check's message says 'Tier 1' but the old query
+        counted EVERY sport, paging on upstream gaps we don't own (esports/NPB).
+        It must now be scoped to the real Tier-1 leagues."""
+        sparsity = next(c for c in CHECKS if c["name"] == "odds_api_sparsity")
+        q = sparsity["query"].lower()
+        assert "baseball_mlb" in q and "basketball_nba" in q
+        assert "americanfootball_nfl" in q and "icehockey_nhl" in q
+        assert "esports" not in q
+
 
 class TestPassesThreshold:
     """Threshold comparison logic."""
@@ -229,6 +261,44 @@ class TestLLMDiagnosis:
         }
         result = _deterministic_fallback(unknown_check, 10)
         assert "some_new_check" in result
+
+    def test_diagnosis_never_hallucinates_schema_or_urls(self):
+        """#215E: the removed LLM diagnosis hallucinated fake tables (`espn_data`),
+        fake endpoints (`/api/admin/logs`), and placeholder URLs
+        (`<your-platform-url>`, `yourdomain.com`) into live alerts (#1149/#1151).
+        Every deterministic diagnosis must cite ONLY the real admin surface."""
+        BANNED = [
+            "<your-platform-url>",
+            "yourdomain.com",
+            "your-api-token",
+            "espn_data",           # phantom table
+            "/api/admin/logs",     # nonexistent endpoint
+            "api.espn.com",        # wrong upstream
+        ]
+        for check in CHECKS:
+            diag = get_llm_diagnosis(check, 0)
+            low = diag.lower()
+            for bad in BANNED:
+                assert bad.lower() not in low, (
+                    f"Check '{check['name']}' diagnosis contains hallucinated "
+                    f"reference '{bad}'"
+                )
+            # Must cite the real admin base + a real endpoint.
+            assert "$bainluck_api" in low
+            assert "/api/admin/" in low
+
+    def test_get_llm_diagnosis_makes_no_network_call(self):
+        """#215E: the LLM path was removed. get_llm_diagnosis must return the
+        deterministic diagnosis even with OPENAI_API_KEY set and never import
+        or call openai."""
+        check = next(c for c in CHECKS if c["name"] == "espn_freshness")
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.side_effect = AssertionError("openai must not be called")
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with patch.dict("sys.modules", {"openai": mock_openai}):
+                result = get_llm_diagnosis(check, 0)
+        assert "Root cause" in result
+        mock_openai.OpenAI.assert_not_called()
 
 
 class TestRedisDedup:
