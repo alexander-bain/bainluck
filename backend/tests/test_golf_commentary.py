@@ -191,3 +191,156 @@ def test_generate_commentary_swallows_llm_exception(monkeypatch):
     )
     comps = [_comp("Leader", 0.4, thru=5, prob_delta_live=2.0)]
     assert gc.generate_commentary("The Open", comps, "live") is None
+
+
+# ---------------------------------------------------------------------------
+# Change-detector: snapshot / diff / correlate (the 2026-07-19 redesign)
+# ---------------------------------------------------------------------------
+
+
+def _env(competitors, children=None):
+    return {"primary": {"competitors": competitors}, "children": children or []}
+
+
+def _region_prop(name, outcomes):
+    # outcomes: list of (outcome_name, prob)
+    return {
+        "market_id": abs(hash(name)) % 100000,
+        "market_name": name,
+        "outcomes": [{"name": n, "probability": p} for n, p in outcomes],
+    }
+
+
+def test_snapshot_state_extracts_leaderboard_props_and_region():
+    env = _env(
+        [_comp("Cameron Young", 0.04, position="T3", thru="17", today_score=-5,
+               score_to_par=-8)],
+        [
+            _region_prop("The Open Championship: Region to Win",
+                         [("United States", 0.43), ("Rest of World", 0.22)]),
+            _region_prop("The Open Championship: Top American Golfer",
+                         [("Cameron Young", 0.10), ("Scottie Scheffler", 0.18)]),
+        ],
+    )
+    snap = gc.snapshot_state(env)
+    assert "cameron young" in snap["leaderboard"]
+    lb = snap["leaderboard"]["cameron young"]
+    assert lb["today"] == -5 and lb["thru"] == 17 and lb["win"] == 0.04
+    # region derived from the "Top American Golfer" membership
+    assert snap["golfer_region"]["cameron young"] == "United States"
+    # region-to-win outcomes snapshotted
+    assert any("Region to Win" in lbl for lbl in snap["labels"].values())
+
+
+def test_diff_state_detects_birdie_with_hole_and_prop_move():
+    prev = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.02, thru="16", today_score=-4)],
+        [_region_prop("Region to Win", [("United States", 0.40)])],
+    ))
+    cur = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.04, thru="17", today_score=-5)],
+        [_region_prop("Region to Win", [("United States", 0.43)])],
+    ))
+    diff = gc.diff_state(prev, cur)
+    # scoring: single-hole advance 16->17 + one shot gained => birdie at 17
+    cy = [s for s in diff["scoring"] if s["name"] == "Cameron Young"]
+    assert cy and cy[0]["made"] == "birdie" and cy[0]["hole"] == 17
+    assert cy[0]["win_from_pct"] == 2 and cy[0]["win_to_pct"] == 4
+    # prop: US 40 -> 43 = +3 pts (>= threshold)
+    us = [p for p in diff["props"] if p["outcome"] == "United States"]
+    assert us and us[0]["from_pct"] == 40 and us[0]["to_pct"] == 43
+
+
+def test_diff_no_prev_is_empty():
+    cur = gc.snapshot_state(_env([_comp("X", 0.1, thru="5", today_score=-2)]))
+    d = gc.diff_state(None, cur)
+    assert d["scoring"] == [] and d["props"] == []
+    assert gc.has_new_moves(d) is False
+
+
+def test_multi_hole_advance_does_not_fabricate_hole():
+    prev = gc.snapshot_state(_env([_comp("Y", 0.1, thru="12", today_score=-1)]))
+    cur = gc.snapshot_state(_env([_comp("Y", 0.1, thru="15", today_score=-2)]))
+    d = gc.diff_state(prev, cur)
+    y = [s for s in d["scoring"] if s["name"] == "Y"][0]
+    assert y["hole"] is None  # thru advanced 3 holes -> cannot pin the hole
+    assert "gained 1 shot" in y["made"]
+
+
+def test_correlate_links_american_birdie_to_region_move():
+    prev = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.02, thru="16", today_score=-4)],
+        [
+            _region_prop("Region to Win", [("United States", 0.40)]),
+            _region_prop("Top American Golfer", [("Cameron Young", 0.10)]),
+        ],
+    ))
+    cur = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.05, thru="17", today_score=-5)],
+        [
+            _region_prop("Region to Win", [("United States", 0.44)]),
+            _region_prop("Top American Golfer", [("Cameron Young", 0.14)]),
+        ],
+    ))
+    diff = gc.diff_state(prev, cur)
+    corr = gc.correlate_moves(diff, cur)
+    # Cameron Young (US member, gaining) correlated to US region rising.
+    us_corr = [c for c in corr if c["outcome"] == "United States"]
+    assert us_corr, corr
+    assert us_corr[0]["golfer"]["name"] == "Cameron Young"
+
+
+def test_build_digest_prompt_leads_with_correlation_and_grounds_numbers():
+    prev = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.02, thru="16", today_score=-4)],
+        [_region_prop("Region to Win", [("United States", 0.40)]),
+         _region_prop("Top American Golfer", [("Cameron Young", 0.10)])],
+    ))
+    cur = gc.snapshot_state(_env(
+        [_comp("Cameron Young", 0.05, thru="17", today_score=-5)],
+        [_region_prop("Region to Win", [("United States", 0.44)]),
+         _region_prop("Top American Golfer", [("Cameron Young", 0.14)])],
+    ))
+    diff = gc.diff_state(prev, cur)
+    corr = gc.correlate_moves(diff, cur)
+    seed = gc.select_commentary_data(cur_competitors := [
+        {"name": "Cameron Young", "probability": 0.05, "thru": "17"}
+    ])
+    prompt = gc.build_digest_prompt("The Open Championship", diff, corr, seed)
+    assert prompt is not None
+    assert "Cameron Young" in prompt
+    assert "birdie" in prompt and "hole 17" in prompt
+    assert "United States" in prompt
+    assert "40%->44%" in prompt
+
+
+def test_build_digest_prompt_falls_back_to_seed_when_quiet():
+    # No moves -> should produce the seed (current-standings) prompt, not None.
+    seed = gc.select_commentary_data([{"name": "Leader", "probability": 0.4}])
+    prompt = gc.build_digest_prompt("The Open", {"scoring": [], "props": []}, [], seed)
+    assert prompt is not None
+    assert "Leader" in prompt
+
+
+def test_generate_from_snapshots_not_live_makes_no_call(monkeypatch):
+    def _boom(*a, **k):  # pragma: no cover
+        raise AssertionError("must not call LLM when not live")
+
+    monkeypatch.setattr(
+        "app.services.llm.generate_golf_live_commentary", _boom, raising=True
+    )
+    cur = gc.snapshot_state(_env([_comp("X", 0.1, thru="5", today_score=-2)]))
+    assert gc.generate_from_snapshots("The Open", cur, None, "settled", []) is None
+
+
+def test_generate_from_snapshots_degrades_on_llm_none(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.llm.generate_golf_live_commentary",
+        lambda p: None,
+        raising=True,
+    )
+    comps = [_comp("Cameron Young", 0.05, thru="17", today_score=-5)]
+    prev = gc.snapshot_state(_env([_comp("Cameron Young", 0.02, thru="16",
+                                         today_score=-4)]))
+    cur = gc.snapshot_state(_env(comps))
+    assert gc.generate_from_snapshots("The Open", cur, prev, "live", comps) is None
