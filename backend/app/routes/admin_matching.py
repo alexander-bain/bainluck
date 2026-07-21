@@ -1,6 +1,7 @@
 """Admin endpoints for prediction market matching, link rate, sawtooth, and matching review."""
 
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
@@ -672,6 +673,40 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     }
 
 
+# Derivative / prop sub-markets that carry BOTH team names but are NOT the
+# game-WINNER (moneyline). The unlinked-held check's definition is "game-winner
+# market", but the raw both-teams match leaks these in two ways: a "- First 5
+# Innings Winner" suffix survives extract_matchup as a dirty team_b that still
+# substring-matches, and "- Player Props" gets its suffix stripped so it looks
+# identical to the moneyline. Excluding them keeps the metric honest to its
+# definition and stops the Flow Sentinel filing cry-wolf issues for markets that
+# are not blend-critical (their event_id, when wanted, comes from group_id
+# propagation off the moneyline / the game-markets group fallback — NOT a
+# name-match miss). #224.
+_NON_GAME_WINNER_MARKET_RE = re.compile(
+    r"\b("
+    r"player\s+props|"
+    r"first\s+\d+\s+innings|first\s+(five|three|seven)\s+innings|f5\b|"
+    r"first\s+half|1st\s+half|second\s+half|2nd\s+half|"
+    r"first\s+quarter|1st\s+quarter|first\s+period|1st\s+period|"
+    r"total\s+(runs|points|goals|hits|bases|sets|games)|over/under|over\s+under|"
+    r"run\s+line|puck\s+line|spread|handicap|"
+    r"correct\s+score|winning\s+margin|margin\s+of\s+victory|"
+    r"double\s+chance|both\s+teams\s+to\s+score|btts|"
+    r"to\s+score|anytime|home\s+run|strikeouts|rbis?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_non_game_winner_derivative(name: str) -> bool:
+    """True for a matchup-named market that is a derivative/prop sub-market
+    (First N Innings Winner, Player Props, halves/quarters, totals, run line,
+    spread, etc.) rather than the full-game winner. Used to keep the
+    unlinked-held check to its stated 'game-winner' definition."""
+    return bool(_NON_GAME_WINNER_MARKET_RE.search(name or ""))
+
+
 def _matchup_matches_event(matchup, home: str, away: str, external_id: str | None) -> bool:
     """True when a market matchup's BOTH teams correspond to an event's two teams
     (either orientation). Stricter than match_teams_to_event (which fires on one
@@ -783,8 +818,16 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
 
     misses: list[dict] = []
     seen: set[tuple] = set()
+    derivatives_excluded = 0
     for m in cand:
         if not is_game_level_market(m.name or "", m.llm_sport_category, external_id=m.external_id):
+            continue
+        # Keep the metric to its "game-winner" definition: skip derivative/prop
+        # sub-markets (First N Innings Winner, Player Props, halves, totals, run
+        # line, ...) — they carry both team names but are not the moneyline, so
+        # they are not a blend-critical name-match miss (#224).
+        if _is_non_game_winner_derivative(m.name or ""):
+            derivatives_excluded += 1
             continue
         matchup = extract_matchup(m.name or "", m.external_id)
         if matchup is None:
@@ -819,13 +862,17 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
         "status": "ok",
         "events_checked": len(imm),
         "candidates_scanned": len(cand),
+        "derivatives_excluded": derivatives_excluded,
         "misses": misses,
         "by_source": by_source,
         "definition": (
-            "Unlinked-but-held: a Kalshi/Polymarket game-winner market we hold "
-            "(status open, event_id NULL) whose both teams match an imminent event — "
-            "the matcher missed a link it could have made. 0 = clean; >0 = real "
-            "match-failures (distinct from blend-integrity phantoms)."
+            "Unlinked-but-held: a Kalshi/Polymarket game-WINNER (moneyline) market "
+            "we hold (status open, event_id NULL) whose both teams match an imminent "
+            "event — the matcher missed a link it could have made. Derivative/prop "
+            "sub-markets (First N Innings Winner, Player Props, halves, totals, run "
+            "line, ...) are EXCLUDED (they are not blend-critical; their link comes "
+            "from group_id propagation, not a name match). 0 = clean; >0 = real "
+            "game-winner match-failures (distinct from blend-integrity phantoms)."
         ),
     }
 
