@@ -12,6 +12,12 @@
  *
  * Light-mode tokens only. The live state adds a green 1px ring (design shadow
  * `0 0 0 1px rgba(34,197,94,0.25)`); other states use the standard card ring.
+ *
+ * Two optional per-kernel affordances the design assigns to specific kernels:
+ *   • `topAccent`        — a 2px accent-futures top border (the Field kernel's
+ *     "many entrants" cue: design `border-top:2px solid rgba(139,92,246,0.5)`).
+ *   • `footerAccessory`  — an extra node rendered in the footer-left after the
+ *     league (the Container kernel's "12 markets" bundle-count pill).
  */
 
 import type { ReactNode } from "react";
@@ -47,6 +53,10 @@ interface KernelCardProps {
   categoryLabel: string;
   /** Footer-right: "5m ago", "Live", "Final · Jul 29". */
   timestamp?: string;
+  /** A 2px accent-futures top border — the Field kernel's "many entrants" cue. */
+  topAccent?: boolean;
+  /** Extra footer-left node after the league (Container's "12 markets" pill). */
+  footerAccessory?: ReactNode;
   children: ReactNode;
   ariaLabel?: string;
 }
@@ -98,12 +108,14 @@ export function KernelCard({
   categoryEmoji,
   categoryLabel,
   timestamp,
+  topAccent,
+  footerAccessory,
   children,
   ariaLabel,
 }: KernelCardProps) {
   return (
     <article
-      className="relative flex flex-col overflow-hidden rounded-[10px] border border-surface-border bg-surface-card transition-shadow hover:shadow-lg"
+      className={`relative flex flex-col overflow-hidden rounded-[10px] border border-surface-border bg-surface-card transition-shadow hover:shadow-lg${topAccent ? " border-t-2 border-t-accent-futures/50" : ""}`}
       style={{ boxShadow: state === "live" ? RING_LIVE : RING_BASE }}
       data-kernel-state={state}
       aria-label={ariaLabel}
@@ -121,12 +133,15 @@ export function KernelCard({
         {/* Body: the kernel-specific glance-form */}
         {children}
 
-        {/* Footer: league + timestamp */}
-        <div className="mt-0.5 flex items-center justify-between">
-          <span className="text-[11px] tracking-[0.02em] text-text-muted">
-            {categoryEmoji} {categoryLabel}
+        {/* Footer: league (+ optional accessory) + timestamp */}
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] tracking-[0.02em] text-text-muted whitespace-nowrap">
+              {categoryEmoji} {categoryLabel}
+            </span>
+            {footerAccessory}
           </span>
-          {timestamp && <span className="text-[11px] text-text-muted">{timestamp}</span>}
+          {timestamp && <span className="shrink-0 text-[11px] text-text-muted">{timestamp}</span>}
         </div>
       </div>
     </article>
