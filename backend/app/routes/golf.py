@@ -2286,13 +2286,19 @@ async def get_golf_tournament(
                 if total > best_count:
                     best_count = total
                     best_id = mid
-                # Settled preference: the max snapshot probability of this market's
-                # graded winner. A market that converged to ~100% (real-money
-                # Kalshi) beats the stale odds_api futures market that never
-                # resolved. On live/upcoming tournaments there is no is_winner, so
-                # this stays None and the snapshot-richest pick is used unchanged.
+                # Settled preference: the graded winner's LATEST snapshot value —
+                # i.e. did this market END with the winner resolved high and STAY
+                # there. A real-money Kalshi market closes at ~0.999 for the
+                # champion; the odds_api futures market fizzled (~18%) and the
+                # DataGolf model RESETS to ~0.5% post-event (its momentary in-play
+                # 1.0 spike would win a max()-based rank but leaves an ugly end-drop
+                # on the chart). Ranking by the final value picks the market whose
+                # completed journey actually stays at the top. Live/upcoming
+                # tournaments carry no is_winner, so this stays None and the
+                # snapshot-richest pick is used unchanged.
                 gw = await db.execute(
-                    select(sqlfunc.max(FuturesOddsSnapshot.probability)).where(
+                    select(FuturesOddsSnapshot.probability)
+                    .where(
                         FuturesOddsSnapshot.outcome_id.in_(
                             select(FuturesOutcome.id).where(
                                 FuturesOutcome.market_id == mid,
@@ -2300,6 +2306,8 @@ async def get_golf_tournament(
                             )
                         )
                     )
+                    .order_by(FuturesOddsSnapshot.captured_at.desc())
+                    .limit(1)
                 )
                 winner_resolve = gw.scalar()
                 if winner_resolve is not None and float(winner_resolve) >= resolved_best_val:
