@@ -14,6 +14,30 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['recharts', 'date-fns'],
   },
+  async headers() {
+    // Security-headers baseline (#L2-137). CSP-with-nonces is deliberately
+    // deferred — it needs its own careful pass against every inline script and
+    // third-party origin (Sentry, Firebase, GA4, TMDB, Pexels).
+    const securityHeaders = [
+      // Clickjacking: disallow this site from being framed anywhere.
+      { key: "X-Frame-Options", value: "DENY" },
+      // MIME-sniffing: force declared Content-Type.
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      // Referrer: send origin cross-site, full path same-origin.
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      // Powerful features off by default (we use none of these in the browser).
+      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
+      // Force HTTPS. Vercel usually sets HSTS at the edge; setting it here is
+      // idempotent and covers any origin that doesn't.
+      { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+    ];
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders,
+      },
+    ];
+  },
   async redirects() {
     return [
       // #213 surface unification: the bespoke golf tournament detail page is the

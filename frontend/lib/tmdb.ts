@@ -5,6 +5,8 @@
  * Images are cached in localStorage with 24h TTL.
  */
 
+import { lruSetItem } from "./lruCache";
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 const CACHE_PREFIX = "tmdb_";
@@ -72,12 +74,10 @@ function cacheGet<T>(key: string): T | null {
 }
 
 function cacheSet<T>(key: string, data: T): void {
-  try {
-    const entry: CacheEntry<T> = { data, ts: Date.now() };
-    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry));
-  } catch {
-    // localStorage full or unavailable — silently fail
-  }
+  const entry: CacheEntry<T> = { data, ts: Date.now() };
+  // LRU-bounded write: evicts oldest tmdb_ entries on quota rather than
+  // silently freezing the cache once localStorage fills (#L2-137).
+  lruSetItem(CACHE_PREFIX + key, JSON.stringify(entry), CACHE_PREFIX);
 }
 
 // ============================================================================

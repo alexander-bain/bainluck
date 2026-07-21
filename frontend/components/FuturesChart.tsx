@@ -436,7 +436,11 @@ export function FuturesChart({
         )}
       </div>
 
-      {/* Legend */}
+      {/* Legend — interactive (toggle) when a handler is supplied, otherwise a
+          static key so single-question charts (e.g. the settled Path to
+          resolution) still say which colored line is which contender. The
+          flex-wrap layout is the collision-safe alternative to end-of-line
+          labels, which pile up when contenders converge (#L2-137). */}
       {effectiveShowLegend && onToggleOutcome && (
         <div className="flex flex-wrap gap-3">
           {displayedOutcomes.map((outcome, idx) => (
@@ -451,6 +455,22 @@ export function FuturesChart({
               />
               <span className="text-text-primary">{outcome.name}</span>
             </button>
+          ))}
+        </div>
+      )}
+      {effectiveShowLegend && !onToggleOutcome && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1.5" aria-label="Chart legend">
+          {displayedOutcomes.map((outcome, idx) => (
+            <span
+              key={outcome.outcome_id}
+              className="flex items-center gap-2 text-sm"
+            >
+              <span
+                className="w-3 h-3 rounded-full flex-shrink-0"
+                style={{ backgroundColor: colors[idx % colors.length] }}
+              />
+              <span className="text-text-primary truncate max-w-[160px]">{outcome.name}</span>
+            </span>
           ))}
         </div>
       )}

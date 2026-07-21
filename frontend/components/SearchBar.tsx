@@ -58,6 +58,9 @@ export default function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Aborts the previous in-flight typeahead request so a slow earlier keystroke
+  // can't clobber the results of a newer one (and to stop wasted work).
+  const typeaheadAbortRef = useRef<AbortController | null>(null);
 
   // Load recent searches on mount; trending cached for 5 min
   useEffect(() => {
@@ -99,13 +102,18 @@ export default function SearchBar({
       return;
     }
 
+    // Cancel any in-flight typeahead so stale results can't overwrite fresh ones.
+    typeaheadAbortRef.current?.abort();
+    const controller = new AbortController();
+    typeaheadAbortRef.current = controller;
+
     setLoading(true);
     setShowRecent(false);
     // L2-96: curated concept hubs (e.g. "midterms" → the 2026 elections page)
     // whose phrase no market NAME contains, so the backend won't derive them.
     const curated = matchCuratedConcepts(q);
     try {
-      const data = await fetchTypeahead(q);
+      const data = await fetchTypeahead(q, controller.signal);
       const backendKeys = new Set(
         data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
       );
@@ -124,12 +132,16 @@ export default function SearchBar({
       if (withAnswer > 0) {
         track("answer_visible_typeahead", { query: q, answers_shown: withAnswer });
       }
-    } catch {
+    } catch (err) {
+      // A newer keystroke aborted this request — a fresher one owns the state.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       // Backend down/slow: still surface curated hubs so discovery survives.
       setSuggestions(curated);
       setIsOpen(curated.length > 0);
     } finally {
-      setLoading(false);
+      // Only the latest request clears the loading flag; a superseded (aborted)
+      // request must not turn the spinner off out from under the fresh one.
+      if (typeaheadAbortRef.current === controller) setLoading(false);
     }
   }, [track]);
 
@@ -137,7 +149,7 @@ export default function SearchBar({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       fetchSuggestions(query);
-    }, 200);
+    }, 150);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };

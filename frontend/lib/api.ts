@@ -94,9 +94,19 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
   const timeoutMs = options?.timeoutMs ?? 20000;
   const maxRetries = 2;
 
+  // An externally-supplied signal (e.g. SearchBar's typeahead AbortController)
+  // must cancel the in-flight fetch AND stop the retry loop. It is separate
+  // from the per-attempt timeout controller below, so wire the two together.
+  const externalSignal = options?.signal ?? undefined;
+  if (externalSignal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const onExternalAbort = () => controller.abort();
+    externalSignal?.addEventListener("abort", onExternalAbort);
 
     try {
       const res = await fetch(`${API_URL}${endpoint}`, {
@@ -106,6 +116,7 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
       });
 
       clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
 
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: "Unknown error" }));
@@ -115,6 +126,11 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
       return res.json();
     } catch (err: unknown) {
       clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+      // Caller aborted (not a timeout) — surface immediately, never retry.
+      if (externalSignal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       const isTimeout = err instanceof DOMException && err.name === "AbortError";
       const isNetworkError = err instanceof TypeError && (err.message.includes("fetch") || err.message.includes("network"));
       if ((isTimeout || isNetworkError) && attempt < maxRetries) {
@@ -305,9 +321,13 @@ export interface TypeaheadResponse {
   did_you_mean?: string;
 }
 
-export async function fetchTypeahead(q: string): Promise<TypeaheadResponse> {
+export async function fetchTypeahead(
+  q: string,
+  signal?: AbortSignal
+): Promise<TypeaheadResponse> {
   return apiFetch<TypeaheadResponse>(
-    `/api/events/typeahead?q=${encodeURIComponent(q)}`
+    `/api/events/typeahead?q=${encodeURIComponent(q)}`,
+    { signal }
   );
 }
 

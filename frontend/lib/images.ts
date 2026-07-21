@@ -5,6 +5,8 @@
  * Images are cached in localStorage with 24h TTL (same pattern as tmdb.ts).
  */
 
+import { lruSetItem } from "./lruCache";
+
 const CACHE_PREFIX = "img_";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -35,12 +37,10 @@ function cacheGet<T>(key: string): T | undefined {
 
 function cacheSet<T>(key: string, data: T): void {
   if (typeof window === "undefined") return;
-  try {
-    const entry: CacheEntry<T> = { data, ts: Date.now() };
-    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry));
-  } catch {
-    // localStorage full or unavailable — silently fail
-  }
+  const entry: CacheEntry<T> = { data, ts: Date.now() };
+  // LRU-bounded write: evicts oldest img_ entries on quota rather than
+  // silently freezing the cache once localStorage fills (#L2-137).
+  lruSetItem(CACHE_PREFIX + key, JSON.stringify(entry), CACHE_PREFIX);
 }
 
 // ============================================================================
