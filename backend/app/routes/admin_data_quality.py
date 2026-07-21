@@ -3390,6 +3390,27 @@ async def trigger_datagolf_leaderboard_backfill(
     return stats
 
 
+@router.post("/backfill-winners/datagolf-regrade-1152")
+async def trigger_datagolf_winner_regrade(
+    request: Request, secret: str = Query(None),
+):
+    """#1152: run the authoritative DataGolf leaderboard WINNER resolver on the
+    worker and return its stats.
+
+    Repairs Winner/Top-N/Make-Cut markets that resolved with the champion graded
+    a loser (0 winners) — the resolver previously sat in the budget-starved
+    Phase-0g tail and stopped reaching post-2026-07-05 tournaments. Reads each
+    market's STORED leaderboard (confirmed re-resolve source → gotcha #21 safe)
+    and is idempotent. Exposed as an endpoint because the Heroku one-off dyno
+    cannot stream stats (EPERM); this returns them over HTTP.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.backfill_winners import _backfill_datagolf_winners
+    stats = await _backfill_datagolf_winners()
+    return stats
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     request: Request, secret: str = Query(None),
