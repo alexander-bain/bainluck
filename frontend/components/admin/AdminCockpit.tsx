@@ -65,6 +65,37 @@ interface FlowSentinelData {
   per_flow: FlowSentinelFlow[];
 }
 
+// L2-140 Item 1 — the data-quality watchdog RED tile (display half). The server
+// half (#218 Item 3) mirrors _flow_sentinel_group(): it persists the P0/P1
+// watchdog results and shapes them into this `data_quality_watchdog` group on
+// the cockpit payload — one row per FAILING check with its severity, the action
+// sentence (message), and the auto-filed GitHub issue link. This tile renders
+// them so an "email-only P0" can no longer hide: a firing alert is RED and
+// on-screen. Absent key (server half not deployed yet) → the card simply
+// doesn't render.
+interface DataQualityWatchdogCheck {
+  name: string;
+  severity: string; // "P0" | "P1"
+  message: string; // the action sentence
+  value: number | null;
+  threshold: number | null;
+  status: "green" | "amber" | "red";
+  issue: number | null;
+  issue_url: string | null;
+}
+
+interface DataQualityWatchdogData {
+  status: "green" | "amber" | "red" | "unknown";
+  detail?: string | null;
+  checks_run?: number | null;
+  checks_passed?: number | null;
+  alerts_fired?: number | null;
+  last_run?: string | null;
+  // Set when the watchdog itself errored (monitor unreliable → amber).
+  self_error?: boolean | string | null;
+  per_check: DataQualityWatchdogCheck[];
+}
+
 interface CockpitData {
   generated_at: string;
   cached: boolean;
@@ -79,6 +110,7 @@ interface CockpitData {
     bug_reports_href: string;
   };
   flow_sentinel?: FlowSentinelData;
+  data_quality_watchdog?: DataQualityWatchdogData;
 }
 
 // --- Status → design-system colors ---
@@ -222,6 +254,7 @@ export default function AdminCockpit() {
 
   const evalQ = data.eval_queue;
   const fs = data.flow_sentinel;
+  const dqw = data.data_quality_watchdog;
 
   return (
     <div className="space-y-4">
@@ -358,6 +391,99 @@ export default function AdminCockpit() {
           </ul>
         )}
       </div>
+
+      {/* Data-quality watchdog (L2-140 Item 1): P0/P1 alerts as a RED tile with
+          the action sentence + filed-issue link. A firing alert can no longer
+          be an "email-only P0" — it's on-screen and RED. Card is loud when
+          alerting (danger border), quiet green when all checks pass. */}
+      {dqw && (
+        <div
+          className={
+            "rounded-xl border p-4 " +
+            (dqw.status === "red"
+              ? "border-accent-danger/40 bg-accent-danger/10"
+              : "border-surface-border bg-surface-card")
+          }
+        >
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+              <span className={"h-2 w-2 rounded-full shrink-0 " + dotBg(dqw.status)} />
+              Data-quality watchdog
+            </h3>
+            <span className={"text-micro font-medium " + statusText(dqw.status)}>
+              {dqw.status === "red"
+                ? `${dqw.alerts_fired ?? dqw.per_check.filter((c) => c.status === "red").length} alert${
+                    (dqw.alerts_fired ?? dqw.per_check.length) === 1 ? "" : "s"
+                  } firing`
+                : dqw.checks_run != null
+                ? `${dqw.checks_passed ?? 0}/${dqw.checks_run} checks passing`
+                : dqw.status === "unknown"
+                ? "no run cached"
+                : "all clear"}
+            </span>
+          </div>
+          {dqw.self_error && (
+            <div className="mb-2 text-micro text-yellow-600 leading-relaxed">
+              ⚠ Watchdog self-error — the monitor may be unreliable right now.
+              Treat GREEN with suspicion until this clears.
+            </div>
+          )}
+          {dqw.per_check.length === 0 ? (
+            <div className="text-sm text-text-muted">
+              {dqw.detail ||
+                (dqw.status === "unknown"
+                  ? "No watchdog run cached yet — it runs every 2h."
+                  : "All data-quality checks passing.")}
+            </div>
+          ) : (
+            <ul className="space-y-1.5">
+              {dqw.per_check.map((c) => (
+                <li
+                  key={c.name}
+                  className="flex items-start gap-2 text-sm py-1 border-b border-surface-border last:border-0"
+                >
+                  <span
+                    className={
+                      "shrink-0 mt-0.5 rounded px-1.5 py-0.5 text-micro font-bold " +
+                      (c.severity === "P0"
+                        ? "bg-accent-danger/15 text-accent-danger"
+                        : "bg-yellow-500/15 text-yellow-600")
+                    }
+                  >
+                    {c.severity}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="text-text-primary block truncate">
+                      {c.name.replace(/_/g, " ")}
+                    </span>
+                    {/* THE ACTION SENTENCE — what's wrong, from the check's message. */}
+                    <span className="text-micro text-text-muted leading-relaxed block">
+                      {c.message}
+                    </span>
+                  </span>
+                  {c.issue_url ? (
+                    <a
+                      href={c.issue_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-brand hover:underline shrink-0 mt-0.5"
+                    >
+                      #{c.issue}
+                    </a>
+                  ) : (
+                    <span
+                      className="text-micro text-accent-danger font-medium shrink-0 mt-0.5"
+                      title="No filed issue — this alert only went to email. File one."
+                    >
+                      no issue
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Flow Sentinel scorecard (per-flow pass/fail; click → filed issue) */}
       {fs && (

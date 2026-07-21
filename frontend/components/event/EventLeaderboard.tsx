@@ -260,7 +260,14 @@ function WinnerFieldRow({
   const zero = pct === 0; // rounds to 0% — a longshot / eliminated row
   const dim = out || zero;
   // Dead/zero rows carry no movement/sparkline — there is no live story to tell.
-  const mv = dim ? null : formatMovement(competitorMovement(c));
+  // L2-138: prefer the in-play win-prob delta ("who's charging", in POINTS) so
+  // the winner-field table feels live during play — the golf-row pattern applied
+  // here. Fall back to the 24h move (null during live) → the felt-live tick.
+  const mv = dim
+    ? null
+    : c.prob_delta_live != null
+      ? formatMovement(c.prob_delta_live / 100)
+      : formatMovement(competitorMovement(c));
   const hasFinish = finishColumns.length > 0;
   const ownSeries = showSparkline && !dim && !hasFinish ? seriesFromCompetitor(c) : [];
   const series =

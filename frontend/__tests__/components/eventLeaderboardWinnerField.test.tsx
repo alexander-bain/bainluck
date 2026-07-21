@@ -73,4 +73,25 @@ describe("EventLeaderboard winner-field contender/tail chrome (L2-132)", () => {
     );
     expect(html).toBe("");
   });
+
+  // L2-138: the winner-field table must feel live — the in-play win-prob delta
+  // (`prob_delta_live`, in POINTS) drives a movement tick during play, even when
+  // the 24h move is absent. Mirrors the golf-row "who's charging" behavior.
+  test("live prob_delta_live drives an up/down movement tick on contender rows", () => {
+    const field: EventConceptCompetitor[] = [
+      { name: "Foxy", probability: 0.4, prob_delta_live: 2.1 } as EventConceptCompetitor,
+      { name: "Burns", probability: 0.3, prob_delta_live: -1.3 } as EventConceptCompetitor,
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={field} label="Winner" live />,
+    );
+    // Up mover: ▲ + points; down mover: ▼ + points.
+    expect(html).toContain("▲");
+    expect(html).toContain("2.1");
+    expect(html).toContain("▼");
+    expect(html).toContain("1.3");
+    // Up tick is accent-brand, down tick is accent-danger.
+    expect(html).toContain("text-accent-brand");
+    expect(html).toContain("text-accent-danger");
+  });
 });

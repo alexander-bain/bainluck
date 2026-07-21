@@ -13,6 +13,7 @@ import LeagueChips from "@/components/LeagueChips";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
+import SportsEmptySlate from "@/components/SportsEmptySlate";
 import { getCategoryForLeague } from "@/lib/sportCategories";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
@@ -290,18 +291,26 @@ export default function SportsPage() {
       {feedData && (
         <>
           {feedData.items.length === 0 ? (
-            <div className="text-center py-16">
-              <p className="text-body text-text-secondary mb-2">
-                Nothing interesting right now
-              </p>
-              <p className="text-caption text-text-muted">
-                Check back soon — we surface the best stuff automatically
-              </p>
+            <div className="flex justify-center py-10">
+              <SportsEmptySlate mode="empty" hasMarketsBelow={false} onRefresh={() => refreshFeed()} />
             </div>
           ) : (
             <div className="space-y-6">
               {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
+
+              {/* #217 no-games UX: games are quiet but the feed isn't empty
+                  (Top Markets / props still surface). Lead with an honest,
+                  helpful panel instead of a headerless list of futures. */}
+              {gameSections.length === 0 && (
+                <SportsEmptySlate
+                  mode="no-games"
+                  hasMarketsBelow={
+                    !!marketsSection || (!!groupedData && groupedData.feed.length > 0)
+                  }
+                  onRefresh={() => refreshFeed()}
+                />
+              )}
 
               {/* #1102: Games LEAD — Live Now / Just Happened / Upcoming first */}
               {gameSections.map((section, sectionIndex) =>

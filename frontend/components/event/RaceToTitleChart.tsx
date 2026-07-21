@@ -29,7 +29,18 @@ const RANGES: { label: string; hours: number }[] = [
   { label: "7d", hours: 168 },
   { label: "All", hours: 0 }, // 0 = no time filter
 ];
-const TOPS = [5, 10];
+// L2-138 (Alex's corrected ruling): default line set = genuine contenders
+// (Top 5), with the full field togglable via this same picker — no spaghetti by
+// default, nothing removed. n=0 is the "Full field" sentinel (select every
+// competitor). The legend is suppressed in full-field mode (a 100-golfer key is
+// its own clutter); it names the lines in the Top-5/Top-10 default views.
+const TOPS: { label: string; n: number }[] = [
+  { label: "Top 5", n: 5 },
+  { label: "Top 10", n: 10 },
+  { label: "Full field", n: 0 },
+];
+/** A legend stays legible up to ~12 lines; beyond that it's clutter. */
+const MAX_LEGEND_LINES = 12;
 
 /** Current probability = the last non-null point of an outcome's series. */
 function lastProb(o: FuturesOutcomeHistory): number {
@@ -63,11 +74,17 @@ export default function RaceToTitleChart({
   );
 
   // Pick the current top-N contenders (by latest probability) and hand their ids
-  // to FuturesChart as the selected set so it plots exactly those lines.
+  // to FuturesChart as the selected set so it plots exactly those lines. topN=0
+  // ("Full field") selects every competitor — the togglable full view.
   const selected = useMemo(() => {
     const ranked = [...outcomes].sort((a, b) => lastProb(b) - lastProb(a));
-    return new Set(ranked.slice(0, topN).map((o) => o.outcome_id));
+    const chosen = topN === 0 ? ranked : ranked.slice(0, topN);
+    return new Set(chosen.map((o) => o.outcome_id));
   }, [outcomes, topN]);
+
+  // Name the lines with a legend in the default (contender) views; suppress it
+  // in full-field mode where a 100-name key would be its own clutter.
+  const showLegend = topN !== 0 && selected.size <= MAX_LEGEND_LINES;
 
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
@@ -82,15 +99,15 @@ export default function RaceToTitleChart({
           <div className="flex rounded-full bg-surface-elevated p-0.5">
             {TOPS.map((t) => (
               <button
-                key={t}
-                onClick={() => setTopN(t)}
+                key={t.n}
+                onClick={() => setTopN(t.n)}
                 className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                  topN === t
+                  topN === t.n
                     ? "bg-surface-card text-text-primary shadow-card font-semibold"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
               >
-                Top {t}
+                {t.label}
               </button>
             ))}
           </div>
@@ -122,7 +139,7 @@ export default function RaceToTitleChart({
           selectedOutcomes={selected}
           fixedYAxis
           showAxes
-          showLegend={false}
+          showLegend={showLegend}
           height={280}
           greenTheme={domain === "golf"}
           timeMarkers={timeMarkers}
