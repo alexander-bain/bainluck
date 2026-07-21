@@ -1,0 +1,24 @@
+{
+  "id": "alcaraz-ao-2026",
+  "event": "Australian Open Men's: Carlos Alcaraz vs Alexander Zverev",
+  "date_utc": "2026-01-30",
+  "resolved": "Alcaraz",
+  "provenance": {
+    "platform": "Polymarket",
+    "slug": "atp-alcaraz-zverev-2026-01-30",
+    "market_id": "1276989",
+    "outcome": "Alcaraz",
+    "outcome_token_ref": "48395990…397732",
+    "volume_usd": 6600000,
+    "source_endpoint": "clob.polymarket.com/prices-history",
+    "fidelity": 1,
+    "raw_point_count": 4209,
+    "match_play_window_utc": ["2026-01-30T02:30:00Z", "2026-01-30T09:25:00Z"],
+    "fetch_recipe": "clob.polymarket.com/prices-history?market=<Alcaraz token from Gamma market 1276989>&startTs=<02:30 UTC epoch>&endTs=<09:25 UTC epoch>&fidelity=1"
+  },
+  "note": "14-point downsample of the 4209-point raw match-play series. Every plotted value is an actual observed market price — no interpolation, no fabrication (L2-145 Item 2, Alex's ruling). This committed archive makes the /about trust exhibit reproducible even if Polymarket ever prunes the CLOB history. The arc: ~84% favorite -> 98% up two sets -> 14% (adductor injury, the brink) -> choppy recovery -> 100% win in five.",
+  "caption": "Alcaraz win probability through the match (Polymarket)",
+  "points": [84, 82, 78, 90, 96, 98, 77, 14, 42, 53, 36, 23, 40, 100],
+  "annotation_index": 7,
+  "annotation_label": "Adductor injury — 14%, the brink"
+}

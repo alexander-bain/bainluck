@@ -13,7 +13,15 @@
  * price — no interpolation, no fabrication; L2-145 Item 2, Alex's ruling). The
  * McIlroy bars are three documented point-in-time win-prob values (DataGolf +
  * Kalshi futures). Nothing here is schematic.
+ *
+ * Belt-and-suspenders (L2-146 Item 2): the Alcaraz series lives in a committed
+ * JSON archive (`lib/data/alcaraz-ao-2026-series.json`) so the exhibit is
+ * reproducible even if Polymarket ever prunes its CLOB history — the chart
+ * reads the archived points, not an inline copy. The archive also carries the
+ * full provenance (slug, market id, fetch recipe) so anyone can re-derive it.
  */
+
+import alcarazSeries from "./data/alcaraz-ao-2026-series.json";
 
 /* ── 1. THE ONE-LINER ── */
 export const STORY_ONE_LINER =
@@ -100,10 +108,12 @@ export const CASE_STUDIES: CaseStudy[] = [
     source: "Polymarket · atp-alcaraz-zverev-2026-01-30 · real price series, $6.6M volume",
     chart: {
       type: "line",
-      caption: "Alcaraz win probability through the match (Polymarket)",
-      points: [84, 82, 78, 90, 96, 98, 77, 14, 42, 53, 36, 23, 40, 100],
-      annotationIndex: 7,
-      annotationLabel: "Adductor injury — 14%, the brink",
+      // Read from the committed archive so the exhibit survives Poly pruning
+      // (L2-146 Item 2). The archive IS the source of truth for these numbers.
+      caption: alcarazSeries.caption,
+      points: alcarazSeries.points,
+      annotationIndex: alcarazSeries.annotation_index,
+      annotationLabel: alcarazSeries.annotation_label,
     },
   },
   {

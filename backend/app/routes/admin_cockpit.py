@@ -629,6 +629,98 @@ def _raw_link_rate_subtitle() -> str | None:
     return None
 
 
+_LINK_TILE_STATE_KEY = "bainluck:admin:link_tile_state"
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Compact h/m/s duration for tile subtitles (e.g. '2h04m', '5m', '45s')."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    mins = seconds // 60
+    if mins < 60:
+        return f"{mins}m"
+    hrs = mins // 60
+    return f"{hrs}h{mins % 60:02d}m"
+
+
+def _link_tile_state_change(status: str, value) -> dict | None:
+    """Track when the link tile's status band last changed (L2-146 Item 3).
+
+    When Lane 1's matcher fix lands and the tile returns to 100%, the recovery
+    should be visible on the tile itself — no log archaeology. This records the
+    tile's status + a `since` timestamp in Redis and reports how long the tile
+    has held its current state (and what it changed from).
+
+    Write-on-read is cheap and idempotent; the whole cockpit payload is cached
+    5 min (``_CACHE_TTL``), so this fires at most once per cache refresh —
+    timestamps are accurate to the refresh cadence, which is all the recovery
+    watch needs. Degrades to None on any Redis error so the tile simply omits
+    the recovery subtitle rather than breaking the payload.
+
+    Returns ``{'age_s': float, 'prev': str|None, 'bootstrap': bool}`` or None.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        r = get_redis_client()
+        now = datetime.now(timezone.utc)
+        raw = r.get(_LINK_TILE_STATE_KEY)
+        prior = None
+        if raw:
+            try:
+                prior = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            except Exception:
+                prior = None
+        if prior and prior.get("status") == status:
+            since_iso = prior.get("since")
+            try:
+                since_dt = datetime.fromisoformat(since_iso) if since_iso else now
+            except Exception:
+                since_dt = now
+            if since_dt.tzinfo is None:
+                since_dt = since_dt.replace(tzinfo=timezone.utc)
+            return {
+                "age_s": (now - since_dt).total_seconds(),
+                "prev": prior.get("prev"),
+                "bootstrap": False,
+            }
+        # Status changed (or first observation) — stamp a fresh transition.
+        prev_status = prior.get("status") if prior else None
+        r.set(
+            _LINK_TILE_STATE_KEY,
+            _json.dumps(
+                {
+                    "status": status,
+                    "value": value,
+                    "since": now.isoformat(),
+                    "prev": prev_status,
+                }
+            ),
+        )
+        return {"age_s": 0.0, "prev": prev_status, "bootstrap": prev_status is None}
+    except Exception:
+        logger.debug("cockpit: link tile state-change read failed", exc_info=True)
+        return None
+
+
+def _apply_link_tile_state_change(detail_bits: list[str], status: str, value) -> None:
+    """Append a 'how long in this state / recovered from what' bit to the link
+    tile's detail (L2-146 Item 3). No-op on the first ever observation (nothing
+    to report yet) or on any Redis error."""
+    change = _link_tile_state_change(status, value)
+    if not change or change["bootstrap"]:
+        return
+    age = _fmt_duration(change["age_s"])
+    prev = change["prev"]
+    if status == "green" and prev and prev != "green":
+        detail_bits.append(f"recovered {age} ago (was {prev})")
+    elif prev and prev != status:
+        detail_bits.append(f"{status} for {age} (was {prev})")
+    else:
+        detail_bits.append(f"stable {status} for {age}")
+
+
 async def _health_group(db: AsyncSession) -> list[dict]:
     """Build the site-health tile row from warm caches + cheap queries."""
     tiles: list[dict] = []
@@ -659,12 +751,19 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         ml_pct = ml.get("headline_pct")
         phantom = ml.get("phantom") or 0
         checkable = ml.get("checkable_pairs") or 0
+        # 100 = clean. Any phantom is a real defect → amber below 100.
+        ml_status = (
+            "green" if ml_pct == 100 else _status_from_pct(ml_pct, green=100, amber=90)
+        )
         if ml_pct == 100:
             detail_bits = ["every matured event fully linked"]
         else:
             detail_bits = [f"{ml.get('backed')}/{checkable} imminent blend sources linked"]
         if phantom:
             detail_bits.append(f"{phantom} phantom (in blend, no linked market)")
+        # L2-146 Item 3: surface how long the tile has held this state so a
+        # recovery to 100% (when Lane 1's matcher fix lands) is self-evident.
+        _apply_link_tile_state_change(detail_bits, ml_status, ml_pct)
         if raw_subtitle:
             detail_bits.append(raw_subtitle)
         tiles.append(
@@ -673,8 +772,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
                 "label": "Link rate",
                 "value": f"{ml_pct}%" if ml_pct is not None else "—",
                 "numeric": ml_pct,
-                # 100 = clean. Any phantom is a real defect → amber below 100.
-                "status": "green" if ml_pct == 100 else _status_from_pct(ml_pct, green=100, amber=90),
+                "status": ml_status,
                 "detail": " · ".join(detail_bits),
                 "href": "/admin/matching",
             }

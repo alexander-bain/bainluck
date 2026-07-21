@@ -17,6 +17,14 @@ const PROP_GROUPS: { key: string; label: string }[] = [
   { key: "round", label: "By round" }, // L2-89: golf round leaders + per-round Top-N
   { key: "primary", label: "Primaries" }, // L2-89: election primary/nominee contests
   { key: "seats", label: "Seat forecasts" }, // L2-89: election seat-count markets
+  // L2-146: cycling grand-tour props (Tour de France) — the stage winners and
+  // classification/jersey markets that hang off the GC winner-field leaderboard.
+  // These prop_types are set ONLY by event_cycling.py, so the labels can't leak
+  // into UFC/golf/election concepts. Without them all 24 TdF markets collapse
+  // into one undifferentiated "Other props" bucket.
+  { key: "stage", label: "Stages" },
+  { key: "team", label: "Team classification" },
+  { key: "jersey", label: "Jerseys" },
   { key: "occurrence", label: "Will it happen?" },
 ];
 

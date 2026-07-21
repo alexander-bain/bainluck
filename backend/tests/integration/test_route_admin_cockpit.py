@@ -14,12 +14,16 @@ import pytest
 
 from app.routes.admin_cockpit import (
     _AUTOPILOT_BEATS,
+    _LINK_TILE_STATE_KEY,
     _WAITING_FALLBACK,
+    _apply_link_tile_state_change,
     _autopilot_tile,
     _celery_health_tile,
     _feed_quality_empty_detail,
     _flow_sentinel_group,
+    _fmt_duration,
     _hours_since,
+    _link_tile_state_change,
     _red_sub_context,
     _status_from_pct,
     _waiting_on_you,
@@ -518,3 +522,112 @@ class TestCockpitEndpoint:
         assert ctx["golf"]["kind"] == "artifact"
         assert ctx["mlb"]["kind"] == "untracked"
         assert grid["context"][0]["kind"] == "untracked"
+
+
+class TestLinkTileStateChange:
+    """L2-146 Item 3: the link tile tracks its own status transitions in Redis so
+    a recovery to 100% (when Lane 1's matcher fix lands) is visible on the tile
+    without log archaeology. Scoped to admin_cockpit — never touches the matcher."""
+
+    def _stateful_redis(self):
+        """A MagicMock redis whose get/set share a dict so `since` persists
+        across calls (the whole point of the state-change tracker)."""
+        store: dict = {}
+        r = MagicMock()
+        r.get.side_effect = lambda key: store.get(key)
+        r.set.side_effect = lambda key, val, **kw: store.__setitem__(key, val)
+        return r, store
+
+    def test_fmt_duration_bands(self):
+        assert _fmt_duration(0) == "0s"
+        assert _fmt_duration(45) == "45s"
+        assert _fmt_duration(59) == "59s"
+        assert _fmt_duration(60) == "1m"
+        assert _fmt_duration(305) == "5m"
+        assert _fmt_duration(3600) == "1h00m"
+        assert _fmt_duration(7440) == "2h04m"
+        assert _fmt_duration(-10) == "0s"  # clamp
+
+    def test_first_observation_is_bootstrap(self):
+        r, store = self._stateful_redis()
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            change = _link_tile_state_change("red", 50)
+        assert change["bootstrap"] is True
+        assert change["prev"] is None
+        # It stamped the state so the NEXT observation has a baseline.
+        assert _LINK_TILE_STATE_KEY in store
+        stamped = json.loads(store[_LINK_TILE_STATE_KEY])
+        assert stamped["status"] == "red" and stamped["prev"] is None
+
+    def test_same_status_accrues_age(self):
+        r, store = self._stateful_redis()
+        # Seed a prior state 2h ago, same status.
+        store[_LINK_TILE_STATE_KEY] = json.dumps(
+            {"status": "red", "value": 50, "since": _iso_hours_ago(2), "prev": "green"}
+        )
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            change = _link_tile_state_change("red", 50)
+        assert change["bootstrap"] is False
+        assert change["prev"] == "green"
+        assert 7000 < change["age_s"] < 7400  # ~2h
+
+    def test_status_change_resets_since_and_records_prev(self):
+        r, store = self._stateful_redis()
+        store[_LINK_TILE_STATE_KEY] = json.dumps(
+            {"status": "red", "value": 50, "since": _iso_hours_ago(3), "prev": None}
+        )
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            change = _link_tile_state_change("green", 100)
+        assert change["bootstrap"] is False
+        assert change["prev"] == "red"
+        assert change["age_s"] == 0.0
+        stamped = json.loads(store[_LINK_TILE_STATE_KEY])
+        assert stamped["status"] == "green" and stamped["prev"] == "red"
+
+    def test_apply_recovery_message(self):
+        r, store = self._stateful_redis()
+        store[_LINK_TILE_STATE_KEY] = json.dumps(
+            {"status": "red", "value": 50, "since": _iso_hours_ago(1.5), "prev": None}
+        )
+        bits: list[str] = ["every matured event fully linked"]
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            _apply_link_tile_state_change(bits, "green", 100)
+        # Just recovered → age 0.
+        assert any("recovered" in b and "was red" in b for b in bits)
+
+    def test_apply_stable_message(self):
+        r, store = self._stateful_redis()
+        store[_LINK_TILE_STATE_KEY] = json.dumps(
+            {"status": "green", "value": 100, "since": _iso_hours_ago(5), "prev": "green"}
+        )
+        bits: list[str] = ["every matured event fully linked"]
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            _apply_link_tile_state_change(bits, "green", 100)
+        assert any("stable green for 5h" in b for b in bits)
+
+    def test_apply_degraded_message(self):
+        r, store = self._stateful_redis()
+        store[_LINK_TILE_STATE_KEY] = json.dumps(
+            {"status": "green", "value": 100, "since": _iso_hours_ago(0.5), "prev": "green"}
+        )
+        bits: list[str] = ["11/12 imminent blend sources linked"]
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            _apply_link_tile_state_change(bits, "amber", 91)
+        assert any("amber for" in b and "was green" in b for b in bits)
+
+    def test_apply_bootstrap_is_noop(self):
+        r, _ = self._stateful_redis()
+        bits: list[str] = ["every matured event fully linked"]
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            _apply_link_tile_state_change(bits, "green", 100)
+        assert bits == ["every matured event fully linked"]  # nothing appended
+
+    def test_redis_error_degrades_gracefully(self):
+        r = MagicMock()
+        r.get.side_effect = RuntimeError("redis down")
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            assert _link_tile_state_change("green", 100) is None
+        bits: list[str] = ["every matured event fully linked"]
+        with patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            _apply_link_tile_state_change(bits, "green", 100)
+        assert bits == ["every matured event fully linked"]
