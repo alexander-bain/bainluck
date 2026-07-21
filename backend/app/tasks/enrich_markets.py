@@ -530,7 +530,23 @@ async def enrich_market_hooks(limit: int = 50):
                 # swings without a schema migration.
                 from app.utils.hook_staleness import HOOK_PROB_METADATA_KEY
 
-                next_metadata = dict(market.market_metadata or {})
+                # #219E Item 3 (BAINLUCK-SZ): a jsonb-concat gotcha left ~369
+                # rows with ARRAY metadata ([null, {"shape": {...}}]) instead of
+                # an object — `dict()` on that raised "cannot convert dictionary
+                # update sequence element #0 to a sequence" and killed hook
+                # generation for the market. Normalize defensively: recover the
+                # first dict element from a malformed array (preserving the shape
+                # payload), else start fresh. Writing next_metadata below also
+                # self-heals the row back to object shape.
+                _md = market.market_metadata
+                if isinstance(_md, dict):
+                    next_metadata = dict(_md)
+                elif isinstance(_md, list):
+                    next_metadata = next(
+                        (dict(e) for e in _md if isinstance(e, dict)), {}
+                    )
+                else:
+                    next_metadata = {}
                 if leader_prob is not None:
                     next_metadata[HOOK_PROB_METADATA_KEY] = round(leader_prob, 4)
                 elif HOOK_PROB_METADATA_KEY in next_metadata:

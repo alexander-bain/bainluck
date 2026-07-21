@@ -165,8 +165,13 @@ async def _backfill_market_shapes(
                         """
                         UPDATE futures_markets
                         SET market_type = :shape,
-                            market_metadata = COALESCE(market_metadata, '{}'::jsonb)
-                                || jsonb_build_object('shape', CAST(:meta AS jsonb))
+                            market_metadata = (
+                                CASE
+                                    WHEN jsonb_typeof(market_metadata) = 'object'
+                                        THEN market_metadata
+                                    ELSE '{}'::jsonb
+                                END
+                            ) || jsonb_build_object('shape', CAST(:meta AS jsonb))
                         WHERE id = :id
                         """
                     ),
