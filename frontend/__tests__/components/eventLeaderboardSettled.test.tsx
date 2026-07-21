@@ -88,6 +88,49 @@ describe("EventLeaderboard settled mode (L2-81)", () => {
     expect(html).not.toContain("%");
   });
 
+  // L2-147 Item 1: the settled field must be fully visible — top ~10 rendered by
+  // default, the FULL field behind "Show all N" (never the old slice(0,20) that
+  // dropped the tail, and never fully collapsed). Alex: "I still can't see detail
+  // beyond the 5 golfers listed."
+  test("shows the top ~10 by default and the FULL field behind 'Show all N'", () => {
+    const field: EventConceptCompetitor[] = [
+      { name: "Scottie Scheffler", probability: 0.98, won: true },
+      ...Array.from({ length: 24 }, (_, i) => ({
+        name: `Contender ${String(i + 1).padStart(2, "0")}`,
+        probability: 0.5 - i * 0.01,
+      })),
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={field} label="Winner" settled domain="golf" />,
+    );
+    // Champion crowned once.
+    expect(html).toContain("Scottie Scheffler");
+    expect(html).toContain("Won");
+    // 25 total → "Show all 25" reveals the full field; the tail (e.g. #20) is in
+    // the DOM, not dropped by a hard cut.
+    expect(html).toContain("Show all 25");
+    expect(html).toContain("Contender 20");
+    // The head is visible by default (top of the "did not win" list).
+    expect(html).toContain("Contender 01");
+    // Settled honesty: no stale percentages anywhere.
+    expect(html).not.toContain("%");
+  });
+
+  test("golf champion hero carries a headshot avatar (initials fallback on SSR)", () => {
+    const field: EventConceptCompetitor[] = [
+      { name: "Rory McIlroy", probability: 0.99, won: true },
+      { name: "Jon Rahm", probability: 0.4 },
+    ];
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={field} label="Winner" settled domain="golf" />,
+    );
+    // EntityImage renders the initials chip on SSR (no network) — "RM" for the
+    // champion proves the avatar slot mounted for the golf person-field.
+    expect(html).toContain("RM");
+    expect(html).toContain("Won");
+    expect(html).not.toContain("%");
+  });
+
   test("empty field renders nothing", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard competitors={[]} label="Winner" settled />,

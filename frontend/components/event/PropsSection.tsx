@@ -36,6 +36,8 @@
 
 import QuantityGroup, { type QuantityRung } from "@/components/QuantityGroup";
 import { probabilityHeat } from "@/lib/probabilityColors";
+import { isPersonFieldDomain } from "@/lib/eventConceptDisplay";
+import EntityImage from "@/components/EntityImage";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -97,6 +99,15 @@ interface PropsSectionProps {
   /** Event status used to derive the state when `state` is omitted. */
   eventStatus?: string | null;
   title?: string;
+  /**
+   * L2-147 Item 2: event domain. For a person-field domain (golf, MMA, boxing,
+   * tennis) the named field cards carry a Wikipedia headshot next to each
+   * competitor — the leaderboard's avatar pattern extended to the props section
+   * (Alex: "I'm not seeing golfer images on the Props section"). Graceful:
+   * EntityImage falls back to an initials chip when no image resolves. Absent /
+   * non-person domains render text-only (unchanged).
+   */
+  domain?: string | null;
 }
 
 const STATE_META: Record<PropsState, { eyebrow: string; blurb: string }> = {
@@ -187,11 +198,15 @@ export default function PropsSection({
   state,
   eventStatus,
   title = "Props",
+  domain = null,
 }: PropsSectionProps) {
   if (!items || items.length === 0) return null;
 
   const activeState = state ?? deriveState(eventStatus);
   const meta = STATE_META[activeState];
+  // L2-147 Item 2: the field cards name real competitors → give them headshots
+  // for a person-field domain (golf today). Ladders ("Under 63.5") never do.
+  const withAvatars = isPersonFieldDomain(domain);
 
   // THE DIVERGENCE ranks biggest-mover-first; SCRIPT and WHAT HIT keep the
   // payload order (the endpoint already orders by prominence). Cards and rows
@@ -228,7 +243,7 @@ export default function PropsSection({
             item.kind === "ladder" ? (
               <LadderPropCard key={item.key} item={item} />
             ) : (
-              <FieldPropCard key={item.key} item={item} />
+              <FieldPropCard key={item.key} item={item} withAvatars={withAvatars} />
             ),
           )}
         </div>
@@ -389,7 +404,13 @@ function BinaryBarRow({ item, state }: { item: PropMark; state: PropsState }) {
 // recur). The favorite carries the opening → current arc.
 // ---------------------------------------------------------------------------
 
-function FieldPropCard({ item }: { item: PropMark }) {
+function FieldPropCard({
+  item,
+  withAvatars = false,
+}: {
+  item: PropMark;
+  withAvatars?: boolean;
+}) {
   const outs = (item.outcomes ?? []).filter(
     (o) => o.name && typeof o.probability === "number",
   );
@@ -409,6 +430,11 @@ function FieldPropCard({ item }: { item: PropMark }) {
           return (
             <div key={`${o.name}-${i}`}>
               <div className="flex items-center gap-2">
+                {withAvatars && o.name && (
+                  // L2-147 Item 2: golfer headshot (Wikipedia) next to the name —
+                  // graceful initials fallback when no image resolves.
+                  <EntityImage type="wikipedia" name={o.name} size={20} />
+                )}
                 <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
                   {o.name}
                 </span>

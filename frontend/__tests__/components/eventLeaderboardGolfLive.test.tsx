@@ -124,6 +124,29 @@ describe("EventLeaderboard golf live mode (L2-66)", () => {
     expect(html).not.toMatch(/[+-]\d{3,}/);
   });
 
+  // L2-147 Item 1: active golfers ranked past the 20-row limit used to be silently
+  // dropped in the golf-live branch (no expander, unlike the winner-field branch).
+  // The full field must now be reachable behind "Show all N".
+  test("reveals active golfers past the limit behind 'Show all N' (no hard cut)", () => {
+    const bigField: EventConceptCompetitor[] = Array.from({ length: 25 }, (_, i) => ({
+      name: `Golfer ${String(i + 1).padStart(2, "0")}`,
+      probability: 0.5 - i * 0.01,
+      position: `${i + 1}`,
+      score_to_par: -20 + i,
+      thru: "F",
+      current_round: 4,
+    }));
+    const html = renderToStaticMarkup(
+      <EventLeaderboard competitors={bigField} label="Leaderboard" live asOf="x" />,
+    );
+    // 25 active golfers, none cut → the "Show all 25" expander must appear.
+    expect(html).toContain("Show all 25");
+    // A golfer ranked past the 20-row default is still present in the DOM (inside
+    // the expander), not dropped — the wall is gone.
+    expect(html).toContain("Golfer 24");
+    expect(html).not.toContain("Missed cut");
+  });
+
   test("falls back to the standard winner-field render when not golf-live", () => {
     const html = renderToStaticMarkup(
       <EventLeaderboard

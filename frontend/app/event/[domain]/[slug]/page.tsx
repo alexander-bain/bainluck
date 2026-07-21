@@ -18,6 +18,7 @@ import {
   marketsTracked,
   renderedFinishColumns,
   headlinerMatchup,
+  settledChampion,
 } from "@/lib/eventConceptDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -355,9 +356,15 @@ export default function EventConceptPage() {
       />
 
       {hasPropsScript ? (
-        <PropsSection items={propMarks} eventStatus={event.status} />
+        <PropsSection
+          items={propMarks}
+          eventStatus={event.status}
+          domain={event.domain}
+        />
       ) : (
-        <EventProps items={propChildren} />
+        // L2-147 Item 4: consume the backend-owned section split when present
+        // (GC / Stages / Jerseys …); prop_type grouping otherwise.
+        <EventProps items={propChildren} sections={data.sections} />
       )}
 
       {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,
@@ -372,6 +379,10 @@ export default function EventConceptPage() {
           domain={event.domain}
           startDate={event.start_date}
           endDate={event.end_date}
+          // L2-147 Item 3: highlight the champion's line in the completed journey
+          // (leader color + first in the legend). Falls back to the default top
+          // lines when the winner can't be named or matched (settled-means-settled).
+          championName={settledChampion(competitors)?.name ?? null}
         />
       )}
     </div>

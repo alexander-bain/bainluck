@@ -31,6 +31,19 @@ interface SettledPathChartProps {
   /** L2-135: tournament start/end — golf's settled path gets R1..R4 markers. */
   startDate?: string | null;
   endDate?: string | null;
+  /** L2-147 Item 3: the champion's name. When it matches an outcome, that line is
+   *  drawn first (leader color) and guaranteed into the visible set — the settled
+   *  journey highlights how the winner got there, not an arbitrary top-5. */
+  championName?: string | null;
+}
+
+/** Last non-null probability of a series (its "current"/final value). */
+function lastProbOf(o: FuturesOutcomeHistory): number {
+  for (let i = o.history.length - 1; i >= 0; i--) {
+    const p = o.history[i]?.probability;
+    if (p != null) return p;
+  }
+  return -1;
 }
 
 export default function SettledPathChart({
@@ -38,6 +51,7 @@ export default function SettledPathChart({
   domain,
   startDate,
   endDate,
+  championName,
 }: SettledPathChartProps) {
   // Widest window — a settled event's path spans the whole run.
   const { data, isLoading } = useSWR(
@@ -66,6 +80,25 @@ export default function SettledPathChart({
     [outcomes, range, startMs],
   );
 
+  // L2-147 Item 3: reorder so the champion's line is FIRST (leader color) and
+  // pick the visible set = champion + the next strongest lines. FuturesChart
+  // filters by the selected ids preserving `plotted` order, so the winner leads
+  // the legend and can never be pushed out by an arbitrary top-5 slice. When the
+  // winner can't be named/matched, plotted === windowed and the default applies.
+  const { plotted, selected } = useMemo(() => {
+    const target = championName?.trim().toLowerCase();
+    const champ = target
+      ? windowed.find((o) => (o.name ?? "").trim().toLowerCase() === target)
+      : undefined;
+    if (!champ) return { plotted: windowed, selected: undefined as Set<number> | undefined };
+    const rest = windowed
+      .filter((o) => o.outcome_id !== champ.outcome_id)
+      .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+    const plotted = [champ, ...rest];
+    const selected = new Set(plotted.slice(0, 6).map((o) => o.outcome_id));
+    return { plotted, selected };
+  }, [windowed, championName]);
+
   if (!isLoading && !hasHistory) return null;
 
   // For a settled event, cap markers at the event end (now-cap doesn't apply).
@@ -86,7 +119,8 @@ export default function SettledPathChart({
         </div>
       ) : (
         <FuturesChart
-          historyData={windowed}
+          historyData={plotted}
+          selectedOutcomes={selected}
           fixedYAxis
           stepInterpolation
           showAxes

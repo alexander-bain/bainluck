@@ -144,6 +144,10 @@ function fmtThru(t: string | null | undefined): string {
 
 const CUT_STATUSES = new Set(["cut", "mc", "wd", "w/d", "dq", "dnf", "dns", "mdf"]);
 
+/** L2-147 Item 1: settled "did not win" rows shown before the "Show all N"
+ *  expander reveals the full field — a default view of ~10, never a hard cut. */
+const SETTLED_HEAD = 10;
+
 /** L2-68: a player who missed the cut / withdrew / was DQ'd — DataGolf reports
  *  these as a status string in `position`. They must NOT sort mid-field by a stale
  *  score; they sink into a collapsed "Missed cut" group. Honest — only real status
@@ -391,18 +395,42 @@ export default function EventLeaderboard({
     const ranked = fieldOrder(competitors);
     if (ranked.length === 0) return null;
     const champion = settledChampion(competitors);
-    const others = ranked.filter((c) => c !== champion).slice(0, limit);
+    // L2-147 Item 1: never drop the tail. The rest of the field shows its top
+    // ~10 by default and the FULL field lives behind a "Show all N" expander —
+    // the L2-130 winner-field pattern applied to the settled surface (Alex: "I
+    // still can't see detail beyond the 5 golfers listed"). No stale % (L2-81).
+    const others = ranked.filter((c) => c !== champion);
+    const othersHead = others.slice(0, SETTLED_HEAD);
+    const othersTail = others.slice(SETTLED_HEAD);
+    const settledRow = (c: EventConceptCompetitor, rank: number) => (
+      <div key={`${c.name}-${rank}`} className="flex items-center gap-3 py-2 opacity-70">
+        <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
+          {rank}
+        </span>
+        {golfAvatar && !c.team && <PlayerAvatar name={c.name} size={20} />}
+        {c.team && <TeamCrest side={c.team} size={20} />}
+        <span className="flex-1 min-w-0 truncate text-sm text-text-secondary">
+          {c.name}
+        </span>
+      </div>
+    );
     return (
       <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
         <h2 className="text-title-3 font-semibold text-text-primary mb-4">
           {champion ? "Final result" : label || "Final standings"}
         </h2>
         {champion ? (
+          // L2-147 Item 3 (WHAT HIT): the champion hero — trophy + headshot (golf)
+          // / crest (team) + name + "Won" chip. Image degrades to an initials chip.
           <div className="flex items-center gap-3 py-1">
             <span aria-hidden className="text-xl shrink-0">
               🏆
             </span>
-            {champion.team && <TeamCrest side={champion.team} size={28} />}
+            {champion.team ? (
+              <TeamCrest side={champion.team} size={28} />
+            ) : (
+              golfAvatar && <PlayerAvatar name={champion.name} size={28} />
+            )}
             <span className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
               {champion.name}
             </span>
@@ -414,26 +442,24 @@ export default function EventLeaderboard({
           <p className="text-sm text-text-secondary">Awaiting the final result.</p>
         )}
         {others.length > 0 && (
-          <details className="mt-3">
-            <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+          <div className="mt-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-1">
               {champion ? `Did not win (${others.length})` : `Field (${others.length})`}
-            </summary>
-            <div className="divide-y divide-surface-border/40 mt-2">
-              {others.map((c, i) => (
-                <div
-                  key={`${c.name}-${i}`}
-                  className="flex items-center gap-3 py-2 opacity-70"
-                >
-                  <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="flex-1 min-w-0 truncate text-sm text-text-secondary">
-                    {c.name}
-                  </span>
-                </div>
-              ))}
             </div>
-          </details>
+            <div className="divide-y divide-surface-border/40">
+              {othersHead.map((c, i) => settledRow(c, i + 1))}
+            </div>
+            {othersTail.length > 0 && (
+              <details className="mt-2">
+                <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+                  Show all {competitors.length}
+                </summary>
+                <div className="divide-y divide-surface-border/40 mt-2">
+                  {othersTail.map((c, i) => settledRow(c, othersHead.length + i + 1))}
+                </div>
+              </details>
+            )}
+          </div>
         )}
       </section>
     );
@@ -455,7 +481,12 @@ export default function EventLeaderboard({
       if (sa !== sb) return sa - sb;
       return (b.probability ?? -1) - (a.probability ?? -1);
     });
-    const active = sorted.filter((c) => !isCutStatus(c.position)).slice(0, limit);
+    const activeAll = sorted.filter((c) => !isCutStatus(c.position));
+    const active = activeAll.slice(0, limit);
+    // L2-147 Item 1: active golfers ranked past `limit` were silently dropped in
+    // this branch (no expander, unlike the winner-field branch). Reveal the full
+    // field behind "Show all N" — never a hard cut on the live leaderboard.
+    const activeRest = activeAll.slice(limit);
     const cutPlayers = sorted.filter((c) => isCutStatus(c.position));
     if (active.length === 0 && cutPlayers.length === 0) return null;
 
@@ -493,6 +524,24 @@ export default function EventLeaderboard({
                 />
               ))}
             </div>
+            {activeRest.length > 0 && (
+              <details className="mt-3">
+                <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
+                  Show all {activeAll.length}
+                </summary>
+                <div className="divide-y divide-surface-border/40 mt-2">
+                  {activeRest.map((c, i) => (
+                    <GolfRow
+                      key={`rest-${c.name}-${i}`}
+                      c={c}
+                      index={active.length + i}
+                      avatar={golfAvatar}
+                      finishColumns={finishColumns}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
             {cutPlayers.length > 0 && (
               <details className="mt-4">
                 <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">

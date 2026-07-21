@@ -8,7 +8,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import EventProps from "../../components/event/EventProps";
-import type { EventConceptChild } from "../../lib/types";
+import type { EventConceptChild, EventConceptSection } from "../../lib/types";
 
 function cyclingChild(
   market_id: number,
@@ -64,5 +64,59 @@ describe("EventProps — cycling grand-tour grouping (L2-146 Item 1)", () => {
     const h = renderToStaticMarkup(<EventProps items={withUnknown} />);
     expect(h).toContain("Other props");
     expect(h).toContain("Mystery Market");
+  });
+});
+
+// L2-147 Item 4: the backend emits a structured `sections` split (market_ids per
+// section). When present, EventProps groups children by the section that claims
+// their id — the backend owns the split — instead of re-deriving from prop_type.
+describe("EventProps — data.sections consumption (L2-147 Item 4)", () => {
+  const children: EventConceptChild[] = [
+    cyclingChild(101, "Tour de France: Stage 1 Winner", "stage"),
+    cyclingChild(102, "Tour de France: Stage 2 Winner", "stage"),
+    cyclingChild(103, "Tour de France: Green Jersey", "jersey"),
+  ];
+  const sections: EventConceptSection[] = [
+    { type: "gc", label: "General Classification", market_ids: [999] },
+    { type: "stages", label: "Daily Stages", market_ids: [101, 102] },
+    { type: "jerseys", label: "Classifications & Jerseys", market_ids: [103] },
+  ];
+
+  test("groups by backend section label (not the prop_type label) when sections claim the children", () => {
+    const html = renderToStaticMarkup(
+      <EventProps items={children} sections={sections} />,
+    );
+    // Backend-owned labels win over EventProps' prop_type labels. (renderToStatic
+    // escapes "&" → "&amp;", so match the distinctive stem.)
+    expect(html).toContain("Daily Stages");
+    expect(html).toContain("Classifications &amp; Jerseys");
+    // The prop_type "Stages"/"Jerseys" labels are NOT used when sections drive it.
+    expect(html).not.toContain("Team classification");
+    // Empty sections (GC claims no rendered child) are dropped, not shown empty.
+    expect(html).not.toContain("General Classification");
+    // Every market still renders.
+    expect(html).toContain("Tour de France: Stage 1 Winner");
+    expect(html).toContain("Tour de France: Green Jersey");
+  });
+
+  test("children not claimed by any section fall back to prop_type grouping (additive, never lossy)", () => {
+    const withUnclaimed = [
+      ...children,
+      cyclingChild(200, "Tour de France Team Winner", "team"),
+    ];
+    const html = renderToStaticMarkup(
+      <EventProps items={withUnclaimed} sections={sections} />,
+    );
+    expect(html).toContain("Daily Stages"); // section-driven
+    expect(html).toContain("Team classification"); // prop_type fallback for #200
+    expect(html).toContain("Tour de France Team Winner");
+  });
+
+  test("absent/empty sections keep the prop_type grouping (unchanged behavior)", () => {
+    const html = renderToStaticMarkup(
+      <EventProps items={children} sections={[]} />,
+    );
+    expect(html).toContain("Stages"); // prop_type label
+    expect(html).toContain("Jerseys");
   });
 });

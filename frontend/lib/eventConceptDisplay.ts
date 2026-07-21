@@ -20,6 +20,17 @@ export function statusLabel(status: string): string {
   }
 }
 
+/** L2-147: domains whose winner-field / named-field rows are individual PEOPLE, so
+ *  a Wikipedia headshot is meaningful (the leaderboard already opts golf in; this
+ *  extends the same signal to the props section). Team/region/numeric fields are
+ *  excluded — no headshot for "United States" or "Under 63.5". */
+const PERSON_FIELD_DOMAINS = new Set(["golf", "mma", "boxing", "tennis"]);
+
+/** True when a domain's competitors are individual people (headshot-worthy). */
+export function isPersonFieldDomain(domain?: string | null): boolean {
+  return domain != null && PERSON_FIELD_DOMAINS.has(domain.toLowerCase());
+}
+
 /** Competitors sorted by probability desc (the winner-field leaderboard order). */
 export function fieldOrder(
   competitors: EventConceptCompetitor[],

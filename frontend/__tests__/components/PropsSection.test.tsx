@@ -125,6 +125,43 @@ describe("PropsSection rendering", () => {
     expect(html).not.toContain("→"); // no divergence arrow
   });
 
+  // L2-147 Item 2: a named field card (e.g. "Top American Golfer") carries a
+  // Wikipedia headshot next to each competitor for a person-field domain (golf) —
+  // Alex: "I'm not seeing golfer images on the Props section." SSR renders the
+  // initials chip (no network); "SS" for Scottie Scheffler proves the avatar slot
+  // mounted (his name has no "SS" substring).
+  const golferField: PropMark[] = [
+    {
+      key: 1,
+      label: "Top American Golfer",
+      question: "Top American Golfer",
+      kind: "field",
+      pregame_mark: null,
+      current: null,
+      outcomes: [
+        { name: "Scottie Scheffler", probability: 0.42 },
+        { name: "Xander Schauffele", probability: 0.18 },
+      ],
+    },
+  ];
+
+  test("field card carries golfer headshots for a person-field domain (golf)", () => {
+    const html = renderToStaticMarkup(
+      <PropsSection items={golferField} state="divergence" domain="golf" />,
+    );
+    expect(html).toContain("Scottie Scheffler"); // name still shown
+    expect(html).toContain("SS"); // initials avatar (SSR fallback) mounted
+    expect(html).toContain("XS"); // Xander Schauffele avatar
+  });
+
+  test("no headshots without a person-field domain (unchanged text-only render)", () => {
+    const html = renderToStaticMarkup(
+      <PropsSection items={golferField} state="divergence" />,
+    );
+    expect(html).toContain("Scottie Scheffler");
+    expect(html).not.toContain("SS"); // no avatar chip when domain is absent
+  });
+
   test("empty items render nothing", () => {
     expect(renderToStaticMarkup(<PropsSection items={[]} />)).toBe("");
   });
