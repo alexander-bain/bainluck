@@ -29,7 +29,6 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
-import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";

@@ -1,11 +1,13 @@
 # THE CHART CENSUS
 
-**Queue:** L2-148 Item 2 · **Produced:** 2026-07-21 · **Scope:** fact-finding only, ZERO chart code changes.
+**Queue:** L2-148 Item 2 (produced) · L2-149 (field-kernel consolidation applied) · **Produced:** 2026-07-21.
 **Purpose:** the "our side" half of the win-prob chart competitive audit ("Kalshi and ESPN are meaningfully better at data viz"). Step one is knowing exactly what we have before any redesign or taste call.
 
+> **L2-149 UPDATE (2026-07-21):** The field multi-line kernel has been consolidated onto **FuturesChart** (Part 2A finding executed). The two competing recharts engines — **EvolutionChart** and **TournamentChart** — are **deleted**. EvolutionView now renders FuturesChart directly (windowing/combined/highlight/round-markers preserved, colors shared with the leaderboard via a `outcomeColors` map); TournamentChart was already dead code (imported nowhere since the #883 refactor). FuturesChart's `fixedYAxis` is now the **NON-OPTIONAL default** (opt-out), so every field/futures surface honors principle 2. Implementation count **15 → 13**. Sections below are annotated with `[L2-149]` where the state changed; the original descriptive text is retained for history.
+
 All paths under `frontend/`. Two rendering technologies coexist:
-- **recharts** (`recharts@^2.12.0`, the only chart lib in `package.json`) — OddsChart, ScoreDifferentialChart, EvolutionChart, TournamentChart.
-- **hand-rolled SVG** (`<path>`/`<polyline>` + manual scale math) — FuturesChart and everything else.
+- **recharts** (`recharts@^2.12.0`, the only chart lib in `package.json`) — OddsChart, ScoreDifferentialChart. `[L2-149]` EvolutionChart + TournamentChart **removed** — the recharts family is now the two single-game event charts only.
+- **hand-rolled SVG** (`<path>`/`<polyline>` + manual scale math) — FuturesChart (the sole field kernel) and everything else.
 No d3. One `<canvas>` (`components/weather/MapCanvas.tsx`) is a geographic map, NOT a data chart, so it is out of scope.
 
 ## The four standing chart principles (the audit rubric)
@@ -22,13 +24,13 @@ No d3. One `<canvas>` (`components/weather/MapCanvas.tsx`) is a geographic map, 
 The single most-reused real chart; the backbone of every event-concept chart via 4 wrappers.
 - **Surfaces:** `app/futures/[id]/page.tsx` (futures detail hero), `app/categories/golf/page.tsx`, and — via the wrappers below — the event-concept page `app/event/[domain]/[slug]/page.tsx` (SettledPathChart, RaceToTitleChart, WinnerEvolutionChart, TwoSidedTimeline).
 - **Props/variants** (lines 39–63): `mini`, `height`, `showLegend`, `showAxes`, `goldTheme`, `greenTheme` (golf/Augusta), `stepInterpolation`, `fixedYAxis`, `timeMarkers` (golf R1–R4 boundaries), `selectedOutcomes`, `onToggleOutcome`.
-- **Axis:** Y **auto-scales by default** (`maxProb = fixedYAxis ? 1 : Math.min(1, maxProb * 1.1)`, line 145) — only honors fixed-0–100 when the caller passes `fixedYAxis` (every event-concept wrapper does). X is time-based linear. Gridlines at `[0,0.25,0.5,0.75,1]`.
-- **Color:** three index-based palettes — `DEFAULT_COLORS` (blue/red/green/…, line 6), `GOLD_COLORS` (leader gold + grays), `GREEN_COLORS` (Augusta green + grays). All lines equal weight — **no faint-source treatment**.
-- **Smoothing:** ✅ **NONE.** Raw `M/L` segments (line 359) or explicit step (`H…V…`, lines 350–357 when `stepInterpolation`).
-- **Chrome:** dashed gridlines `#e5e7eb`, ≤5 x-ticks, flex-wrap legend, crosshair hover tooltip. Minimal.
-- **Line cap:** `historyData.slice(0, 5)` when nothing is selected (line 89); "Showing top 5 outcomes" note.
+- **Axis:** `[L2-149]` Y is now **fixed 0–100 by default** (`fixedYAxis = true`, opt-out via `fixedYAxis={false}`; `maxProb = fixedYAxis ? 1 : Math.min(1, maxProb * 1.1)`). X is time-based linear. Gridlines at `[0,0.25,0.5,0.75,1]`.
+- **Color:** three index-based palettes — `DEFAULT_COLORS` (blue/red/green/…), `GOLD_COLORS` (leader gold + grays), `GREEN_COLORS` (Augusta green + grays). `[L2-149]` plus an optional `outcomeColors` map (per-outcome override keyed by `outcome_id`) so a caller can keep lines in sync with an external leaderboard; eliminated contenders draw thin + dashed + faded grey. All contender lines still equal weight (no blend-hero — a field chart has no single blend line; that treatment lives in OddsChart).
+- **Smoothing:** ✅ **NONE.** Raw `M/L` segments or explicit step (`H…V…` when `stepInterpolation`).
+- **Chrome:** dashed gridlines `#e5e7eb`, ≤5 x-ticks, flex-wrap legend, crosshair hover tooltip. `[L2-149]` optional round/state `timeMarkers`, hover-highlight dimming (`highlightedOutcomeId`/`onHoverOutcome`), and an opt-in dashed "Combined" summed line — all migrated from EvolutionChart. Still minimal.
+- **Line cap:** `historyData.slice(0, 5)` when nothing is selected; "Showing top 5 outcomes" note.
 - **Live:** none itself — parents feed SWR data. **Mobile:** `overflow-x-auto`, `min-w-[600px]`, mouse-only crosshair.
-- **Principle scorecard:** smoothing ✅ · fixed-axis ⚠️ (opt-in, default auto) · faint-blend ❌ (all equal) · minimal chrome ✅.
+- **Principle scorecard `[L2-149]`:** smoothing ✅ · fixed-axis ✅ (now default-on) · faint-blend n/a (field kernel, no single blend) · minimal chrome ✅. **This is the sole field multi-line engine.**
 
 **Wrappers (ride on FuturesChart — NOT distinct implementations):**
 - `components/event/SettledPathChart.tsx` — settled path; `fixedYAxis stepInterpolation`, greenTheme for golf, `golfRoundMarkers`, champion-first ordering, `slice(0, 6)` (line 98). Uses `lib/chartWindow.ts` + `ChartRangeChips`.
@@ -69,21 +71,12 @@ The single most-reused real chart; the backbone of every event-concept chart via
 - **Color:** `SOURCE_COLORS` (lines 5–12) — near-copy of OddsChart's config with a different betting color (`#374151` vs `#0f172a`).
 - **Smoothing:** ✅ NONE — `<polyline>` (line 123). **Chrome:** grid, time axis, rotated y-label, inline legend.
 
-### 6. `components/EvolutionChart.tsx` — futures evolution (recharts LineChart)
-- **Surfaces:** via `components/EvolutionView.tsx` + `components/EvolutionLeaderboard.tsx` → `app/futures/[id]/page.tsx`, `app/sport/[sport]/[league]/page.tsx` (+ `[slug]`), `app/categories/golf/page.tsx`, `app/categories/golf/tournaments/[slug]/page.tsx`.
-- **Axis:** Y **auto-scales with padding** (`domain = [max(0,min-pad), min(1,max+pad)]`, `pad = max(0.02,(max-min)*0.1)`, line 142) — NOT fixed 0–100. X time-based, per-day ticks. Ranges: full/tournament/7d/24h/today.
-- **Color:** `EVOLUTION_COLORS` (line 21, 10-color white-bg palette); eliminated outcomes `#b5b9c3` dashed; combined line `#111827` dashed.
-- **Smoothing:** ❌ **VIOLATES** — `<Line type="monotone">` (379/395).
-- **Chrome:** horizontal-only grid, round-boundary ReferenceLines, hover dims non-hovered to 0.2, rich tooltip.
-- **Live:** `EvolutionView` SWR `refreshInterval: 60_000`, `keepPreviousData`. **Line cap:** auto-selects top `defaultTopN` (default 8).
+### 6. `components/EvolutionChart.tsx` — futures evolution (recharts LineChart) — **`[L2-149]` DELETED**
+- **Status:** removed. Its sole consumer `EvolutionView.tsx` now renders **FuturesChart** directly. Behavior preserved: time-range windowing (moved into EvolutionView's `windowByTimeRange`), the "Combined" summed line, hover-highlight dimming, round-boundary markers (→ FuturesChart `timeMarkers`), and eliminated treatment. Colors now come from a shared `outcomeColors` map so the chart lines and the leaderboard dots match exactly.
+- **Why it violated:** was recharts `<Line type="monotone">` (smoothing ❌) on an **auto-scaled + padded** Y axis (fixed-0–100 ❌). Both violations are gone: FuturesChart draws raw segments on a fixed 0–100 axis. *(Historical: surfaced on `app/futures/[id]`, `app/sport/[sport]/[league]` (+ `[slug]`), `app/categories/golf` + `/tournaments/[slug]`.)*
 
-### 7. `components/TournamentChart.tsx` — tournament probability timeline (recharts, ~27KB)
-- **Surfaces:** `app/futures/[id]/page.tsx`.
-- **Type:** `ComposedChart` multi-line + a "Field" aggregate line + leaderboard table + highlight panel.
-- **Axis:** Y `domain={[0, "auto"]}` (line 420) — auto-scaled, NOT fixed 0–100. X time-based `interval="preserveStartEnd"`.
-- **Color:** `POSITION_COLORS` (line 24, 20-color palette), `FIELD_COLOR="#6b7280"`, cross-source `SOURCE_DISPLAY`. Leader `strokeWidth 2.5`; non-selected dimmed to opacity 0.12; field line dashed.
-- **Smoothing:** ❌ **VIOLATES** — `<Line type="monotone">` (450/464).
-- **Line cap:** `TopFilter = 5|10|"all"`; `slice(0,3)` default selection, `slice(0,topN)`, `slice(0,15)` highlight. **Live:** SWR.
+### 7. `components/TournamentChart.tsx` — tournament probability timeline (recharts) — **`[L2-149]` DELETED (was already dead code)**
+- **Status:** removed. Imported **nowhere** — the futures-detail hero replaced it with FuturesChart in the #883 refactor (only a past-tense comment referenced it). Deleting it removes one recharts `ComposedChart` engine at zero surface risk. *(Historical: `<Line type="monotone">` smoothing ❌ on `domain={[0,"auto"]}` fixed-0–100 ❌; carried its own leaderboard table + cross-source panel.)*
 
 ### 8. `components/MarketMap.tsx` (+ `MarketMapSection.tsx`) — distribution rail (hand-rolled)
 - **Surfaces:** `MarketMapSection` → `app/events/[id]/page.tsx`.
@@ -128,13 +121,13 @@ The single most-reused real chart; the backbone of every event-concept chart via
 
 ## PART 2 — DUPLICATION MAP
 
-**A. THREE separate multi-line time-series engines (the "field" kernel), grown apart — the core drift:**
-| Engine | Tech | Smoothing | Y axis |
-|--------|------|-----------|--------|
-| `FuturesChart` | hand-rolled SVG | NONE ✅ | `fixedYAxis` opt-in (default auto) |
-| `EvolutionChart` | recharts | `monotone` ❌ | auto-scaled + padding |
-| `TournamentChart` | recharts | `monotone` ❌ | `[0,"auto"]` |
-Same job (top-N probability lines over time), three axis philosophies, two smoothing behaviors. FuturesChart is the only one that can honor no-smoothing + fixed-axis; the two recharts engines predate/diverge from it. **This is exactly the drift class that hid the `slice(0,5)` bug** — three engines each re-deriving line selection and axis independently.
+**A. `[L2-149]` RESOLVED — ONE field engine now.** Was three separate multi-line time-series engines grown apart (the core drift); consolidated onto FuturesChart.
+| Engine | Tech | Smoothing | Y axis | Status |
+|--------|------|-----------|--------|--------|
+| `FuturesChart` | hand-rolled SVG | NONE ✅ | **fixed 0–100 default** ✅ | **the sole field kernel** |
+| `EvolutionChart` | recharts | `monotone` ❌ | auto-scaled + padding | **DELETED** (EvolutionView → FuturesChart) |
+| `TournamentChart` | recharts | `monotone` ❌ | `[0,"auto"]` | **DELETED** (was dead code) |
+Same job (top-N probability lines over time) is now served by one implementation that honors no-smoothing + fixed-axis. **This closes the drift class that hid the `slice(0,5)` bug** — line selection and axis are derived in exactly one place.
 
 **B. OddsChart ↔ ScoreDifferentialChart — near-copy scaffolding.** Both replicate minute-bucket `ensurePoint`/`toMinuteKey`, gap-fill loop, forward-fill, per-source time-range `useMemo` filters, the vertical writing-mode team-label rail, period-boundary dedup, and the `sharedTicks`/`chartStartTime`/`chartEndTime` contract. Intentionally coupled (shared x-axis) but copy-pasted rather than sharing helpers.
 
@@ -158,20 +151,20 @@ Same shape (min/max normalize → path), four copies, one of which smooths again
 
 ## PART 3 — COUNT: IMPLEMENTATIONS vs KERNELS
 
-**Distinct chart implementations: 15** (excluding the 5 FuturesChart wrappers, the golfLive leaderboard table, and pure bar widgets):
+**`[L2-149]` Distinct chart implementations: 13** (was 15; EvolutionChart + TournamentChart deleted). Excludes the 5 FuturesChart wrappers, the golfLive leaderboard table, and pure bar widgets:
 
-1. FuturesChart · 2. OddsChart · 3. ScoreDifferentialChart · 4. CalibrationChart · 5. DisagreementChart · 6. EvolutionChart · 7. TournamentChart · 8. MarketMap(+Section) · 9. ThresholdSparkline · 10. TotalPointsSpectrum · 11. weather/DistributionPanel · 12. weather/Sparkline · 13. event/Sparkline · 14. story/CaseStudyChart · 15. FuturesHero inline sparkline.
+1. FuturesChart · 2. OddsChart · 3. ScoreDifferentialChart · 4. CalibrationChart · 5. DisagreementChart · 6. MarketMap(+Section) · 7. ThresholdSparkline · 8. TotalPointsSpectrum · 9. weather/DistributionPanel · 10. weather/Sparkline · 11. event/Sparkline · 12. story/CaseStudyChart · 13. FuturesHero inline sparkline.
 
-**15 distinct implementations → 4 conceptual kernels:**
+**13 distinct implementations → 4 conceptual kernels:**
 
 | Kernel | Implementations | Redundancy |
 |--------|-----------------|-----------|
 | **(a) Duel 2-line** | OddsChart (home vs away across 50%), TwoSidedTimeline (FuturesChart `slice(0,2)`) | 2 |
-| **(b) Field multi-line** | FuturesChart, EvolutionChart, TournamentChart (+ wrappers RaceToTitle/WinnerEvolution/SettledPath ride FuturesChart) | **3 full engines** |
+| **(b) Field multi-line** | **FuturesChart** (+ wrappers RaceToTitle/WinnerEvolution/SettledPath, and EvolutionView, all ride FuturesChart) | **`[L2-149]` 1 engine** (was 3) |
 | **(c) Single-market line** | DisagreementChart, ScoreDifferentialChart (spread-over-time), story/CaseStudyChart (line), event/Sparkline, weather/Sparkline, FuturesHero inline | **6 copies** |
 | **(d) Distribution** | CalibrationChart (reliability), MarketMap (density rail), ThresholdSparkline (threshold dots), TotalPointsSpectrum (scoring ladder), weather/DistributionPanel (histogram), story/CaseStudyChart (bars) | **6 unrelated renderers** |
 
-So **15 implementations collapse to 4 kernels**, and within kernels the redundancy is stark: (b) has 3 competing engines, (c) has 6 copy-pasted line/sparkline renderers, (d) has 6 unrelated distribution renderers.
+So **13 implementations collapse to 4 kernels**. `[L2-149]` closed kernel (b)'s 3-engine drift (now 1). Remaining redundancy: (c) has 6 copy-pasted line/sparkline renderers, (d) has 6 unrelated distribution renderers — candidates for a future pass.
 
 ---
 
@@ -179,15 +172,15 @@ So **15 implementations collapse to 4 kernels**, and within kernels the redundan
 
 | Principle | HONORED | VIOLATED |
 |-----------|---------|----------|
-| **NO smoothing** | FuturesChart (+all wrappers), CalibrationChart, DisagreementChart, event/Sparkline, CaseStudyChart, FuturesHero | **OddsChart, ScoreDifferentialChart, EvolutionChart, TournamentChart** (all recharts `type="monotone"`) + **weather/Sparkline** (cubic bezier) |
-| **Fixed 0–100 Y** | OddsChart (`[0,100]`), CalibrationChart (both axes), DisagreementChart, all FuturesChart wrappers (`fixedYAxis`) | **EvolutionChart** (padded auto), **TournamentChart** (`[0,"auto"]`), bare **FuturesChart** default. (ScoreDiff is intentionally symmetric-around-0 — a spread, not a probability, so out of rubric.) |
-| **Prominent blend + faint sources** | **ONLY OddsChart Mode A** (`strokeWidth 3` blend vs `strokeWidth 1, opacity 0.28` sources) | FuturesChart, EvolutionChart, TournamentChart, DisagreementChart all draw lines at comparable weight |
+| **NO smoothing** | FuturesChart (+all wrappers, +EvolutionView), CalibrationChart, DisagreementChart, event/Sparkline, CaseStudyChart, FuturesHero | **OddsChart, ScoreDifferentialChart** (recharts `type="monotone"`) + **weather/Sparkline** (cubic bezier). `[L2-149]` EvolutionChart + TournamentChart removed from this list — deleted. |
+| **Fixed 0–100 Y** | OddsChart (`[0,100]`), CalibrationChart (both axes), DisagreementChart, **FuturesChart (now default) + all its wrappers + EvolutionView** | (ScoreDiff is intentionally symmetric-around-0 — a spread, not a probability, so out of rubric.) `[L2-149]` the three prior offenders (EvolutionChart, TournamentChart, bare-FuturesChart default) are all resolved. |
+| **Prominent blend + faint sources** | **ONLY OddsChart Mode A** (`strokeWidth 3` blend vs `strokeWidth 1, opacity 0.28` sources) | FuturesChart, DisagreementChart draw contender lines at comparable weight. *(A field chart has no single blend line, so this principle is really an OddsChart/duel-kernel concern — out of scope for the field kernel.)* |
 | **Kalshi-minimal chrome** | FuturesChart, Calibration, Disagreement, sparklines | OddsChart / ScoreDiff carry the heaviest chrome (period lines, lead-change diamonds, dual legends) |
 
 ### Headline findings for the program (fact, not recommendation)
-1. **The recharts family violates no-smoothing uniformly.** All 4 recharts charts (OddsChart, ScoreDiff, EvolutionChart, TournamentChart) use `type="monotone"`; the hand-rolled family does not. Smoothing correlates 1:1 with the rendering tech.
-2. **The blend-hero treatment exists in exactly one place** (OddsChart Mode A). Every futures/field chart draws all lines at equal weight — the single most visible gap vs "prominent blend."
-3. **Fixed-axis is opt-in in the most-reused engine.** FuturesChart defaults to auto-scale; only the callers that remember to pass `fixedYAxis` honor principle 2. The two recharts field engines can't honor it at all today.
-4. **Kernel (b) has 3 engines.** Consolidating the field multi-line kernel onto one implementation (FuturesChart is the only principle-honoring candidate) would resolve findings 1–3 for the futures/tournament surfaces in one move — and is where the `slice(0,5)`-style drift bugs live.
+1. `[L2-149 RESOLVED]` **The recharts field engines are gone.** Of the original 4 recharts charts, EvolutionChart + TournamentChart (both `type="monotone"`) are deleted; only OddsChart + ScoreDiff (the two single-game event charts) remain on recharts. weather/Sparkline's bezier is the last hand-rolled smoothing outlier.
+2. **The blend-hero treatment exists in exactly one place** (OddsChart Mode A). This is a duel-kernel property (one blend vs faint sources); the field kernel has no single blend line, so it is out of scope for FuturesChart.
+3. `[L2-149 RESOLVED]` **Fixed-axis is now the default in the field kernel.** FuturesChart defaults to `fixedYAxis` (opt-out); every field/futures surface honors principle 2 without remembering a prop.
+4. `[L2-149 RESOLVED]` **Kernel (b) is now 1 engine.** The field multi-line kernel is consolidated onto FuturesChart — findings 1 & 3 resolved for the futures/tournament surfaces, and the `slice(0,5)`-style drift class is closed (line selection + axis derived in one place).
 
-*This census is descriptive only. No redesign, ranking, or taste call is made here — that is the next program's job.*
+*This census was descriptive; the L2-149 annotations record the field-kernel consolidation that executed the standing rulings (no smoothing · fixed 0–100 · minimal chrome). Redesign/taste calls remain the next program's job.*

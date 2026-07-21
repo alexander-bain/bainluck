@@ -36,6 +36,16 @@ const GREEN_COLORS = [
   "#d1d5db",
 ];
 
+/** Eliminated-outcome line color — a muted grey so a knocked-out contender stays
+ *  visible for context without competing with the live field (L2-149, migrated
+ *  from EvolutionChart). */
+const ELIMINATED_COLOR = "#b5b9c3";
+
+/** Combined-probability line color — the summed line reads as a dark neutral so
+ *  it never masquerades as one of the contenders (L2-149, migrated from
+ *  EvolutionChart). */
+const COMBINED_COLOR = "#111827";
+
 interface FuturesChartProps {
   historyData: FuturesOutcomeHistory[];
   selectedOutcomes?: Set<number>;
@@ -50,9 +60,11 @@ interface FuturesChartProps {
   /** Use step interpolation (hold value until next point) for sparse data */
   stepInterpolation?: boolean;
   /** Pin the y-axis to a fixed 0–100% domain (#883 blend-line principle: the
-   *  futures-detail blend chart never rescales to the data max — movement stays
-   *  honestly proportional). Default false preserves the auto-scaled behavior
-   *  other surfaces (e.g. golf) rely on. */
+   *  futures/field chart never rescales to the data max — movement stays honestly
+   *  proportional and charts stay comparable). L2-149 made this the NON-OPTIONAL
+   *  default for the consolidated field kernel: it is opt-OUT (`fixedYAxis={false}`),
+   *  not opt-in. Auto-scaling is only for the rare surface that deliberately wants
+   *  it. */
   fixedYAxis?: boolean;
   /** L2-135: vertical state markers giving the time axis a real sense of time —
    *  golf round boundaries (R1/R2/R3/R4), the settled-page state-marker language
@@ -60,6 +72,24 @@ interface FuturesChartProps {
    *  clipped to the chart's visible [minTime, maxTime] window. Opt-in: undefined
    *  = no markers (every non-golf surface is unaffected). Times are epoch ms. */
   timeMarkers?: { time: number; label: string }[];
+  /** L2-149: per-outcome color override keyed by outcome_id. When supplied it wins
+   *  over the index palette, so a caller can keep a chart's line colors in sync
+   *  with an external leaderboard (EvolutionView) or with team/source colors.
+   *  Outcomes absent from the map fall back to the index palette (or the
+   *  eliminated grey). */
+  outcomeColors?: Map<number, string>;
+  /** L2-149: the currently highlighted outcome (driven by an external leaderboard
+   *  hover, or by chart hover via `onHoverOutcome`). Its line is emphasized and
+   *  every other line dims — the focus interaction migrated from EvolutionChart.
+   *  `null`/undefined = no highlight (all lines at normal weight). */
+  highlightedOutcomeId?: number | null;
+  /** L2-149: fired with the top outcome under the cursor (or null on leave) so an
+   *  external leaderboard can highlight in sync. Non-mini only. */
+  onHoverOutcome?: (outcomeId: number | null) => void;
+  /** L2-149: draw the summed probability of the displayed outcomes as a single
+   *  dashed line (the "Combined" toggle migrated from EvolutionChart). Only shown
+   *  when more than one outcome is displayed. */
+  showCombinedProbability?: boolean;
 }
 
 export function FuturesChart({
@@ -74,12 +104,16 @@ export function FuturesChart({
   greenTheme = false,
   className,
   stepInterpolation = false,
-  fixedYAxis = false,
+  fixedYAxis = true,
   timeMarkers,
+  outcomeColors,
+  highlightedOutcomeId,
+  onHoverOutcome,
+  showCombinedProbability = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
-  const colors = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
+  const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
   // Filter to selected outcomes, or show top 5 if none selected
   const displayedOutcomes = useMemo(() => {
@@ -89,11 +123,20 @@ export function FuturesChart({
     return historyData.slice(0, 5);
   }, [historyData, selectedOutcomes]);
 
+  // Resolve a line color: explicit per-outcome override > eliminated grey >
+  // index palette. Centralized so lines, hover dots and the legend never drift.
+  const colorFor = (outcome: FuturesOutcomeHistory, idx: number): string => {
+    const override = outcomeColors?.get(outcome.outcome_id);
+    if (override) return override;
+    if (outcome.eliminated) return ELIMINATED_COLOR;
+    return palette[idx % palette.length];
+  };
+
   // Hover tooltip state (non-mini only) — must be before any early returns
   const [hoverInfo, setHoverInfo] = useState<{
     svgX: number;
     time: number;
-    values: { name: string; prob: number; color: string }[];
+    values: { outcomeId: number; name: string; prob: number; color: string }[];
   } | null>(null);
 
   if (displayedOutcomes.length === 0) {
@@ -158,6 +201,49 @@ export function FuturesChart({
   const yScale = (prob: number) =>
     padding.top + (1 - prob / maxProb) * innerHeight;
 
+  // L2-149: combined probability line — the forward-filled sum of the displayed
+  // outcomes across the union of their timestamps, capped at 100%. Only meaningful
+  // for more than one outcome. Migrated from EvolutionChart's "Combined" toggle.
+  // NOTE: a plain computation (not a hook) — it lives below the early returns, so
+  // a useMemo here would break the rules of hooks. The loop is O(points) and cheap.
+  const combinedPoints: { t: number; sum: number }[] | null = (() => {
+    if (!showCombinedProbability || displayedOutcomes.length < 2) return null;
+    const stamps = new Set<number>();
+    for (const o of displayedOutcomes) {
+      for (const p of o.history) {
+        if (p.probability !== null) stamps.add(new Date(p.timestamp).getTime());
+      }
+    }
+    const sortedStamps = Array.from(stamps).sort((a, b) => a - b);
+    if (sortedStamps.length < 2) return null;
+    // Pre-sort each outcome's real points once for a linear forward-fill walk.
+    const series = displayedOutcomes.map((o) =>
+      o.history
+        .filter((p) => p.probability !== null)
+        .map((p) => ({ t: new Date(p.timestamp).getTime(), v: p.probability as number }))
+        .sort((a, b) => a.t - b.t)
+    );
+    const cursors = series.map(() => 0);
+    const last = series.map(() => null as number | null);
+    const pts: { t: number; sum: number }[] = [];
+    for (const t of sortedStamps) {
+      let sum = 0;
+      let anyKnown = false;
+      series.forEach((pointsList, i) => {
+        while (cursors[i] < pointsList.length && pointsList[cursors[i]].t <= t) {
+          last[i] = pointsList[cursors[i]].v;
+          cursors[i] += 1;
+        }
+        if (last[i] !== null) {
+          sum += last[i] as number;
+          anyKnown = true;
+        }
+      });
+      if (anyKnown) pts.push({ t, sum: Math.min(1, sum) });
+    }
+    return pts.length >= 2 ? pts : null;
+  })();
+
   // Hover handler for interactive tooltip
   function handleChartHover(e: React.MouseEvent<SVGSVGElement>) {
     const svg = e.currentTarget;
@@ -165,6 +251,7 @@ export function FuturesChart({
     const svgX = ((e.clientX - rect.left) / rect.width) * chartWidth;
     if (svgX < padding.left || svgX > chartWidth - padding.right) {
       setHoverInfo(null);
+      onHoverOutcome?.(null);
       return;
     }
     const time =
@@ -183,15 +270,23 @@ export function FuturesChart({
         }
         return best !== null
           ? {
+              outcomeId: outcome.outcome_id,
               name: outcome.name,
               prob: best,
-              color: colors[idx % colors.length],
+              color: colorFor(outcome, idx),
             }
           : null;
       })
       .filter((v): v is NonNullable<typeof v> => v !== null)
       .sort((a, b) => b.prob - a.prob);
     setHoverInfo({ svgX, time, values });
+    // Keep an external leaderboard highlighted on the top line under the cursor.
+    onHoverOutcome?.(values.length > 0 ? values[0].outcomeId : null);
+  }
+
+  function handleChartLeave() {
+    setHoverInfo(null);
+    onHoverOutcome?.(null);
   }
 
   function formatTooltipTime(ts: number): string {
@@ -217,11 +312,14 @@ export function FuturesChart({
           viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
           className={mini ? "w-full" : "w-full min-w-[600px]"}
           style={{
-            maxHeight: mini ? `${effectiveHeight}px` : "250px",
+            // Honor the caller's requested height (L2-149): the old hard 250px
+            // non-mini cap silently shrank taller surfaces (event-concept charts
+            // ask for 260–280; EvolutionView asks for 300, or 600 fullscreen).
+            maxHeight: `${effectiveHeight}px`,
             cursor: mini ? undefined : "crosshair",
           }}
           onMouseMove={mini ? undefined : handleChartHover}
-          onMouseLeave={mini ? undefined : () => setHoverInfo(null)}
+          onMouseLeave={mini ? undefined : handleChartLeave}
         >
           {/* Y-axis grid lines */}
           {effectiveShowAxes &&
@@ -359,18 +457,55 @@ export function FuturesChart({
                   .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
                   .join(" ");
 
+            // L2-149: highlight/eliminated line weighting. When one outcome is
+            // highlighted (leaderboard or chart hover), it thickens and the rest
+            // dim; eliminated contenders draw thin + dashed + faded for context.
+            const elim = !!outcome.eliminated;
+            const isFocus = highlightedOutcomeId === outcome.outcome_id;
+            const isDimmed =
+              highlightedOutcomeId != null && highlightedOutcomeId !== outcome.outcome_id;
+            const strokeWidth = mini
+              ? 1.5
+              : isFocus
+                ? 2.75
+                : isDimmed
+                  ? 1
+                  : elim
+                    ? 1.25
+                    : 2;
+            const strokeOpacity = isDimmed ? 0.2 : elim ? 0.4 : 1;
+
             return (
               <path
                 key={outcome.outcome_id}
                 d={pathD}
                 fill="none"
-                stroke={colors[idx % colors.length]}
-                strokeWidth={mini ? 1.5 : 2}
+                stroke={colorFor(outcome, idx)}
+                strokeWidth={strokeWidth}
+                strokeOpacity={strokeOpacity}
+                strokeDasharray={elim ? "4 3" : undefined}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             );
           })}
+
+          {/* L2-149: combined (summed) probability line — dashed, dark, drawn on
+              top so the aggregate reads clearly against the contender lines. */}
+          {!mini && combinedPoints && (
+            <path
+              d={combinedPoints
+                .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.t)} ${yScale(p.sum)}`)
+                .join(" ")}
+              fill="none"
+              stroke={COMBINED_COLOR}
+              strokeWidth={2.2}
+              strokeOpacity={highlightedOutcomeId != null ? 0.45 : 0.9}
+              strokeDasharray="7 4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
 
           {/* Hover crosshair and dots */}
           {hoverInfo && !mini && (
@@ -451,7 +586,7 @@ export function FuturesChart({
             >
               <span
                 className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: colors[idx % colors.length] }}
+                style={{ backgroundColor: colorFor(outcome, idx) }}
               />
               <span className="text-text-primary">{outcome.name}</span>
             </button>
@@ -467,7 +602,7 @@ export function FuturesChart({
             >
               <span
                 className="w-3 h-3 rounded-full flex-shrink-0"
-                style={{ backgroundColor: colors[idx % colors.length] }}
+                style={{ backgroundColor: colorFor(outcome, idx) }}
               />
               <span className="text-text-primary truncate max-w-[160px]">{outcome.name}</span>
             </span>

@@ -2,11 +2,62 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import useSWR from "swr";
-import { EvolutionChart } from "@/components/EvolutionChart";
+import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory } from "@/lib/api";
+import type { FuturesOutcomeHistory } from "@/lib/types";
 
 type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
+
+/** 10-color palette (white-bg optimized) shared with EvolutionLeaderboard so a
+ *  chart line and its sidebar dot always match. L2-149: computed once here and
+ *  handed to both FuturesChart (via outcomeColors) and the leaderboard. */
+const EVOLUTION_COLORS = [
+  "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
+  "#0369a1", "#92400e", "#4338ca", "#be185d", "#065f46",
+];
+const ELIMINATED_COLOR = "#b5b9c3";
+
+/** Last non-null probability of a series — its current/final value. Used to rank
+ *  the selected set (color order + leaderboard order stay in lockstep). */
+function lastProbOf(o: FuturesOutcomeHistory): number {
+  return o.history[o.history.length - 1]?.probability ?? 0;
+}
+
+/** Client-side time-range cutoff (epoch ms), mirroring the old EvolutionChart
+ *  buildChartData cutoffs. 0 = no cutoff (full history). */
+function timeRangeCutoff(timeRange: TimeRange, tournamentStart?: string | null): number {
+  const now = Date.now();
+  if (timeRange === "7d") return now - 7 * 86_400_000;
+  if (timeRange === "24h") return now - 86_400_000;
+  if (timeRange === "today") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  if (timeRange === "tournament" && tournamentStart) {
+    // #957: clamp to the tournament start so a pre-start buffer day never leaks in.
+    const t = new Date(tournamentStart).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+  return 0;
+}
+
+/** Drop history points older than the range cutoff, keeping every outcome row so
+ *  color/selection stays stable. Outcomes left with <2 points simply don't draw
+ *  a line (FuturesChart handles that), matching the old windowed behavior. */
+function windowByTimeRange(
+  outcomes: FuturesOutcomeHistory[],
+  timeRange: TimeRange,
+  tournamentStart?: string | null,
+): FuturesOutcomeHistory[] {
+  const cutoff = timeRangeCutoff(timeRange, tournamentStart);
+  if (!cutoff) return outcomes;
+  return outcomes.map((o) => ({
+    ...o,
+    history: o.history.filter((p) => new Date(p.timestamp).getTime() >= cutoff),
+  }));
+}
 
 export interface PositionOption {
   key: string;   // "win", "top_5", "top_10", "top_20"
@@ -202,6 +253,41 @@ export function EvolutionView({
     return new Set(selected);
   }, [data, selectedOutcomeIds, defaultTopN]);
 
+  // L2-149: shared color map — rank the SELECTED outcomes by latest probability
+  // and assign the evolution palette by that rank (eliminated → grey). The same
+  // map goes to FuturesChart (line colors) and EvolutionLeaderboard (dot colors),
+  // so the two can never drift. Ranking uses the full (unwindowed) history so a
+  // color stays put as the range switches.
+  const outcomeColors = useMemo(() => {
+    const m = new Map<number, string>();
+    if (!data?.outcomes) return m;
+    const sorted = data.outcomes
+      .filter((o) => effectiveSelectedIds.has(o.outcome_id))
+      .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+    sorted.forEach((o, i) => {
+      m.set(o.outcome_id, o.eliminated ? ELIMINATED_COLOR : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]);
+    });
+    return m;
+  }, [data, effectiveSelectedIds]);
+
+  // L2-149: apply the range cutoff client-side (the old EvolutionChart did this
+  // inside buildChartData). FuturesChart then plots the raw windowed points.
+  const windowedOutcomes = useMemo(
+    () => (data?.outcomes ? windowByTimeRange(data.outcomes, timeRange, tournamentStart) : []),
+    [data, timeRange, tournamentStart],
+  );
+
+  // L2-149: round/day boundaries → FuturesChart's epoch-ms timeMarkers (R1..R5).
+  // FuturesChart clips them to the visible window, so out-of-range markers drop.
+  const timeMarkers = useMemo(
+    () =>
+      effectiveBoundaries?.map((b) => ({
+        time: new Date(b.timestamp).getTime(),
+        label: b.label,
+      })),
+    [effectiveBoundaries],
+  );
+
   const handleToggleOutcome = useCallback(
     (outcomeId: number) => {
       setSelectedOutcomeIds((prev) => {
@@ -252,18 +338,23 @@ export function EvolutionView({
     </div>
   ) : (
     <>
-      <div className={`flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 ${isFullscreen ? "min-h-0" : ""}`}>
-        <EvolutionChart
-          historyData={data.outcomes}
-          selectedOutcomeIds={effectiveSelectedIds}
+      <div className={`flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center ${isFullscreen ? "min-h-0" : ""}`}>
+        {/* L2-149: the field kernel is now FuturesChart (hand-rolled SVG, no
+            smoothing, fixed 0–100 axis by default) — the recharts EvolutionChart
+            engine is gone. Selection/hover/combined/round-markers are preserved;
+            the shared outcomeColors map keeps lines and sidebar dots in lockstep. */}
+        <FuturesChart
+          historyData={windowedOutcomes}
+          selectedOutcomes={effectiveSelectedIds}
+          outcomeColors={outcomeColors}
           highlightedOutcomeId={highlightedOutcomeId}
           onHoverOutcome={setHighlightedOutcomeId}
-          roundBoundaries={effectiveBoundaries}
-          height={isFullscreen ? 600 : 300}
-          className=""
-          timeRange={timeRange}
-          tournamentStart={tournamentStart ?? null}
+          timeMarkers={timeMarkers}
           showCombinedProbability={showCombinedProbability}
+          showAxes
+          showLegend={false}
+          height={isFullscreen ? 600 : 300}
+          className="w-full"
         />
       </div>
       <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-surface-border px-3 py-2 sm:overflow-y-auto">
@@ -276,6 +367,7 @@ export function EvolutionView({
           onHoverOutcome={setHighlightedOutcomeId}
           leaderboard={data.leaderboard}
           entityLabel={entityLabel}
+          outcomeColors={outcomeColors}
         />
       </div>
     </>

@@ -37,10 +37,11 @@ import FeedCard from "@/components/FeedCard";
 import MoversRibbon from "@/components/MoversRibbon";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
-// Lazy-load the recharts-backed EvolutionView so recharts + date-fns are not in
-// this page's initial bundle (they parsed/evaluated on first load, stalling the
-// league page 6–15s while its APIs returned <0.4s — #901). Mirrors the
-// event-detail page's chart code-splitting (app/events/[id]/page.tsx). The
+// Lazy-load the heavy interactive EvolutionView so it is not in this page's
+// initial bundle (it stalled the league page 6–15s on first load while its APIs
+// returned <0.4s — #901). Mirrors the event-detail page's chart code-splitting
+// (app/events/[id]/page.tsx). L2-149: EvolutionView now renders the hand-rolled
+// FuturesChart kernel (no recharts/date-fns), but the split still pays off — the
 // component SWR-fetches its own data and shows its own loader, so deferring it
 // has no data-correctness impact.
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;

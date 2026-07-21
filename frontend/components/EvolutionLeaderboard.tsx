@@ -7,7 +7,9 @@ import type {
 } from "@/lib/types";
 
 /**
- * Color palette matching EvolutionChart — kept in sync for dot colors.
+ * Fallback dot palette. When EvolutionView supplies `outcomeColors` (L2-149) the
+ * dots use that shared map so they match the FuturesChart lines exactly; this
+ * local copy only applies when no map is passed.
  */
 const EVOLUTION_COLORS = [
   "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
@@ -24,6 +26,11 @@ interface EvolutionLeaderboardProps {
   leaderboard?: DataGolfLeaderboardEntry[] | null;
   /** Label for the sidebar header and search placeholder */
   entityLabel?: string;
+  /** L2-149: shared color map keyed by outcome_id. When supplied, the sidebar
+   *  dots use exactly the colors the chart draws (EvolutionView passes the same
+   *  map to FuturesChart), so the leaderboard and the lines never drift. Falls
+   *  back to the local index palette when absent. */
+  outcomeColors?: Map<number, string>;
   className?: string;
 }
 
@@ -43,6 +50,7 @@ export function EvolutionLeaderboard({
   highlightedOutcomeId,
   onHoverOutcome,
   entityLabel = "Players",
+  outcomeColors,
   className,
 }: EvolutionLeaderboardProps) {
   // Build sidebar rows: only show selected outcomes
@@ -58,10 +66,14 @@ export function EvolutionLeaderboard({
       outcomeId: o.outcome_id,
       name: shortName(o.name),
       currentProbability: o.history[o.history.length - 1]?.probability ?? 0,
-      color: o.eliminated ? "#b5b9c3" : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length],
+      // L2-149: prefer the shared map so a dot matches its line exactly; else
+      // fall back to the local eliminated-grey / index palette.
+      color:
+        outcomeColors?.get(o.outcome_id) ??
+        (o.eliminated ? "#b5b9c3" : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]),
       eliminated: o.eliminated,
     }));
-  }, [historyData, selectedOutcomeIds]);
+  }, [historyData, selectedOutcomeIds, outcomeColors]);
 
   // Build unselected outcomes for the dropdown
   const unselected = useMemo(() => {
