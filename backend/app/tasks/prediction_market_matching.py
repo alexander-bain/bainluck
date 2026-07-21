@@ -318,6 +318,108 @@ def _peer_consensus_side(win_probability_sources: dict, exclude_source: str):
     return None
 
 
+# ── #1163: source-implies-linked-market invariant ──────────────────────────
+# A prediction-market source (kalshi/polymarket) may only appear in
+# Event.win_probability_sources while a linked market of that source backs it.
+# The two snapshot writers above only add the key for a LINKED market, but the
+# unlink sites (Phase 1.5 mislink, Phase 2 wrong-game + date-mismatch) set
+# event_id=None WITHOUT pruning the key — leaving a phantom blend input that the
+# aggregation keeps averaging in forever (all 4 of a night's MLB games carried a
+# kalshi key with ZERO backing linked kalshi markets → matured-linkage 33%).
+# Only PM sources are subject to this: betting/espn/mlb/stat_model come from
+# their own pollers, not from linked futures_markets, and must never be pruned.
+_PM_BLEND_SOURCES = frozenset({"kalshi", "polymarket"})
+
+
+def prune_blend_source(
+    win_probability_sources: dict | None, source: str, remaining_linked: int
+) -> tuple[dict, bool]:
+    """Pure: given an event's win_probability_sources, a source, and how many
+    linked markets of that source remain, return (new_wps, changed). A PM source
+    with zero remaining linked markets is removed (the phantom-orphan case). A PM
+    source with >=1 remaining, or any non-PM source, is left untouched."""
+    wps = dict(win_probability_sources or {})
+    if source not in _PM_BLEND_SOURCES:
+        return wps, False
+    if remaining_linked > 0:
+        return wps, False
+    if source not in wps:
+        return wps, False
+    wps.pop(source, None)
+    return wps, True
+
+
+async def _prune_orphaned_blend_source(
+    session, event_id: int, source: str, exclude_market_id: int | None = None
+) -> bool:
+    """Enforce the source-implies-linked-market invariant after an unlink: if no
+    linked market of ``source`` remains for ``event_id``, drop that source key
+    from Event.win_probability_sources (Core SQL JSONB write, gotcha #4). No-op
+    for non-PM sources. Returns True when a phantom key was pruned. #1163."""
+    if source not in _PM_BLEND_SOURCES or event_id is None:
+        return False
+    from app.models.models import Event, FuturesMarket
+
+    q = select(func.count(FuturesMarket.id)).where(
+        FuturesMarket.event_id == event_id,
+        FuturesMarket.source == source,
+    )
+    if exclude_market_id is not None:
+        q = q.where(FuturesMarket.id != exclude_market_id)
+    remaining = (await session.execute(q)).scalar() or 0
+
+    r = await session.execute(
+        select(Event.win_probability_sources).where(Event.id == event_id)
+    )
+    new_wps, changed = prune_blend_source(r.scalar_one_or_none(), source, remaining)
+    if changed:
+        await session.execute(
+            update(Event).where(Event.id == event_id).values(win_probability_sources=new_wps)
+        )
+    return changed
+
+
+async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit: int = 2000) -> int:
+    """Backfill/clean EXISTING phantom PM source keys — events carrying a
+    kalshi/polymarket key in win_probability_sources with no linked market of
+    that source (created before the prune-on-unlink guard existed). Bounded and
+    idempotent so it can ride the 15-min matching task and self-heal the slate.
+    Returns the number of phantom keys removed. #1163."""
+    from app.models.models import Event, FuturesMarket
+
+    pruned = 0
+    for source in sorted(_PM_BLEND_SOURCES):
+        # Candidate events: the source key is present AND no linked market of that
+        # source exists. One targeted query per source; JSONB `?` is index-cheap.
+        rows = (
+            await session.execute(
+                select(Event.id, Event.win_probability_sources)
+                .where(
+                    Event.win_probability_sources.op("?")(source),
+                    ~select(FuturesMarket.id)
+                    .where(
+                        FuturesMarket.event_id == Event.id,
+                        FuturesMarket.source == source,
+                    )
+                    .exists(),
+                )
+                .limit(limit)
+            )
+        ).all()
+        for eid, wps in rows:
+            if time_remaining_fn is not None and time_remaining_fn() < 20:
+                return pruned
+            new_wps, changed = prune_blend_source(wps, source, 0)
+            if changed:
+                await session.execute(
+                    update(Event).where(Event.id == eid).values(win_probability_sources=new_wps)
+                )
+                pruned += 1
+    if pruned:
+        await session.commit()
+    return pruned
+
+
 async def _check_and_fix_inversion(
     session, event_id: int, home_prob: float, source: str,
 ) -> float:
@@ -920,7 +1022,16 @@ async def _phase15_revalidate(
                     )
                 )
                 stats["orphaned_snapshots_deleted"] += del_result.rowcount
+                _unlinked_event_id = linked_event.id
                 market.event_id = None
+                await session.flush()  # persist event_id=None before the count query
+                # #1163: prune the now-orphaned blend source key (invariant:
+                # a PM source may not sit in the blend without a linked market).
+                if await _prune_orphaned_blend_source(
+                    session, _unlinked_event_id, market.source, exclude_market_id=market.id
+                ):
+                    stats.setdefault("phantom_blend_sources_pruned", 0)
+                    stats["phantom_blend_sources_pruned"] += 1
                 stats["funnel"]["mislink_fixed"] += 1
         except Exception as e:
             logger.debug("Error checking link for market %d: %s", market.id, e)
@@ -1110,6 +1221,12 @@ async def _match_prediction_markets(limit: int = 500):
                     .values(event_id=None)
                 )
                 stats["funnel"]["phase2_multi_game_unlinked"] += 1
+                # #1163: prune the orphaned blend source key on unlink.
+                if await _prune_orphaned_blend_source(
+                    session, ev_ref.event_id, m.source, exclude_market_id=m.market_id
+                ):
+                    stats.setdefault("phantom_blend_sources_pruned", 0)
+                    stats["phantom_blend_sources_pruned"] += 1
                 group[:] = [gm for gm in group if gm.market_id != m.market_id]
 
             await session.commit()
@@ -1177,6 +1294,13 @@ async def _match_prediction_markets(limit: int = 500):
                             .where(FuturesMarket.id == market.market_id)
                             .values(event_id=None)
                         )
+                        # #1163: prune the orphaned blend source key on unlink
+                        # (before the commit so it lands atomically).
+                        if await _prune_orphaned_blend_source(
+                            session, market.event_id, market.source, exclude_market_id=market.market_id
+                        ):
+                            stats.setdefault("phantom_blend_sources_pruned", 0)
+                            stats["phantom_blend_sources_pruned"] += 1
                         await session.commit()
                         stats["funnel"].setdefault("phase2_date_unlinked", 0)
                         stats["funnel"]["phase2_date_unlinked"] += 1
@@ -1321,6 +1445,22 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                 except Exception as e:
                     stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
+
+    # ── #1163: self-heal phantom blend sources ─────────────────────────────
+    # Sweep events whose win_probability_sources carries a kalshi/polymarket key
+    # with no linked market of that source (orphans left by pre-guard unlinks).
+    # Bounded by the task's remaining budget so it never starves the poll.
+    if _time_remaining() > 30:
+        try:
+            async with get_task_session() as cleanup_session:
+                pruned = await _cleanup_orphaned_blend_sources(
+                    cleanup_session, time_remaining_fn=_time_remaining
+                )
+            stats["phantom_blend_sources_cleaned"] = pruned
+            if pruned:
+                logger.info("Pruned %d phantom blend source key(s) (#1163)", pruned)
+        except Exception as e:
+            stats["errors"].append(f"phantom_cleanup: {str(e)[:100]}")
 
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
