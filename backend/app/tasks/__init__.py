@@ -101,18 +101,37 @@ if broker_use_ssl:
 celery_app.conf.update(**celery_config)
 
 # =============================================================================
-# Queue routing: realtime vs background workers
+# Queue routing: realtime vs background vs heavy workers
 #
 # realtime (Standard-2X, concurrency=4):
 #   High-frequency tasks driving user-visible live game data.
 #   Never blocked by batch jobs.
 #
 # background (Standard-1X, concurrency=2):
-#   Hourly/daily batch tasks — enrichment, audits, maintenance.
-#   Can tolerate delays without user impact.
+#   Short (<300s) hourly/daily batch tasks, matching-pipeline drivers
+#   (match_prediction_markets, poll_kalshi_markets, merges) and the
+#   sentinels (flow/grid/horizon/calibration). Latency-tolerant but must
+#   still fire promptly — so it must NOT share slots with 600s grinders.
 #   Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB dyno).
 #
-# To move a task: just change its queue in task_routes below.
+# heavy (Standard-1X, concurrency=2):
+#   The 600s-class batch grinders — the calibration precompute family
+#   (precompute_calibration_main, time_horizon, calibration_prices,
+#   fair_fight, source_intelligence, coverage, backfill_winners_status),
+#   the backfill_winners pipeline, and the kalshi/polymarket backfills.
+#   These are pure cache-warmers/backfills with no user-facing latency SLA;
+#   isolating them onto a dedicated worker stops them starving the hourly
+#   /calibration warmer and the fast background beats. This dedicated lane
+#   is the structural fix for the recurring background-queue starvation
+#   (cal_price #183, then time_horizon, then precompute_calibration_main #223)
+#   that per-task minute-offset juggling could not durably solve.
+#
+# HEAVY membership rule: any 600s-class (soft_time_limit >= 600) batch
+# grinder EXCEPT latency-sensitive pipeline drivers / alarms (kept on
+# background — see _BACKGROUND_KEEP below). Applied programmatically to both
+# task_routes and the beat schedule's per-entry `options["queue"]` (beat
+# options override task_routes, so both must agree — see the loop after the
+# beat_schedule definition).
 # =============================================================================
 
 from kombu import Queue
@@ -120,6 +139,7 @@ from kombu import Queue
 celery_app.conf.task_queues = [
     Queue("realtime", routing_key="realtime"),
     Queue("background", routing_key="background"),
+    Queue("heavy", routing_key="heavy"),
 ]
 
 celery_app.conf.task_default_queue = "background"
@@ -137,7 +157,60 @@ celery_app.conf.task_routes = {
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # --- Everything else routes to background (default queue) ---
+    # --- 600s-class grinders route to `heavy` (applied below) ---
 }
+
+# 600s-class grinders that stay on `background` despite being long: they are
+# latency-sensitive pipeline drivers or alarms that must fire promptly and
+# must never queue behind a 10-minute backfill on the heavy lane.
+_HEAVY_KEEP_ON_BACKGROUND = {
+    "app.tasks.match_prediction_markets",   # linkage pipeline, every 15 min
+    "app.tasks.poll_kalshi_markets",        # ingest cadence
+    "app.tasks.merge_duplicate_events",     # matching pipeline
+    "app.tasks.merge_degenerate_combat_events",
+    "app.tasks.flow_sentinel",              # alarms — must fire promptly
+    "app.tasks.grid_sentinel",
+    "app.tasks.horizon_sentinel",
+    "app.tasks.calibration_sentinel",
+}
+
+# The heavy grinder set. Kept explicit (not derived from decorators at import
+# time) so routing is greppable and stable. Everything here moves to `heavy`.
+HEAVY_TASKS = {
+    # calibration precompute family (the recurring starvation class)
+    "app.tasks.precompute_calibration_main",
+    "app.tasks.compute_calibration_prices",
+    "app.tasks.compute_time_horizon_calibration",
+    "app.tasks.compute_fair_fight_comparison",
+    "app.tasks.precompute_source_intelligence",
+    "app.tasks.snapshot_coverage_metrics",
+    "app.tasks.precompute_backfill_winners_status",
+    # the big backfill / grinder pipeline
+    "app.tasks.backfill_winners",
+    "app.tasks.backfill_kalshi_candlestick",
+    "app.tasks.backfill_kalshi_history",
+    "app.tasks.backfill_kalshi_settled",
+    "app.tasks.backfill_kalshi_trades",
+    "app.tasks.backfill_kalshi_volume",
+    "app.tasks.backfill_polymarket_history",
+    "app.tasks.backfill_polymarket_winners",
+    "app.tasks.backfill_espn_win_prob",
+    "app.tasks.backfill_team_identities",
+    "app.tasks.clob_resolve_drain",
+    "app.tasks.sync_polymarket_resolved",
+    "app.tasks.recover_datagolf_participation",
+    # heavy maintenance grinders (600s-class, no latency SLA)
+    "app.tasks.enrich_cu_v2_profiles",
+    "app.tasks.recategorize_other",
+    "app.tasks.regenerate_tags",
+    "app.tasks.audit_canonical_keys",
+    "app.tasks.audit_prediction_market_links",
+    "app.tasks.audit_related_futures",
+    "app.tasks.check_snapshot_sparsity",
+}
+
+for _heavy_task in HEAVY_TASKS:
+    celery_app.conf.task_routes[_heavy_task] = {"queue": "heavy"}
 
 # Initialize Sentry for Celery workers
 # Set SENTRY_DSN env var in Heroku to enable
@@ -2621,6 +2694,15 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
 }
+
+# Route the heavy grinder class onto the dedicated `heavy` worker. Beat entries
+# pin `options["queue"]` explicitly, which OVERRIDES task_routes at dispatch
+# time — so both must agree. This loop is the single source of truth: it flips
+# every HEAVY_TASKS beat entry to the heavy queue regardless of what it was
+# authored with. (See the queue-routing comment block above for the rationale.)
+for _beat_entry in celery_app.conf.beat_schedule.values():
+    if _beat_entry.get("task") in HEAVY_TASKS:
+        _beat_entry.setdefault("options", {})["queue"] = "heavy"
 
 
 # =============================================================================

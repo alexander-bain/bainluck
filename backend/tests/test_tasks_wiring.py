@@ -321,3 +321,58 @@ class TestBeatScheduleCompleteness:
             entry["task"] for entry in celery_app.conf.beat_schedule.values()
         }
         assert historical_tasks.isdisjoint(scheduled)
+
+
+class TestHeavyQueueRouting:
+    """#224: the 600s-class grinders (calibration precompute family + backfills)
+    must land on the dedicated `heavy` worker, not the 2-slot `background` worker.
+    This is the structural fix for the recurring background-queue starvation
+    (cal_price #183 → time_horizon → precompute_calibration_main #223). A beat
+    entry's `options["queue"]` OVERRIDES task_routes, so BOTH must agree — guard
+    both, in both directions, so a future edit can't silently re-starve the class.
+    """
+
+    def test_heavy_queue_exists(self):
+        from app.tasks import celery_app as app
+        qnames = {q.name for q in app.conf.task_queues}
+        assert "heavy" in qnames, f"heavy queue missing from {qnames}"
+
+    def test_heavy_tasks_route_to_heavy_in_task_routes(self):
+        from app.tasks import HEAVY_TASKS, celery_app as app
+        routes = app.conf.task_routes
+        misrouted = {
+            t: routes.get(t, {}).get("queue") for t in HEAVY_TASKS
+            if routes.get(t, {}).get("queue") != "heavy"
+        }
+        assert not misrouted, f"HEAVY tasks not routed to heavy in task_routes: {misrouted}"
+
+    def test_heavy_beat_entries_pin_heavy_queue(self):
+        """Beat options override task_routes — every HEAVY task's beat entry must
+        pin queue=heavy, else it silently reverts to background."""
+        from app.tasks import HEAVY_TASKS, celery_app as app
+        bad = {
+            name: entry.get("options", {}).get("queue")
+            for name, entry in app.conf.beat_schedule.items()
+            if entry["task"] in HEAVY_TASKS
+            and entry.get("options", {}).get("queue") != "heavy"
+        }
+        assert not bad, f"HEAVY beat entries not pinned to heavy: {bad}"
+
+    def test_latency_sensitive_tasks_stay_on_background(self):
+        """The pipeline drivers and alarms must NOT be on heavy — they must fire
+        promptly and never queue behind a 10-minute backfill."""
+        from app.tasks import HEAVY_TASKS, _HEAVY_KEEP_ON_BACKGROUND, celery_app as app
+        overlap = HEAVY_TASKS & _HEAVY_KEEP_ON_BACKGROUND
+        assert not overlap, f"tasks in BOTH heavy and keep-on-background: {overlap}"
+        routes = app.conf.task_routes
+        leaked = [
+            t for t in _HEAVY_KEEP_ON_BACKGROUND
+            if routes.get(t, {}).get("queue") == "heavy"
+        ]
+        assert not leaked, f"latency-sensitive tasks leaked onto heavy: {leaked}"
+
+    def test_all_heavy_tasks_registered(self):
+        from app.tasks import HEAVY_TASKS, celery_app as app
+        registered = set(app.tasks.keys())
+        unregistered = [t for t in HEAVY_TASKS if t not in registered]
+        assert not unregistered, f"HEAVY_TASKS references unregistered tasks: {unregistered}"
