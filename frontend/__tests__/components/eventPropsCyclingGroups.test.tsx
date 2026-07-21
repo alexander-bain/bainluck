@@ -120,3 +120,38 @@ describe("EventProps — data.sections consumption (L2-147 Item 4)", () => {
     expect(html).toContain("Jerseys");
   });
 });
+
+// L2-148: golf tags per-round Top-N children kind:"prop" but only its round-LEADER
+// markets reach the props-script; the round_top family was computed into propChildren
+// then dropped when the page rendered PropsSection XOR EventProps. EventProps now
+// renders alongside the props-script as a SECONDARY section — it takes an optional
+// title/anchorId so that instance reads "More props"/#more-props instead of colliding
+// with the primary "Props"/#props.
+describe("EventProps — secondary title/anchor override (L2-148)", () => {
+  const items: EventConceptChild[] = [
+    cyclingChild(301, "Round 1 Top 5", "round"),
+  ];
+
+  test("defaults to the Props heading and #props anchor (unchanged)", () => {
+    const html = renderToStaticMarkup(<EventProps items={items} />);
+    expect(html).toContain('id="props"');
+    expect(html).toContain(">Props<");
+  });
+
+  test("renders a custom heading + anchor when supplied", () => {
+    const html = renderToStaticMarkup(
+      <EventProps items={items} title="More props" anchorId="more-props" />,
+    );
+    expect(html).toContain('id="more-props"');
+    expect(html).toContain(">More props<");
+    // The default identity is NOT used when overridden.
+    expect(html).not.toContain('id="props"');
+  });
+
+  test("self-suppresses (renders nothing) when there are no items — the common no-leftover case", () => {
+    const html = renderToStaticMarkup(
+      <EventProps items={[]} title="More props" anchorId="more-props" />,
+    );
+    expect(html).toBe("");
+  });
+});

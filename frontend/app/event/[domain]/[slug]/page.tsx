@@ -265,6 +265,10 @@ export default function EventConceptPage() {
     nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
   if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
   else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
+  // L2-148: golf's per-round Top-N props surface in a secondary EventProps section
+  // ALONGSIDE the props-script — give it its own nav anchor when both render.
+  if (hasPropsScript && propChildren.length > 0)
+    nav.push({ id: "more-props", label: "More props" });
   if (hasScoringRecords) nav.push({ id: "scoring-records", label: "Scoring" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
@@ -355,17 +359,30 @@ export default function EventConceptPage() {
         title={isSoccer ? "Matches" : undefined}
       />
 
-      {hasPropsScript ? (
+      {hasPropsScript && (
         <PropsSection
           items={propMarks}
           eventStatus={event.status}
           domain={event.domain}
         />
-      ) : (
-        // L2-147 Item 4: consume the backend-owned section split when present
-        // (GC / Stages / Jerseys …); prop_type grouping otherwise.
-        <EventProps items={propChildren} sections={data.sections} />
       )}
+
+      {/* L2-147 Item 4: consume the backend-owned section split when present
+          (GC / Stages / Jerseys …); prop_type grouping otherwise.
+          L2-148: this ALSO runs alongside the props-script. Golf tags per-round
+          Top-N children kind:"prop" (prop_type:"round") but only its round-LEADER
+          markets reach the props-script — the round_top family was computed into
+          propChildren and then dropped, because the page rendered PropsSection XOR
+          EventProps. propChildren already excludes every props-script market, so
+          there is no double-render; the leftover section-grouped props now surface
+          under their backend labels (Round Top N …). Self-suppresses when empty
+          (EventProps returns null on no items — the common no-leftover case). */}
+      <EventProps
+        items={propChildren}
+        sections={data.sections}
+        title={hasPropsScript ? "More props" : undefined}
+        anchorId={hasPropsScript ? "more-props" : undefined}
+      />
 
       {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,
           not a wall of numbers. Suppressed once settled (settled-means-settled). */}

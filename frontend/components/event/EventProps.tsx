@@ -138,9 +138,20 @@ interface EventPropsProps {
    *  least one child), children group by section instead of re-derived prop_type;
    *  absent/non-matching → the prop_type grouping (unchanged). */
   sections?: EventConceptSection[] | null;
+  /** L2-148: heading + anchor id. A secondary instance — golf's section-grouped
+   *  prop children (per-round Top-N) rendered ALONGSIDE the props-script — reads
+   *  "More props" / #more-props so it doesn't collide with the primary props
+   *  section's "Props" / #props. Defaults preserve the sole-section behavior. */
+  title?: string;
+  anchorId?: string;
 }
 
-export default function EventProps({ items, sections }: EventPropsProps) {
+export default function EventProps({
+  items,
+  sections,
+  title = "Props",
+  anchorId = "props",
+}: EventPropsProps) {
   if (!items || items.length === 0) return null;
 
   const groups =
@@ -149,8 +160,8 @@ export default function EventProps({ items, sections }: EventPropsProps) {
       : groupByPropType(items);
 
   return (
-    <section id="props" className="bg-surface-card rounded-card shadow-card p-6">
-      <h2 className="text-title-3 font-semibold text-text-primary mb-4">Props</h2>
+    <section id={anchorId} className="bg-surface-card rounded-card shadow-card p-6">
+      <h2 className="text-title-3 font-semibold text-text-primary mb-4">{title}</h2>
       <div className="space-y-5">
         {groups.map((g) => (
           <div key={g.key}>

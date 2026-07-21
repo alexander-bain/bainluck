@@ -64,6 +64,10 @@ const ENVELOPE = {
     { type: "top_5", label: "Top 5", market_ids: [21] },
     { type: "top_10", label: "Top 10", market_ids: [22] },
     { type: "make_cut", label: "Make Cut", market_ids: [23] },
+    // L2-148: a per-round Top-N section claiming a prop child NOT in props_script.
+    // Before the fix this child was computed into propChildren then dropped (the
+    // page rendered PropsSection XOR EventProps); now it surfaces here.
+    { type: "round_top", label: "Round Top N", market_ids: [44] },
   ],
   children: [
     {
@@ -82,6 +86,16 @@ const ENVELOPE = {
       kind: "prop",
       prop_type: "round",
       outcomes: [{ name: "Scottie Scheffler", probability: 0.044 }],
+    },
+    // L2-148: a per-round Top-N prop child tagged kind:"prop" that is NOT in the
+    // props_script. It must surface via the secondary section-grouped EventProps
+    // ("More props") rather than vanishing.
+    {
+      market_id: 44,
+      market_name: "Round 1 Top 5: Scottie Scheffler",
+      kind: "prop",
+      prop_type: "round",
+      outcomes: [{ name: "Scottie Scheffler", probability: 0.31 }],
     },
   ],
   // L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) for the
@@ -230,6 +244,25 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).not.toContain("By round");
     // The H2H matchup (not a props-script market) still renders in the rail.
     expect(html).toContain("H2H: Scheffler vs McIlroy");
+  });
+
+  test("surfaces section-grouped prop children the props-script doesn't cover, alongside PropsSection (L2-148)", () => {
+    const html = renderToStaticMarkup(<EventConceptPage />);
+    // The props-script (curated SCRIPT/DIVERGENCE) still renders...
+    expect(html).toContain('id="props-script"');
+    // ...AND a secondary section-grouped props block now renders alongside it,
+    // under its own anchor + heading (not colliding with the primary "Props").
+    expect(html).toContain('id="more-props"');
+    expect(html).toContain("More props");
+    // The leftover round Top-N child (market_id 44, NOT in props_script) surfaces
+    // under its backend section label instead of being dropped.
+    expect(html).toContain("Round Top N");
+    expect(html).toContain("Round 1 Top 5: Scottie Scheffler");
+    // No double-render: the props-script market (42) is excluded from propChildren
+    // by construction, so it renders only in PropsSection — the section-grouped
+    // block groups solely by the backend split, never the prop_type "By round"
+    // fallback (which would signal an unclaimed leak).
+    expect(html).not.toContain("By round");
   });
 
   test("reconstructs the API key from the domain/slug segments (L2-113)", () => {
