@@ -848,6 +848,59 @@ async def get_horizon_sentinel_last(
     return json.loads(raw)
 
 
+@router.post("/settled-concept-sentinel/run")
+async def trigger_settled_concept_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+    concept_key: str = Query(None, description="Check ONE specific concept key (overrides calendar target selection)"),
+):
+    """Queue #226: on-demand run of the Settled-Concept Sentinel.
+
+    Enqueues the daily settled-contract check, or (inline=True) runs it in-request
+    and returns the scorecard — handy for verification
+    (?inline=true&file_issues=false&concept_key=event:golf:the-open-championship).
+    Reads the LIVE event-concept surface for every recently-settled marquee
+    concept (or the single ``concept_key`` given) and asserts champion hero /
+    field membership / evolution resolves / round resolution, classifying REAL vs
+    EXPLAINED. Read-only against production; the sentinel files work, never data."""
+    _check_admin_secret(secret, request=request)
+
+    keys = [concept_key] if concept_key else None
+    if inline:
+        from app.tasks.settled_concept_sentinel import _run_settled_concept_sentinel
+
+        return await _run_settled_concept_sentinel(file_issues=file_issues, concept_keys=keys)
+
+    from app.tasks import celery_app
+
+    result = celery_app.send_task(
+        "app.tasks.settled_concept_sentinel",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/settled-concept-sentinel/last")
+async def get_settled_concept_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue #226: read the last cached Settled-Concept Sentinel run (scorecard +
+    filed issues) without re-running the checks."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get("bainluck:settled_concept_sentinel:last")
+    if not raw:
+        return {"status": "no_run_cached", "key": "bainluck:settled_concept_sentinel:last"}
+    return json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Pairwise Discover Card Preference Labeling
 # ---------------------------------------------------------------------------

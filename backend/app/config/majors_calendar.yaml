@@ -44,15 +44,17 @@ majors:
     notes: "The 2026 Grande Boucle. Finishes in Paris. Item 3 builds the cycling adapter."
 
   - name: "The Open Championship 2026"
-    slug: the-open-2026
-    concept_key: "event:golf:the-open-2026"
+    slug: the-open-championship
+    concept_key: "event:golf:the-open-championship"
     domain: golf
     start: 2026-07-16
     end: 2026-07-19
     archetype: winner_field
     marquee: true
     date_confidence: approximate
-    notes: "Golf major. Royal Birkdale window."
+    notes: "Golf major. Royal Birkdale window. Golf concepts key by durable
+      tournament slug (the-open-championship), not year — the live/settled page
+      resolves there (event:golf:the-open-2026 was stale, never resolved)."
 
   - name: "MLB All-Star Game 2026"
     slug: mlb-all-star-2026

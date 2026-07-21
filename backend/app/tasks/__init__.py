@@ -180,6 +180,7 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.flow_sentinel",              # alarms — must fire promptly
     "app.tasks.grid_sentinel",
     "app.tasks.horizon_sentinel",
+    "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
     # the big backfills — deliberately NOT on heavy (see comment above)
     "app.tasks.backfill_winners",
@@ -1653,6 +1654,25 @@ def horizon_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.settled_concept_sentinel")
+def settled_concept_sentinel(self, file_issues=True):
+    """Settled-Concept Sentinel (Queue #226): within ~24h of any marquee concept
+    settling (THE HORIZON CALENDAR knows the dates), read the LIVE event-concept
+    surface and assert the settled contract — champion hero (winner market,
+    won:true, top prob), field membership (round/leader markets show only real
+    competitors), evolution chart resolves to one ~100% winner line (no 0.99-wall,
+    no fizzle), and no double-graded round markets. Classifies REAL vs EXPLAINED so
+    RED means REAL, and files ONE deduped GitHub issue per concept with REAL
+    defects. The guard #225 earned. Read-only; files work, never data (gotcha #21).
+    The 840s soft limit (under the 900s hard limit, clear of the global 300s) plus
+    the run's 240s inner deadline keep it from SIGKILLing untracked (#966)."""
+    from app.tasks.settled_concept_sentinel import _run_settled_concept_sentinel
+    return _tracked_run(
+        "settled_concept_sentinel",
+        _run_settled_concept_sentinel(file_issues=file_issues),
+    )
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -2369,6 +2389,18 @@ celery_app.conf.beat_schedule = {
         # event so a marquee never arrives without a page. background queue.
         "task": "app.tasks.horizon_sentinel",
         "schedule": crontab(minute=40, hour=7),  # Daily 07:40 UTC
+        "options": {"queue": "background"},
+    },
+    "settled-concept-sentinel-daily": {
+        # Queue #226: within ~24h of any marquee concept settling (THE HORIZON
+        # CALENDAR knows the dates), assert the settled contract on the LIVE
+        # event-concept surface — champion hero, field membership, evolution chart
+        # resolves, no double-graded round markets — classifying REAL vs EXPLAINED
+        # so RED means REAL, filing one deduped issue per concept with REAL
+        # defects. The guard #225 earned. Daily (07:45 UTC, after the horizon
+        # sentinel). background queue.
+        "task": "app.tasks.settled_concept_sentinel",
+        "schedule": crontab(minute=45, hour=7),  # Daily 07:45 UTC
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {
