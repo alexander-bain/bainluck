@@ -214,6 +214,10 @@ export default function EventConceptPage() {
   // /next match), NOT the RaceToTitleChart (the winner-field competitors carry no
   // per-outcome history, so the race chart would render its honest-empty state).
   const isSoccer = event.domain === "soccer";
+  // Cycling (Tour de France) is a winner-field concept whose children are per-stage
+  // winner markets — it falls through to the domain-agnostic race chart + leaderboard
+  // + stage rail. Like soccer it has no dedicated hub page, so it up-links to /sports.
+  const isCycling = event.domain === "cycling";
   const soccerHero =
     isSoccer && !isSettled ? headlinerMatchup(fightChildren) : null;
   // L2-116 → Alex's ruling (The Open 2026): the golfer grid is ONE box. The
@@ -265,9 +269,10 @@ export default function EventConceptPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
-      {/* L2-130: hub/category up-link. Soccer has no /hub/soccer page, so the World
-          Cup concept up-links to the Sports feed (an existing, honest destination). */}
-      {isSoccer && (
+      {/* L2-130: hub/category up-link. Soccer (World Cup) and cycling (Tour de France)
+          have no dedicated hub page, so these winner-field concepts up-link to the
+          Sports feed (an existing, honest destination). */}
+      {(isSoccer || isCycling) && (
         <Link
           href="/sports"
           className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"

@@ -797,6 +797,57 @@ async def get_grid_sentinel_last(
     return json.loads(raw)
 
 
+@router.post("/horizon-sentinel/run")
+async def trigger_horizon_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+):
+    """Queue #223: on-demand run of the Horizon Sentinel.
+
+    Enqueues the daily marquee-event early-warning task, or (inline=True) runs it
+    in-request and returns the scorecard — handy for verification
+    (?inline=true&file_issues=false). Reads THE HORIZON CALENDAR
+    (app/config/majors_calendar.yaml) and escalates each major as it nears (T-30 /
+    T-14 / T-7 / in-progress-without-page = P0). Read-only against production; the
+    sentinel files work, it never writes data."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.horizon_sentinel import _run_horizon_sentinel
+
+        return await _run_horizon_sentinel(file_issues=file_issues)
+
+    from app.tasks import celery_app
+
+    result = celery_app.send_task(
+        "app.tasks.horizon_sentinel",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/horizon-sentinel/last")
+async def get_horizon_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue #223: read the last cached Horizon Sentinel run (scorecard + filed
+    issues). Lets an enqueued worker run be inspected without re-running the
+    calendar walk."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get("bainluck:horizon_sentinel:last")
+    if not raw:
+        return {"status": "no_run_cached", "key": "bainluck:horizon_sentinel:last"}
+    return json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Pairwise Discover Card Preference Labeling
 # ---------------------------------------------------------------------------

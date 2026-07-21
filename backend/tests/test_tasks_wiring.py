@@ -273,6 +273,7 @@ class TestBeatScheduleCompleteness:
         "calibration-sentinel-weekly",
         "flow-sentinel-daily",
         "grid-sentinel-daily",
+        "horizon-sentinel-daily",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",

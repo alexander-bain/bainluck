@@ -214,6 +214,18 @@ def derive_market_concept_key(
     except Exception:
         pass
 
+    # 2d. Cycling grand tours — the GC winner field up-links to its race concept
+    #     (`event:cycling:<slug>`). Name-gated to the GC winner (stage/team markets
+    #     fall through to the market/sport page, not a wrong concept breadcrumb).
+    try:
+        from app.utils.event_cycling import derive_cycling_concept
+
+        cyc = derive_cycling_concept(external_id, name, llm_sport_category)
+        if cyc and cyc.get("key"):
+            return cyc["key"]
+    except Exception:
+        pass
+
     # 3. Winner-field domains — name-slug (adapters resolve token-tolerantly).
     if cat == "tennis":
         try:

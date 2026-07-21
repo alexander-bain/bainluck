@@ -1,0 +1,244 @@
+# THE HORIZON CALENDAR — every knowable major event through 2030.
+# Queue #223 Item 1. Read by app/tasks/horizon_sentinel.py.
+#
+# Purpose: a marquee event should never arrive without a page. This file is the
+# roadmap. The sentinel walks it every day and escalates as each event nears:
+#   T-30  (0 < days_to_start <= 30)  -> candidate     (info)
+#   T-14  (0 < days_to_start <= 14)  -> needs-page     (P1) if no live page
+#   T-7   (0 < days_to_start <=  7)  -> marquee-escalation (P1; marquee=true)
+#   in progress (start <= today <= end) AND no page   -> IN-PROGRESS-WITHOUT-PAGE (P0)
+# The sentinel checks "has a page" by resolving concept_key against the live
+# event-concept surface (GET /api/event/{concept_key}). marquee:true also drives
+# server-side feed pinning (Item 2).
+#
+# Schema per entry:
+#   name            human label
+#   slug            url slug (kebab)
+#   concept_key     event-concept key the page resolves at (event:<domain>:<slug>),
+#                   or null when the surface is a plain event/bracket with no concept
+#                   adapter yet (still tracked; page-check is best-effort)
+#   domain          adapter domain (golf/tennis/f1/soccer/cycling/awards/election/...)
+#   start / end     ISO dates (YYYY-MM-DD). end == start for single-day events.
+#   archetype       expected surface shape: winner_field | bracket | single_event |
+#                   team_match | card | ceremony
+#   marquee         true => must pin atop the feed while in progress
+#   date_confidence confirmed | approximate  (approximate = conventional window for a
+#                   not-yet-scheduled edition; honest early-warning, refine when set)
+#   notes           optional context
+#
+# NOTE ON DATES: 2026 entries are confirmed from published schedules. Far-future
+# annual editions use the sport's conventional window (date_confidence: approximate)
+# — good enough for a T-30 early-warning; tighten each as the real date is announced.
+
+majors:
+  # ============================ 2026 ============================
+  - name: "Tour de France 2026"
+    slug: tour-de-france-2026
+    concept_key: "event:cycling:tour-de-france-2026"
+    domain: cycling
+    start: 2026-07-04
+    end: 2026-07-26
+    archetype: winner_field
+    marquee: true
+    date_confidence: confirmed
+    notes: "The 2026 Grande Boucle. Finishes in Paris. Item 3 builds the cycling adapter."
+
+  - name: "The Open Championship 2026"
+    slug: the-open-2026
+    concept_key: "event:golf:the-open-2026"
+    domain: golf
+    start: 2026-07-16
+    end: 2026-07-19
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+    notes: "Golf major. Royal Birkdale window."
+
+  - name: "MLB All-Star Game 2026"
+    slug: mlb-all-star-2026
+    concept_key: null
+    domain: mlb
+    start: 2026-07-14
+    end: 2026-07-14
+    archetype: single_event
+    marquee: false
+    date_confidence: approximate
+
+  - name: "US Open Tennis 2026"
+    slug: us-open-tennis-2026
+    concept_key: "event:tennis:us-open-2026"
+    domain: tennis
+    start: 2026-08-24
+    end: 2026-09-13
+    archetype: bracket
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Vuelta a España 2026"
+    slug: vuelta-2026
+    concept_key: "event:cycling:vuelta-2026"
+    domain: cycling
+    start: 2026-08-22
+    end: 2026-09-13
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Emmy Awards 2026"
+    slug: emmys-2026
+    concept_key: "event:awards:emmys-2026"
+    domain: awards
+    start: 2026-09-13
+    end: 2026-09-13
+    archetype: ceremony
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Ryder Cup 2027"
+    slug: ryder-cup-2027
+    concept_key: "event:golf:ryder-cup-2027"
+    domain: golf
+    start: 2027-09-17
+    end: 2027-09-19
+    archetype: team_match
+    marquee: true
+    date_confidence: approximate
+    notes: "Adare Manor, Ireland (biennial, odd years)."
+
+  - name: "F1 Season Finale 2026 (Abu Dhabi GP)"
+    slug: f1-abu-dhabi-2026
+    concept_key: "event:f1:abu-dhabi-2026"
+    domain: f1
+    start: 2026-12-06
+    end: 2026-12-06
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+
+  # ============================ 2027 (annual anchors) ============================
+  - name: "Grammy Awards 2027"
+    slug: grammys-2027
+    concept_key: "event:awards:grammys-2027"
+    domain: awards
+    start: 2027-02-07
+    end: 2027-02-07
+    archetype: ceremony
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Super Bowl LXI"
+    slug: super-bowl-61
+    concept_key: null
+    domain: nfl
+    start: 2027-02-07
+    end: 2027-02-07
+    archetype: single_event
+    marquee: true
+    date_confidence: approximate
+    notes: "Feb 2027. Concept adapter TBD; tracked as marquee single event."
+
+  - name: "Academy Awards 2027 (Oscars)"
+    slug: oscars-2027
+    concept_key: "event:awards:oscars-2027"
+    domain: awards
+    start: 2027-03-14
+    end: 2027-03-14
+    archetype: ceremony
+    marquee: true
+    date_confidence: approximate
+
+  - name: "WrestleMania 43"
+    slug: wrestlemania-43
+    concept_key: null
+    domain: wwe
+    start: 2027-04-03
+    end: 2027-04-04
+    archetype: card
+    marquee: true
+    date_confidence: approximate
+    notes: "Late March / early April. No adapter yet."
+
+  - name: "NCAA March Madness 2027 (Men's)"
+    slug: march-madness-2027
+    concept_key: null
+    domain: ncaab
+    start: 2027-03-16
+    end: 2027-04-05
+    archetype: bracket
+    marquee: true
+    date_confidence: approximate
+
+  - name: "The Masters 2027"
+    slug: masters-2027
+    concept_key: "event:golf:masters-2027"
+    domain: golf
+    start: 2027-04-08
+    end: 2027-04-11
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Giro d'Italia 2027"
+    slug: giro-2027
+    concept_key: "event:cycling:giro-2027"
+    domain: cycling
+    start: 2027-05-08
+    end: 2027-05-30
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+
+  - name: "Tour de France 2027"
+    slug: tour-de-france-2027
+    concept_key: "event:cycling:tour-de-france-2027"
+    domain: cycling
+    start: 2027-07-03
+    end: 2027-07-25
+    archetype: winner_field
+    marquee: true
+    date_confidence: approximate
+
+  # ============================ QUADRENNIAL ANCHORS (2028-2030) ============================
+  - name: "2028 Summer Olympics (Los Angeles)"
+    slug: summer-olympics-2028
+    concept_key: null
+    domain: olympics
+    start: 2028-07-14
+    end: 2028-07-30
+    archetype: single_event
+    marquee: true
+    date_confidence: confirmed
+    notes: "LA28. Medal-count + event futures. Concept adapter TBD."
+
+  - name: "UEFA Euro 2028"
+    slug: euro-2028
+    concept_key: "event:soccer:euro-2028"
+    domain: soccer
+    start: 2028-06-09
+    end: 2028-07-09
+    archetype: bracket
+    marquee: true
+    date_confidence: approximate
+    notes: "UK & Ireland. Soccer adapter template applies."
+
+  - name: "2030 Winter Olympics (French Alps)"
+    slug: winter-olympics-2030
+    concept_key: null
+    domain: olympics
+    start: 2030-02-01
+    end: 2030-02-17
+    archetype: single_event
+    marquee: true
+    date_confidence: approximate
+    notes: "French Alps 2030. Exact dates not yet fixed."
+
+  - name: "2030 FIFA World Cup"
+    slug: world-cup-2030
+    concept_key: "event:soccer:world-cup-2030"
+    domain: soccer
+    start: 2030-06-13
+    end: 2030-07-21
+    archetype: bracket
+    marquee: true
+    date_confidence: approximate
+    notes: "Spain/Portugal/Morocco (+ centenary matches in South America). Window approximate."

@@ -1206,3 +1206,10 @@ register_adapter(ElectionEventAdapter())
 from app.utils.event_soccer import SoccerEventAdapter  # noqa: E402
 
 register_adapter(SoccerEventAdapter())
+
+# Cycling grand tours (winner_field) — The Tour (Queue #223). The GC winner field
+# is the primary block (riders); per-stage winners, team classification, and jersey
+# props fold in as children. Futures-only shape (F1 template).
+from app.utils.event_cycling import CyclingEventAdapter  # noqa: E402
+
+register_adapter(CyclingEventAdapter())

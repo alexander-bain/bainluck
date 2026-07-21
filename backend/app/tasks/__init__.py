@@ -1566,6 +1566,23 @@ def grid_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.horizon_sentinel")
+def horizon_sentinel(self, file_issues=True):
+    """Horizon Sentinel (Queue #223): read THE HORIZON CALENDAR
+    (app/config/majors_calendar.yaml — every knowable major through 2030) and
+    escalate as each event nears — T-30 candidate, T-14 needs-page, T-7 marquee
+    escalation, IN-PROGRESS-WITHOUT-PAGE = P0 — filing ONE deduped GitHub issue
+    per uncovered event. A marquee event should never arrive without a page (The
+    Open / World Cup top-slot failure class). Read-only; files work, never data.
+    The 840s soft limit (under the 900s hard limit, clear of the global 300s) plus
+    the run's 180s inner deadline keep it from SIGKILLing untracked (#966)."""
+    from app.tasks.horizon_sentinel import _run_horizon_sentinel
+    return _tracked_run(
+        "horizon_sentinel",
+        _run_horizon_sentinel(file_issues=file_issues),
+    )
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -2271,6 +2288,17 @@ celery_app.conf.beat_schedule = {
         # background queue.
         "task": "app.tasks.grid_sentinel",
         "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
+        "options": {"queue": "background"},
+    },
+    "horizon-sentinel-daily": {
+        # Queue #223: marquee-event early-warning sentinel. Daily (07:40 UTC,
+        # after the grid sentinel) — reads THE HORIZON CALENDAR
+        # (app/config/majors_calendar.yaml) and escalates each major as it nears
+        # (T-30 candidate, T-14 needs-page, T-7 marquee escalation,
+        # IN-PROGRESS-WITHOUT-PAGE = P0), filing one deduped issue per uncovered
+        # event so a marquee never arrives without a page. background queue.
+        "task": "app.tasks.horizon_sentinel",
+        "schedule": crontab(minute=40, hour=7),  # Daily 07:40 UTC
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

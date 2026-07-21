@@ -1623,6 +1623,7 @@ async def search_events(
         derive_election_concept as _derive_election_concept,
         is_race as _is_election_race,
     )
+    from app.utils.event_cycling import derive_cycling_concept as _derive_cycling_concept
     from app.utils.event_soccer import derive_soccer_concept as _derive_soccer_concept
     from app.utils.event_tennis import is_winner_market as _is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _derive_ufc_concept
@@ -1698,6 +1699,24 @@ async def search_events(
                 "key": _sc["key"],
                 "name": _sc["name"],
                 "domain": "soccer",
+                "market_id": _m.id,
+            })
+            if len(event_concepts) >= 5:
+                break
+            continue
+        # Queue #223: cycling grand tours (Tour de France / Giro / Vuelta) are
+        # winner-field concepts. A matched GC-winner market surfaces the concept page
+        # (event:cycling:<slug>); stage/team markets return None (they reach the
+        # market, not a dead concept link).
+        _cyc = _derive_cycling_concept(_m.external_id, _m.name, _m.llm_sport_category)
+        if _cyc is not None:
+            if _cyc["key"] in _seen_concept_keys:
+                continue
+            _seen_concept_keys.add(_cyc["key"])
+            event_concepts.append({
+                "key": _cyc["key"],
+                "name": _cyc["name"],
+                "domain": "cycling",
                 "market_id": _m.id,
             })
             if len(event_concepts) >= 5:

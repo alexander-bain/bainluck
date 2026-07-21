@@ -717,6 +717,26 @@ def _rank_key(item: dict) -> tuple:
     )
 
 
+def _pin_marquee_items(feed_items: list[dict]) -> list[dict]:
+    """Move in-progress, calendar-flagged marquee concepts/tournaments to the very
+    top of the feed, preserving the relative order of everyone else (Queue #223
+    Item 2). A concept/tournament earns the pin only when it set ``_marquee_pin``
+    at scoring time (marquee-flagged in majors_calendar.yaml AND currently live).
+
+    Pure, stable, defensive: on any error it returns the list unchanged so a marquee
+    lookup can never empty the feed (gotcha #42). Among multiple pins, the existing
+    rank order is preserved (they are already in score order at this point)."""
+    try:
+        pinned = [it for it in feed_items if it.get("_marquee_pin")]
+        if not pinned:
+            return feed_items
+        rest = [it for it in feed_items if not it.get("_marquee_pin")]
+        return pinned + rest
+    except Exception:
+        logger.warning("Feed: marquee pin pass failed; leaving order unchanged", exc_info=True)
+        return feed_items
+
+
 def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
     for item in feed_items:
         if item.get("type") != "event":
@@ -1455,6 +1475,14 @@ async def get_feed(
         # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
         feed_items = assemble_swings_theme_bundles(feed_items)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
+
+    # === MARQUEE PINNING (Queue #223 Item 2) ===
+    # Calendar-flagged marquee concepts/tournaments that are IN PROGRESS pin to the
+    # very top — the last word on ordering, after every score/diversity/bundle pass,
+    # so The Open / World Cup top-slot failure class dies. Pure stable reorder: it
+    # touches no score and can never empty the feed (gotcha #42/#43).
+    feed_items = _pin_marquee_items(feed_items)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "marquee_pin")
 
     total = len(feed_items)
     paginated = feed_items[offset : offset + limit]
@@ -6099,6 +6127,14 @@ async def _score_golf_tournaments(
     if not tournaments:
         return []
 
+    # Queue #223 Item 2: calendar-flagged marquee concept keys (best-effort).
+    try:
+        from app.utils.majors_calendar import marquee_concept_keys
+
+        _marquee_keys = marquee_concept_keys()
+    except Exception:
+        _marquee_keys = set()
+
     feed_items: list[dict] = []
 
     # Per-user tour filtering based on sport affinities
@@ -6186,6 +6222,10 @@ async def _score_golf_tournaments(
             "source_count": len(set(t.get("market_sources", []))),
         }
 
+        # Item 2: marquee pin when the tournament is a calendar-flagged marquee AND live.
+        _is_marquee = t.get("key") in _marquee_keys
+        data["is_marquee"] = _is_marquee
+
         feed_items.append(
             {
                 "type": "tournament",
@@ -6193,6 +6233,7 @@ async def _score_golf_tournaments(
                 "reason": reason,
                 "headline": headline,
                 "data": data,
+                "_marquee_pin": bool(_is_marquee and _tournament_is_live(t, now)),
                 "_sort_time": (
                     datetime.fromisoformat(t["commence_time"]).timestamp()
                     if t.get("commence_time")
@@ -6384,12 +6425,33 @@ async def _score_event_concepts(
         except Exception as e:
             logger.warning("Feed: failed to list F1 GP concepts: %s", e)
 
+    # Cycling grand tours (winner-field) — The Tour (Queue #223 Item 3).
+    if not sport_filter or sport_filter in ("cycling", "all"):
+        from app.utils.event_cycling import list_cycling_concepts
+
+        try:
+            concepts += await list_cycling_concepts(
+                db, statuses=("upcoming", "live"), limit=6
+            )
+        except Exception as e:
+            logger.warning("Feed: failed to list cycling concepts: %s", e)
+
+    # Queue #223 Item 2: which concept keys are calendar-flagged marquee. Loaded
+    # once per feed build; best-effort (empty set on any failure — no pin, no crash).
+    try:
+        from app.utils.majors_calendar import marquee_concept_keys
+
+        _marquee_keys = marquee_concept_keys()
+    except Exception:
+        _marquee_keys = set()
+
     feed_items: list[dict] = []
     for c in concepts:
         score = _score_event_concept(c, now)
         if score <= 0:
             continue
         latest = c.get("latest_commence")
+        _is_marquee = c["key"] in _marquee_keys
         feed_items.append(
             {
                 "type": "concept",
@@ -6405,7 +6467,11 @@ async def _score_event_concepts(
                     "is_major": c["is_major"],
                     "fight_count": c.get("fight_count", 0),
                     "entry_count": c.get("entry_count", 0),
+                    # Item 2: calendar-flagged marquee => pinned atop the feed while live.
+                    "is_marquee": _is_marquee,
                 },
+                # Item 2: an in-progress marquee concept pins to the very top.
+                "_marquee_pin": bool(_is_marquee and c.get("status") == "live"),
                 "_sort_time": latest.timestamp() if latest is not None else 0,
             }
         )

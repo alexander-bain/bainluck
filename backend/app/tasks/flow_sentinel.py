@@ -124,6 +124,7 @@ _FLOW_AREA_LABELS = {
     "category_discover": "area:discover-ranking",
     "participation_family": "area:event-details",
     "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
+    "unlinked_held": "area:event-details",  # matcher missed a link we could have made
 }
 _FLOW_TITLES = {
     "search_gold_set": "search misses gold-set entities",
@@ -134,6 +135,7 @@ _FLOW_TITLES = {
     "category_discover": "category / Discover first page empty or low-quality",
     "participation_family": "non-ME prop family (make-cut/top-N) squashed to sum-100%",
     "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
+    "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
 }
 
 
@@ -829,6 +831,68 @@ async def _run_matured_linkage(client: httpx.AsyncClient) -> dict:
     }
 
 
+async def _run_unlinked_held(client: httpx.AsyncClient) -> dict:
+    """Queue #223 Item 4 — the STRONGER linkage flow (Alex's ruling). Distinct from
+    matured_linkage: that finds a blend source with no market; THIS finds a game-
+    winner market we ALREADY HOLD (Kalshi/Poly, open, event_id NULL) whose both teams
+    match an imminent event — the matcher missed a link it could have made. Reads the
+    ``unlinked_held`` block of the precomputed matured-linkage metric from Redis (kept
+    warm every 10 min) and files each miss. Read-only — the sentinel files work."""
+    payload = None
+    try:
+        import json as _json
+
+        from app.tasks.redis_state import get_redis_client
+
+        cached = get_redis_client().get("bainluck:admin:matured_linkage")
+        if cached:
+            payload = (_json.loads(cached) or {}).get("unlinked_held")
+    except Exception as exc:
+        return {
+            "flow": "unlinked_held",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {"reason": f"unlinked-held cache read failed: {str(exc)[:120]}"},
+        }
+
+    if not payload or payload.get("status") != "ok":
+        return {
+            "flow": "unlinked_held",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {"reason": (payload or {}).get("status", "cache cold — beat has not run")},
+        }
+
+    misses = payload.get("misses") or []
+    failures = [
+        {
+            "event_id": m.get("event_id"),
+            "source": m.get("source"),
+            "detail": f"imminent {m.get('sport')} event {m.get('matchup')} — we hold "
+                      f"unlinked {m.get('source')} market #{m.get('market_id')} "
+                      f"'{m.get('market_name')}' whose both teams match this event, but "
+                      f"event_id is NULL (matcher miss; event {m.get('event_id')})",
+        }
+        for m in misses
+    ]
+    return {
+        "flow": "unlinked_held",
+        "checked": payload.get("candidates_scanned", 0),
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "evidence": {
+            "headline_unlinked_held": payload.get("headline_unlinked_held"),
+            "events_checked": payload.get("events_checked"),
+            "candidates_scanned": payload.get("candidates_scanned"),
+            "by_source": payload.get("by_source"),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
@@ -996,6 +1060,7 @@ async def _run_flow_sentinel(
         ("category_discover", _run_category_discover),
         ("participation_family", _run_participation_family),
         ("matured_linkage", _run_matured_linkage),
+        ("unlinked_held", _run_unlinked_held),
     )
 
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,

@@ -672,6 +672,164 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     }
 
 
+def _matchup_matches_event(matchup, home: str, away: str, external_id: str | None) -> bool:
+    """True when a market matchup's BOTH teams correspond to an event's two teams
+    (either orientation). Stricter than match_teams_to_event (which fires on one
+    side) — requiring both sides present keeps the unlinked-held check high-precision
+    so a filed miss is a real matcher failure, not a coincidental one-name overlap."""
+    from app.utils.prediction_market_matching import (
+        _fuzzy_team_match,
+        extract_teams_from_ticker,
+    )
+
+    pairs: list[tuple[str, str]] = []
+    a = getattr(matchup, "team_a", None)
+    b = getattr(matchup, "team_b", None)
+    if a and b:
+        pairs.append((a, b))
+    if external_id:
+        tt = extract_teams_from_ticker(external_id)
+        if tt:
+            pairs.append(tt)
+    for ta, tb in pairs:
+        if (_fuzzy_team_match(ta, home) and _fuzzy_team_match(tb, away)) or (
+            _fuzzy_team_match(ta, away) and _fuzzy_team_match(tb, home)
+        ):
+            return True
+    return False
+
+
+async def _compute_unlinked_held(db: AsyncSession) -> dict:
+    """The STRONGER linkage check (Queue #223 Item 4, Alex's ruling): a game-winner
+    market we HOLD in the DB (Kalshi/Polymarket, status open, event_id IS NULL) whose
+    BOTH teams match an imminent event — i.e. the matcher had everything it needed and
+    still missed the link. Distinct from blend-integrity (matured-linkage): that finds
+    a blend source with no market; THIS finds a market with no link. Catchable today.
+
+    Bounded + high-precision: scans only unlinked open Kalshi/Poly markets resolving
+    near now, requires a game-level shape AND a both-teams match to an imminent event.
+    Read-only."""
+    from app.utils.prediction_market_matching import (
+        extract_matchup,
+        is_game_level_market,
+    )
+
+    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    # Imminent events (same window as matured-linkage).
+    imm_rows = (
+        await db.execute(
+            text(
+                """
+                SELECT e.id, s.key AS sport_key,
+                       e.home_team_name AS home, e.away_team_name AS away,
+                       e.away_team_name || ' @ ' || e.home_team_name AS matchup,
+                       e.commence_time
+                FROM events e
+                JOIN sports s ON s.id = e.sport_id
+                WHERE e.status IN ('scheduled', 'live')
+                  AND e.commence_time >= NOW() - INTERVAL '6 hours'
+                  AND e.commence_time <= NOW() + INTERVAL '24 hours'
+                  AND e.home_team_name IS NOT NULL
+                  AND e.away_team_name IS NOT NULL
+                """
+            )
+        )
+    ).all()
+    imm = [
+        {
+            "id": r.id,
+            "sport": r.sport_key,
+            "home": r.home,
+            "away": r.away,
+            "matchup": r.matchup,
+            "commence_time": r.commence_time,
+        }
+        for r in imm_rows
+    ]
+    if not imm:
+        return {
+            "headline_unlinked_held": 0,
+            "status": "insufficient_slate",
+            "events_checked": 0,
+            "candidates_scanned": 0,
+            "misses": [],
+            "by_source": {},
+            "definition": (
+                "Unlinked-but-held: a Kalshi/Polymarket game-winner market we hold "
+                "(status open, event_id NULL) whose both teams match an imminent event "
+                "— the matcher missed a link it could have made. 0 = clean."
+            ),
+        }
+
+    # Bounded candidate pool: unlinked open Kalshi/Poly markets resolving near now.
+    cand = (
+        await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.external_id,
+                FuturesMarket.source,
+                FuturesMarket.llm_sport_category,
+            ).where(
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                FuturesMarket.status == "open",
+                FuturesMarket.resolution_date.isnot(None),
+                FuturesMarket.resolution_date >= datetime.now(timezone.utc) - timedelta(days=2),
+                FuturesMarket.resolution_date <= datetime.now(timezone.utc) + timedelta(days=10),
+            ).limit(2000)
+        )
+    ).all()
+
+    misses: list[dict] = []
+    seen: set[tuple] = set()
+    for m in cand:
+        if not is_game_level_market(m.name or "", m.llm_sport_category, external_id=m.external_id):
+            continue
+        matchup = extract_matchup(m.name or "", m.external_id)
+        if matchup is None:
+            continue
+        for ev in imm:
+            if _matchup_matches_event(matchup, ev["home"], ev["away"], m.external_id):
+                key = (ev["id"], m.source, m.id)
+                if key in seen:
+                    break
+                seen.add(key)
+                misses.append(
+                    {
+                        "event_id": ev["id"],
+                        "source": m.source,
+                        "sport": ev["sport"],
+                        "matchup": ev["matchup"],
+                        "market_id": m.id,
+                        "market_name": m.name,
+                        "commence_time": ev["commence_time"].isoformat()
+                        if ev["commence_time"]
+                        else None,
+                    }
+                )
+                break
+
+    by_source: dict[str, int] = {}
+    for miss in misses:
+        by_source[miss["source"]] = by_source.get(miss["source"], 0) + 1
+
+    return {
+        "headline_unlinked_held": len(misses),
+        "status": "ok",
+        "events_checked": len(imm),
+        "candidates_scanned": len(cand),
+        "misses": misses,
+        "by_source": by_source,
+        "definition": (
+            "Unlinked-but-held: a Kalshi/Polymarket game-winner market we hold "
+            "(status open, event_id NULL) whose both teams match an imminent event — "
+            "the matcher missed a link it could have made. 0 = clean; >0 = real "
+            "match-failures (distinct from blend-integrity phantoms)."
+        ),
+    }
+
+
 async def _compute_matured_linkage(db: AsyncSession) -> dict:
     """Compute the matured-linkage metric (Queue #220/221 Item 2).
 
@@ -728,6 +886,12 @@ async def _compute_matured_linkage(db: AsyncSession) -> dict:
     ]
     payload = summarize_matured_linkage(rows)
     payload["window"] = "NOW-6h..NOW+24h"
+    # Queue #223 Item 4: the stronger linkage class (unlinked-but-held) rides the
+    # same payload/endpoint/Redis key so the cockpit + sentinel see both classes.
+    try:
+        payload["unlinked_held"] = await _compute_unlinked_held(db)
+    except Exception as exc:
+        payload["unlinked_held"] = {"status": "error", "error": str(exc)[:160]}
     payload["generated_at"] = datetime.now(timezone.utc).isoformat()
     return payload
 
