@@ -597,6 +597,24 @@ export interface DestinationEngagedParams extends FunnelDimensions {
   dwell_ms: number;
 }
 
+/**
+ * COCKPIT funnel (measurement_spec §2 — Alex-ops): a human verdict on an LLM
+ * proposal in the eval queue (cockpit quick-eval or the label-pass page).
+ * `applied` is false until #222 wires Accept to a real Discover-scoring term;
+ * it ships now so the funnel measures verdict volume from day one and flips to
+ * true the moment the promote build lands.
+ */
+export interface EvalVerdictParams extends FunnelDimensions {
+  verdict: 'accept' | 'reject' | 'skip';
+  decision_id: number | string;
+  /** The proposal being judged, e.g. "promote" | "downrank". */
+  proposal?: string;
+  item_name?: string;
+  /** Whether this verdict changed live ranking (false until #222). */
+  applied: boolean;
+  surface: 'cockpit' | 'label_pass';
+}
+
 // ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
@@ -684,6 +702,9 @@ export interface AnalyticsEventMap {
   challenge_completed: ChallengeCompletedParams;
   search_opened: SearchOpenedParams;
   destination_engaged: DestinationEngagedParams;
+
+  // Cockpit (Alex-ops) funnel (measurement_spec §2 — Queue L2-142 Item 4)
+  eval_verdict: EvalVerdictParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

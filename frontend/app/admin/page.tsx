@@ -1368,10 +1368,13 @@ export default function AdminDashboard() {
 
       {data && (
         <>
-          <DiagnosisCard />
-
-          {/* Key takeaways */}
+          {/* IA order (L2-142 Item 2): the cockpit's reds-with-actions render
+              first (inside <AdminCockpit /> above), Key Takeaways second, and the
+              System Diagnosis + full detail sections below. The first screenful
+              answers "what needs anyone's attention." */}
           <KeyTakeaways data={data} />
+
+          <DiagnosisCard />
 
           {/* Top stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

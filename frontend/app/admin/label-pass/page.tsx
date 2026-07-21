@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
+import { trackEvent } from "@/lib/analytics";
 
 export default function LabelPassPage() {
   usePageTracking({ pageType: "admin_label_pass" });
@@ -29,13 +30,27 @@ export default function LabelPassPage() {
   const handleVerdict = useCallback(async (verdict: string) => {
     if (!current || submitting || !secret) return;
     setSubmitting(true);
+    const c = current as Record<string, unknown>;
     try {
       await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision_id: (current as Record<string, unknown>).id, verdict, features: (current as Record<string, unknown>).features || {} }),
+        body: JSON.stringify({ decision_id: c.id, verdict, features: c.features || {} }),
       });
-      setHistory((h) => [...h, { id: (current as Record<string, unknown>).id as number, verdict }]);
+      // Cockpit (Alex-ops) funnel (measurement_spec §2). `applied:false` until
+      // #222 wires Accept to a real Discover-scoring term.
+      if (verdict === "accept" || verdict === "reject" || verdict === "skip") {
+        trackEvent("eval_verdict", {
+          verdict,
+          decision_id: c.id as number,
+          proposal: ((c.decision as string) || "").replace("llm_proposed_", "") || undefined,
+          item_name: (c.item_name as string) || undefined,
+          category: (c.category as string) || undefined,
+          applied: false,
+          surface: "label_pass",
+        });
+      }
+      setHistory((h) => [...h, { id: c.id as number, verdict }]);
       setIndex((i) => i + 1);
     } catch (e) {
       console.error(e);
@@ -90,10 +105,16 @@ export default function LabelPassPage() {
 
   return (
     <div className="max-w-2xl mx-auto p-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">Label Speed Pass</h1>
         <span className="text-sm text-text-muted font-mono">{reviewed + 1} / {total}</span>
       </div>
+      {/* L2-142 Item 4 — honest copy until #222 (the eval-promote build) lands.
+          Verdicts train the scorer today; applying them live in Discover ranking
+          is rolling out. Flips to the "promotes + trains" wording when #222 ships. */}
+      <p className="text-xs text-text-muted mb-6 leading-relaxed">
+        Verdicts train the ranking scorer. Applying them live in Discover is rolling out (#222).
+      </p>
 
       {/* Card */}
       <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6 shadow-md">

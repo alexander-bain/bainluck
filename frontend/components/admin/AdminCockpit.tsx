@@ -5,6 +5,8 @@ import Link from "next/link";
 import useSWR from "swr";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { trackEvent } from "@/lib/analytics";
+import FileThisButton from "@/components/admin/FileThisButton";
 
 // --- Types (matches GET /api/admin/cockpit) ---
 
@@ -209,6 +211,29 @@ function tileAction(t: HealthTile): { text: string; tone: "danger" | "warn" | "m
   };
 }
 
+// A red/amber tile "lacking a linked issue" (L2-142 Item 1) = one with no
+// tracked context badge. Those get the one-tap File-this rail; tiles already
+// tracked link to their open issue instead.
+function tileHasIssue(t: HealthTile): boolean {
+  return (t.context ?? []).some((c) => c.kind === "tracked" && !!c.ref);
+}
+
+function tileSeverity(status: string): string {
+  return status === "red" ? "P1" : "P2";
+}
+
+// Body for a one-tap filing from a health tile — the tile's own action sentence
+// is the best first line of "what to do".
+function tileFileBody(t: HealthTile): string {
+  const a = tileAction(t);
+  return [
+    `**${t.label}** is ${t.status.toUpperCase()} — ${t.value}.`,
+    t.detail ? `\n${t.detail}` : "",
+    a ? `\n\n${a.text}` : "",
+    `\n\nSurfaced by the Alex cockpit (${t.href}).`,
+  ].join("");
+}
+
 export default function AdminCockpit() {
   const { secret } = useAdminAuth();
   const { data, error, isLoading, mutate } = useSWR<CockpitData>(
@@ -219,14 +244,29 @@ export default function AdminCockpit() {
 
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  async function submitVerdict(decisionId: number, verdict: "accept" | "reject" | "skip") {
+  async function submitVerdict(
+    item: EvalSample,
+    verdict: "accept" | "reject" | "skip",
+  ) {
     if (!secret) return;
-    setBusyId(decisionId);
+    setBusyId(item.id);
     try {
       await adminFetch("/api/admin/label-pass/verdict", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision_id: decisionId, verdict, features: {} }),
+        body: JSON.stringify({ decision_id: item.id, verdict, features: {} }),
+      });
+      // Cockpit (Alex-ops) funnel (measurement_spec §2). `applied:false` until
+      // #222 wires Accept to a real Discover-scoring term — the event ships now
+      // so verdict volume is measured from day one.
+      trackEvent("eval_verdict", {
+        verdict,
+        decision_id: item.id,
+        proposal: item.decision.replace("llm_proposed_", ""),
+        item_name: item.item_name ?? undefined,
+        category: item.category ?? undefined,
+        applied: false,
+        surface: "cockpit",
       });
       await mutate();
     } catch {
@@ -256,6 +296,15 @@ export default function AdminCockpit() {
   const fs = data.flow_sentinel;
   const dqw = data.data_quality_watchdog;
 
+  // L2-142 Item 2 — reds-with-actions first. Everything that needs someone's
+  // attention (non-green tiles + firing watchdog checks + failing flows) is
+  // hoisted into ONE strip at the very top so the first screenful answers
+  // "what needs attention." Green tiles and full detail stay below.
+  const attentionTiles = data.health.filter((t) => t.status === "red" || t.status === "amber");
+  const firingChecks = (dqw?.per_check ?? []).filter((c) => c.status === "red");
+  const failingFlows = (fs?.per_flow ?? []).filter((f) => f.status === "red" && !f.skipped);
+  const attentionCount = attentionTiles.length + firingChecks.length + failingFlows.length;
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline justify-between">
@@ -265,7 +314,135 @@ export default function AdminCockpit() {
         </span>
       </div>
 
-      {/* Top strip: health tiles */}
+      {/* Needs attention (L2-142 Item 2) — reds-with-actions, first. */}
+      <div
+        className={
+          "rounded-xl border p-4 " +
+          (attentionCount > 0
+            ? "border-accent-danger/40 bg-accent-danger/5"
+            : "border-green-500/20 bg-green-500/5")
+        }
+      >
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-text-primary">Needs attention</h3>
+          <span
+            className={
+              "text-micro font-medium " + (attentionCount > 0 ? "text-accent-danger" : "text-green-600")
+            }
+          >
+            {attentionCount > 0 ? `${attentionCount} to handle` : "all clear"}
+          </span>
+        </div>
+        {attentionCount === 0 ? (
+          <div className="text-sm text-text-muted">
+            Nothing red or amber — the site is doing what it&apos;s supposed to.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {attentionTiles.map((t) => {
+              const a = tileAction(t);
+              const tracked = (t.context ?? []).find((c) => c.kind === "tracked" && !!c.ref);
+              return (
+                <li key={`tile-${t.key}`} className="flex items-start gap-2 text-sm">
+                  <span className={"h-2 w-2 rounded-full shrink-0 mt-1.5 " + dotBg(t.status)} />
+                  <span className="flex-1 min-w-0">
+                    <Link href={t.href} className="text-text-primary font-medium hover:underline">
+                      {t.label}: {t.value}
+                    </Link>
+                    {a && <span className="text-micro text-text-muted block leading-relaxed">{a.text}</span>}
+                  </span>
+                  {tracked ? (
+                    <a
+                      href={tracked.url ?? "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-brand hover:underline shrink-0 text-micro mt-0.5"
+                    >
+                      {tracked.ref}
+                    </a>
+                  ) : (
+                    <FileThisButton
+                      compact
+                      source="cockpit_tile"
+                      itemKey={t.key}
+                      title={`${t.label} ${t.status.toUpperCase()}: ${t.value}`}
+                      body={tileFileBody(t)}
+                      severity={tileSeverity(t.status)}
+                      labels={["area:infra"]}
+                    />
+                  )}
+                </li>
+              );
+            })}
+            {firingChecks.map((c) => (
+              <li key={`check-${c.name}`} className="flex items-start gap-2 text-sm">
+                <span className="h-2 w-2 rounded-full shrink-0 mt-1.5 bg-accent-danger" />
+                <span className="flex-1 min-w-0">
+                  <span className="text-text-primary font-medium block">
+                    {c.severity} · {c.name.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-micro text-text-muted block leading-relaxed">{c.message}</span>
+                </span>
+                {c.issue_url ? (
+                  <a
+                    href={c.issue_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-brand hover:underline shrink-0 text-micro mt-0.5"
+                  >
+                    #{c.issue}
+                  </a>
+                ) : (
+                  <FileThisButton
+                    compact
+                    source="watchdog_check"
+                    itemKey={c.name}
+                    title={`[${c.severity}] ${c.name.replace(/_/g, " ")}`}
+                    body={c.message}
+                    severity={c.severity}
+                    labels={["area:data"]}
+                  />
+                )}
+              </li>
+            ))}
+            {failingFlows.map((f) => (
+              <li key={`flow-${f.flow}`} className="flex items-start gap-2 text-sm">
+                <span className="h-2 w-2 rounded-full shrink-0 mt-1.5 bg-accent-danger" />
+                <span className="flex-1 min-w-0">
+                  <span className="text-text-primary font-medium block">
+                    Flow failing · {f.flow.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-micro text-text-muted block leading-relaxed">
+                    {f.failing} failing of {f.checked ?? "?"} checked.
+                  </span>
+                </span>
+                {f.issue_url ? (
+                  <a
+                    href={f.issue_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-brand hover:underline shrink-0 text-micro mt-0.5"
+                  >
+                    #{f.issue}
+                  </a>
+                ) : (
+                  <FileThisButton
+                    compact
+                    source="flow_sentinel"
+                    itemKey={f.flow}
+                    title={`Flow failing: ${f.flow.replace(/_/g, " ")}`}
+                    body={`${f.failing} failing of ${f.checked ?? "?"} checked in the ${f.flow} flow.`}
+                    severity="P1"
+                    labels={["area:infra"]}
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Detail strip: all health tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {data.health.map((t) => (
           <div key={t.key} className={"rounded-xl border p-4 " + statusBg(t.status)}>
@@ -295,6 +472,21 @@ export default function AdminCockpit() {
                     : "text-text-muted";
               return <div className={"mt-2 text-micro leading-relaxed " + cls}>{a.text}</div>;
             })()}
+            {/* L2-142 Item 1 — a red/amber tile with no linked issue gets the
+                one-tap rail. Tiles already tracked show their issue badge above. */}
+            {(t.status === "red" || t.status === "amber") && !tileHasIssue(t) && (
+              <div className="mt-2">
+                <FileThisButton
+                  compact
+                  source="cockpit_tile"
+                  itemKey={t.key}
+                  title={`${t.label} ${t.status.toUpperCase()}: ${t.value}`}
+                  body={tileFileBody(t)}
+                  severity={tileSeverity(t.status)}
+                  labels={["area:infra"]}
+                />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -333,7 +525,7 @@ export default function AdminCockpit() {
 
       {/* Bottom: quick eval queue */}
       <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-semibold text-text-primary">Quick eval queue</h3>
           <div className="flex gap-3 text-micro">
             <Link href={evalQ.eval_href} className="text-accent-brand hover:underline">
@@ -344,6 +536,14 @@ export default function AdminCockpit() {
             </Link>
           </div>
         </div>
+        {/* L2-142 Item 4 — honest copy until #222 (the eval-promote build) lands.
+            Every verdict already trains the interestingness scorer; Accept does
+            not yet steer Discover ranking. Flips to the "promotes + trains"
+            wording (and applied:true) the moment #222 ships. */}
+        <p className="text-micro text-text-muted mb-2 leading-relaxed">
+          Verdicts train the ranking scorer. Applying them live in Discover is
+          rolling out (#222).
+        </p>
 
         {evalQ.pending_eval_sample.length === 0 ? (
           <div className="text-sm text-text-muted">No LLM proposals waiting for your call.</div>
@@ -365,21 +565,21 @@ export default function AdminCockpit() {
                 </span>
                 <div className="flex gap-1 shrink-0">
                   <button
-                    onClick={() => submitVerdict(item.id, "accept")}
+                    onClick={() => submitVerdict(item, "accept")}
                     disabled={busyId === item.id}
                     className="px-2 py-1 rounded-md text-micro font-medium bg-green-500/10 text-green-600 hover:bg-green-500/20 disabled:opacity-50"
                   >
                     Accept
                   </button>
                   <button
-                    onClick={() => submitVerdict(item.id, "reject")}
+                    onClick={() => submitVerdict(item, "reject")}
                     disabled={busyId === item.id}
                     className="px-2 py-1 rounded-md text-micro font-medium bg-accent-danger/10 text-accent-danger hover:bg-accent-danger/20 disabled:opacity-50"
                   >
                     Reject
                   </button>
                   <button
-                    onClick={() => submitVerdict(item.id, "skip")}
+                    onClick={() => submitVerdict(item, "skip")}
                     disabled={busyId === item.id}
                     className="px-2 py-1 rounded-md text-micro font-medium text-text-muted hover:bg-surface-elevated disabled:opacity-50"
                   >
@@ -471,11 +671,18 @@ export default function AdminCockpit() {
                       #{c.issue}
                     </a>
                   ) : (
-                    <span
-                      className="text-micro text-accent-danger font-medium shrink-0 mt-0.5"
-                      title="No filed issue — this alert only went to email. File one."
-                    >
-                      no issue
+                    /* L2-142 Item 1 — was a dead "no issue" label; now the one-tap
+                       rail so an email-only P0 becomes a filed issue in front of Alex. */
+                    <span className="shrink-0 mt-0.5">
+                      <FileThisButton
+                        compact
+                        source="watchdog_check"
+                        itemKey={c.name}
+                        title={`[${c.severity}] ${c.name.replace(/_/g, " ")}`}
+                        body={c.message}
+                        severity={c.severity}
+                        labels={["area:data"]}
+                      />
                     </span>
                   )}
                 </li>

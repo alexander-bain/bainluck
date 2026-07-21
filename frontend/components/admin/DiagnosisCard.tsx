@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, XCircle, Info, RefreshCw, Copy, Check } from "lucide-react";
+import { AlertTriangle, XCircle, Info, RefreshCw } from "lucide-react";
 import { useAdminAuth } from "./AdminAuthProvider";
 import { adminFetch } from "@/lib/adminFetch";
+import FileThisButton from "@/components/admin/FileThisButton";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -28,9 +29,28 @@ const SEVERITY_CONFIG = {
   info: { icon: Info, color: "text-text-muted", bg: "bg-surface-elevated border-surface-border" },
 };
 
+// L2-142 Item 3 — a filable body for a diagnosis: the same diagnosis content,
+// now headed to a real filed issue instead of the clipboard. The old
+// `claude_prompt` becomes the investigation notes inside the issue.
+function diagnosisBody(issue: DiagnosisIssue): string {
+  const parts = [issue.explanation];
+  if (issue.claude_prompt) {
+    parts.push(`\n\n**Investigation notes**\n\n${issue.claude_prompt}`);
+  }
+  if (issue.admin_page && issue.admin_page !== "/admin") {
+    parts.push(`\n\nAdmin page: ${issue.admin_page}`);
+  }
+  return parts.join("");
+}
+
+const _SEVERITY_LABEL: Record<string, string> = {
+  critical: "System Diagnosis (critical)",
+  warning: "System Diagnosis (warning)",
+  info: "System Diagnosis",
+};
+
 export default function DiagnosisCard() {
   const { secret } = useAdminAuth();
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const { data, mutate } = useSWR<DiagnosisResponse>(
@@ -61,12 +81,6 @@ export default function DiagnosisCard() {
       setRefreshing(false);
     }
   }, [secret, mutate]);
-
-  const copyPrompt = (prompt: string, idx: number) => {
-    navigator.clipboard.writeText(prompt);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 2000);
-  };
 
   if (!data || !data.issues?.length) return null;
 
@@ -99,16 +113,17 @@ export default function DiagnosisCard() {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text-primary">{issue.title}</div>
                   <p className="text-xs text-text-secondary mt-0.5">{issue.explanation}</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    {issue.claude_prompt && (
-                      <button
-                        onClick={() => copyPrompt(issue.claude_prompt, i)}
-                        className="inline-flex items-center gap-1 text-[11px] text-accent-brand hover:underline"
-                      >
-                        {copiedIdx === i ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                        {copiedIdx === i ? "Copied" : "Copy Claude prompt"}
-                      </button>
-                    )}
+                  <div className="flex items-center gap-3 mt-2">
+                    {/* L2-142 Item 3 — retired the copy-Claude-prompt blurb. The
+                        diagnosis now files a real issue via the rail (the same
+                        diagnosis, a real destination) and flips to "filed #N". */}
+                    <FileThisButton
+                      source="system_diagnosis"
+                      itemKey={issue.title}
+                      title={`${_SEVERITY_LABEL[issue.severity] ?? "System Diagnosis"}: ${issue.title}`}
+                      body={diagnosisBody(issue)}
+                      severity={issue.severity}
+                    />
                     {issue.admin_page && issue.admin_page !== "/admin" && (
                       <a href={issue.admin_page} className="text-[11px] text-text-muted hover:text-text-secondary">
                         View details →
