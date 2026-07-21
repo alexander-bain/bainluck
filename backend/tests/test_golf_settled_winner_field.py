@@ -10,7 +10,7 @@ Guards the class of bug Alex flagged on the settled The Open page:
 Tests the pure assembler `_assemble_completed_winner_field`.
 """
 
-from app.routes.golf import _assemble_completed_winner_field
+from app.routes.golf import _assemble_completed_winner_field, _is_golf_market
 
 
 class _Outcome:
@@ -29,6 +29,7 @@ class _Market:
         self.name = name
         self.source = source
         self.outcomes = outcomes
+        self.external_id = f"{source}:{mid}"
 
 
 def _open_field(names, winner=None, source="datagolf"):
@@ -124,6 +125,20 @@ def test_placement_only_tournament_falls_back_not_empty():
     )
     golfers, *_ = _assemble_completed_winner_field([makecut])
     assert len(golfers) == len(FIELD)
+
+
+def test_squash_british_open_rejected_from_golf():
+    # #225: "Quilter Cheviot British Open Squash Winner" normalized to The (golf)
+    # Open and crowned squash champion Paul Coll as a co-winner. _is_golf_market
+    # must reject it before it ever reaches the winner field.
+    squash = _Market(
+        99, "Quilter Cheviot British Open Squash Winner", "kalshi", [_Outcome("Paul Coll", cur=0.99, is_winner=True)]
+    )
+    squash.external_id = "KXSQUASH-25"
+    assert _is_golf_market(squash) is False
+    real = _Market(1, "The Open Championship Winner", "datagolf", [_Outcome("Ryan Fox", is_winner=True)])
+    real.external_id = "datagolf:open"
+    assert _is_golf_market(real) is True
 
 
 def test_yes_no_outcomes_excluded():

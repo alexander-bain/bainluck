@@ -40,6 +40,10 @@ _NON_GOLF_RE = re.compile(
     r"rocket\s+league|starcraft|hearthstone|"
     # Sports leagues (not golf)
     r"\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bwnba\b|\bmls\b|\bufc\b|\bmma\b|"
+    # Racquet sports that share tournament names with golf (#225: the "British
+    # Open Squash" winner leaked into The (golf) Open's winner field and crowned
+    # squash champion Paul Coll as a co-winner).
+    r"\bsquash\b|\bbadminton\b|table\s+tennis|"
     r"\bepl\b|la\s+liga|serie\s+a|\bbundesliga\b|"
     r"super\s+bowl|world\s+series|stanley\s+cup|"
     # English football / EFL (prevents "EFL Championship" matching golf)
