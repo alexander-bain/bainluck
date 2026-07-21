@@ -9,8 +9,9 @@ still fall back to computing inline on a cold cache or ``?bust=1``, so nothing
 depends on the task having run — the beat just keeps the cache warm.
 
 Redis keys / TTL are shared with the routes:
-- ``bainluck:admin:audit_all``   (ex=3600)
-- ``bainluck:admin:link_rate``   (ex=3600)
+- ``bainluck:admin:audit_all``        (ex=3600)
+- ``bainluck:admin:link_rate``        (ex=3600)
+- ``bainluck:admin:matured_linkage``  (ex=3600)  # Queue #220/221 Item 2
 """
 
 import json
@@ -62,3 +63,27 @@ async def _precompute_admin_link_rate():
         overall.get("total_game_markets"),
     )
     return {"status": "ok", "link_rate_pct": overall.get("link_rate_pct")}
+
+
+async def _precompute_admin_matured_linkage():
+    """Compute the matured-linkage metric and cache it in Redis (Item 2)."""
+    from app.routes.admin_matching import _compute_matured_linkage
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    async with get_task_session() as db:
+        payload = await _compute_matured_linkage(db)
+
+    rc = get_redis_client()
+    rc.set(
+        "bainluck:admin:matured_linkage",
+        json.dumps(payload),
+        ex=_ADMIN_HEALTH_CACHE_TTL,
+    )
+    logger.info(
+        "Cached admin matured-linkage in Redis (headline_pct=%s, phantom=%s, checkable=%s)",
+        payload.get("headline_pct"),
+        payload.get("phantom"),
+        payload.get("checkable_pairs"),
+    )
+    return {"status": "ok", "headline_pct": payload.get("headline_pct")}

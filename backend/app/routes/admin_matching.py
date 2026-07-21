@@ -672,6 +672,99 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     }
 
 
+async def _compute_matured_linkage(db: AsyncSession) -> dict:
+    """Compute the matured-linkage metric (Queue #220/221 Item 2).
+
+    Headline linkage number that MEANS something (Alex's ruling): for imminent
+    events (scheduled/live, starting within NOW-6h..NOW+24h), every prediction-
+    market source present in the event's blend (win_probability_sources) must be
+    backed by a linked winner market. See app/utils/matured_linkage.py for the
+    full rationale. One SQL over the imminent slate; below-100 = a real phantom."""
+    from app.utils.matured_linkage import CHECKABLE_SOURCES, summarize_matured_linkage
+
+    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    result = await db.execute(
+        text(
+            """
+            WITH imm AS (
+                SELECT e.id, s.key AS sport_key,
+                       e.away_team_name || ' @ ' || e.home_team_name AS matchup,
+                       e.commence_time, e.status,
+                       e.win_probability_sources AS wps
+                FROM events e
+                JOIN sports s ON s.id = e.sport_id
+                WHERE e.status IN ('scheduled', 'live')
+                  AND e.commence_time >= NOW() - INTERVAL '6 hours'
+                  AND e.commence_time <= NOW() + INTERVAL '24 hours'
+                  AND e.win_probability_sources IS NOT NULL
+            ),
+            blend_pairs AS (
+                SELECT imm.id, imm.sport_key, imm.matchup, imm.commence_time,
+                       jsonb_object_keys(imm.wps) AS src
+                FROM imm
+            )
+            SELECT bp.id AS event_id, bp.sport_key, bp.matchup, bp.commence_time,
+                   bp.src AS source,
+                   EXISTS (
+                       SELECT 1 FROM futures_markets fm
+                       WHERE fm.event_id = bp.id AND fm.source = bp.src
+                   ) AS linked
+            FROM blend_pairs bp
+            WHERE bp.src = ANY(:checkable)
+            """
+        ),
+        {"checkable": list(CHECKABLE_SOURCES)},
+    )
+    rows = [
+        {
+            "event_id": r.event_id,
+            "sport": r.sport_key,
+            "matchup": r.matchup,
+            "commence_time": r.commence_time.isoformat() if r.commence_time else None,
+            "source": r.source,
+            "linked": bool(r.linked),
+        }
+        for r in result.all()
+    ]
+    payload = summarize_matured_linkage(rows)
+    payload["window"] = "NOW-6h..NOW+24h"
+    payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return payload
+
+
+@router.get("/prediction-markets/matured-linkage")
+async def prediction_market_matured_linkage(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    bust: int = Query(0, include_in_schema=False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Matured-linkage — the headline linkage metric where below-100 MEANS a real
+    defect (Queue #220/221 Item 2). Served warm from Redis; ?bust=1 recomputes."""
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+
+    if not bust:
+        try:
+            from app.tasks.redis_state import get_redis_client
+            cached = get_redis_client().get("bainluck:admin:matured_linkage")
+            if cached:
+                return _json.loads(cached)
+        except Exception:
+            pass
+
+    payload = await _compute_matured_linkage(db)
+    try:
+        from app.tasks.redis_state import get_redis_client
+        get_redis_client().set(
+            "bainluck:admin:matured_linkage", _json.dumps(payload), ex=3600
+        )
+    except Exception:
+        pass
+    return payload
+
+
 @router.get("/prediction-markets/link-rate")
 async def prediction_market_link_rate(
     request: Request,

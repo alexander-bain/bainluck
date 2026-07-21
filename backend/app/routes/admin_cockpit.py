@@ -616,11 +616,61 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     except Exception:
         logger.debug("cockpit: celery health tile failed", exc_info=True)
 
-    # --- Link rate (warm cache from precompute_admin_link_rate) ---
-    # L2-104 honesty pass: the HEADLINE is the open-markets rate (the CLAUDE.md
-    # metric, ~99.6%). The all-status rate (~90.3%) is real but capped by aged-out
-    # settled markets that stay status='open' in our DB (gotcha #35) — demote it
-    # to a subtitle so it never reads as a fixable gap.
+    # --- Matured linkage (Queue #220/221 Item 2) — the HEADLINE linkage number ---
+    # Alex's ruling: below-100 must MEAN something. Unlike the market link-rate
+    # below (a coverage number capped by upstream gaps + aged-out settled markets),
+    # this measures imminent events (≤24h) where a blend prediction-market source
+    # has NO linked winner market — a phantom blend source, always a real defect.
+    ml = _read_redis_json("bainluck:admin:matured_linkage")
+    if ml and ml.get("status") == "ok":
+        ml_pct = ml.get("headline_pct")
+        phantom = ml.get("phantom") or 0
+        checkable = ml.get("checkable_pairs") or 0
+        detail_bits = [f"{ml.get('backed')}/{checkable} imminent blend sources linked"]
+        if phantom:
+            detail_bits.append(f"{phantom} phantom (in blend, no linked market)")
+        tiles.append(
+            {
+                "key": "matured_linkage",
+                "label": "Matured linkage",
+                "value": f"{ml_pct}%" if ml_pct is not None else "—",
+                "numeric": ml_pct,
+                # 100 = clean. Any phantom is a real defect → amber below 100.
+                "status": "green" if ml_pct == 100 else _status_from_pct(ml_pct, green=100, amber=90),
+                "detail": " · ".join(detail_bits),
+                "href": "/admin/matching",
+            }
+        )
+    elif ml and ml.get("status") == "insufficient_slate":
+        tiles.append(
+            {
+                "key": "matured_linkage",
+                "label": "Matured linkage",
+                "value": "n/a",
+                "numeric": None,
+                "status": "unknown",
+                "detail": "no imminent Kalshi/Poly blend sources to check (off-brand slate)",
+                "href": "/admin/matching",
+            }
+        )
+    else:
+        tiles.append(
+            {
+                "key": "matured_linkage",
+                "label": "Matured linkage",
+                "value": "—",
+                "numeric": None,
+                "status": "unknown",
+                "detail": "cache cold — matured-linkage beat has not run yet",
+                "href": "/admin/matching",
+            }
+        )
+
+    # --- Market link rate (warm cache from precompute_admin_link_rate) ---
+    # DIAGNOSTIC, not the headline (Item 2 demoted it below matured linkage): this
+    # is all-future coverage, structurally capped by upstream gaps + aged-out
+    # settled markets (gotcha #35), so its below-100 does NOT mean a fixable
+    # defect. Kept as context. The open-markets rate is the least-noisy cut.
     link = _read_redis_json("bainluck:admin:link_rate")
     if link and isinstance(link.get("overall"), dict):
         overall = link["overall"]
@@ -638,7 +688,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         tiles.append(
             {
                 "key": "link_rate",
-                "label": "Market link rate",
+                "label": "Market link rate (diagnostic)",
                 "value": f"{open_pct}%" if open_pct is not None else "—",
                 "numeric": open_pct,
                 "status": _status_from_pct(open_pct, green=99, amber=90),
@@ -650,7 +700,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         tiles.append(
             {
                 "key": "link_rate",
-                "label": "Market link rate",
+                "label": "Market link rate (diagnostic)",
                 "value": "—",
                 "numeric": None,
                 "status": "unknown",

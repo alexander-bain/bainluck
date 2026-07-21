@@ -76,6 +76,21 @@ interface LinkRateData {
   polymarket: LinkRateSourceBlock;
 }
 
+// Queue #220/221 Item 2 — the matured-linkage HEADLINE metric. Below-100 MEANS a
+// real defect: an imminent event (≤24h) carries a prediction-market source in its
+// blend but has no linked winner market behind it (a phantom blend source).
+interface MaturedLinkageData {
+  headline_pct: number | null;
+  status: string;
+  checkable_pairs: number;
+  backed: number;
+  phantom: number;
+  events_checked: number;
+  events_consistent: number;
+  misses: { event_id: number; source: string; sport: string; matchup: string }[];
+  window: string;
+}
+
 const TIER1_SPORTS = [
   { key: "basketball_nba", label: "NBA", emoji: "🏀" },
   { key: "icehockey_nhl", label: "NHL", emoji: "🏒" },
@@ -226,6 +241,15 @@ export default function MatchingPage() {
     { refreshInterval: 300000 }
   );
 
+  // Queue #220/221 Item 2 — the matured-linkage headline metric.
+  const { data: maturedLinkage } = useSWR<MaturedLinkageData>(
+    ["prediction-market-matured-linkage", secret],
+    () =>
+      adminFetch("/api/admin/prediction-markets/matured-linkage", secret)
+        .then((r) => (r.ok ? r.json() : null)),
+    { refreshInterval: 300000 }
+  );
+
   const tier1Data = TIER1_SPORTS.map((s) => ({
     sport: s,
     data: accuracy?.sports?.[s.key],
@@ -258,6 +282,62 @@ export default function MatchingPage() {
         ideal="Every Tier 1 event should have Odds API, ESPN, and StatPal data."
         subtitle="Source linkage determines whether event pages show sportsbook odds, charts, and cross-source comparison."
       />
+
+      {/* Queue #220/221 Item 2 — MATURED LINKAGE: the headline number that means
+          something. Below-100 = a real phantom blend source. */}
+      {maturedLinkage && (
+        <div className="rounded-lg border border-surface-border bg-surface-card p-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">
+                Matured linkage <span className="text-text-muted font-normal">(headline)</span>
+              </h2>
+              <p className="text-xs text-text-muted mt-0.5">
+                Imminent events ({maturedLinkage.window}): every blend prediction-market
+                source must have a linked winner market. Below 100% = a real phantom.
+              </p>
+            </div>
+            <div
+              className={`text-2xl font-bold ${
+                maturedLinkage.status !== "ok"
+                  ? "text-text-muted"
+                  : maturedLinkage.headline_pct === 100
+                  ? "text-accent-live"
+                  : "text-accent-danger"
+              }`}
+            >
+              {maturedLinkage.status !== "ok" || maturedLinkage.headline_pct === null
+                ? "n/a"
+                : `${maturedLinkage.headline_pct}%`}
+            </div>
+          </div>
+          {maturedLinkage.status === "ok" ? (
+            <p className="text-xs text-text-secondary mt-2">
+              {maturedLinkage.backed}/{maturedLinkage.checkable_pairs} imminent blend
+              sources linked · {maturedLinkage.events_consistent}/{maturedLinkage.events_checked} events
+              consistent
+              {maturedLinkage.phantom > 0 && (
+                <span className="text-accent-danger">
+                  {" "}· {maturedLinkage.phantom} phantom (filed by the Flow Sentinel)
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="text-xs text-text-muted mt-2">
+              No imminent Kalshi/Polymarket blend sources to check (off-brand slate).
+            </p>
+          )}
+          {maturedLinkage.status === "ok" && maturedLinkage.misses.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {maturedLinkage.misses.slice(0, 8).map((m, i) => (
+                <li key={i} className="text-xs text-accent-danger">
+                  {m.sport}: {m.matchup} — {m.source} in blend, no linked market
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <MetricSection
         question="Do Tier 1 sports have sportsbook coverage?"
@@ -292,14 +372,14 @@ export default function MatchingPage() {
       </MetricSection>
 
       <MetricSection
-        question="Are prediction markets linked to events?"
+        question="Diagnostic: all-market coverage (Kalshi/Polymarket → events)"
         status={linkRateLoading ? "loading" : pmStatus}
         summary={
           linkRateLoading
             ? "Loading..."
-            : `${linkRate?.overall?.open_linked ?? 0}/${linkRate?.overall?.open_total ?? 0} open game markets linked (${pmPct}%)`
+            : `${linkRate?.overall?.open_linked ?? 0}/${linkRate?.overall?.open_total ?? 0} open game markets linked (${pmPct}%) — diagnostic, not the headline`
         }
-        ideal="Every open Kalshi/Polymarket game market should carry an event_id so its line shows on the event page."
+        ideal="Diagnostic only (Item 2): this coverage number is structurally capped by upstream gaps and aged-out settled markets (gotcha #35), so below-100 here does NOT mean a fixable defect. The Matured linkage card above is the headline number. Every open Kalshi/Polymarket game market should carry an event_id so its line shows on the event page."
         action={
           !linkRateLoading && pmPct < 80
             ? "Game markets below 80% linkage means Kalshi/Polymarket lines are missing from event pages. Run the matcher (POST /api/admin/prediction-markets/match) and check tier1-gaps for the leagues dragging the rate — this is the market→event FK, separate from the event→source linkage above. Tracked under the prediction-market matching pipeline (gotchas #15, #16)."

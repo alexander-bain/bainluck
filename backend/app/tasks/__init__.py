@@ -1813,6 +1813,13 @@ def precompute_admin_link_rate(self):
     return _tracked_run("precompute_admin_link_rate", _precompute_admin_link_rate())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_admin_matured_linkage")
+def precompute_admin_matured_linkage(self):
+    """Precompute the matured-linkage metric into Redis (Queue #220/221 Item 2)."""
+    from app.tasks.precompute_admin_health import _precompute_admin_matured_linkage
+    return _tracked_run("precompute_admin_matured_linkage", _precompute_admin_matured_linkage())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_backfill_winners_status")
 def precompute_backfill_winners_status(self):
     """Precompute backfill-winners/status response and cache in Redis (every 1h)."""
@@ -2578,6 +2585,11 @@ celery_app.conf.beat_schedule = {
     "precompute-admin-link-rate": {
         "task": "app.tasks.precompute_admin_link_rate",
         "schedule": crontab(minute="*/10"),  # Every 10 min — keeps /link-rate cache warm
+        "options": {"queue": "background"},
+    },
+    "precompute-admin-matured-linkage": {
+        "task": "app.tasks.precompute_admin_matured_linkage",
+        "schedule": crontab(minute="*/10"),  # Every 10 min — matured-linkage headline (Item 2)
         "options": {"queue": "background"},
     },
 }

@@ -123,6 +123,7 @@ _FLOW_AREA_LABELS = {
     "chart_density": "area:event-details",
     "category_discover": "area:discover-ranking",
     "participation_family": "area:event-details",
+    "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
 }
 _FLOW_TITLES = {
     "search_gold_set": "search misses gold-set entities",
@@ -132,6 +133,7 @@ _FLOW_TITLES = {
     "chart_density": "user-visible charts below the density bar",
     "category_discover": "category / Discover first page empty or low-quality",
     "participation_family": "non-ME prop family (make-cut/top-N) squashed to sum-100%",
+    "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
 }
 
 
@@ -759,6 +761,74 @@ async def _run_participation_family(client: httpx.AsyncClient) -> dict:
     }
 
 
+async def _run_matured_linkage(client: httpx.AsyncClient) -> dict:
+    """Queue #220/221 Item 2 — the matured-linkage flow. For imminent events
+    (≤24h), a prediction-market source that is in the blend (win_probability_
+    sources) but has NO linked winner market is a phantom source — a real defect
+    (Alex: below-100 must MEAN something). Reads the precomputed metric from
+    Redis (kept warm every 10 min by precompute_admin_matured_linkage) and files
+    each miss as an (event, source) pair. Decoupled + read-only: the sentinel
+    files work, it never writes data."""
+    payload = None
+    try:
+        import json as _json
+
+        from app.tasks.redis_state import get_redis_client
+
+        cached = get_redis_client().get("bainluck:admin:matured_linkage")
+        if cached:
+            payload = _json.loads(cached)
+    except Exception as exc:
+        return {
+            "flow": "matured_linkage",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {"reason": f"matured-linkage cache read failed: {str(exc)[:120]}"},
+        }
+
+    if not payload or payload.get("status") != "ok":
+        return {
+            "flow": "matured_linkage",
+            "checked": 0,
+            "passed": True,
+            "skipped": True,
+            "failures": [],
+            "evidence": {
+                "reason": (payload or {}).get("status", "cache cold — beat has not run"),
+            },
+        }
+
+    misses = payload.get("misses") or []
+    failures = [
+        {
+            "event_id": m.get("event_id"),
+            "source": m.get("source"),
+            "detail": f"imminent {m.get('sport')} event {m.get('matchup')} carries "
+                      f"{m.get('source')} in its blend but has NO linked {m.get('source')} "
+                      f"winner market (phantom blend source; event {m.get('event_id')})",
+        }
+        for m in misses
+    ]
+    return {
+        "flow": "matured_linkage",
+        "checked": payload.get("checkable_pairs", 0),
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "evidence": {
+            "headline_pct": payload.get("headline_pct"),
+            "checkable_pairs": payload.get("checkable_pairs"),
+            "backed": payload.get("backed"),
+            "phantom": payload.get("phantom"),
+            "by_source": payload.get("by_source"),
+            "events_checked": payload.get("events_checked"),
+            "events_consistent": payload.get("events_consistent"),
+            "window": payload.get("window"),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
@@ -925,6 +995,7 @@ async def _run_flow_sentinel(
         ("chart_density", _run_chart_density),
         ("category_discover", _run_category_discover),
         ("participation_family", _run_participation_family),
+        ("matured_linkage", _run_matured_linkage),
     )
 
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,

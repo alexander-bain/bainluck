@@ -265,6 +265,7 @@ class TestBeatScheduleCompleteness:
         "precompute-category-pages",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
+        "precompute-admin-matured-linkage",
         "precompute-backfill-winners-status",
         "precompute-backfill-progress",
         "backfill-combat-wps",
