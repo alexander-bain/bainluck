@@ -16,6 +16,7 @@ const browsePages = [
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },
   { label: "Weather", href: "/weather", emoji: "🌤" },
+  { label: "About", href: "/about", emoji: "🍀" },
 ];
 
 export default function BottomNav() {

@@ -17,6 +17,15 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { STORY_CHAPTERS } from "@/components/admin/StoryMode";
+import {
+  STORY_ONE_LINER,
+  STORY_ANTI_THESIS,
+  STORY_BLEND,
+  STORY_THESIS,
+  STORY_HUMAN_LINE,
+  CASE_STUDIES,
+} from "@/lib/story-content";
+import CaseStudyCard from "@/components/story/CaseStudyCard";
 
 const CHAPTER_ICONS = [Activity, Database, Tags, BarChart3, FlaskConical, Target, MessageSquare];
 
@@ -27,10 +36,65 @@ export default function StoryIndexPage() {
 
   return (
     <div className="max-w-4xl">
+      {/* ── The public story (shared source of truth with /about) ── */}
+      <section className="mb-10">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h1 className="text-xl font-bold text-text-primary">The public story</h1>
+          <Link
+            href="/about"
+            className="text-xs font-medium text-accent-brand hover:underline shrink-0"
+          >
+            View /about →
+          </Link>
+        </div>
+        <p className="text-xs text-text-muted mb-4">
+          This is the exact narrative shown on the public About page — same source module
+          (<code className="text-text-secondary">lib/story-content.ts</code>), so edits here and
+          there can never drift.
+        </p>
+
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 space-y-4">
+          <p className="text-sm text-text-primary leading-relaxed">{STORY_ONE_LINER}</p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="bg-surface-deep rounded-lg p-3 border border-surface-border">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-1">
+                Anti-thesis
+              </div>
+              <p className="text-xs text-text-secondary leading-relaxed">
+                {STORY_ANTI_THESIS.heading}
+              </p>
+            </div>
+            <div className="bg-surface-deep rounded-lg p-3 border border-surface-border">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-1">
+                The blend
+              </div>
+              <p className="text-xs text-text-secondary leading-relaxed">{STORY_BLEND.heading}</p>
+            </div>
+            <div className="bg-surface-deep rounded-lg p-3 border border-surface-border">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-1">
+                Who builds it
+              </div>
+              <p className="text-xs text-text-secondary leading-relaxed">{STORY_HUMAN_LINE}</p>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-2">
+              {STORY_THESIS.heading}
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {CASE_STUDIES.map((study) => (
+                <CaseStudyCard key={study.id} study={study} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="mb-8">
-        <h1 className="text-xl font-bold text-text-primary">
+        <h2 className="text-xl font-bold text-text-primary">
           How Bain Luck Works
-        </h1>
+        </h2>
         <p className="text-sm text-text-secondary mt-1">
           A 7-stage pipeline from raw data to user experience. Click any stage to explore its admin dashboard.
         </p>
