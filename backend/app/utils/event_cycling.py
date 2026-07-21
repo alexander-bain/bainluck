@@ -32,10 +32,21 @@ _WINNER_RE = re.compile(r"\b(winner|to win|champion)\b", re.IGNORECASE)
 _STAGE_RE = re.compile(r"\bstage\s*\d+", re.IGNORECASE)
 _TEAM_RE = re.compile(r"\bteam\b", re.IGNORECASE)
 # Secondary classifications / jersey props (green=points, polka dot=KOM/mountains,
-# white=young rider). Folded in as props if/when Kalshi lists them.
+# white=young rider). Folded in as props, NOT the GC winner field.
 _JERSEY_RE = re.compile(
     r"\b(green\s+jersey|points\s+classification|polka|mountains?\s+classification|"
     r"king\s+of\s+the\s+mountains?|white\s+jersey|young\s+rider|most\s+aggressive)\b",
+    re.IGNORECASE,
+)
+# Any secondary-classification token that disqualifies a market from being the
+# OVERALL GC winner field. Critical: without this, "Green Jersey Winner" / "Points
+# Classification Winner" pass the winner gate and a fresher sprinter market can be
+# crowned the GC leader (the live bug: Mads Pedersen shown as GC leader over Pogačar).
+# Excludes the secondary jerseys/classifications but NOT "General Classification".
+_NON_GC_RE = re.compile(
+    r"\b(green\s+jersey|polka\s*dot|white\s+jersey|points|sprints?|intermediate|"
+    r"mountains?|king\s+of\s+the\s+mountain|young\s+rider|combativity|"
+    r"most\s+aggressive|super[\s-]?combativity)\b",
     re.IGNORECASE,
 )
 
@@ -103,11 +114,19 @@ def _slug_year(slug: str) -> int | None:
 
 def is_gc_winner_field_market(name: str | None, race_re: re.Pattern | None = None) -> bool:
     """True for the overall GC winner field — a winner market for the race that is
-    NOT a per-stage winner and NOT the team classification."""
+    NOT a per-stage winner, NOT the team classification, and NOT a secondary jersey /
+    points / mountains / young-rider classification (those are props, and one of them
+    being fresher must never be crowned the GC leader)."""
     n = name or ""
     if race_re is not None and not race_re.search(n):
         return False
-    return bool(_WINNER_RE.search(n)) and not _STAGE_RE.search(n) and not _TEAM_RE.search(n)
+    if not _WINNER_RE.search(n):
+        return False
+    if _STAGE_RE.search(n) or _TEAM_RE.search(n):
+        return False
+    if _JERSEY_RE.search(n) or _NON_GC_RE.search(n):
+        return False
+    return True
 
 
 def is_stage_market(name: str | None) -> bool:
@@ -120,7 +139,10 @@ def is_team_classification_market(name: str | None) -> bool:
 
 
 def is_cycling_jersey_prop(name: str | None) -> bool:
-    return bool(_JERSEY_RE.search(name or ""))
+    """A secondary classification / jersey market (green/points, polka-dot/mountains,
+    white/young-rider, most-aggressive) — surfaced as a prop child, never the GC."""
+    n = name or ""
+    return bool(_JERSEY_RE.search(n) or _NON_GC_RE.search(n))
 
 
 def _stage_number(name: str | None) -> int:
@@ -158,12 +180,15 @@ def _field_is_coherent(real: list) -> bool:
 
 
 def _select_gc_field(candidates: list):
-    """Pick the GC winner market: freshest whose real field has genuine spread AND
-    coherent ~100% sum. Falls back to the richest real field if none pass the gate
-    (so a live, real TdF field is never dropped for a hair-off sum) — but a field with
-    <2 real outcomes never qualifies. Returns (market, real_outcomes)."""
+    """Pick the GC winner market. Among candidates whose real field has genuine spread
+    AND a coherent ~100% sum, prefer the LARGEST real field (the GC is the whole
+    peloton — 184 riders — vs a handful in any stray secondary market), tie-broken by
+    freshness. Falls back to the richest real field if none pass the coherence gate
+    (Kalshi 184-way independent binaries can sum past the coherence band, gotcha #23 —
+    the real GC must never be dropped to an empty page for that). A field with <2 real
+    outcomes never qualifies. Returns (market, real_outcomes)."""
     best = None
-    best_key = None
+    best_key = None  # (n_real, freshness)
     best_real: list = []
     fallback = None
     fallback_real: list = []
@@ -180,8 +205,9 @@ def _select_gc_field(candidates: list):
             (o.last_updated for o in real if getattr(o, "last_updated", None) is not None),
             default=datetime.min.replace(tzinfo=timezone.utc),
         )
-        if best is None or freshness > best_key:
-            best, best_key, best_real = m, freshness, real
+        key = (len(real), freshness)
+        if best is None or key > best_key:
+            best, best_key, best_real = m, key, real
     if best is not None:
         return best, best_real
     return fallback, fallback_real

@@ -40,6 +40,24 @@ class TestNameGates:
     def test_wrong_race_name_rejected(self):
         assert not ec.is_gc_winner_field_market("Giro Winner", TDF)
 
+    def test_secondary_classifications_are_not_gc(self):
+        # The live bug: these passed the winner gate and a fresher sprinter market
+        # was crowned GC leader over Pogačar. They must be props, not the GC.
+        for nm in (
+            "Tour de France: Green Jersey Winner",
+            "Tour de France Points Classification Winner",
+            "Tour de France: Polka Dot Jersey Winner",
+            "Tour de France White Jersey Winner",
+            "Tour de France Young Rider Winner",
+            "Tour de France Most Aggressive Rider Winner",
+        ):
+            assert not ec.is_gc_winner_field_market(nm, TDF), nm
+            assert ec.is_cycling_jersey_prop(nm), nm
+
+    def test_bare_gc_winner_survives_exclusions(self):
+        assert ec.is_gc_winner_field_market("Tour de France Winner", TDF)
+        assert not ec.is_cycling_jersey_prop("Tour de France Winner")
+
     def test_stage_and_team_classifiers(self):
         assert ec.is_stage_market("Tour de France: Stage 10 Winner")
         assert not ec.is_stage_market("Tour de France Winner")
@@ -111,6 +129,21 @@ class TestCoherenceGate:
         gc = _mkt(1, "Tour de France Winner", [_out("Solo", 0.99)])
         market, real = ec._select_gc_field([gc])
         assert market is None and real == []
+
+    def test_largest_field_wins_over_fresher_small_field(self):
+        # GC (many riders) must beat a fresher secondary market with a small field.
+        old = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        new = datetime(2026, 7, 21, tzinfo=timezone.utc)
+        gc = _mkt(
+            1,
+            "Tour de France Winner",
+            [_out("Pogacar", 0.6, old), _out("Vingegaard", 0.2, old), _out("Del Toro", 0.2, old)],
+        )
+        small_fresh = _mkt(
+            2, "Tour de France Winner", [_out("Pedersen", 0.55, new), _out("Ghirmay", 0.45, new)]
+        )
+        market, real = ec._select_gc_field([small_fresh, gc])
+        assert market is gc and len(real) == 3
 
     def test_freshest_coherent_wins(self):
         old = datetime(2026, 7, 1, tzinfo=timezone.utc)
