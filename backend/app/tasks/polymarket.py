@@ -349,7 +349,20 @@ async def _poll_polymarket_markets():
 
         # Stream events page-by-page instead of loading all into memory.
         # Each page is processed and committed in batches.
-        max_pages = 130  # 13,000 events — Polymarket has 10,500+ active events
+        #
+        # #219E (creation freeze, poly edition): Polymarket's Gamma API changed
+        # (~2026-07-14) to CAP offset pagination at offset 2000 — offset>=2100
+        # now returns HTTP 422 "offset too large, use /events/keyset". Combined
+        # with the previous default sort (oldest-first by id), the poll was stuck
+        # perpetually re-scanning the OLDEST ~2000 active events (all already in
+        # DB) and could NEVER reach newly-created markets → daily creation fell
+        # off a cliff from ~1000-2000/day to <10/day while the poll kept
+        # SUCCEEDING (it just re-updated the same old set). Fix: order the scan
+        # NEWEST-first (order=startDate desc, below) so new markets land on the
+        # first pages, and bound max_pages to the 2000-offset cap so we never
+        # burn calls on the guaranteed-422 tail. Durable follow-up: migrate to
+        # /events/keyset for uncapped coverage (see #219E report).
+        max_pages = 20  # offset 0..1900 — the Gamma offset-2000 hard cap
         seen_ids: set[str] = set()
         batch: list = []
 
@@ -387,11 +400,22 @@ async def _poll_polymarket_markets():
                 await asyncio.sleep(0.3)
 
             try:
+                # #219E: NEWEST-first. The Gamma default sort is oldest-first,
+                # which — under the new offset-2000 cap — pinned the poll on the
+                # oldest (already-ingested) active events and created nothing.
+                # order=startDate + ascending=False puts newly-created markets on
+                # the first pages, well inside the 2000-offset window.
                 events_data = await service.get_events(
                     active=True, closed=False, limit=100, offset=page * 100,
+                    order="startDate", ascending=False,
                 )
             except Exception as e:
                 logger.warning("Error fetching Polymarket page %d: %s", page, e)
+                # #219E: a 422 "offset too large" means we hit the Gamma cap —
+                # reset the cursor so the next run restarts at the newest page
+                # instead of sticking at an always-422 offset.
+                if "offset too large" in str(e) or "422" in str(e):
+                    _rc.setex(_poll_cursor_key, 86400, "0")
                 break
 
             pages_fetched += 1
