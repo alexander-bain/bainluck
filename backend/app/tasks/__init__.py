@@ -453,10 +453,13 @@ def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero")
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_settled")
-def backfill_kalshi_settled(self, limit: int = 5000):
-    """Recover prices from Kalshi settled events API (much faster than candlesticks)."""
+def backfill_kalshi_settled(self, limit: int = 5000, only_series=None):
+    """Recover prices from Kalshi settled events API (much faster than candlesticks).
+
+    ``only_series`` (#227 Item 2) pins the scan to specific series prefixes (e.g.
+    ``["KXPGA"]`` for the Open) to settle an already-concluded event NOW."""
     from app.tasks.kalshi import _backfill_from_settled_events
-    return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit))
+    return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit, only_series=only_series))
 
 
 @celery_app.task(bind=True, soft_time_limit=420, time_limit=480, name="app.tasks.backfill_settled_gap_creation")

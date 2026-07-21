@@ -2313,7 +2313,7 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
     return stats
 
 
-async def _backfill_from_settled_events(limit: int = 5000):
+async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str] | None = None):
     """Recover historical prices and fix market status from Kalshi settled events.
 
     Two-phase approach:
@@ -2324,6 +2324,13 @@ async def _backfill_from_settled_events(limit: int = 5000):
       can process these markets.
     Phase 2 (snapshot backfill): Create closing-price snapshots for outcomes
       that have no snapshots at all. Respects the limit parameter.
+
+    ``only_series`` (Queue #227 Item 2, gotcha #33/#35): a targeted trigger can
+    pin the scan to specific series prefixes (e.g. the Open's ``KXPGA*``) to
+    settle an already-concluded event NOW — within the ~2-3mo capture window —
+    instead of waiting for the ~38-run rotation to reach it. Matches by
+    case-insensitive prefix so ``["KXPGA"]`` catches KXPGAR1LEAD/KXPGATOP5/… .
+    Bypasses the rotating cursor; scheduled runs (only_series=None) are unchanged.
     """
     import asyncio
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
@@ -2378,6 +2385,17 @@ async def _backfill_from_settled_events(limit: int = 5000):
                 ORDER BY 1
             """))
         SERIES_PREFIXES = [r[0] for r in series_result.all()]
+    # #227 Item 2: a targeted trigger pins the scan to specific series prefixes
+    # (case-insensitive prefix match) so an already-settled event is recovered
+    # NOW rather than on the rotation. Scheduled runs pass nothing → unchanged.
+    if only_series:
+        _wanted = tuple(s.strip().upper() for s in only_series if s and s.strip())
+        if _wanted:
+            SERIES_PREFIXES = [s for s in SERIES_PREFIXES if s.upper().startswith(_wanted)]
+            logger.info(
+                "Settled events: only_series=%s → %d matching prefixes",
+                list(_wanted), len(SERIES_PREFIXES),
+            )
     logger.info("Settled events: discovered %d series prefixes", len(SERIES_PREFIXES))
 
     try:
@@ -2472,13 +2490,20 @@ async def _backfill_from_settled_events(limit: int = 5000):
                     "KXINXU",
                 ]
 
-                _series_cursor_key = "bainluck:settled_series_cursor"
-                _cursor_pos = int(_rc.get(_series_cursor_key) or 0)
-                non_priority = [s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES]
-                rotated = non_priority[_cursor_pos:] + non_priority[:_cursor_pos]
-                check_list = _PRIORITY_SERIES + rotated[:100]
-                _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
-                _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
+                if only_series:
+                    # #227 Item 2: a targeted trigger scans ONLY the filtered
+                    # series — bypass the priority list + rotating cursor so the
+                    # whole budget goes to the requested event (e.g. the Open's
+                    # KXPGA* props), not the hardcoded NBA/NHL priority set.
+                    check_list = list(SERIES_PREFIXES)
+                else:
+                    _series_cursor_key = "bainluck:settled_series_cursor"
+                    _cursor_pos = int(_rc.get(_series_cursor_key) or 0)
+                    non_priority = [s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES]
+                    rotated = non_priority[_cursor_pos:] + non_priority[:_cursor_pos]
+                    check_list = _PRIORITY_SERIES + rotated[:100]
+                    _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
+                    _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
 
                 # Just use the check_list directly — the early exit per series
                 # handles the case where a series has no work. Avoids the slow
