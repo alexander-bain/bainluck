@@ -25,11 +25,15 @@ function EvolutionViewWithFallback({
   marketName,
   defaultTopN,
   hours,
+  tournamentStart,
+  tournamentEnd,
 }: {
   marketIds: number[];
   marketName: string;
   defaultTopN: number;
   hours: number;
+  tournamentStart?: string | null;
+  tournamentEnd?: string | null;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -48,6 +52,8 @@ function EvolutionViewWithFallback({
       marketName={marketName}
       defaultTopN={defaultTopN}
       hours={hours}
+      tournamentStart={tournamentStart}
+      tournamentEnd={tournamentEnd}
       onEmpty={() => {
         if (currentIndex + 1 < marketIds.length) {
           setCurrentIndex(currentIndex + 1);
@@ -62,12 +68,16 @@ function EvolutionViewWithCallback({
   marketName,
   defaultTopN,
   hours,
+  tournamentStart,
+  tournamentEnd,
   onEmpty,
 }: {
   marketId: number;
   marketName: string;
   defaultTopN: number;
   hours: number;
+  tournamentStart?: string | null;
+  tournamentEnd?: string | null;
   onEmpty: () => void;
 }) {
   const [hasData, setHasData] = useState<boolean | null>(null);
@@ -107,6 +117,8 @@ function EvolutionViewWithCallback({
       marketName={marketName}
       defaultTopN={defaultTopN}
       hours={hours}
+      tournamentStart={tournamentStart}
+      tournamentEnd={tournamentEnd}
     />
   );
 }
@@ -313,6 +325,20 @@ export default function GolfTournamentPage() {
   if (!data) return <ErrorState message="Tournament not found" />;
 
   const { tournament, golfers, markets, evolution_market_id } = data;
+
+  // #1138: window the trend chart to event-start -> now instead of a fixed
+  // 168h lookback (which left ~3 dead pre-event days flat-lining the frame).
+  // EvolutionView clamps its left edge to tournamentStart in "LIVE" mode; this
+  // just sizes the underlying fetch so the full in-play series is pulled.
+  const evolutionHours = (() => {
+    if (!tournament.start_date) return 168;
+    const startMs = new Date(tournament.start_date).getTime();
+    if (Number.isNaN(startMs)) return 168;
+    // +1 day lead-in, clamp between 1 week and ~6 months.
+    const hrs = Math.ceil((Date.now() - startMs) / 3_600_000) + 24;
+    return Math.min(4320, Math.max(168, hrs));
+  })();
+
   const emoji = TOURNAMENT_EMOJI[tournament.key || ""] || "\u26F3";
   const isMasters = /masters/i.test(tournament.name);
   const accentColor = isMasters ? "#006747" : "#059669";
@@ -461,7 +487,7 @@ export default function GolfTournamentPage() {
               marketId={positionOptions[positionOptions.length - 1].marketId}
               marketName={tournament.name}
               defaultTopN={8}
-              hours={168}
+              hours={evolutionHours}
               positionOptions={positionOptions.length > 1 ? positionOptions : undefined}
               tournamentStart={tournament.start_date}
               tournamentEnd={tournament.end_date}
@@ -474,7 +500,9 @@ export default function GolfTournamentPage() {
               marketIds={evolutionMarketIds}
               marketName={`${tournament.name} - Winner`}
               defaultTopN={8}
-              hours={168}
+              hours={evolutionHours}
+              tournamentStart={tournament.start_date}
+              tournamentEnd={tournament.end_date}
             />
           </section>
         )}

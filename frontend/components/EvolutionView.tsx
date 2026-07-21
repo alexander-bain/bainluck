@@ -293,16 +293,39 @@ export function EvolutionView({
             </span>
             <div className="flex border border-surface-border rounded-md overflow-hidden">
               {(() => {
-                // Tournament mode: once started, show "Tournament" instead of "7 Days".
-                // For completed tournaments, drop 24h/Today (they'd show nothing useful).
+                // Tournament mode (#1138): once the event has started, lead with
+                // "LIVE" (event-start -> now, the default) followed by 1D / 1W / ALL
+                // zoom-in selectors. For completed tournaments, drop 1D (it'd show
+                // nothing useful). Non-tournament charts keep Season / 7 Days / etc.
                 const tournamentEnded = tournamentEnd
                   ? new Date(tournamentEnd).getTime() + 86_400_000 < Date.now()
                   : false;
-                const ranges: TimeRange[] = hasTournament && tournamentStarted
+                const inTournamentMode = hasTournament && tournamentStarted;
+                const ranges: TimeRange[] = inTournamentMode
                   ? tournamentEnded
-                    ? ["full", "tournament"]
-                    : ["full", "tournament", "24h", "today"]
+                    ? ["tournament", "7d", "full"]
+                    : ["tournament", "24h", "7d", "full"]
                   : ["full", "7d", "24h", "today"];
+                const labelFor = (range: TimeRange): string => {
+                  if (inTournamentMode) {
+                    return range === "tournament"
+                      ? "LIVE"
+                      : range === "24h"
+                        ? "1D"
+                        : range === "7d"
+                          ? "1W"
+                          : range === "full"
+                            ? "ALL"
+                            : "Today";
+                  }
+                  return range === "full"
+                    ? "Season"
+                    : range === "7d"
+                      ? "7 Days"
+                      : range === "24h"
+                        ? "24 Hours"
+                        : "Today";
+                };
                 return ranges.map((range) => (
                   <button
                     key={range}
@@ -313,15 +336,7 @@ export function EvolutionView({
                         : "text-text-secondary hover:bg-surface-secondary"
                     }`}
                   >
-                    {range === "full"
-                      ? "Season"
-                      : range === "tournament"
-                        ? "Tournament"
-                        : range === "7d"
-                          ? "7 Days"
-                          : range === "24h"
-                            ? "24 Hours"
-                            : "Today"}
+                    {labelFor(range)}
                   </button>
                 ));
               })()}
