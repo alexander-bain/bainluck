@@ -1549,6 +1549,11 @@ async def grouped_feed(
                 "probability": o.probability,
                 "american_odds": o.american_odds,
                 "market_id": m.id,
+                # #1102: thread parent-market context so threshold grouping scopes
+                # to a single real-world question (player/game/entity) instead of
+                # pooling every "over #" outcome across unrelated markets.
+                "market_name": m.name,
+                "group_id": m.group_id,
                 "source": m.source,
             }
             m_dict["outcomes"].append(o_dict)
@@ -1612,15 +1617,30 @@ async def grouped_feed(
             "market_count": len(group_markets),
         })
 
-    for stem, outcomes in threshold_groups.items():
+    for scope, outcomes in threshold_groups.items():
         if len(outcomes) < 2:
             continue
         for o in outcomes:
             grouped_outcome_ids.add(o["id"])
+        # #1102: build a context-carrying title from the parent market name
+        # (strip the specific numeric threshold, preserve case for the entity),
+        # falling back to the shared stem for legacy/context-free groups.
+        market_name = (outcomes[0].get("market_name") or "").strip()
+        if market_name:
+            title = re.sub(
+                r"\$?\b[\d,]+(?:\.\d+)?\+?\b\s*(?:°[FCK]|%|points?|goals?|runs?|yards?)?",
+                "",
+                market_name,
+            )
+            title = re.sub(r"\s{2,}", " ", title).strip(" :–-·?")
+            if not title:
+                title = market_name
+        else:
+            title = scope.replace("#", "").strip()
         feed_items.append({
             "type": "threshold",
-            "group_key": f"threshold:{stem}",
-            "title": stem.replace("#", "").strip(),
+            "group_key": f"threshold:{scope}",
+            "title": title,
             "points": [
                 {
                     "id": o["id"],

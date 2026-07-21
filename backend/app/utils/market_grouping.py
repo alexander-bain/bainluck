@@ -418,26 +418,49 @@ def detect_threshold_groups(
         - id: int (outcome ID)
         - name: str (outcome name like "33°F or below")
         - market_id: int (parent market ID)
+    Optionally (strongly preferred — see #1102):
+        - market_name: str (parent market name, carries player/game/entity)
+        - group_id: str (shared real-world-question grouping)
 
     Returns:
-        Dict mapping threshold_stem → sorted list of outcome dicts
-        (only groups with 2+ outcomes sharing the same stem).
-        Each outcome dict gets additional keys:
+        Dict mapping scope_key → sorted list of outcome dicts
+        (only groups with 2+ outcomes belonging to the same real-world
+        question). Each outcome dict gets additional keys:
         - threshold_value: float
         - threshold_unit: str
         - threshold_direction: str
+
+    Scoping (#1102): outcome names alone are context-free (e.g. "Over 2.5"
+    for one player and a different game share the stem "over #"). Grouping
+    purely by that stem pooled unrelated markets into one card with no
+    player/game attribution. We now scope each group to a single real-world
+    question — an explicit ``group_id`` when present, else a stem of the
+    parent ``market_name`` (which carries the entity), and only fall back to
+    the bare outcome stem when neither is available (legacy callers).
     """
-    by_stem: dict[str, list[dict]] = {}
+    by_scope: dict[str, list[dict]] = {}
 
     for o in outcomes:
         name = o.get("name", "")
-        stem = compute_threshold_stem(name)
-        if not stem:
-            continue
 
         threshold = extract_threshold(name)
         if not threshold:
             continue
+
+        group_id = o.get("group_id")
+        market_name = o.get("market_name")
+        if group_id:
+            scope = f"group:{group_id}"
+        elif market_name:
+            # A market-name stem keeps the entity ("Jayson Tatum: Points")
+            # while collapsing threshold variants ("25+" / "30+").
+            scope = compute_threshold_stem(market_name) or market_name.strip().lower()
+        else:
+            # Legacy path: no parent context available, group by outcome stem.
+            stem = compute_threshold_stem(name)
+            if not stem:
+                continue
+            scope = stem
 
         value, unit, direction = threshold
         enriched = {
@@ -446,14 +469,14 @@ def detect_threshold_groups(
             "threshold_unit": unit,
             "threshold_direction": direction,
         }
-        by_stem.setdefault(stem, []).append(enriched)
+        by_scope.setdefault(scope, []).append(enriched)
 
     # Only return groups with 2+ outcomes, sorted by threshold value
     result = {}
-    for stem, group in by_stem.items():
+    for scope, group in by_scope.items():
         if len(group) >= 2:
             group.sort(key=lambda x: x["threshold_value"])
-            result[stem] = group
+            result[scope] = group
 
     return result
 

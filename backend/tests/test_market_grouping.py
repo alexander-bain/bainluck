@@ -283,6 +283,44 @@ class TestDetectThresholdGroups:
         assert group[0]["threshold_direction"] == "above"
         assert "points" in group[0]["threshold_unit"]
 
+    def test_market_name_scoping_separates_unrelated_entities(self):
+        """#1102: outcomes sharing a generic stem ("over #") must NOT pool
+        across unrelated markets. Scoping by the parent market name keeps
+        each player's ladder distinct instead of one context-free card."""
+        outcomes = [
+            # Tatum's points ladder — same entity, two thresholds → one group
+            {"id": 1, "name": "Over 25.5 points", "market_id": 10,
+             "market_name": "Jayson Tatum: 25+ Points"},
+            {"id": 2, "name": "Over 30.5 points", "market_id": 11,
+             "market_name": "Jayson Tatum: 30+ Points"},
+            # LeBron's points ladder — different entity → separate group
+            {"id": 3, "name": "Over 25.5 points", "market_id": 12,
+             "market_name": "LeBron James: 25+ Points"},
+            {"id": 4, "name": "Over 30.5 points", "market_id": 13,
+             "market_name": "LeBron James: 30+ Points"},
+        ]
+        groups = detect_threshold_groups(outcomes)
+        # Two distinct groups, NOT one pooled "over #" card
+        assert len(groups) == 2
+        grouped_ids = {frozenset(o["id"] for o in g) for g in groups.values()}
+        assert grouped_ids == {frozenset({1, 2}), frozenset({3, 4})}
+
+    def test_group_id_scoping_takes_precedence(self):
+        """#1102: an explicit group_id scopes the group even when outcome
+        names/market names would otherwise pool differently."""
+        outcomes = [
+            {"id": 1, "name": "Over 25.5 points", "market_id": 10,
+             "market_name": "Player A points", "group_id": "kalshi:EVT1"},
+            {"id": 2, "name": "Over 30.5 points", "market_id": 11,
+             "market_name": "Player A points", "group_id": "kalshi:EVT1"},
+            {"id": 3, "name": "Over 25.5 points", "market_id": 12,
+             "market_name": "Player A points", "group_id": "kalshi:EVT2"},
+            {"id": 4, "name": "Over 30.5 points", "market_id": 13,
+             "market_name": "Player A points", "group_id": "kalshi:EVT2"},
+        ]
+        groups = detect_threshold_groups(outcomes)
+        assert set(groups.keys()) == {"group:kalshi:EVT1", "group:kalshi:EVT2"}
+
 
 # ── higher-level group detection ──
 
