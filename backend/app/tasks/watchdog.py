@@ -60,6 +60,99 @@ def _bounded_rc():
     return get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
 
 
+# --- #219E Item 2: alert fingerprinting + GitHub rail --------------------
+# The third email/Sentry-only incident (poly creation freeze) proved two gaps:
+#   1. Sentry fingerprinted the creation-stall alert by MESSAGE, which embeds the
+#      staleness HOURS ("6.0h" then "11.5h") — so a single stall episode spawned
+#      a new Sentry issue every reading = noise nobody could triage.
+#   2. The alert lived in Sentry+email only, never reaching the GitHub board or
+#      the cockpit RED tile — so it stayed invisible to the execution loop.
+# Fix: fingerprint on [alert-class, provider] (stable across readings), and route
+# the same event to the GitHub filing rail (#215E's play for freshness) so ONE
+# deduped board issue per stall episode carries the evidence.
+_WATCHDOG_ALERT_MARKER = "watchdog-alert-fingerprint"
+
+
+def _capture_fingerprinted(alert_class: str, provider: str, msg: str) -> None:
+    """Send a Sentry event fingerprinted on [alert_class, provider] so all
+    readings of the SAME stall episode collapse into ONE issue (not one per
+    hour-value in the message)."""
+    try:
+        # sentry-sdk 2.x: new_scope replaces the deprecated push_scope.
+        with sentry_sdk.new_scope() as scope:
+            scope.fingerprint = [alert_class, provider]
+            scope.set_tag("alert_class", alert_class)
+            scope.set_tag("alert_provider", provider)
+            sentry_sdk.capture_message(msg, level="error")
+    except Exception:
+        # Never let telemetry break the watchdog.
+        logger.critical(msg)
+
+
+def _file_watchdog_issue(alert_class: str, provider: str, title: str, body: str):
+    """File OR comment ONE deduped GitHub issue per [alert_class, provider].
+
+    Mirrors the flow/calibration sentinel rail (bug_report_github). Fingerprint
+    is embedded in the body so the search-based dedup finds the open issue and
+    accretes evidence instead of spawning duplicates. No-ops (returns a reason)
+    when GITHUB_TOKEN is unset so a token gap can never crash the watchdog."""
+    fingerprint = f"{alert_class}:{provider}"
+    try:
+        from app.tasks.bug_report_github import (
+            GITHUB_TOKEN,
+            REPO,
+            add_to_project_board,
+            comment_on_issue,
+            create_github_issue,
+        )
+        import httpx
+    except Exception as exc:  # pragma: no cover - import guard
+        return {"action": "error", "error": f"import: {exc}"[:200]}
+
+    if not GITHUB_TOKEN:
+        return {"action": "skipped_no_token", "fingerprint": fingerprint}
+
+    marker = f"{_WATCHDOG_ALERT_MARKER}:{fingerprint}"
+    body = f"{body}\n\n<!-- {marker} -->"
+    # Dedup: find an open issue carrying this fingerprint marker.
+    existing = None
+    try:
+        resp = httpx.get(
+            "https://api.github.com/search/issues",
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            params={"q": f'repo:{REPO} in:body "{marker}" state:open'},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        existing = items[0]["number"] if items else None
+    except Exception as exc:
+        logger.warning("watchdog dedup search failed (%s): %s", fingerprint, exc)
+
+    if existing:
+        try:
+            comment_on_issue(existing, f"Watchdog re-observed this alert. {title}")
+        except Exception as exc:
+            logger.warning("watchdog comment failed on #%d: %s", existing, exc)
+        return {"action": "commented", "issue": existing, "fingerprint": fingerprint}
+
+    labels = ["alert-intake", "needs-agent", "area:infra", "priority:p1"]
+    try:
+        number, node_id = create_github_issue(title, body, labels)
+    except Exception as exc:
+        logger.error("watchdog issue creation failed (%s): %s", fingerprint, exc)
+        return {"action": "error", "error": str(exc)[:200], "fingerprint": fingerprint}
+    try:
+        add_to_project_board(node_id)
+    except Exception:
+        logger.warning("watchdog: add #%d to board failed (non-fatal)", number, exc_info=True)
+    return {"action": "filed", "issue": number, "fingerprint": fingerprint}
+
+
 def evaluate_creation_alerts(max_created_by_source, now):
     """Pure staleness decision (testable without a DB). ``max_created_by_source``
     maps source -> latest created_at (datetime or None). Returns the alert list.
@@ -121,6 +214,7 @@ async def _run_creation_freshness_watchdog():
         }
 
     rc = _bounded_rc()
+    filed = []
     if alerts:
         for a in alerts:
             msg = (
@@ -131,7 +225,35 @@ async def _run_creation_freshness_watchdog():
                 f"(#995)."
             )
             logger.critical(msg)
-            sentry_sdk.capture_message(msg, level="error")
+            # #219E Item 2(a): fingerprint on [class, provider] — NOT the message
+            # (its hours-value spawned one Sentry issue per reading = noise).
+            _capture_fingerprinted("creation_stall", a["source"], msg)
+            # #219E Item 2(b): route to the GitHub board (no alert class may be
+            # Sentry/email-only). ONE deduped issue per source per episode.
+            title = (
+                f"[watchdog] {a['source']} market creation stalled "
+                f"(>{a['threshold_hours']}h with no new markets)"
+            )
+            body = (
+                f"The creation-freshness watchdog detected a market CREATION "
+                f"stall.\n\n"
+                f"- **Source:** {a['source']}\n"
+                f"- **Newest market age:** {a['age_hours']}h "
+                f"(threshold {a['threshold_hours']}h)\n"
+                f"- **Last created:** {a['last_created']}\n\n"
+                f"This is the create-freeze class (gotcha #35 / #995 / #219E): a "
+                f"poll SIGKILLs before its create/commit phase (or an upstream "
+                f"API/pagination change starves the create path) while `updated_at` "
+                f"stays fresh, so only a creates-specific signal catches it. "
+                f"Root-cause via the freeze playbook (gotchas #38/#39, rate-limit "
+                f"hang inside fetch, upstream pagination caps).\n\n"
+                f"_Auto-filed by the freshness watchdog; comments accrete as the "
+                f"stall persists._"
+            )
+            try:
+                filed.append(_file_watchdog_issue("creation_stall", a["source"], title, body))
+            except Exception as exc:
+                logger.warning("watchdog filing failed for %s: %s", a["source"], exc)
         try:
             rc.setex(CREATION_STALE_FLAG_KEY, 7200, json.dumps(alerts))
         except Exception:
@@ -146,6 +268,7 @@ async def _run_creation_freshness_watchdog():
         "stale_sources": [a["source"] for a in alerts],
         "alerts": alerts,
         "by_source": by_source,
+        "filed": filed,
     }
 
 
@@ -205,7 +328,14 @@ def _run_phase_heartbeat_watchdog():
                     f"stuck on a synchronous op at this phase (#995)."
                 )
                 logger.critical(msg)
-                sentry_sdk.capture_message(msg, level="error")
+                # #219E Item 2(a): fingerprint on [class, task] — the phase suffix
+                # carries an elapsed-seconds value ("@174s") + the stuck_seconds in
+                # the message both drift, so message-fingerprinting spawned a new
+                # Sentry issue per reading. Group by the STALLED PHASE instead.
+                _stuck_phase = marker.split("@", 1)[0]
+                _capture_fingerprinted(
+                    "phase_block", f"{task_label}:{_stuck_phase}", msg
+                )
                 stuck.append(
                     {
                         "task": task_label,

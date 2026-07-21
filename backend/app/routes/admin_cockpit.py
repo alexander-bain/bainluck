@@ -852,6 +852,23 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         f_status = "amber"
     else:
         f_status = "green"
+    detail = ", ".join(
+        f"{s}: {h}h" if h is not None else f"{s}: —"
+        for s, h in freshness.items()
+    )
+    # #219E Item 2(b): honor the watchdog's active creation-stall flag. The
+    # newest-age numeric is fooled by a TRICKLE — the poly freeze kept creating
+    # ~10/day, so MAX(created_at) age stayed <6h (GREEN) while real creation was
+    # dead. When the freshness watchdog has an active stall alert, force RED so a
+    # trickle-masked freeze is visible on the cockpit, not just in Sentry/email.
+    stall = _read_redis_json("bainluck:watchdog:creation_stale")
+    if isinstance(stall, list) and stall:
+        f_status = "red"
+        _stalled = ", ".join(
+            f"{a.get('source')} {a.get('age_hours')}h>{a.get('threshold_hours')}h"
+            for a in stall
+        )
+        detail = f"STALL ALERT: {_stalled} | newest-age {detail}"
     tiles.append(
         {
             "key": "creation_freshness",
@@ -859,10 +876,7 @@ async def _health_group(db: AsyncSession) -> list[dict]:
             "value": f"{worst_hours}h" if worst_hours is not None else "—",
             "numeric": worst_hours,
             "status": f_status,
-            "detail": ", ".join(
-                f"{s}: {h}h" if h is not None else f"{s}: —"
-                for s, h in freshness.items()
-            ),
+            "detail": detail,
             "href": "/admin/source-intelligence",
         }
     )

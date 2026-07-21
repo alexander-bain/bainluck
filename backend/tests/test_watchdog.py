@@ -36,6 +36,93 @@ class _FakeRedis:
         self.store.pop(key, None)
 
 
+# ── #219E Item 2: fingerprinting + GitHub rail ────────────────────────
+
+
+class TestAlertFingerprintingAndFiling:
+    """The creation-stall alert must fingerprint on [class, provider] (not the
+    hours-bearing message) and route to the GitHub board — no email/Sentry-only
+    class (the third email-only incident, #219E)."""
+
+    def test_capture_fingerprints_on_class_and_provider(self, monkeypatch):
+        seen = {}
+
+        class _Scope:
+            def __init__(self):
+                self.fingerprint = None
+                self.tags = {}
+
+            def set_tag(self, k, v):
+                self.tags[k] = v
+
+        class _Ctx:
+            def __enter__(self_inner):
+                self_inner.scope = _Scope()
+                seen["scope"] = self_inner.scope
+                return self_inner.scope
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(watchdog.sentry_sdk, "new_scope", lambda: _Ctx())
+        monkeypatch.setattr(
+            watchdog.sentry_sdk, "capture_message",
+            lambda msg, level=None: seen.setdefault("msg", msg),
+        )
+        # two different hour-values must produce the SAME fingerprint
+        watchdog._capture_fingerprinted("creation_stall", "polymarket", "stalled 6.0h")
+        fp1 = seen["scope"].fingerprint
+        watchdog._capture_fingerprinted("creation_stall", "polymarket", "stalled 11.5h")
+        fp2 = seen["scope"].fingerprint
+        assert fp1 == ["creation_stall", "polymarket"] == fp2, (
+            "fingerprint must be [class, provider], stable across hour-values"
+        )
+
+    async def test_stale_routes_to_github_rail(self, monkeypatch, now):
+        monkeypatch.setattr(watchdog.sentry_sdk, "capture_message", lambda *a, **k: None)
+        monkeypatch.setattr(watchdog.sentry_sdk, "new_scope",
+                            lambda: __import__("contextlib").nullcontext(type("S", (), {"set_tag": lambda s, *a: None})()))
+        fake = _FakeRedis()
+        monkeypatch.setattr(watchdog, "_bounded_rc", lambda: fake)
+        monkeypatch.setattr(
+            watchdog, "evaluate_creation_alerts",
+            lambda rows, n: [{"source": "polymarket", "age_hours": 30.0,
+                              "threshold_hours": 6, "last_created": "x"}],
+        )
+        filed_calls = []
+        monkeypatch.setattr(
+            watchdog, "_file_watchdog_issue",
+            lambda cls, prov, title, body: filed_calls.append((cls, prov)) or {"action": "filed"},
+        )
+
+        class _FakeSession:
+            async def execute(self, *_a, **_k):
+                return type("R", (), {"scalar": lambda s: None})()
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return _FakeSession()
+            async def __aexit__(self, *a):
+                return False
+
+        import app.tasks.base as base
+        monkeypatch.setattr(base, "get_task_session", lambda: _FakeCtx())
+
+        out = await watchdog._run_creation_freshness_watchdog()
+        assert filed_calls == [("creation_stall", "polymarket")], (
+            "a creation stall must file to the GitHub rail, not Sentry/email only"
+        )
+        assert out.get("filed"), "runner must report what it filed"
+
+    def test_filer_noops_without_token(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "")
+        res = watchdog._file_watchdog_issue("creation_stall", "polymarket", "t", "b")
+        assert res["action"] == "skipped_no_token", (
+            "a token gap must degrade gracefully, never crash the watchdog"
+        )
+
+
 # ── creation-freshness ────────────────────────────────────────────────
 
 
