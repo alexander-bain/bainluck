@@ -385,29 +385,31 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
     that source (created before the prune-on-unlink guard existed). Bounded and
     idempotent so it can ride the 15-min matching task and self-heal the slate.
     Returns the number of phantom keys removed. #1163."""
-    from app.models.models import Event, FuturesMarket
+    from app.models.models import Event
 
     pruned = 0
     for source in sorted(_PM_BLEND_SOURCES):
         # Candidate events: the source key is present AND no linked market of that
-        # source exists. One targeted query per source; JSONB `?` is index-cheap.
+        # source exists. Raw SQL (asyncpg-safe jsonb_exists + an explicit
+        # correlated NOT EXISTS — the ORM ``select().exists()`` correlation was
+        # unreliable here) mirrors the existing text()/jsonb_exists pattern in
+        # this file. ``:source`` is a plain text bind (no ::cast trap, gotcha #45).
         rows = (
             await session.execute(
-                select(Event.id, Event.win_probability_sources)
-                .where(
-                    Event.win_probability_sources.op("?")(source),
-                    ~select(FuturesMarket.id)
-                    .where(
-                        FuturesMarket.event_id == Event.id,
-                        FuturesMarket.source == source,
-                    )
-                    .exists(),
-                )
-                .limit(limit)
+                text(
+                    "SELECT e.id, e.win_probability_sources FROM events e "
+                    "WHERE jsonb_exists(e.win_probability_sources, :source) "
+                    "AND NOT EXISTS (SELECT 1 FROM futures_markets fm "
+                    "WHERE fm.event_id = e.id AND fm.source = :source) "
+                    "LIMIT :lim"
+                ),
+                {"source": source, "lim": limit},
             )
         ).all()
         for eid, wps in rows:
             if time_remaining_fn is not None and time_remaining_fn() < 20:
+                if pruned:
+                    await session.commit()
                 return pruned
             new_wps, changed = prune_blend_source(wps, source, 0)
             if changed:
