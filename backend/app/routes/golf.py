@@ -319,6 +319,12 @@ _NON_WINNER_MARKET_RE = re.compile(
 # excludes props like "Nationality of Winner") to detect a true winner field.
 _WINNER_MARKET_RE = re.compile(r"\b(?:winner|to\s+win)\b", re.I)
 
+# #225 Item 3: minimum resolved-winner snapshot probability for a settled winner
+# market to be preferred as the evolution (path-to-resolution) chart source. A
+# real-money market converges to ~1.0 for the champion; a stale futures market
+# that stopped before the finish never crosses this, so it stays a fallback.
+_SETTLED_RESOLVE_MIN = 0.5
+
 # Chart-specific exclusion for the contenders Win chart (#955): drop winner-PROP
 # markets (nationality / country-of-winner / tour-of-winner / winning margin)
 # that classify as type "winner" but hold no golfers. Unlike _NON_WINNER_MARKET_RE,
@@ -1960,6 +1966,114 @@ def _prefer_datagolf_merge(
     return (existing + incoming) / 2, existing_is_dg  # same source class → average
 
 
+def _settled_outcome_signal(outcome) -> float | None:
+    """Best pre-settlement probability for ordering a settled winner field: live
+    price → closing (calibration) line → opening line. Settled winner markets
+    carry current_probability=None (gotcha #33), so the closing/opening line is
+    the only surviving ordering signal."""
+    for v in (
+        outcome.current_probability,
+        getattr(outcome, "calibration_probability", None),
+        outcome.opening_probability,
+    ):
+        if v is not None:
+            return float(v)
+    return None
+
+
+def _assemble_completed_winner_field(
+    tournament_markets: list,
+) -> tuple[list[dict], list[int], list[str], list[str]]:
+    """Assemble the winner field for a SETTLED tournament (#225 Items 1 & 2).
+
+    Returns (golfers, market_ids, market_names, market_sources). Pure over a list
+    of market objects (each with .id/.name/.source/.outcomes; each outcome with
+    .name/.current_probability/.calibration_probability/.opening_probability/
+    .current_american_odds/.is_winner) so it is unit-testable without a DB.
+
+    The prior settled builder pooled EVERY market type — winner, make-cut, top-N,
+    round-leader — into one name-keyed map (first-market-wins) using raw
+    current_probability. Settled placement markets resolve YES≈0.99 for the whole
+    made-cut field (gotcha #33: Kalshi stays status='open' with stale prices), so
+    the winner field read as a wall of 0.990000 and the champion could never be
+    named (the "R2: Åberg under 69.5" hero Alex flagged). Fixes:
+      * FIELD from winner-type markets only (never placement/round/props, never
+        nationality/first-time/qualifier props down-classified to "other");
+      * champion crowned from is_winner (settled-means-settled — authoritative even
+        when the price is stale/None), ordered first;
+      * restrict to the authoritative DataGolf field so speculative Kalshi-only
+        names for players who never entered (the Tiger-Woods class) drop out.
+    """
+    market_ids: list[int] = []
+    market_names: list[str] = []
+    market_sources: list[str] = []
+    for market in tournament_markets:
+        market_ids.append(market.id)
+        market_names.append(market.name or "")
+        src = market.source or "sportsbook"
+        if src not in market_sources:
+            market_sources.append(src)
+
+    def _collect(winner_only: bool) -> dict[str, dict]:
+        gmap: dict[str, dict] = {}
+        for market in tournament_markets:
+            src = market.source or "sportsbook"
+            if winner_only and _tournament_market_type(market.name or "")[0] != "winner":
+                continue
+            for outcome in market.outcomes:
+                if not outcome.name:
+                    continue
+                name = outcome.name.strip()
+                if name.lower() in ("yes", "no", "over", "under", "draw"):
+                    continue
+                prob = _settled_outcome_signal(outcome)
+                if not winner_only and prob is None:
+                    continue  # legacy fallback keeps the old "has a price" guard
+                if name not in gmap:
+                    gmap[name] = {
+                        "name": name,
+                        "probability": prob,
+                        "american_odds": outcome.current_american_odds,
+                        "movement_24h": None,
+                        "opening_probability": outcome.opening_probability,
+                        "rank": 0,
+                        "sources": {},
+                        "won": False,
+                    }
+                elif gmap[name]["probability"] is None and prob is not None:
+                    gmap[name]["probability"] = prob
+                if prob is not None:
+                    gmap[name]["sources"][src] = prob
+                if outcome.is_winner:
+                    gmap[name]["won"] = True
+                    gmap[name]["is_winner"] = True
+        return gmap
+
+    golfer_map = _collect(winner_only=True)
+    # Never regress to an empty field: an odd tournament with only placement
+    # markets still open falls back to the legacy all-market behavior.
+    if not golfer_map:
+        golfer_map = _collect(winner_only=False)
+
+    # Restrict to the authoritative DataGolf field when present (mirrors the live
+    # invitee filter). The graded champion is always kept even if a key misses.
+    dg_field = {k for k, v in golfer_map.items() if "datagolf" in v.get("sources", {})}
+    if len(dg_field) >= 20:
+        golfer_map = {
+            k: v for k, v in golfer_map.items() if k in dg_field or v.get("won")
+        }
+
+    # Champion(s) first, then pre-settlement probability desc, then name — a
+    # longshot winner is crowned above the field's higher-priced favorites.
+    golfers = sorted(
+        golfer_map.values(),
+        key=lambda g: (0 if g.get("won") else 1, -(g.get("probability") or 0.0), g["name"]),
+    )
+    for i, g in enumerate(golfers):
+        g["rank"] = i + 1
+    return golfers, market_ids, market_names, market_sources
+
+
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
@@ -2007,36 +2121,12 @@ async def _build_completed_tournament(
     display_name = TOURNAMENT_DISPLAY_NAMES.get(matched_key or "", (matched_key or slug).replace("_", " ").title())
     key = matched_key or slug
 
-    # Collect all golfers from outcomes
-    golfer_map: dict[str, dict] = {}
-    market_ids: list[int] = []
-    market_names: list[str] = []
-
-    for market in tournament_markets:
-        market_ids.append(market.id)
-        market_names.append(market.name or "")
-        for outcome in market.outcomes:
-            if not outcome.name or not outcome.current_probability:
-                continue
-            name = outcome.name.strip()
-            if name.lower() in ("yes", "no", "over", "under", "draw"):
-                continue
-            if name not in golfer_map:
-                golfer_map[name] = {
-                    "name": name,
-                    "probability": outcome.current_probability,
-                    "american_odds": outcome.current_american_odds,
-                    "movement_24h": None,
-                    "opening_probability": outcome.opening_probability,
-                    "rank": 0,
-                    "sources": {},
-                }
-            source = market.source or "sportsbook"
-            golfer_map[name]["sources"][source] = outcome.current_probability
-
-    golfers = sorted(golfer_map.values(), key=lambda g: g["probability"], reverse=True)
-    for i, g in enumerate(golfers):
-        g["rank"] = i + 1
+    # Build the settled WINNER FIELD (#225 Items 1 & 2). Pure assembly extracted to
+    # _assemble_completed_winner_field so the champion-crown + field-purge logic is
+    # unit-tested independently of the DB.
+    golfers, market_ids, market_names, market_sources = _assemble_completed_winner_field(
+        tournament_markets
+    )
 
     # Try to find schedule data from the golf API response (already cached)
     start_date = None
@@ -2082,6 +2172,11 @@ async def _build_completed_tournament(
         "golfers": golfers,
         "market_ids": market_ids,
         "market_names": market_names,
+        # #225 Item 2: carry the settled tournament's sources so the round-leader
+        # field-membership filter (apply_field_filter) activates — otherwise it
+        # defaults off and Kalshi's speculative round-leader roster (Tiger Woods
+        # et al., who never entered) surfaces on completed rounds.
+        "market_sources": market_sources,
         "_all_golfers": golfers,
     }
 
@@ -2147,6 +2242,15 @@ async def get_golf_tournament(
     # snapshot data (richest time coverage). Filter out non-golfer markets
     # like "League of Winner" or "Winner Nationality" by requiring >5 outcomes.
     evolution_market_id = None
+    # #225 Item 3 — for a SETTLED tournament, the "Path to resolution" chart must
+    # show the winner converging to ~100%. The snapshot-richest winner market for a
+    # settled major is the long-lived odds_api futures market, which stops updating
+    # before the finish (its winner line fizzles at ~18% and never resolves); a
+    # real-money Kalshi market converges to 99.9%. So prefer the winner market whose
+    # graded winner actually RESOLVED high; fall back to snapshot-richest when no
+    # market carries a resolved winner (live/upcoming — no is_winner exists yet).
+    resolved_best_id = None
+    resolved_best_val = _SETTLED_RESOLVE_MIN
     for g in sorted_groups:
         if g["type"] == "winner" and g["market_ids"]:
             best_id = None
@@ -2178,7 +2282,27 @@ async def get_golf_tournament(
                 if total > best_count:
                     best_count = total
                     best_id = mid
-            evolution_market_id = best_id
+                # Settled preference: the max snapshot probability of this market's
+                # graded winner. A market that converged to ~100% (real-money
+                # Kalshi) beats the stale odds_api futures market that never
+                # resolved. On live/upcoming tournaments there is no is_winner, so
+                # this stays None and the snapshot-richest pick is used unchanged.
+                gw = await db.execute(
+                    select(sqlfunc.max(FuturesOddsSnapshot.probability)).where(
+                        FuturesOddsSnapshot.outcome_id.in_(
+                            select(FuturesOutcome.id).where(
+                                FuturesOutcome.market_id == mid,
+                                FuturesOutcome.is_winner.is_(True),
+                            )
+                        )
+                    )
+                )
+                winner_resolve = gw.scalar()
+                if winner_resolve is not None and float(winner_resolve) >= resolved_best_val:
+                    resolved_best_val = float(winner_resolve)
+                    resolved_best_id = mid
+            # A resolved-winner market (settled) wins over snapshot-richness.
+            evolution_market_id = resolved_best_id or best_id
             break
     if not evolution_market_id and market_ids:
         evolution_market_id = market_ids[0]

@@ -1805,6 +1805,23 @@ async def trigger_calibration_recompute(request: Request, secret: str = Query(No
     return {"status": "queued", "task_id": result.id}
 
 
+@router.post("/calibration/time-horizon/recompute")
+async def trigger_time_horizon_calibration(request: Request, secret: str = Query(None)):
+    """Force recompute the time-horizon calibration cache.
+
+    #224/#225 Item 0: the time_horizon task is a 600s-class grinder that runs on
+    the dedicated heavy worker via the 6h beat, but there was no manual trigger to
+    exercise it on demand (it was unexercised since the #224 deploy). Route to the
+    same heavy lane as the beat so manual and scheduled paths agree (#224 pattern).
+    """
+    _check_admin_secret(secret, request=request)
+    from app.tasks import celery_app
+    result = celery_app.send_task(
+        "app.tasks.compute_time_horizon_calibration", queue="heavy"
+    )
+    return {"status": "queued", "task_id": result.id}
+
+
 @router.post("/backfill-volume-direct")
 async def backfill_volume_direct(
     request: Request, secret: str = Query(None),

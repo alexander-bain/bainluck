@@ -2791,6 +2791,16 @@ async def get_futures_history(
             reverse=True
         )[:capped_n]
         outcome_ids = [o.id for o in sorted_outcomes]
+        # #225 Item 3 — settled charts show the completed journey: the graded
+        # winner's line MUST appear even when it was a longshot (low
+        # current_probability) or the market's prices went stale/None at
+        # settlement. Without this, a settled winner-field charts everyone BUT the
+        # winner (the "path to resolution" that never resolves).
+        _selected = set(outcome_ids)
+        for o in market.outcomes:
+            if getattr(o, "is_winner", False) and o.id not in _selected:
+                outcome_ids.append(o.id)
+                _selected.add(o.id)
 
     # --- Auto-extend for sparse markets ---
     # Try the requested window first. If too few snapshots, widen to 30d then 90d.
