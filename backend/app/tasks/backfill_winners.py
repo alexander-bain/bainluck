@@ -4009,7 +4009,18 @@ async def _backfill_from_current_probability():
                         SELECT fm.id AS market_id
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        -- #1152: DataGolf winner/top-N markets have their own
+                        -- authoritative leaderboard resolver
+                        -- (_backfill_datagolf_winners). Their stored
+                        -- current_probability is a stale pre-win model
+                        -- prediction (the champion sits at <1% even after
+                        -- winning), so this heuristic would grade the entire
+                        -- field — including the champion — as losers. Never let
+                        -- the all_losers guess touch DataGolf; the leaderboard
+                        -- resolver (run just above, and in the Phase-0g tail)
+                        -- owns golf grading.
                         WHERE fm.status = 'resolved'
+                          AND fm.source != 'datagolf'
                           AND fo.current_probability IS NOT NULL
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
@@ -5487,6 +5498,23 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _start_phase("polymarket_api")
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=10000)
     _end_phase("polymarket_api")
+
+    # #1152: Authoritative DataGolf leaderboard resolution MUST run BEFORE the
+    # current-probability heuristic below. This call is metadata-only (no
+    # DataGolf API — the live poll already stores full leaderboards), so it is
+    # cheap and safe to run in the un-budget-guarded core section. The old
+    # placement was in the Phase-0g tail (~line 5990), guarded by an early
+    # budget return; the kalshi_api drain routinely eats the ~840s soft limit
+    # before that tail is reached, so it stopped running ~2026-07-05. Meanwhile
+    # the all_losers pass in _backfill_from_current_probability graded the whole
+    # winner field (incl. the champion) as losers because the champion's stored
+    # current_probability is a stale pre-win model prediction (e.g. 0.45%) that
+    # never converged above the 0.10 all_losers ceiling. Running the leaderboard
+    # resolver first sets the true champion is_winner=TRUE, so the all_losers
+    # pass sees SUM(is_winner) >= 1 and skips the market. (The Phase-0g tail
+    # call below is kept — idempotent — to catch markets whose truncated
+    # leaderboards get API-backfilled later in the same run.)
+    dg_early_stats = await _backfill_datagolf_winners()
 
     # Set is_winner from current_probability (all sources, fast). Only
     # handles markets not already resolved by API settlement above.
