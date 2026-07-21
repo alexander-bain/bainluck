@@ -150,6 +150,63 @@ async def test_top5_market_grades_top_finishers_true(monkeypatch):
     assert sum(1 for u in sess.updates if u["won"] is True) == 2
 
 
+@pytest.mark.asyncio
+async def test_one_bad_market_does_not_abort_the_batch(monkeypatch):
+    """#1152 hardening (found via prod verification 2026-07-20): per-market
+    commit + isolation. One market that throws must NOT roll back the healthy
+    siblings' writes. The old single end-of-loop commit meant any exception
+    anywhere in the whole-population loop wrote NOTHING — so an --apply repair
+    left 20 zero-winner golf markets untouched (champion still all_losers)."""
+    champ = 11889
+    lb = _full_field_leaderboard(champ)
+    good = _Row(
+        id=1, external_id="datagolf:pga:100:win",
+        market_metadata={"leaderboard": lb},
+    )
+    bad = _Row(
+        id=2, external_id="datagolf:pga:200:win",
+        market_metadata={"leaderboard": lb},
+    )
+    good_outcomes = [_Row(id=101, external_id=f"dg_{champ}")]
+
+    class _FlakySession(_MockSession):
+        def __init__(self):
+            super().__init__([])
+            self.rolled_back = 0
+            self.commits = 0
+
+        async def execute(self, stmt, params=None):
+            s = str(stmt)
+            if "FROM futures_markets" in s and "market_metadata" in s:
+                return _Result([good, bad])
+            if "FROM futures_outcomes" in s and "UPDATE" not in s:
+                if params and params.get("mid") == 2:
+                    raise RuntimeError("simulated DB failure on market 2")
+                return _Result(good_outcomes)
+            if "UPDATE" in s:
+                self.updates.append(params)
+                return _Result([])
+            return _Result([])
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rolled_back += 1
+
+    sess = _FlakySession()
+    monkeypatch.setattr(bw, "get_task_session", lambda: sess)
+
+    stats = await bw._backfill_datagolf_winners()
+
+    # Healthy market's champion still graded TRUE and committed.
+    assert any(u["oid"] == 101 and u["won"] is True for u in sess.updates)
+    assert sess.commits >= 1            # good market committed
+    assert sess.rolled_back == 1        # bad market rolled back, not fatal
+    assert stats["winners_set"] == 1
+    assert any("market 2" in e for e in stats["errors"])
+
+
 def test_all_losers_pass_excludes_datagolf():
     """The all_losers heuristic must never touch DataGolf markets — they have
     an authoritative leaderboard resolver. Without this exclusion the champion

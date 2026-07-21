@@ -3810,89 +3810,110 @@ async def _backfill_datagolf_winners():
 
             for row in markets:
                 stats["markets_processed"] += 1
-                metadata = row.market_metadata or {}
-                leaderboard = metadata.get("leaderboard")
-                if not leaderboard:
-                    stats["no_leaderboard"] += 1
-                    continue
-
-                # Determine market type from external_id: "datagolf:pga:123:win"
-                market_type = row.external_id.rsplit(":", 1)[-1]
-
-                # Build dg_id → position lookup from leaderboard
-                pos_by_dg = {}
-                for entry in leaderboard:
-                    dg_id = entry.get("dg_id")
-                    pos_raw = entry.get("position")
-                    if dg_id is not None and pos_raw is not None:
-                        pos_by_dg[str(dg_id)] = str(pos_raw)
-
-                # Get all outcomes for this market
-                outcomes = await session.execute(
-                    text("""
-                        SELECT id, external_id FROM futures_outcomes
-                        WHERE market_id = :mid
-                    """),
-                    {"mid": row.id},
-                )
-
-                # Anyone NOT in a COMPLETE leaderboard was never in the field
-                # and is definitively a loser for win/top_N markets.
-                #
-                # For make_cut: only infer absent = missed-cut when the
-                # leaderboard is large enough to contain the full field
-                # (typically 120-160 players). Truncated leaderboards
-                # (e.g., 50 entries from the old polling code) omit
-                # players ranked 51+ who actually MADE the cut, so
-                # can_infer_absent would mark them as losers incorrectly.
-                # The 100-player threshold safely distinguishes full
-                # fields from truncated snapshots.
-                leaderboard_size = len(leaderboard)
-                if market_type == "make_cut":
-                    can_infer_absent = leaderboard_size >= 100
-                else:
-                    can_infer_absent = market_type in (
-                        "win",
-                        "top_5",
-                        "top_10",
-                        "top_20",
-                    )
-
-                for out_row in outcomes.all():
-                    ext = out_row.external_id or ""
-                    if not ext.startswith("dg_"):
-                        continue
-                    dg_id = ext[3:]
-
-                    pos_str = pos_by_dg.get(dg_id)
-                    res_source = "leaderboard"
-                    if pos_str is None:
-                        if can_infer_absent:
-                            won = False
-                            res_source = "did_not_play"
-                        else:
-                            continue
-                    else:
-                        upper = pos_str.strip().upper()
-                        if upper in ("WD", "DNS", "W/D"):
-                            res_source = "withdrew"
-                        won = _datagolf_check_placement(pos_str, market_type)
-                    if won is None:
+                # #1152: isolate + commit PER MARKET. The old single
+                # end-of-loop commit meant ONE bad market anywhere in the
+                # (whole-population) loop threw, hit the outer except, and
+                # rolled back EVERY market's writes — so a repair run wrote
+                # nothing (observed on prod 2026-07-20: 20 zero-winner golf
+                # markets, champion Ryan Fox still graded all_losers after an
+                # --apply). Per-market try/except + commit keeps the healthy
+                # siblings (gotcha #42). Row objects are already-materialized
+                # scalars, so iterating them after a rollback is safe.
+                try:
+                    metadata = row.market_metadata or {}
+                    leaderboard = metadata.get("leaderboard")
+                    if not leaderboard:
+                        stats["no_leaderboard"] += 1
                         continue
 
-                    await session.execute(
+                    # Determine market type from external_id: "datagolf:pga:123:win"
+                    market_type = row.external_id.rsplit(":", 1)[-1]
+
+                    # Build dg_id → position lookup from leaderboard
+                    pos_by_dg = {}
+                    for entry in leaderboard:
+                        dg_id = entry.get("dg_id")
+                        pos_raw = entry.get("position")
+                        if dg_id is not None and pos_raw is not None:
+                            pos_by_dg[str(dg_id)] = str(pos_raw)
+
+                    # Get all outcomes for this market
+                    outcomes = await session.execute(
                         text("""
-                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src, last_updated = NOW()
-                            WHERE id = :oid
+                            SELECT id, external_id FROM futures_outcomes
+                            WHERE market_id = :mid
                         """),
-                        {"won": won, "src": res_source, "oid": out_row.id},
+                        {"mid": row.id},
                     )
-                    if won:
-                        stats["winners_set"] += 1
-                    else:
-                        stats["losers_set"] += 1
 
-            await session.commit()
+                    # Anyone NOT in a COMPLETE leaderboard was never in the field
+                    # and is definitively a loser for win/top_N markets.
+                    #
+                    # For make_cut: only infer absent = missed-cut when the
+                    # leaderboard is large enough to contain the full field
+                    # (typically 120-160 players). Truncated leaderboards
+                    # (e.g., 50 entries from the old polling code) omit
+                    # players ranked 51+ who actually MADE the cut, so
+                    # can_infer_absent would mark them as losers incorrectly.
+                    # The 100-player threshold safely distinguishes full
+                    # fields from truncated snapshots.
+                    leaderboard_size = len(leaderboard)
+                    if market_type == "make_cut":
+                        can_infer_absent = leaderboard_size >= 100
+                    else:
+                        can_infer_absent = market_type in (
+                            "win",
+                            "top_5",
+                            "top_10",
+                            "top_20",
+                        )
+
+                    for out_row in outcomes.all():
+                        ext = out_row.external_id or ""
+                        if not ext.startswith("dg_"):
+                            continue
+                        dg_id = ext[3:]
+
+                        pos_str = pos_by_dg.get(dg_id)
+                        res_source = "leaderboard"
+                        if pos_str is None:
+                            if can_infer_absent:
+                                won = False
+                                res_source = "did_not_play"
+                            else:
+                                continue
+                        else:
+                            upper = pos_str.strip().upper()
+                            if upper in ("WD", "DNS", "W/D"):
+                                res_source = "withdrew"
+                            won = _datagolf_check_placement(pos_str, market_type)
+                        if won is None:
+                            continue
+
+                        await session.execute(
+                            text("""
+                                UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src, last_updated = NOW()
+                                WHERE id = :oid
+                            """),
+                            {"won": won, "src": res_source, "oid": out_row.id},
+                        )
+                        if won:
+                            stats["winners_set"] += 1
+                        else:
+                            stats["losers_set"] += 1
+
+                    await session.commit()
+                except Exception as market_err:
+                    await session.rollback()
+                    stats["errors"].append(f"market {row.id}: {market_err}")
+                    logger.warning(
+                        "DataGolf winner backfill: market %s (%s) failed, "
+                        "skipping: %s",
+                        row.id,
+                        getattr(row, "external_id", "?"),
+                        market_err,
+                    )
+                    continue
 
     except Exception as e:
         stats["errors"].append(str(e))
