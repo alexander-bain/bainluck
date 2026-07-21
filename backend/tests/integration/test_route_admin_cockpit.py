@@ -454,12 +454,22 @@ class TestCockpitEndpoint:
     async def test_honesty_pass_link_rate_and_grid_context(
         self, client, monkeypatch
     ):
-        """L2-104: link-rate headline is the OPEN rate (not all-status), and RED
-        grids carry tracked / artifact / untracked context badges."""
+        """L2-145 Item 1: the link tile's HEADLINE is matured-linkage (below-100
+        MEANS a real defect); the raw market link-rate is folded into the tile's
+        diagnostic subtitle. RED grids carry tracked/artifact/untracked badges."""
         monkeypatch.setenv("ADMIN_TOKEN", "right-token")
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
         warm = {
+            "bainluck:admin:matured_linkage": json.dumps(
+                {
+                    "status": "ok",
+                    "headline_pct": 100,
+                    "backed": 12,
+                    "checkable_pairs": 12,
+                    "phantom": 0,
+                }
+            ),
             "bainluck:admin:link_rate": json.dumps(
                 {
                     "overall": {
@@ -486,12 +496,18 @@ class TestCockpitEndpoint:
         assert resp.status_code == 200
         tiles = {t["key"]: t for t in resp.json()["health"]}
 
-        # Link-rate HEADLINE is the open-markets rate; all-status demoted to detail.
+        # The link tile HEADLINE is now matured-linkage; the raw link-rate is a
+        # subtitle. The standalone "matured_linkage" tile is retired (merged in).
         link = tiles["link_rate"]
-        assert link["value"] == "99.6%"
+        assert link["label"] == "Link rate"
+        assert link["value"] == "100%"
         assert link["status"] == "green"
+        assert "every matured event fully linked" in link["detail"]
+        # Raw link-rate folded into the diagnostic subtitle.
+        assert "raw link rate 99.6% open" in link["detail"]
         assert "90.3% all-status" in link["detail"]
         assert "gotcha #35" in link["detail"]
+        assert "matured_linkage" not in tiles  # the separate tile is gone
 
         # Grid RED context: mlb untracked (four-alarm, sorted first), nba tracked,
         # golf artifact; nhl (94, amber) is NOT flagged.

@@ -7,10 +7,12 @@
  * Plain data module — NO "use client" — safe to import from server or client
  * components. Editorial spec: .claude/handoff/story_about_editorial.md.
  *
- * All case-study numbers are documented, real exhibits (Kalshi ticker + DataGolf
- * sources cited). The chart point arrays are schematic illustrations of the
- * documented arc (underdog → dominant → desperate → champion; tied-but-3x-apart)
- * — the exact live series live at the cited sources.
+ * All case-study numbers are documented, real exhibits. The Alcaraz line chart
+ * is a real, downsampled win-probability series pulled from Polymarket's CLOB
+ * price history for the cited market (every plotted point is an actual observed
+ * price — no interpolation, no fabrication; L2-145 Item 2, Alex's ruling). The
+ * McIlroy bars are three documented point-in-time win-prob values (DataGolf +
+ * Kalshi futures). Nothing here is schematic.
  */
 
 /* ── 1. THE ONE-LINER ── */
@@ -55,7 +57,8 @@ export type CaseStudyChart =
   | {
       type: "line";
       caption: string;
-      /** 0–100 win-probability points across the event, schematic of the documented arc. */
+      /** 0–100 win-probability points across the event — a real, downsampled
+       *  series (each point is an actual observed market price). */
       points: number[];
       /** Index of the ONE annotated moment. */
       annotationIndex: number;
@@ -88,19 +91,19 @@ export const CASE_STUDIES: CaseStudy[] = [
     id: "alcaraz-ao-2026",
     kicker: "Tennis · 2026 Australian Open semifinal",
     headline:
-      "Alcaraz won in five sets. So why did his odds run from 20% to 85% to the brink — and back?",
+      "Alcaraz won in five sets. So why did his odds run from 98% up two sets to 14% — the brink of elimination — before he won?",
     scoreSaid: "Final: Alcaraz d. Zverev 6-4, 7-6, 6-7, 6-7, 7-5.",
     moment:
-      "Up two sets, Alcaraz hit 85%. Then an adductor injury — and across the next two sets the market watched him slide to the edge of elimination before he broke back in the fifth to win. $27M changed hands on Kalshi tracking every swing.",
+      "A pre-match favorite around 84%, Alcaraz went up two sets and the market pushed him to 98%. Then an adductor injury — and across the next two sets it watched him crash to 14%, the edge of elimination, before he broke back in the fifth to win. $6.6M changed hands on Polymarket tracking every swing.",
     takeaway:
       "The scoreline says close. The probability line says he won, nearly lost, and won again. That's the night we show you.",
-    source: "Kalshi · kxatpmatch-26jan29alczve · $27M volume",
+    source: "Polymarket · atp-alcaraz-zverev-2026-01-30 · real price series, $6.6M volume",
     chart: {
       type: "line",
-      caption: "Alcaraz win probability through the match",
-      points: [20, 52, 76, 85, 60, 33, 15, 24, 49, 73, 100],
-      annotationIndex: 3,
-      annotationLabel: "Up 2 sets — 85%, then the injury",
+      caption: "Alcaraz win probability through the match (Polymarket)",
+      points: [84, 82, 78, 90, 96, 98, 77, 14, 42, 53, 36, 23, 40, 100],
+      annotationIndex: 7,
+      annotationLabel: "Adductor injury — 14%, the brink",
     },
   },
   {

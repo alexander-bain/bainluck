@@ -603,6 +603,32 @@ def _celery_health_tile() -> dict:
     }
 
 
+def _raw_link_rate_subtitle() -> str | None:
+    """The raw market link-rate, worded as the link tile's diagnostic subtitle
+    (L2-145 Item 1). Never its own tile — it cried wolf (below-100 for non-defect
+    reasons), so it rides along under the matured-linkage headline as context.
+    Returns None when the cache is cold (the tile then omits the subtitle)."""
+    link = _read_redis_json("bainluck:admin:link_rate")
+    if link and isinstance(link.get("overall"), dict):
+        overall = link["overall"]
+        open_pct = overall.get("link_rate_pct")
+        all_pct = overall.get("link_rate_all_pct")
+        open_linked = overall.get("open_linked")
+        open_total = overall.get("open_total")
+        bits: list[str] = []
+        if open_pct is not None:
+            head = f"raw link rate {open_pct}% open"
+            if open_linked is not None and open_total is not None:
+                head += f" ({open_linked}/{open_total} game markets)"
+            bits.append(head)
+        if all_pct is not None:
+            bits.append(
+                f"{all_pct}% all-status — capped by the aged-out settled-market flood (gotcha #35)"
+            )
+        return " · ".join(bits) if bits else None
+    return None
+
+
 async def _health_group(db: AsyncSession) -> list[dict]:
     """Build the site-health tile row from warm caches + cheap queries."""
     tiles: list[dict] = []
@@ -616,23 +642,35 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     except Exception:
         logger.debug("cockpit: celery health tile failed", exc_info=True)
 
-    # --- Matured linkage (Queue #220/221 Item 2) — the HEADLINE linkage number ---
-    # Alex's ruling: below-100 must MEAN something. Unlike the market link-rate
-    # below (a coverage number capped by upstream gaps + aged-out settled markets),
-    # this measures imminent events (≤24h) where a blend prediction-market source
-    # has NO linked winner market — a phantom blend source, always a real defect.
+    # --- The link tile (L2-145 Item 1) — ONE tile: matured-linkage is the
+    # HEADLINE number, the raw market link-rate is the diagnostic subtitle. ---
+    # Alex's ruling (earned by r227's clean 100% read): below-100 must MEAN
+    # something. The raw market link-rate cried wolf — it sits permanently below
+    # 100 for non-defect reasons (upstream coverage gaps + a settled-market flood
+    # that drains the all-status denominator as markets age out, gotcha #35), so
+    # its below-100 is noise, not a fixable defect. The tile that reigns is
+    # matured-linkage: of imminent events (≤24h) it counts blend prediction-market
+    # sources with NO linked winner market — a phantom blend source, always a real
+    # defect. The old standalone raw-rate tile retires; the raw rate now rides
+    # along in this tile's subtitle as context, never its own tile again.
+    raw_subtitle = _raw_link_rate_subtitle()
     ml = _read_redis_json("bainluck:admin:matured_linkage")
     if ml and ml.get("status") == "ok":
         ml_pct = ml.get("headline_pct")
         phantom = ml.get("phantom") or 0
         checkable = ml.get("checkable_pairs") or 0
-        detail_bits = [f"{ml.get('backed')}/{checkable} imminent blend sources linked"]
+        if ml_pct == 100:
+            detail_bits = ["every matured event fully linked"]
+        else:
+            detail_bits = [f"{ml.get('backed')}/{checkable} imminent blend sources linked"]
         if phantom:
             detail_bits.append(f"{phantom} phantom (in blend, no linked market)")
+        if raw_subtitle:
+            detail_bits.append(raw_subtitle)
         tiles.append(
             {
-                "key": "matured_linkage",
-                "label": "Matured linkage",
+                "key": "link_rate",
+                "label": "Link rate",
                 "value": f"{ml_pct}%" if ml_pct is not None else "—",
                 "numeric": ml_pct,
                 # 100 = clean. Any phantom is a real defect → amber below 100.
@@ -642,69 +680,32 @@ async def _health_group(db: AsyncSession) -> list[dict]:
             }
         )
     elif ml and ml.get("status") == "insufficient_slate":
+        detail_bits = ["no imminent Kalshi/Poly blend sources to check (off-brand slate)"]
+        if raw_subtitle:
+            detail_bits.append(raw_subtitle)
         tiles.append(
             {
-                "key": "matured_linkage",
-                "label": "Matured linkage",
+                "key": "link_rate",
+                "label": "Link rate",
                 "value": "n/a",
                 "numeric": None,
                 "status": "unknown",
-                "detail": "no imminent Kalshi/Poly blend sources to check (off-brand slate)",
+                "detail": " · ".join(detail_bits),
                 "href": "/admin/matching",
             }
         )
     else:
-        tiles.append(
-            {
-                "key": "matured_linkage",
-                "label": "Matured linkage",
-                "value": "—",
-                "numeric": None,
-                "status": "unknown",
-                "detail": "cache cold — matured-linkage beat has not run yet",
-                "href": "/admin/matching",
-            }
-        )
-
-    # --- Market link rate (warm cache from precompute_admin_link_rate) ---
-    # DIAGNOSTIC, not the headline (Item 2 demoted it below matured linkage): this
-    # is all-future coverage, structurally capped by upstream gaps + aged-out
-    # settled markets (gotcha #35), so its below-100 does NOT mean a fixable
-    # defect. Kept as context. The open-markets rate is the least-noisy cut.
-    link = _read_redis_json("bainluck:admin:link_rate")
-    if link and isinstance(link.get("overall"), dict):
-        overall = link["overall"]
-        open_pct = overall.get("link_rate_pct")
-        all_pct = overall.get("link_rate_all_pct")
-        open_linked = overall.get("open_linked")
-        open_total = overall.get("open_total")
-        detail_bits = []
-        if open_linked is not None and open_total is not None:
-            detail_bits.append(f"{open_linked}/{open_total} open game markets linked")
-        if all_pct is not None:
-            detail_bits.append(
-                f"{all_pct}% all-status — capped by aged-out settled markets (gotcha #35)"
-            )
+        detail_bits = ["cache cold — matured-linkage beat has not run yet"]
+        if raw_subtitle:
+            detail_bits.append(raw_subtitle)
         tiles.append(
             {
                 "key": "link_rate",
-                "label": "Market link rate (diagnostic)",
-                "value": f"{open_pct}%" if open_pct is not None else "—",
-                "numeric": open_pct,
-                "status": _status_from_pct(open_pct, green=99, amber=90),
-                "detail": " · ".join(detail_bits) if detail_bits else None,
-                "href": "/admin/matching",
-            }
-        )
-    else:
-        tiles.append(
-            {
-                "key": "link_rate",
-                "label": "Market link rate (diagnostic)",
+                "label": "Link rate",
                 "value": "—",
                 "numeric": None,
                 "status": "unknown",
-                "detail": "cache cold — open Matching Review to warm it",
+                "detail": " · ".join(detail_bits),
                 "href": "/admin/matching",
             }
         )
