@@ -411,6 +411,54 @@ def _grid_sentinel_group() -> dict | None:
     }
 
 
+def _data_quality_group() -> dict:
+    """Data-quality watchdog VERDICT as a cockpit tile (#1132 / L2-140).
+
+    Reads the summary the watchdog persists at
+    ``bainluck:data_quality_watchdog:last`` (26h TTL) and shapes it to the exact
+    contract the L2-140 frontend renders (``data_quality_watchdog`` group with a
+    ``per_check`` list). The point (the #1091 lesson wearing a new coat): a P0/P1
+    that only emails a personal inbox + files a GitHub issue is a SILENT alert —
+    the cockpit is the always-open eye. RED when any P0/P1 check is failing; AMBER
+    on a P2 failure or a self-error (monitor unreliable); GREEN when all clear.
+    Always returns a group (never None): before the first run, status='unknown'
+    with an empty per_check so the tile renders 'unknown', never a false green."""
+    raw = _read_redis_json("bainluck:data_quality_watchdog:last")
+    if not raw or "status" not in raw:
+        return {
+            "status": "unknown",
+            "detail": (
+                "No data-quality watchdog run cached yet — it runs on its schedule "
+                "or on POST /api/admin/data-quality/check."
+            ),
+            "per_check": [],
+        }
+
+    per_check = [
+        {
+            "name": f.get("name"),
+            "severity": f.get("severity"),
+            "message": f.get("message"),
+            "value": f.get("value"),
+            "threshold": f.get("threshold"),
+            "status": "red" if f.get("severity") in ("P0", "P1") else "amber",
+            "issue": f.get("issue"),
+            "issue_url": _GH_ISSUE_URL.format(f["issue"]) if f.get("issue") else None,
+        }
+        for f in (raw.get("failing") or [])
+        if isinstance(f, dict)
+    ]
+    return {
+        "status": raw.get("status", "unknown"),
+        "last_run": raw.get("computed_at"),
+        "checks_run": raw.get("checks_run"),
+        "checks_passed": raw.get("checks_passed"),
+        "alerts_fired": raw.get("alerts_fired"),
+        "self_error": raw.get("self_error"),
+        "per_check": per_check,
+    }
+
+
 def _read_redis_json(key: str) -> dict | None:
     try:
         from app.tasks.redis_state import get_redis_client
@@ -989,6 +1037,7 @@ async def cockpit(
         "eval_queue": await _eval_queue(db),
         "flow_sentinel": _flow_sentinel_group(),
         "grid_sentinel": _grid_sentinel_group(),
+        "data_quality_watchdog": _data_quality_group(),
     }
 
     try:

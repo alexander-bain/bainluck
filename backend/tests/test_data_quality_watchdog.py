@@ -96,17 +96,19 @@ class TestCheckDefinitions:
         assert "score_snapshots" in by_name["statpal_freshness"]
 
     def test_espn_capture_gap_scope(self):
-        """#207 Item 2: the granular per-live-game ESPN gap detector is scoped to
-        the sports ESPN actually serves win-probability for (basketball/football/
-        hockey), self-gated by status='live', and must NOT include baseball —
-        MLB win prob comes from the MLB Stats API, and ESPN's baseball summary
-        returns an empty winprobability array."""
+        """#1132 (#215E carryover): the granular per-live-game ESPN gap detector
+        now INCLUDES baseball — ESPN does capture MLB win-prob (prod: 1,538
+        espn baseball_mlb rows), so excluding it was a false NEGATIVE that blinded
+        the detector to live-MLB ESPN gaps. To avoid the false-POSITIVE class
+        (games ESPN never covers), it's gated on `EXISTS(prior espn snapshot)` so
+        it fires only on a real mid-game capture STOP. Self-gated by status='live'."""
         by_name = {c["name"]: c["query"].lower() for c in CHECKS}
         q = by_name["espn_capture_gap"]
         assert "status = 'live'" in q            # self-gates off-season
         assert "source = 'espn'" in q
         assert "basketball%" in q and "americanfootball%" in q and "icehockey%" in q
-        assert "baseball" not in q                # MLB is not an ESPN winprob sport
+        assert "baseball%" in q                   # #1132: MLB now covered
+        assert "exists" in q                      # only fires if ESPN was covering it
         gap = next(c for c in CHECKS if c["name"] == "espn_capture_gap")
         assert gap["comparison"] == "lte" and gap["threshold"] == 0
 
@@ -395,3 +397,54 @@ class TestEmailTemplate:
         html_body = _build_alert_email_html(check, 95.5, "diag")
         assert "95.5" in html_body
         assert "99.0" in html_body
+
+
+class TestCockpitDataQualityTile:
+    """#1132 / L2-140: the watchdog verdict must reach the Alex Cockpit as a tile.
+    A P0/P1 that only emails + files an issue is a silent alert (the #1091 lesson);
+    the cockpit is the always-open eye. RED on any P0/P1 failing; None before the
+    first run (so the tile renders 'unknown', never a false green)."""
+
+    def test_tile_unknown_before_first_run(self):
+        # Never None (L2-140 accesses per_check) — 'unknown' + empty list, never a
+        # false green, before the first run is cached.
+        import app.routes.admin_cockpit as cockpit
+
+        with patch.object(cockpit, "_read_redis_json", return_value=None):
+            tile = cockpit._data_quality_group()
+        assert tile["status"] == "unknown" and tile["per_check"] == []
+
+    def test_tile_red_on_p1_failure_matches_l2140_contract(self):
+        import app.routes.admin_cockpit as cockpit
+
+        summary = {
+            "status": "red",
+            "computed_at": "2026-07-21T17:00:00Z",
+            "checks_run": 10,
+            "checks_passed": 9,
+            "alerts_fired": 1,
+            "self_error": False,
+            "failing": [
+                {"name": "espn_capture_gap", "severity": "P1", "value": 2.0,
+                 "threshold": 0, "message": "gap", "issue": 1132},
+            ],
+        }
+        with patch.object(cockpit, "_read_redis_json", return_value=summary):
+            tile = cockpit._data_quality_group()
+        assert tile["status"] == "red"
+        assert tile["last_run"] == "2026-07-21T17:00:00Z"
+        assert tile["alerts_fired"] == 1
+        # L2-140 reads per_check[].{name,severity,message,value,threshold,status,issue,issue_url}
+        row = tile["per_check"][0]
+        assert row["name"] == "espn_capture_gap" and row["status"] == "red"
+        assert row["severity"] == "P1" and row["threshold"] == 0
+        assert row["issue_url"] and "1132" in row["issue_url"]
+
+    def test_tile_green_when_all_clear(self):
+        import app.routes.admin_cockpit as cockpit
+
+        summary = {"status": "green", "checks_run": 10, "checks_passed": 10,
+                   "alerts_fired": 0, "self_error": False, "failing": []}
+        with patch.object(cockpit, "_read_redis_json", return_value=summary):
+            tile = cockpit._data_quality_group()
+        assert tile["status"] == "green" and tile["per_check"] == []

@@ -11,8 +11,10 @@ Redis dedup prevents duplicate alerts within 24h per check.
 """
 
 import html
+import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -247,12 +249,20 @@ CHECKS: list[dict[str, Any]] = [
     },
     # --- ESPN capture gap (P1) — granular per-live-game detector (#207 Item 2) ---
     # espn_freshness (above) catches a GLOBAL ESPN outage; this catches a gap on a
-    # SPECIFIC live game while other games still flow. Scoped to the sports ESPN
-    # actually serves win-probability for — basketball / american football / ice
-    # hockey — NOT baseball (MLB win prob comes from the MLB Stats API, and ESPN's
-    # baseball summary returns an empty winprobability array; probed 2026-07-15).
+    # SPECIFIC live game while other games still flow. Recoverable after the fact
+    # via backfill_espn_win_prob.
+    #
+    # #1132 (#215E carryover): baseball was excluded on the claim "ESPN's baseball
+    # summary returns an empty winprobability array" — but prod shows ESPN DOES
+    # capture MLB win-prob (1,538 espn baseball_mlb rows in win_prob_snapshots),
+    # so the detector was blind to live-MLB ESPN gaps (a false NEGATIVE). Baseball
+    # is now included. To avoid the false-POSITIVE class (flagging a live game
+    # ESPN simply never covers — MLB ESPN coverage is not universal), the check is
+    # gated on `EXISTS(any prior espn snapshot for this event)`: it fires only when
+    # ESPN WAS actively capturing this game and then went silent for 15 min — a
+    # real mid-game stop. This gate also strictly tightens the other sports.
     # status='live' self-gates against off-season false alarms (no live games =>
-    # count 0 => pass). Recoverable after the fact via backfill_espn_win_prob.
+    # count 0 => pass).
     {
         "name": "espn_capture_gap",
         "query": (
@@ -261,7 +271,11 @@ CHECKS: list[dict[str, Any]] = [
             "WHERE e.status = 'live' "
             "AND e.espn_id IS NOT NULL "
             "AND (s.key LIKE 'basketball%' OR s.key LIKE 'americanfootball%' "
-            "     OR s.key LIKE 'icehockey%') "
+            "     OR s.key LIKE 'icehockey%' OR s.key LIKE 'baseball%') "
+            # ESPN was actively covering this game (>=1 espn snapshot ever) ...
+            "AND EXISTS (SELECT 1 FROM win_prob_snapshots wp "
+            "     WHERE wp.event_id = e.id AND wp.source = 'espn') "
+            # ... and has now gone silent for 15 min (a real mid-game stop).
             "AND (SELECT COUNT(*) FROM win_prob_snapshots wp "
             "     WHERE wp.event_id = e.id AND wp.source = 'espn' "
             "     AND wp.captured_at > NOW() - INTERVAL '15 minutes') = 0"
@@ -269,7 +283,7 @@ CHECKS: list[dict[str, Any]] = [
         "threshold": 0,
         "comparison": "lte",
         "severity": "P1",
-        "message": "A live NBA/NFL/NHL game has no ESPN win-probability snapshot in 15 min — live capture gap; its chart will lose the curve (recoverable via backfill_espn_win_prob)",
+        "message": "A live NBA/NFL/NHL/MLB game ESPN was covering has no ESPN win-probability snapshot in 15 min — live capture gap; its chart will lose the curve (recoverable via backfill_espn_win_prob)",
     },
 ]
 
@@ -655,6 +669,8 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                     "value": float(value) if value is not None else None,
                     "threshold": check["threshold"],
                     "passed": passes_threshold(value, check),
+                    "severity": check["severity"],
+                    "message": check["message"],
                 }
 
                 if passes_threshold(value, check):
@@ -696,6 +712,8 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
 
                 # Set dedup key
                 _set_redis_dedup(check_name, issue_number)
+                if issue_number:
+                    stats["results"][check_name]["issue"] = issue_number
 
                 stats["alerts_fired"] += 1
 
@@ -878,4 +896,44 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
         stats["alerts_deduped"],
         len(stats["errors"]),
     )
+
+    # --- Cockpit verdict (#1132 / L2-140): persist a compact summary the Alex
+    # Cockpit reads as a RED tile. A P0/P1 that only lands in an email + a GitHub
+    # issue is a silent alert if nobody's looking there; the cockpit is the eye
+    # that's always open. RED when any P0/P1 check is failing; AMBER on a P2
+    # failure or a self-error (monitor unreliable); GREEN when all clear.
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        failing = [
+            {
+                "name": name,
+                "severity": r.get("severity"),
+                "value": r.get("value"),
+                "threshold": r.get("threshold"),
+                "message": r.get("message"),
+                "issue": r.get("issue"),
+            }
+            for name, r in stats["results"].items()
+            if not r.get("passed")
+        ]
+        red = any(f["severity"] in ("P0", "P1") for f in failing)
+        amber = bool(failing) or bool(stats["errors"])
+        summary = {
+            "computed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "red" if red else ("amber" if amber else "green"),
+            "checks_run": stats["checks_run"],
+            "checks_passed": stats["checks_passed"],
+            "alerts_fired": stats["alerts_fired"],
+            "self_error": bool(stats["errors"]),
+            "failing": failing,
+        }
+        # 26h TTL > the daily cadence, so a missed run reads stale (not green).
+        get_redis_client().setex(
+            "bainluck:data_quality_watchdog:last", 26 * 3600, json.dumps(summary, default=str)
+        )
+        stats["cockpit_status"] = summary["status"]
+    except Exception as exc:
+        logger.warning("Data-quality cockpit summary persist failed: %s", exc)
+
     return stats
