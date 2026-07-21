@@ -383,7 +383,15 @@ class CyclingEventAdapter:
             if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
                 top["won"] = True
 
-        normalize_display_probs(competitors)
+        # Normalize ONLY a coherent (~mutually-exclusive) field. A Kalshi grand-tour
+        # GC market lists 184 riders as INDEPENDENT YES/NO binaries whose YES prices
+        # sum to ~2.8x (heavy overround, gotcha #23); normalizing that would dilute a
+        # near-lock favorite (Pogačar 94.5% -> a false 34%). When the raw field sums
+        # far past 100% the raw YES price IS the honest per-rider win probability —
+        # keep it (Alex: "the blend is the product — one number per question").
+        _raw_sum = sum(c["probability"] for c in competitors if c["probability"] is not None)
+        if _raw_sum <= _FIELD_SUM_MAX:
+            normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
         # Children = stages (in order), team classification, jersey props.

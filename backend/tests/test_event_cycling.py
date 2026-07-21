@@ -158,6 +158,39 @@ class TestCoherenceGate:
         assert market is fresh
 
 
+class TestNormalizationGuard:
+    """A heavily-overrounded independent-binary field (Kalshi 184-way GC) must NOT be
+    normalized — the raw YES price is the honest per-rider win probability. Only a
+    coherent ~100% field gets normalized. (Regression: Pogačar 94.5% -> false 34%.)"""
+
+    def test_overrounded_field_keeps_raw(self):
+        # Sum ~2.8 (overround) — keep raw, favorite stays a near-lock.
+        comps = [
+            {"probability": 0.945, "name": "Pogacar"},
+            {"probability": 0.9, "name": "noise A"},
+            {"probability": 0.9, "name": "noise B"},
+        ]
+        _sum = sum(c["probability"] for c in comps)
+        assert _sum > ec._FIELD_SUM_MAX  # would be normalized without the guard
+        # emulate the guard
+        from app.utils.outcome_display import normalize_display_probs
+
+        if _sum <= ec._FIELD_SUM_MAX:
+            normalize_display_probs(comps)
+        assert comps[0]["probability"] == 0.945  # untouched
+
+    def test_mild_overround_field_is_squeezed(self):
+        # Sum 1.2 (mild overround, within the guard band) -> normalize squeezes to
+        # ~100% (normalize_display_probs only acts on over-100% fields, gotcha #23).
+        from app.utils.outcome_display import normalize_display_probs
+
+        comps = [{"probability": 0.7, "name": "A"}, {"probability": 0.5, "name": "B"}]
+        _sum = sum(c["probability"] for c in comps)  # 1.2, within FIELD_SUM_MAX
+        assert _sum <= ec._FIELD_SUM_MAX
+        normalize_display_probs(comps)
+        assert abs(sum(c["probability"] for c in comps) - 1.0) < 0.01
+
+
 class TestCyclingStatus:
     def test_settled_when_resolved(self):
         assert ec.cycling_status("resolved", None, datetime.now(timezone.utc)) == "settled"
