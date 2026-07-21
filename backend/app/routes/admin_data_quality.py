@@ -1861,8 +1861,8 @@ async def trigger_volume_backfill(request: Request, secret: str = Query(None)):
     """Fast volume-only backfill — skips all phases except volume writes."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    # Route to the dedicated heavy-compute worker (#224) — same lane as the beat.
-    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="heavy")
+    # backfills stay on background (#224 — heavy is the calibration lane only).
+    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="background")
     return {"status": "queued", "task_id": result.id}
 
 

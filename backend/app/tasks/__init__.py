@@ -115,23 +115,30 @@ celery_app.conf.update(**celery_config)
 #   Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB dyno).
 #
 # heavy (Standard-1X, concurrency=2):
-#   The 600s-class batch grinders — the calibration precompute family
-#   (precompute_calibration_main, time_horizon, calibration_prices,
-#   fair_fight, source_intelligence, coverage, backfill_winners_status),
-#   the backfill_winners pipeline, and the kalshi/polymarket backfills.
-#   These are pure cache-warmers/backfills with no user-facing latency SLA;
-#   isolating them onto a dedicated worker stops them starving the hourly
-#   /calibration warmer and the fast background beats. This dedicated lane
-#   is the structural fix for the recurring background-queue starvation
-#   (cal_price #183, then time_horizon, then precompute_calibration_main #223)
-#   that per-task minute-offset juggling could not durably solve.
+#   ISOLATION LANE for the calibration precompute family — the user-facing
+#   cache-warmers (precompute_calibration_main hourly, calibration_prices,
+#   time_horizon, fair_fight, source_intelligence, coverage,
+#   backfill_winners_status). These are 600s-class but latency-relevant: they
+#   warm /calibration and the source dashboards. On a dedicated 2-slot worker
+#   they can NEVER starve — at most 2-3 of them ever fire in the same minute
+#   (only precompute_calibration_main is hourly; the rest are 6h and staggered
+#   :00/:10/:15/:30), so 2 slots always suffice. This is the structural fix for
+#   the recurring background-queue starvation (cal_price #183, then
+#   time_horizon, then precompute_calibration_main #223) that per-task
+#   minute-offset juggling could not durably solve.
 #
-# HEAVY membership rule: any 600s-class (soft_time_limit >= 600) batch
-# grinder EXCEPT latency-sensitive pipeline drivers / alarms (kept on
-# background — see _BACKGROUND_KEEP below). Applied programmatically to both
-# task_routes and the beat schedule's per-entry `options["queue"]` (beat
-# options override task_routes, so both must agree — see the loop after the
-# beat_schedule definition).
+#   Deliberately NOT here: the big backfills (backfill_winners 840s, the
+#   kalshi/polymarket backfills 600-960s). They stay on `background` where
+#   they have always lived — moving them here would just relocate the
+#   starvation (they'd fill both heavy slots and delay the hourly calibration
+#   warmer, observed live during the #224 rollout). Backfill-vs-fast-task
+#   contention on background was never the reported problem; calibration
+#   starvation was. So heavy stays a small, guaranteed-free calibration lane.
+#
+# HEAVY membership rule: the calibration/precompute cache-warmer family only.
+# Applied programmatically to both task_routes and the beat schedule's per-entry
+# `options["queue"]` (beat options override task_routes, so both must agree —
+# see the loop after the beat_schedule definition).
 # =============================================================================
 
 from kombu import Queue
@@ -160,9 +167,11 @@ celery_app.conf.task_routes = {
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
 
-# 600s-class grinders that stay on `background` despite being long: they are
-# latency-sensitive pipeline drivers or alarms that must fire promptly and
-# must never queue behind a 10-minute backfill on the heavy lane.
+# The big backfills + fast tasks stay on `background` (their historical home).
+# Listed here for documentation / the guard test: these must NOT leak onto the
+# heavy calibration lane, or they'd fill its 2 slots and re-starve the hourly
+# /calibration warmer (observed live during the #224 rollout). Backfill-vs-fast
+# contention on background was never the reported problem.
 _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.match_prediction_markets",   # linkage pipeline, every 15 min
     "app.tasks.poll_kalshi_markets",        # ingest cadence
@@ -172,20 +181,7 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.grid_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.calibration_sentinel",
-}
-
-# The heavy grinder set. Kept explicit (not derived from decorators at import
-# time) so routing is greppable and stable. Everything here moves to `heavy`.
-HEAVY_TASKS = {
-    # calibration precompute family (the recurring starvation class)
-    "app.tasks.precompute_calibration_main",
-    "app.tasks.compute_calibration_prices",
-    "app.tasks.compute_time_horizon_calibration",
-    "app.tasks.compute_fair_fight_comparison",
-    "app.tasks.precompute_source_intelligence",
-    "app.tasks.snapshot_coverage_metrics",
-    "app.tasks.precompute_backfill_winners_status",
-    # the big backfill / grinder pipeline
+    # the big backfills — deliberately NOT on heavy (see comment above)
     "app.tasks.backfill_winners",
     "app.tasks.backfill_kalshi_candlestick",
     "app.tasks.backfill_kalshi_history",
@@ -196,17 +192,18 @@ HEAVY_TASKS = {
     "app.tasks.backfill_polymarket_winners",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
-    "app.tasks.clob_resolve_drain",
-    "app.tasks.sync_polymarket_resolved",
-    "app.tasks.recover_datagolf_participation",
-    # heavy maintenance grinders (600s-class, no latency SLA)
-    "app.tasks.enrich_cu_v2_profiles",
-    "app.tasks.recategorize_other",
-    "app.tasks.regenerate_tags",
-    "app.tasks.audit_canonical_keys",
-    "app.tasks.audit_prediction_market_links",
-    "app.tasks.audit_related_futures",
-    "app.tasks.check_snapshot_sparsity",
+}
+
+# The heavy lane = the calibration/precompute cache-warmer family ONLY. Kept
+# explicit (not derived from decorators) so routing is greppable and stable.
+HEAVY_TASKS = {
+    "app.tasks.precompute_calibration_main",       # hourly :15 — the frozen one (#223)
+    "app.tasks.compute_calibration_prices",        # cal_price (#183)
+    "app.tasks.compute_time_horizon_calibration",  # time_horizon (r228: prior fix didn't take)
+    "app.tasks.compute_fair_fight_comparison",
+    "app.tasks.precompute_source_intelligence",
+    "app.tasks.snapshot_coverage_metrics",
+    "app.tasks.precompute_backfill_winners_status",
 }
 
 for _heavy_task in HEAVY_TASKS:
