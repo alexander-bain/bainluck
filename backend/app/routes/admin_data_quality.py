@@ -1800,7 +1800,8 @@ async def trigger_calibration_recompute(request: Request, secret: str = Query(No
     """Force recompute the public calibration cache."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.precompute_calibration_main", queue="background")
+    # Route to the dedicated heavy-compute worker (#224) — same lane as the beat.
+    result = celery_app.send_task("app.tasks.precompute_calibration_main", queue="heavy")
     return {"status": "queued", "task_id": result.id}
 
 
@@ -1860,7 +1861,8 @@ async def trigger_volume_backfill(request: Request, secret: str = Query(None)):
     """Fast volume-only backfill — skips all phases except volume writes."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="background")
+    # Route to the dedicated heavy-compute worker (#224) — same lane as the beat.
+    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="heavy")
     return {"status": "queued", "task_id": result.id}
 
 
@@ -3577,10 +3579,10 @@ async def calibration_mce_summary(
     from app.tasks.redis_state import get_redis_client
 
     if bust:
-        # Queue an immediate recompute on the background worker (same task the
-        # /calibration/recompute trigger and the hourly beat use).
+        # Queue an immediate recompute on the dedicated heavy-compute worker (#224)
+        # — same lane the /calibration/recompute trigger and the hourly beat use.
         from app.tasks import celery_app
-        celery_app.send_task("app.tasks.precompute_calibration_main", queue="background")
+        celery_app.send_task("app.tasks.precompute_calibration_main", queue="heavy")
 
     payload = None
     try:
