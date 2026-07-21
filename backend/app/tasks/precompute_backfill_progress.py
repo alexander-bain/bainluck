@@ -116,6 +116,30 @@ CHART_DENSITY_SQL = """
 """
 
 
+async def _begin_census(session) -> None:
+    """Start each heavy census tile on a CLEAN transaction with the heavy-query
+    statement timeout.
+
+    #1147: all tiles share one session. The unbounded per-outcome COUNT probes
+    in the density/cohort tiles can hit the 150s statement_timeout
+    (QueryCanceledError), which ABORTS the shared transaction. The per-tile
+    try/except degrades that tile in Python but never resets the DB transaction,
+    so EVERY tile after it fails with "current transaction is aborted" — the
+    chart_density tile then reads as an error, and a sentinel that errors is
+    worse than none (it renders as data). Rolling back at the start of each tile
+    clears any aborted state left by the prior tile, and re-issuing SET LOCAL
+    re-arms the timeout on the fresh transaction. Net effect: each tile is an
+    independent bounded census; one tile's timeout can never blind another."""
+    try:
+        await session.rollback()  # clear any aborted txn from a prior tile
+    except Exception:
+        pass
+    try:
+        await session.execute(text("SET LOCAL statement_timeout = '150s'"))
+    except Exception:
+        pass
+
+
 async def _precompute_backfill_progress() -> dict:
     """Run the heavy density + June-ledger census and cache the result."""
     from app.tasks.base import get_task_session
@@ -135,17 +159,11 @@ async def _precompute_backfill_progress() -> dict:
 
     try:
         async with get_task_session() as session:
-            # Give the heavy sampled query room; the worker session does not
-            # inherit the endpoint's short statement timeout.
-            try:
-                await session.execute(text("SET LOCAL statement_timeout = '150s'"))
-            except Exception:
-                pass
-
             # ── (a) Snapshot DENSITY by source × settlement month ───────────
             # Sampled: random()<frac is evaluated during the scan (no full sort),
             # then a per-outcome index probe on ix_futures_odds_snapshots_outcome_id.
             try:
+                await _begin_census(session)
                 dens = await session.execute(text("""
                     WITH ro AS (
                         SELECT fo.id AS oid, fm.source AS source,
@@ -202,6 +220,7 @@ async def _precompute_backfill_progress() -> dict:
             # of resolved outcomes settled after Jul-2, how many carry a
             # calibration_probability AND >=15 history points.
             try:
+                await _begin_census(session)
                 coh = await session.execute(text("""
                     WITH ro AS (
                         SELECT fo.id AS oid, fm.source AS source,
@@ -271,6 +290,7 @@ async def _precompute_backfill_progress() -> dict:
             # 'clob_history'; Kalshi candlestick writes are unmarked). That split
             # needs either a snapshots.source column or a per-outcome native flag.
             try:
+                await _begin_census(session)
                 cd = await session.execute(text(CHART_DENSITY_SQL),
                       {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
                        "bar": BAR_POINTS_PER_HOUR,
@@ -325,6 +345,7 @@ async def _precompute_backfill_progress() -> dict:
             # not in the DB); the gap-creation backfill recovers what it can and
             # the remainder is a permanent, honestly-acknowledged loss.
             try:
+                await _begin_census(session)
                 created = await session.execute(text("""
                     SELECT COUNT(*) AS total,
                            COUNT(*) FILTER (WHERE fm.status = 'resolved') AS resolved,

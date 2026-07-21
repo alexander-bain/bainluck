@@ -17,6 +17,8 @@ No DB is needed: the SQL is a module constant, so we assert on its text + binds.
 
 import importlib
 
+import pytest
+
 # NB: `from app.tasks import precompute_backfill_progress` resolves to the
 # registered Celery task proxy (same name), not the module. Load the module file
 # explicitly to reach its constants.
@@ -63,3 +65,59 @@ class TestChartDensityBounds:
         binds = set(re.findall(r"(?<!:):(\w+)", pbp.CHART_DENSITY_SQL))
         supplied = {"since", "frac", "bar", "cap", "snapcap"}
         assert binds == supplied, f"bind mismatch: sql has {binds}, execute passes {supplied}"
+
+
+class _MockSession:
+    """Records rollback/execute calls; optionally raises on rollback."""
+
+    def __init__(self, rollback_raises=False):
+        self.calls = []
+        self._rollback_raises = rollback_raises
+
+    async def rollback(self):
+        self.calls.append("rollback")
+        if self._rollback_raises:
+            raise RuntimeError("nothing to roll back")
+
+    async def execute(self, stmt, params=None):
+        self.calls.append(("execute", str(stmt)))
+        return None
+
+
+class TestCensusTransactionIsolation:
+    """#1147: one tile's statement-timeout must not blind every tile after it.
+    _begin_census resets the shared transaction (rollback) then re-arms the
+    per-tile statement timeout, so the bounded chart_density tile no longer reads
+    'current transaction is aborted' when an earlier unbounded tile times out."""
+
+    @pytest.mark.asyncio
+    async def test_begin_census_rolls_back_then_sets_timeout(self):
+        s = _MockSession()
+        await pbp._begin_census(s)
+        # rollback FIRST — clears any aborted txn left by the prior tile.
+        assert s.calls[0] == "rollback"
+        # then the statement timeout is re-armed on the fresh transaction.
+        assert any(
+            isinstance(c, tuple) and "statement_timeout" in c[1] for c in s.calls
+        ), "must re-issue SET LOCAL statement_timeout"
+
+    @pytest.mark.asyncio
+    async def test_begin_census_survives_rollback_error(self):
+        # A rollback that raises (e.g. no active txn on the first tile) must not
+        # propagate — the timeout is still armed and the tile proceeds.
+        s = _MockSession(rollback_raises=True)
+        await pbp._begin_census(s)  # must not raise
+        assert any(
+            isinstance(c, tuple) and "statement_timeout" in c[1] for c in s.calls
+        )
+
+    def test_every_tile_begins_a_clean_census(self):
+        # All four heavy tiles (density, cohort, chart_density, june-ledger) must
+        # call _begin_census so none can be poisoned by a prior tile's abort.
+        import inspect
+
+        src = inspect.getsource(pbp._precompute_backfill_progress)
+        assert src.count("await _begin_census(session)") >= 4, (
+            "each heavy census tile must start with _begin_census (transaction "
+            "isolation) — a tile without it is one an earlier timeout can blind"
+        )
