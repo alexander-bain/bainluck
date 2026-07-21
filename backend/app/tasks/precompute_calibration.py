@@ -12,6 +12,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import text
 
@@ -274,6 +275,48 @@ POLY_PLACEHOLDER_RULE_TEXT = (
     "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
     "has-bid at 0.43–0.55). Read-side only; never mutates resolutions."
 )
+
+# Queue #220/221 Item 3 — the EXCLUSION-SYMMETRY census.
+#
+# The never-traded liquidity filter is ASYMMETRIC across sources: Kalshi excludes
+# EVERY never-bid/never-traded outcome (all price bands, KALSHI_LIQUIDITY_EXISTS),
+# but Polymarket only excludes never-traded outcomes in the near-0.50 placeholder
+# band (POLY_PLACEHOLDER_EXCLUDE). A Polymarket outcome that NEVER traded but sits
+# outside [0.45, 0.55] (e.g. a 0.10 or 0.92 Gamma synthetic) is therefore still
+# counted in the published curve — an asymmetry that Kalshi does not have.
+#
+# This queue MEASURES that asymmetry (it does not change curve behavior — closing
+# the asymmetry by excluding all poly never-traded is a separate, Alex-gated
+# decision; gotcha #21 keeps everything read-side). POLY_NEVER_TRADED is the
+# all-bands never-traded predicate; the census counts the cohort still IN the
+# curve (never traded AND outside the placeholder band).
+POLY_NEVER_TRADED = (
+    "(vm.source = 'polymarket'\n"
+    "     AND NOT EXISTS (\n"
+    "        SELECT 1 FROM futures_odds_snapshots fos\n"
+    "        WHERE fos.outcome_id = fo.id\n"
+    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+)
+
+# Per-source liquidity/never-traded exclusion policy — the parameterization the
+# queue asked for. Declaring each source's policy in one structure (instead of
+# two ad-hoc SQL fragments) makes the asymmetry explicit, surfaces it in the
+# /calibration payload, and turns "close the asymmetry" into a one-field change.
+SOURCE_LIQUIDITY_EXCLUSIONS: dict[str, dict[str, Any]] = {
+    "kalshi": {
+        "never_traded_excluded": "all_bands",
+        "rule": KALSHI_LIQUIDITY_RULE_TEXT,
+    },
+    "polymarket": {
+        "never_traded_excluded": "placeholder_band_0.45_0.55",
+        "rule": POLY_PLACEHOLDER_RULE_TEXT,
+        "asymmetry_note": (
+            "Unlike Kalshi (all-bands), Polymarket only excludes never-traded "
+            "outcomes in the near-0.50 placeholder band; never-traded outcomes "
+            "outside that band are still counted (see poly_never_traded_in_curve)."
+        ),
+    },
+}
 
 # L2-79 Item 1 (#997/#1010): curve-side exclusion of MALFORMED BINARIES. A
 # resolved, mutually-exclusive 2-outcome market must have exactly ONE winner.
@@ -1072,6 +1115,9 @@ async def _precompute_calibration_main():
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
+                    -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
+                    -- the exclusion-symmetry census; does NOT gate the curve).
+                    {POLY_NEVER_TRADED} AS is_poly_never_traded,
                     -- L2-79 Item 1: malformed 2-outcome mex binary (winner count
                     -- 0 = void, or 2 = impossible). mb.win_count carries which.
                     (mb.market_id IS NOT NULL) AS is_malformed_binary,
@@ -1160,6 +1206,12 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
+                    -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
+                    -- never-traded across ALL bands, and the asymmetry cohort
+                    -- (never traded but outside the placeholder band, so still
+                    -- IN the curve — the thing Kalshi excludes but poly does not).
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded) AS poly_never_traded_total,
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_never_traded AND NOT is_poly_placeholder) AS poly_never_traded_in_curve,
                     -- L2-79 Item 1: malformed-binary exclusion counts (eligible
                     -- outcomes flagged in ranked_outcomes, split by winner count).
                     COUNT(*) FILTER (WHERE is_malformed_binary AND malformed_win_count = 0) AS both_false_excluded,
@@ -1192,6 +1244,8 @@ async def _precompute_calibration_main():
                 MAX(ls.kalshi_excluded) AS kalshi_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
                 MAX(ls.poly_included) AS poly_included,
+                MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
+                MAX(ls.poly_never_traded_in_curve) AS poly_never_traded_in_curve,
                 MAX(ls.both_false_excluded) AS both_false_excluded,
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
@@ -1228,6 +1282,17 @@ async def _precompute_calibration_main():
         poly_included = (
             int(rows[0].poly_included)
             if rows and rows[0].poly_included is not None
+            else 0
+        )
+        # Queue #220/221 Item 3: exclusion-symmetry census counts.
+        poly_never_traded_total = (
+            int(rows[0].poly_never_traded_total)
+            if rows and rows[0].poly_never_traded_total is not None
+            else 0
+        )
+        poly_never_traded_in_curve = (
+            int(rows[0].poly_never_traded_in_curve)
+            if rows and rows[0].poly_never_traded_in_curve is not None
             else 0
         )
         # L2-79 Item 1: malformed-binary exclusion transparency counts.
@@ -1825,6 +1890,24 @@ async def _precompute_calibration_main():
             "rule": POLY_PLACEHOLDER_RULE_TEXT,
             "included": poly_included,
             "excluded": poly_placeholder_excluded,
+        },
+        "exclusion_symmetry": {  # Queue #220/221 Item 3
+            "note": (
+                "The never-traded liquidity filter is asymmetric across sources. "
+                "Kalshi excludes every never-traded outcome (all price bands); "
+                "Polymarket only excludes never-traded outcomes in the near-0.50 "
+                "placeholder band. poly_never_traded_in_curve is the cohort that "
+                "never traded but sits outside that band, so it is STILL counted "
+                "in the curve — the residual asymmetry. Measurement only; closing "
+                "it (excluding all poly never-traded) is a separate Alex-gated "
+                "decision (gotcha #21 keeps this read-side)."
+            ),
+            "per_source": SOURCE_LIQUIDITY_EXCLUSIONS,
+            "poly_never_traded_total": poly_never_traded_total,
+            "poly_never_traded_in_curve": poly_never_traded_in_curve,
+            "poly_never_traded_excluded_by_band": max(
+                poly_never_traded_total - poly_never_traded_in_curve, 0
+            ),
         },
         "malformed_binary_filter": {  # L2-79 Item 1 (#997/#1010)
             "applies_to": "all",

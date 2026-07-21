@@ -854,6 +854,19 @@ export default function CalibrationPage() {
               <span className="text-text-muted">{data.void_filter.excluded.toLocaleString()} excluded.</span>
             </li>
           )}
+          {data.exclusion_symmetry && (
+            <li>
+              <strong className="text-text-primary">Never-traded exclusions differ by source (and we say so).</strong>{" "}
+              Kalshi excludes <em>every</em> never-traded outcome (any price); Polymarket only excludes never-traded
+              outcomes near 0.50 (the Gamma synthetic-placeholder band). So a Polymarket outcome that never traded but
+              sits outside that band is still counted.{" "}
+              <span className="text-text-muted">
+                {data.exclusion_symmetry.poly_never_traded_excluded_by_band.toLocaleString()} poly never-traded already
+                excluded by the placeholder band; {data.exclusion_symmetry.poly_never_traded_in_curve.toLocaleString()} still
+                counted (the residual asymmetry). We publish the count so it&rsquo;s never silent.
+              </span>
+            </li>
+          )}
           <li><strong className="text-text-primary">When did we start publishing this?</strong> We began publicly publishing and documenting these calibration metrics in July 2026. The underlying work &mdash; closing-line capture, resolution, devigging, and the exclusion rules above &mdash; long predates that date. July 2026 is when we started showing our work, not when the measurement began.</li>
         </ul>
       </section>

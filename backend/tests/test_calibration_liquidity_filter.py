@@ -69,6 +69,47 @@ class TestLiquiditySQL:
         assert '"liquidity_filter"' in src
 
 
+class TestExclusionSymmetryCensus:
+    """Queue #220/221 Item 3: the poly never-traded cohort is counted, the
+    exclusion is parameterized per source, and the asymmetry is surfaced — all
+    measurement-only (never changes the curve)."""
+
+    def test_per_source_config_declares_both_policies(self):
+        from app.tasks.precompute_calibration import SOURCE_LIQUIDITY_EXCLUSIONS
+
+        assert SOURCE_LIQUIDITY_EXCLUSIONS["kalshi"]["never_traded_excluded"] == "all_bands"
+        poly = SOURCE_LIQUIDITY_EXCLUSIONS["polymarket"]
+        assert "placeholder_band" in poly["never_traded_excluded"]
+        # The asymmetry is documented, not hidden.
+        assert "asymmetry_note" in poly
+
+    def test_poly_never_traded_predicate_is_all_bands(self):
+        from app.tasks.precompute_calibration import (
+            POLY_NEVER_TRADED,
+            POLY_PLACEHOLDER_EXCLUDE,
+        )
+
+        # All-bands: the never-traded predicate has NO 0.45/0.55 band clause,
+        # unlike the placeholder-band exclusion.
+        assert "polymarket" in POLY_NEVER_TRADED
+        assert "yes_bid > 0 OR fos.last_price > 0" in POLY_NEVER_TRADED
+        assert "0.45" not in POLY_NEVER_TRADED and "0.55" not in POLY_NEVER_TRADED
+        assert "0.45" in POLY_PLACEHOLDER_EXCLUDE  # the band filter still bands
+
+    def test_main_query_censuses_cohort_and_payload_surfaces_it(self):
+        import inspect
+
+        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        # Census flag + counts in the query.
+        assert "is_poly_never_traded" in src
+        assert "poly_never_traded_total" in src
+        assert "poly_never_traded_in_curve" in src
+        # Surfaced in the payload as a self-explaining block.
+        assert '"exclusion_symmetry"' in src
+        # Census only — the cohort must NOT gate the curve (no new deduped filter).
+        assert "NOT ro.is_poly_never_traded" not in src
+
+
 class _FakeResult:
     def __init__(self, *, rows=None, scalar_value=None, one_value=None):
         self._rows = rows or []

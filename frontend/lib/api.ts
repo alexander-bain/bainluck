@@ -1628,7 +1628,19 @@ export interface CalibrationData {
   void_filter?: CalibrationExclusionFilter | null;
   soccer_2way_filter?: CalibrationExclusionFilter | null;
   esports_multi_bundle_filter?: CalibrationExclusionFilter | null;
+  // Queue #220/221 Item 3: exclusion-symmetry census — the poly never-traded
+  // cohort still counted in the curve (Kalshi excludes all bands, poly only the
+  // near-0.50 placeholder band).
+  exclusion_symmetry?: CalibrationExclusionSymmetry | null;
   generated_at: string;
+}
+
+export interface CalibrationExclusionSymmetry {
+  note: string;
+  poly_never_traded_total: number;
+  poly_never_traded_in_curve: number;
+  poly_never_traded_excluded_by_band: number;
+  per_source?: Record<string, { never_traded_excluded: string; rule: string; asymmetry_note?: string }>;
 }
 
 /** L2-73: per-source calibration metrics computed server-side (ece = n-weighted,
