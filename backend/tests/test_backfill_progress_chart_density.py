@@ -92,8 +92,10 @@ class TestCensusTransactionIsolation:
 
     @pytest.mark.asyncio
     async def test_begin_census_rolls_back_then_sets_timeout(self):
+        import time
+
         s = _MockSession()
-        await pbp._begin_census(s)
+        await pbp._begin_census(s, time.monotonic(), pbp._DEADLINE_S)
         # rollback FIRST — clears any aborted txn left by the prior tile.
         assert s.calls[0] == "rollback"
         # then the statement timeout is re-armed on the fresh transaction.
@@ -105,8 +107,10 @@ class TestCensusTransactionIsolation:
     async def test_begin_census_survives_rollback_error(self):
         # A rollback that raises (e.g. no active txn on the first tile) must not
         # propagate — the timeout is still armed and the tile proceeds.
+        import time
+
         s = _MockSession(rollback_raises=True)
-        await pbp._begin_census(s)  # must not raise
+        await pbp._begin_census(s, time.monotonic(), pbp._DEADLINE_S)  # must not raise
         assert any(
             isinstance(c, tuple) and "statement_timeout" in c[1] for c in s.calls
         )
@@ -117,7 +121,61 @@ class TestCensusTransactionIsolation:
         import inspect
 
         src = inspect.getsource(pbp._precompute_backfill_progress)
-        assert src.count("await _begin_census(session)") >= 4, (
+        assert src.count("await _begin_census(session, start, _DEADLINE_S)") >= 4, (
             "each heavy census tile must start with _begin_census (transaction "
             "isolation) — a tile without it is one an earlier timeout can blind"
         )
+
+
+class TestDeadlineBudget:
+    """Item 1 (Queue #220/221): the four tiles' statement timeouts summed to more
+    than the task's soft_time_limit, so two slow tiles killed the whole run before
+    the Redis write. The internal deadline budget bounds the SUM: each tile is
+    armed with min(cap, remaining), and once the budget is spent tiles are skipped
+    (keeping their prior cached value) so the run always reaches the write."""
+
+    def test_deadline_is_under_soft_limit(self):
+        # The internal budget must sit under the Celery soft_time_limit (280s) so
+        # the run returns cleanly; a tile can't start with < _TILE_MIN_BUDGET_S.
+        assert pbp._DEADLINE_S < 280
+        assert 0 < pbp._TILE_MIN_BUDGET_S < pbp._DEADLINE_S
+
+    @pytest.mark.asyncio
+    async def test_begin_census_shrinks_timeout_to_remaining_budget(self):
+        # When little budget remains, the armed statement_timeout is the smaller of
+        # the 150s cap and the remaining seconds — the SUM can never overrun.
+        import time
+
+        s = _MockSession()
+        # Pretend the run started (deadline - 40)s ago → ~40s of budget left.
+        start = time.monotonic() - (pbp._DEADLINE_S - 40)
+        await pbp._begin_census(s, start, pbp._DEADLINE_S)
+        timeout_calls = [c for c in s.calls if isinstance(c, tuple) and "statement_timeout" in c[1]]
+        assert timeout_calls, "must arm a statement_timeout"
+        # Armed value should be ~40s (the remaining budget), not the 150s cap.
+        assert "40s" in timeout_calls[0][1] or "39s" in timeout_calls[0][1] or "41s" in timeout_calls[0][1]
+
+    @pytest.mark.asyncio
+    async def test_begin_census_raises_deadline_skip_when_spent(self):
+        # Past the deadline → _DeadlineSkip, so the caller keeps the prior tile.
+        import time
+
+        s = _MockSession()
+        start = time.monotonic() - (pbp._DEADLINE_S + 10)  # already over budget
+        with pytest.raises(pbp._DeadlineSkip):
+            await pbp._begin_census(s, start, pbp._DEADLINE_S)
+
+    def test_degrade_preserves_prior_tile_on_skip(self):
+        # A budget-skip (or error) must keep the last good value, never wipe a
+        # good tile to a "skipped"/"error" tile (a sentinel renders error as data).
+        stats = {"errors": []}
+        prior = {"chart_density": {"overall_below_bar_pct": 3.2}}
+        got = pbp._degrade("chart_density", prior, pbp._DeadlineSkip(), stats, "chart_density")
+        assert got == {"overall_below_bar_pct": 3.2}
+        assert any("skipped" in e for e in stats["errors"])
+
+    def test_degrade_falls_back_when_no_prior(self):
+        # No prior cached value → an explicit skipped/error marker (not silent).
+        stats = {"errors": []}
+        got = pbp._degrade("chart_density", {}, pbp._DeadlineSkip(), stats, "chart_density")
+        assert "skipped" in got

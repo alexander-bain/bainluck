@@ -10,6 +10,7 @@ import logging
 import math
 import random
 import re
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -165,6 +166,29 @@ _HORIZONS = [
 ]
 
 _MIN_OUTCOMES_PER_HORIZON = 50
+
+# Item 1 (Queue #220/221): the time-horizon task ran all 4 horizons in one
+# process and blew the 600s soft limit (0/27 successes over 3 days; last success
+# 2026-07-18, then 12 consecutive SoftTimeLimitExceeded at 600.9s). Each horizon
+# is a LATERAL last-snapshot probe over ~539K eligible resolved non-event
+# outcomes against the largest table — ~150s each, so 4 in one run overrun the
+# limit. Fix = bound + chunk + resumable cursor:
+#   * per-horizon statement_timeout bounds any single query (never runs away);
+#   * completed horizons are persisted to a WIP accumulator keyed by label, so a
+#     later horizon's slowness never discards an already-computed one;
+#   * an internal wall-clock deadline (well under the 600s soft limit, sized so a
+#     freshly-started horizon can run its full statement_timeout and still finish
+#     before the limit) stops the run cleanly and resumes the remaining horizons
+#     on the next beat. The full 4-horizon payload assembles across 1-2 runs and
+#     is only published (and the WIP cleared) once every horizon is present.
+# Runs every 6h; a full refresh lands within ~12h, comfortably inside the 24h TTL.
+_TIME_HORIZON_WIP_KEY = "bainluck:calibration:time_horizon:wip"
+# Per-horizon statement_timeout (seconds). Bounds a single LATERAL probe.
+_HORIZON_STMT_TIMEOUT_S = 300
+# Internal deadline (seconds). A horizon is only started if it can run its full
+# statement_timeout and still finish before this deadline, which itself sits far
+# enough under the 600s soft limit that the run always returns cleanly.
+_HORIZON_DEADLINE_S = 560
 
 # #997 App Store ship-gate: a per-category / per-sport reliability chart below
 # this many resolved outcomes is statistical noise (a handful of resolutions
@@ -1871,14 +1895,67 @@ async def _precompute_calibration_main():
 
 
 async def _compute_time_horizon_calibration():
-    """Compute time-horizon calibration and store in Redis."""
+    """Compute time-horizon calibration and store in Redis.
+
+    Bounded + chunked + resumable (Item 1, Queue #220/221): each horizon runs
+    under a per-query statement_timeout, completed horizons are persisted to a
+    WIP accumulator, and an internal deadline stops the run cleanly (resuming the
+    remaining horizons next beat) so it never hits the 600s soft limit again."""
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
-    async with get_task_session() as db:
-        horizons_result: dict = {}
+    rc = get_redis_client()
+    start = time.monotonic()
+    valid_labels = {label for label, _ in _HORIZONS}
 
+    # Resume from any WIP accumulator left by a prior (deadline-truncated) run.
+    horizons_result: dict = {}
+    wip_raw = rc.get(_TIME_HORIZON_WIP_KEY)
+    if wip_raw:
+        try:
+            horizons_result = {
+                k: v for k, v in json.loads(wip_raw).items() if k in valid_labels
+            }
+        except (ValueError, TypeError):
+            horizons_result = {}
+
+    async with get_task_session() as db:
         for label, days in _HORIZONS:
+            if label in horizons_result:
+                continue  # already computed in an earlier run — resumable cursor
+
+            # Deadline guard: only start a horizon if it can run its full
+            # statement_timeout and still finish before the internal deadline.
+            # Bounds the longest single uninterrupted op (not just loop
+            # boundaries — the budget-guard lesson), so the run always returns
+            # cleanly under the 600s soft limit.
+            elapsed = time.monotonic() - start
+            if elapsed + _HORIZON_STMT_TIMEOUT_S > _HORIZON_DEADLINE_S:
+                rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+                logger.info(
+                    "time-horizon: deadline at %.0fs, %d/%d horizons done — "
+                    "persisted WIP, resuming next run",
+                    elapsed, len(horizons_result), len(_HORIZONS),
+                )
+                return {
+                    "status": "partial",
+                    "horizons_done": len(horizons_result),
+                    "total": len(_HORIZONS),
+                }
+
+            # Fresh bounded transaction per horizon (mirror _begin_census): roll
+            # back any aborted state, then arm the per-query statement_timeout.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            try:
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = '{_HORIZON_STMT_TIMEOUT_S}s'")
+                )
+            except Exception:
+                pass
+
             if days == 0:
                 cutoff_expr = "eo.resolution_date"
             else:
@@ -1977,6 +2054,7 @@ async def _compute_time_horizon_calibration():
                     "skipped": True,
                     "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
                 }
+                rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
                 continue
 
             # Aggregate for MCE
@@ -2054,6 +2132,9 @@ async def _compute_time_horizon_calibration():
                 "mce_by_source": mce_by_source,
                 "mce_by_category": mce_by_category,
             }
+            # Persist immediately so a later horizon's slowness (or the deadline
+            # guard firing next iteration) can never discard this one.
+            rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
 
         response = {
             "horizons": horizons_result,
@@ -2066,10 +2147,10 @@ async def _compute_time_horizon_calibration():
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    # Store in Redis
-    rc = get_redis_client()
+    # Every horizon is present — publish the full payload and clear the WIP cursor.
     rc.set("bainluck:calibration:time_horizon", json.dumps(response), ex=_CACHE_TTL)
-    logger.info("Cached time-horizon calibration in Redis")
+    rc.delete(_TIME_HORIZON_WIP_KEY)
+    logger.info("Cached time-horizon calibration in Redis (%d horizons)", len(horizons_result))
     return {"status": "ok", "horizons": len(horizons_result)}
 
 

@@ -26,6 +26,7 @@ calibration #899/#907 starvation history).
 
 import json
 import logging
+import time
 from datetime import date, datetime, timezone
 
 from sqlalchemy import text
@@ -34,6 +35,42 @@ logger = logging.getLogger(__name__)
 
 CACHE_KEY = "bainluck:backfill_progress"
 CACHE_TTL = 1800  # 30 min — task runs every 15 min so always fresh
+
+# Item 1 (Queue #220/221): DEGRADED failure mode. The four census tiles each
+# arm a 150s statement_timeout, but the task's soft_time_limit is 280s — so two
+# consecutive slow tiles (150s + 150s = 300s) blow the soft limit BEFORE the
+# Redis write, discarding the entire run (observed: 162 SoftTimeLimitExceeded /
+# 24h). Fix = an internal wall-clock deadline budget under the soft limit:
+# each tile is armed with min(150s, remaining-budget), and once the budget is
+# exhausted the remaining tiles are SKIPPED — keeping their prior cached value —
+# so the run always reaches the Redis write. A skipped/errored tile never wipes a
+# good tile to an error (an errored sentinel tile renders as data, worse than
+# stale).
+_DEADLINE_S = 250  # internal budget, under the 280s soft_time_limit
+_TILE_STMT_TIMEOUT_S = 150  # per-tile statement_timeout cap
+_TILE_MIN_BUDGET_S = 15  # don't start a tile with less budget than this
+
+
+class _DeadlineSkip(Exception):
+    """Raised to skip a census tile when the internal deadline budget is spent."""
+
+
+def _degrade(key: str, prior: dict, exc: Exception, stats: dict, label: str) -> dict:
+    """Preserve the prior cached tile on skip/failure instead of wiping it.
+
+    A budget-skip keeps the last good value; a genuine error also prefers the
+    last good value over an error tile (which a sentinel would render as data)."""
+    if isinstance(exc, _DeadlineSkip):
+        stats["errors"].append(f"{label}: skipped (deadline budget)")
+    else:
+        stats["errors"].append(f"{label}: " + str(exc)[:200])
+    if prior.get(key) is not None:
+        return prior[key]
+    return (
+        {"skipped": "deadline budget exhausted"}
+        if isinstance(exc, _DeadlineSkip)
+        else {"error": str(exc)[:300]}
+    )
 
 # The freeze window (#995 Kalshi create-freeze; gotcha #35).
 FREEZE_START = "2026-06-03"
@@ -116,12 +153,12 @@ CHART_DENSITY_SQL = """
 """
 
 
-async def _begin_census(session) -> None:
-    """Start each heavy census tile on a CLEAN transaction with the heavy-query
+async def _begin_census(session, start: float, deadline_s: float) -> float:
+    """Start each heavy census tile on a CLEAN transaction with a budget-aware
     statement timeout.
 
     #1147: all tiles share one session. The unbounded per-outcome COUNT probes
-    in the density/cohort tiles can hit the 150s statement_timeout
+    in the density/cohort tiles can hit the statement_timeout
     (QueryCanceledError), which ABORTS the shared transaction. The per-tile
     try/except degrades that tile in Python but never resets the DB transaction,
     so EVERY tile after it fails with "current transaction is aborted" — the
@@ -129,15 +166,25 @@ async def _begin_census(session) -> None:
     worse than none (it renders as data). Rolling back at the start of each tile
     clears any aborted state left by the prior tile, and re-issuing SET LOCAL
     re-arms the timeout on the fresh transaction. Net effect: each tile is an
-    independent bounded census; one tile's timeout can never blind another."""
+    independent bounded census; one tile's timeout can never blind another.
+
+    Item 1 (Queue #220/221): the per-tile timeout is now the SMALLER of the 150s
+    cap and the remaining internal deadline budget, so the SUM of the tiles can
+    never exceed the task's soft_time_limit. Raises _DeadlineSkip when the budget
+    is spent so the caller keeps the tile's prior cached value."""
     try:
         await session.rollback()  # clear any aborted txn from a prior tile
     except Exception:
         pass
+    remaining = deadline_s - (time.monotonic() - start)
+    if remaining < _TILE_MIN_BUDGET_S:
+        raise _DeadlineSkip()
+    stmt = min(_TILE_STMT_TIMEOUT_S, int(remaining))
     try:
-        await session.execute(text("SET LOCAL statement_timeout = '150s'"))
+        await session.execute(text(f"SET LOCAL statement_timeout = '{stmt}s'"))
     except Exception:
         pass
+    return float(stmt)
 
 
 async def _precompute_backfill_progress() -> dict:
@@ -146,6 +193,18 @@ async def _precompute_backfill_progress() -> dict:
     from app.tasks.redis_state import get_redis_client
 
     stats: dict = {"status": "ok", "errors": []}
+    start = time.monotonic()
+    # Prior cache: a budget-skipped or errored tile keeps its last good value
+    # rather than regressing to a "skipped"/"error" tile (which a sentinel would
+    # render as data). Read once up front, tolerating any miss/parse failure.
+    prior: dict = {}
+    try:
+        from app.tasks.redis_state import get_redis_client as _grc
+        _prev_raw = _grc().get(CACHE_KEY)
+        if _prev_raw:
+            prior = json.loads(_prev_raw)
+    except Exception:
+        prior = {}
     # asyncpg requires date/datetime objects (not strings) for timestamptz binds.
     _freeze_start = date.fromisoformat(FREEZE_START)
     _freeze_end = date.fromisoformat(FREEZE_END)
@@ -163,7 +222,7 @@ async def _precompute_backfill_progress() -> dict:
             # Sampled: random()<frac is evaluated during the scan (no full sort),
             # then a per-outcome index probe on ix_futures_odds_snapshots_outcome_id.
             try:
-                await _begin_census(session)
+                await _begin_census(session, start, _DEADLINE_S)
                 dens = await session.execute(text("""
                     WITH ro AS (
                         SELECT fo.id AS oid, fm.source AS source,
@@ -212,15 +271,15 @@ async def _precompute_backfill_progress() -> dict:
                     "by_source_month": by_month,
                 }
             except Exception as e:  # degrade this tile only
-                response["density_by_month"] = {"error": str(e)[:300]}
-                stats["errors"].append("density: " + str(e)[:200])
+                response["density_by_month"] = _degrade(
+                    "density_by_month", prior, e, stats, "density")
 
             # ── (a') SUCCESS COHORT — settled after the freeze (the SLA target)
             # This is the number Alex's "cruising on autopilot" question turns on:
             # of resolved outcomes settled after Jul-2, how many carry a
             # calibration_probability AND >=15 history points.
             try:
-                await _begin_census(session)
+                await _begin_census(session, start, _DEADLINE_S)
                 coh = await session.execute(text("""
                     WITH ro AS (
                         SELECT fo.id AS oid, fm.source AS source,
@@ -269,8 +328,8 @@ async def _precompute_backfill_progress() -> dict:
                     "by_source": cohort,
                 }
             except Exception as e:
-                response["success_cohort"] = {"error": str(e)[:300]}
-                stats["errors"].append("cohort: " + str(e)[:200])
+                response["success_cohort"] = _degrade(
+                    "success_cohort", prior, e, stats, "cohort")
 
             # ── (a'') CHART DENSITY — the "no embarrassing charts" scoreboard ─
             # #180 Item 5. The user-facing success bar (distinct from the >=15pt
@@ -290,7 +349,7 @@ async def _precompute_backfill_progress() -> dict:
             # 'clob_history'; Kalshi candlestick writes are unmarked). That split
             # needs either a snapshots.source column or a per-outcome native flag.
             try:
-                await _begin_census(session)
+                await _begin_census(session, start, _DEADLINE_S)
                 cd = await session.execute(text(CHART_DENSITY_SQL),
                       {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
                        "bar": BAR_POINTS_PER_HOUR,
@@ -331,8 +390,8 @@ async def _precompute_backfill_progress() -> dict:
                     "provider_native_split": "deferred to #181 — no snapshot-level source column",
                 }
             except Exception as e:  # degrade this tile only
-                response["chart_density"] = {"error": str(e)[:300]}
-                stats["errors"].append("chart_density: " + str(e)[:200])
+                response["chart_density"] = _degrade(
+                    "chart_density", prior, e, stats, "chart_density")
 
             # ── (b) JUNE-GAP recovery ledger (Kalshi, freeze window) ────────
             # Two honest cuts:
@@ -345,7 +404,7 @@ async def _precompute_backfill_progress() -> dict:
             # not in the DB); the gap-creation backfill recovers what it can and
             # the remainder is a permanent, honestly-acknowledged loss.
             try:
-                await _begin_census(session)
+                await _begin_census(session, start, _DEADLINE_S)
                 created = await session.execute(text("""
                     SELECT COUNT(*) AS total,
                            COUNT(*) FILTER (WHERE fm.status = 'resolved') AS resolved,
@@ -399,8 +458,8 @@ async def _precompute_backfill_progress() -> dict:
                     ),
                 }
             except Exception as e:
-                response["june_gap_ledger"] = {"error": str(e)[:300]}
-                stats["errors"].append("june_ledger: " + str(e)[:200])
+                response["june_gap_ledger"] = _degrade(
+                    "june_gap_ledger", prior, e, stats, "june_ledger")
 
             # ── Write to Redis ──────────────────────────────────────────────
             rc = get_redis_client()
