@@ -3392,7 +3392,7 @@ async def trigger_datagolf_leaderboard_backfill(
 
 @router.post("/backfill-winners/datagolf-regrade-1152")
 async def trigger_datagolf_winner_regrade(
-    request: Request, secret: str = Query(None),
+    request: Request, secret: str = Query(None), full: bool = Query(False),
 ):
     """#1152: run the authoritative DataGolf leaderboard WINNER resolver on the
     worker and return its stats.
@@ -3403,11 +3403,17 @@ async def trigger_datagolf_winner_regrade(
     market's STORED leaderboard (confirmed re-resolve source → gotcha #21 safe)
     and is idempotent. Exposed as an endpoint because the Heroku one-off dyno
     cannot stream stats (EPERM); this returns them over HTTP.
+
+    Scoped to only-zero-winner markets (the broken set) so it completes well
+    under Heroku's 30s request limit — the full-population scan 503'd and only
+    made progress via incremental per-market commits across retries. Pass
+    ?full=1 to force a full re-scan (idempotent; may 503 on the 30s limit but
+    still commits per market).
     """
     _check_admin_secret(secret, request=request)
 
     from app.tasks.backfill_winners import _backfill_datagolf_winners
-    stats = await _backfill_datagolf_winners()
+    stats = await _backfill_datagolf_winners(only_zero_winner=not full)
     return stats
 
 

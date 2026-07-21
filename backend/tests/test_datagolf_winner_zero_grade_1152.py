@@ -207,6 +207,38 @@ async def test_one_bad_market_does_not_abort_the_batch(monkeypatch):
     assert any("market 2" in e for e in stats["errors"])
 
 
+@pytest.mark.asyncio
+async def test_only_zero_winner_scopes_the_select(monkeypatch):
+    """#1152 follow-up: only_zero_winner=True must restrict the market SELECT to
+    markets lacking a winner (the broken set), so the admin regrade endpoint
+    completes under Heroku's 30s limit instead of scanning the full population."""
+
+    class _SqlCapturingSession(_MockSession):
+        def __init__(self):
+            super().__init__([_Result([]), _Result([])])
+            self.select_sql = []
+
+        async def execute(self, stmt, params=None):
+            s = str(stmt)
+            if "FROM futures_markets" in s and "UPDATE" not in s:
+                self.select_sql.append(s)
+            return _Result([])
+
+    scoped = _SqlCapturingSession()
+    monkeypatch.setattr(bw, "get_task_session", lambda: scoped)
+    await bw._backfill_datagolf_winners(only_zero_winner=True)
+    assert any("NOT EXISTS" in s and "is_winner = TRUE" in s for s in scoped.select_sql), (
+        "scoped scan must filter to zero-winner markets"
+    )
+
+    full = _SqlCapturingSession()
+    monkeypatch.setattr(bw, "get_task_session", lambda: full)
+    await bw._backfill_datagolf_winners()  # default = full scope
+    assert not any("NOT EXISTS" in s for s in full.select_sql), (
+        "default scope must scan the full population (scheduled pipeline)"
+    )
+
+
 def test_all_losers_pass_excludes_datagolf():
     """The all_losers heuristic must never touch DataGolf markets — they have
     an authoritative leaderboard resolver. Without this exclusion the champion

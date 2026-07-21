@@ -3779,7 +3779,7 @@ async def _recover_datagolf_participation(limit: int = 150, deadline: float | No
     return stats
 
 
-async def _backfill_datagolf_winners():
+async def _backfill_datagolf_winners(only_zero_winner: bool = False):
     """Resolve DataGolf placement markets from actual leaderboard results.
 
     DataGolf markets (make_cut, top_5, top_10, top_20, win) store model
@@ -3788,6 +3788,14 @@ async def _backfill_datagolf_winners():
 
     This function uses the leaderboard stored in market_metadata to
     determine actual placement results and set is_winner correctly.
+
+    only_zero_winner (#1152 follow-up): when True, restrict the scan to markets
+    that currently have NO winner outcome — the exact broken set a targeted
+    repair needs. Scans a handful of markets instead of the full ~30K-outcome
+    DataGolf population, so the admin regrade endpoint completes well under
+    Heroku's 30s request limit (the endpoint previously 503'd, relying on
+    incremental per-market commits across retries to make progress). The
+    scheduled pipeline still calls this with the default (full) scope.
     """
     stats = {
         "markets_processed": 0,
@@ -3797,14 +3805,22 @@ async def _backfill_datagolf_winners():
         "errors": [],
     }
 
+    zero_winner_filter = """
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_outcomes w
+                          WHERE w.market_id = fm.id AND w.is_winner = TRUE
+                      )
+    """ if only_zero_winner else ""
+
     try:
         async with get_task_session() as session:
-            result = await session.execute(text("""
+            result = await session.execute(text(f"""
                     SELECT fm.id, fm.external_id, fm.market_metadata
                     FROM futures_markets fm
                     WHERE fm.source = 'datagolf'
                       AND fm.status = 'resolved'
                       AND fm.market_metadata IS NOT NULL
+                      {zero_winner_filter}
                 """))
             markets = result.all()
 
