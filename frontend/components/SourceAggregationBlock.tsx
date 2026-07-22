@@ -1,11 +1,16 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 
 /** Shared with backend SOURCE_DISAGREEMENT_THRESHOLD_PP and Discover comparison card. */
 export const SOURCE_DISAGREEMENT_PP = 5;
 
-const SOURCE_COLORS: Record<string, string> = {
+// Individual sportsbook BRAND colors. Registry sources (kalshi/polymarket) are
+// NOT listed here — they resolve through the one source-color registry so their
+// identity color matches every other surface (they used to be indigo/#0052FF
+// here, green/blue everywhere else — the class-E drift this queue kills).
+const BOOKMAKER_COLORS: Record<string, string> = {
   draftkings: "#53B94B",
   fanduel: "#1493FF",
   betmgm: "#C1A96D",
@@ -27,9 +32,12 @@ const SOURCE_COLORS: Record<string, string> = {
   fanatics: "#1E90FF",
   fliff: "#9B59B6",
   hardrockbet: "#FF6B35",
-  kalshi: "#6366F1",
-  polymarket: "#0052FF",
 };
+
+/** Color for any source dot: registry sources win, then sportsbook brand, then neutral. */
+function aggSourceColor(source: string): string {
+  return SOURCE_COLOR_REGISTRY[canonicalSourceKey(source)]?.hex ?? BOOKMAKER_COLORS[source] ?? "#888";
+}
 
 const SOURCE_LABELS: Record<string, string> = {
   draftkings: "DraftKings",
@@ -167,7 +175,7 @@ export function SourceAggregationBlock({
               const prob = primaryOutcomeId
                 ? src.outcomes[primaryOutcomeId]
                 : null;
-              const color = SOURCE_COLORS[src.source] || "#888";
+              const color = aggSourceColor(src.source);
               const label =
                 SOURCE_LABELS[src.source] ||
                 src.source.charAt(0).toUpperCase() + src.source.slice(1);

@@ -1,3 +1,5 @@
+import { getSourceColor } from "@/lib/sourceColors";
+
 export type Source = "kalshi" | "polymarket";
 
 export type FeaturedMarket = {
@@ -71,9 +73,11 @@ export type WildCard = {
   tag: string;
 };
 
+// Colors sourced from the one registry (@/lib/sourceColors). color=solid hex,
+// bg=faint tint, fg=readable foreground — same source, same color everywhere.
 export const SOURCES = {
-  kalshi: { key: "kalshi" as const, label: "Kalshi", color: "#22C55E", bg: "#ECFDF5", fg: "#047857" },
-  polymarket: { key: "polymarket" as const, label: "Polymarket", color: "#3B82F6", bg: "#EFF6FF", fg: "#1D4ED8" },
+  kalshi: { key: "kalshi" as const, label: getSourceColor("kalshi").label, color: getSourceColor("kalshi").hex, bg: getSourceColor("kalshi").faint, fg: getSourceColor("kalshi").fg },
+  polymarket: { key: "polymarket" as const, label: getSourceColor("polymarket").label, color: getSourceColor("polymarket").hex, bg: getSourceColor("polymarket").faint, fg: getSourceColor("polymarket").fg },
 };
 
 export const HERO_FEATURED: FeaturedMarket[] = [];

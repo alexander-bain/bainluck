@@ -1072,6 +1072,13 @@ function CoverageTrendChart({ data }: { data: CoverageTrendEntry[] }) {
     return parts[parts.length - 1]?.toUpperCase() || s;
   };
 
+  // NOTE (L2-155 class-E exception): this is NOT a source-identity palette and is
+  // deliberately NOT migrated to @/lib/sourceColors. It's an internal admin
+  // "Source Coverage Trend" chart plotting 7 DISTINCT series that must stay
+  // visually separable — several keys ("ESPN WP", "Model", "StatPal") are
+  // coverage buckets, not registry sources, and forcing registry hexes would
+  // collide (e.g. Kalshi green vs the "ESPN WP" green series). Admin-only, not
+  // user-facing source identity.
   const sourceColors: Record<string, string> = {
     "Odds API": "#3b82f6",
     ESPN: "#f59e0b",

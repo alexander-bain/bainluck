@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, toMinuteKey, fillMinuteGaps } from "@/lib/chartTimeline";
+import { sourceHex } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -28,21 +29,21 @@ import type {
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
+// Colors come from the one source-color registry (@/lib/sourceColors) — the
+// deliberate dark, high-contrast "betting" slate (L2-131) is now the canonical
+// odds_api hex there. Only the display name / dash / type stay local.
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
-  // Betting is the prominent primary line in sportsbooks-only mode — it must be a
-  // dark, high-contrast color, NOT the near-white #e5e7eb that vanished on the
-  // light-mode card (L2-131: "the blend line absent/gray on this class").
-  betting: { display_name: "Betting Odds", color: "#0f172a", dash_pattern: null, type: "market" },
-  espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
-  stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
-  kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
-  polymarket: { display_name: "Polymarket", color: "#3b82f6", dash_pattern: "8 4", type: "market" },
-  fangraphs: { display_name: "MLB Model", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
+  betting: { display_name: "Betting Odds", color: sourceHex("betting"), dash_pattern: null, type: "market" },
+  espn: { display_name: "ESPN", color: sourceHex("espn"), dash_pattern: "6 3", type: "model" },
+  stat_model: { display_name: "Bain Luck Model", color: sourceHex("stat_model"), dash_pattern: "4 4", type: "model" },
+  kalshi: { display_name: "Kalshi", color: sourceHex("kalshi"), dash_pattern: "8 4", type: "market" },
+  polymarket: { display_name: "Polymarket", color: sourceHex("polymarket"), dash_pattern: "8 4", type: "market" },
+  fangraphs: { display_name: "MLB Model", color: sourceHex("fangraphs"), dash_pattern: "4 4", type: "model" },
 };
 
-/** Bain Luck aggregated line config */
+/** Bain Luck aggregated (blend) line config */
 const BAIN_LUCK_CONFIG = {
-  color: "#059669", // emerald-600 — distinctive green
+  color: sourceHex("blend"), // emerald-600 — the one blend line
   displayName: "Bain Luck",
   dataKey: "bainLuckDelta",
 };
@@ -1367,11 +1368,11 @@ export default function OddsChart({
                 type="linear"
                 dataKey="espnDelta"
                 name="ESPN Model"
-                stroke="#f97316"
+                stroke={sourceHex("espn")}
                 strokeWidth={2.5}
                 strokeDasharray="6 3"
                 dot={false}
-                activeDot={{ r: 4, fill: "#f97316" }}
+                activeDot={{ r: 4, fill: sourceHex("espn") }}
                 connectNulls
               />
             )}
@@ -1400,10 +1401,10 @@ export default function OddsChart({
                 type="linear"
                 dataKey="homeDelta"
                 name="Betting Odds"
-                stroke="#0f172a"
+                stroke={sourceHex("betting")}
                 strokeWidth={3}
                 dot={false}
-                activeDot={{ r: 5, fill: "#0f172a" }}
+                activeDot={{ r: 5, fill: sourceHex("betting") }}
                 connectNulls
               />
             )}
@@ -1447,7 +1448,7 @@ export default function OddsChart({
                   const { cx = 0, cy = 0 } = props;
                   const fillColor = isMultiSource
                     ? BAIN_LUCK_CONFIG.color
-                    : "#0f172a";
+                    : sourceHex("betting");
                   return (
                     <g>
                       {/* Outer glow */}

@@ -2,15 +2,7 @@
 
 import { useMemo } from "react";
 import { plotDims, scaleX, scaleY } from "@/lib/chartScale";
-
-const SOURCE_COLORS: Record<string, string> = {
-  betting: "#374151",
-  espn: "#f97316",
-  stat_model: "#8b5cf6",
-  kalshi: "#22c55e",
-  polymarket: "#3b82f6",
-  mlb: "#06b6d4",
-};
+import { sourceHex } from "@/lib/sourceColors";
 
 const SOURCE_LABELS: Record<string, string> = {
   betting: "Betting",
@@ -115,7 +107,7 @@ export default function DisagreementChart({
 
       {/* Source lines */}
       {sources.map(([source, pts]) => {
-        const color = SOURCE_COLORS[source] || "#6b7280";
+        const color = sourceHex(source);
         const points = pts.map(pt => {
           const t = new Date(pt.t).getTime();
           return `${px(t)},${py(pt.p)}`;
@@ -145,7 +137,7 @@ export default function DisagreementChart({
       {/* Legend */}
       <g>
         {sources.map(([source], i) => {
-          const color = SOURCE_COLORS[source] || "#6b7280";
+          const color = sourceHex(source);
           const lx = padL + 8 + i * 90;
           const ly = height - 6;
           return (

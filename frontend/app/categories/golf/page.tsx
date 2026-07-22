@@ -23,6 +23,7 @@ import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import TournamentCard from "@/components/TournamentCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { sourceHex } from "@/lib/sourceColors";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 
@@ -1028,12 +1029,12 @@ function GolferRow({
 // Source Dots
 // ============================================================================
 
-/** Source metadata: color and type (model vs market) */
+/** Source metadata: type (model vs market). Colors come from the one registry. */
 const SOURCE_META: Record<string, { color: string; type: "model" | "market" }> = {
-  odds_api: { color: "#3b82f6", type: "market" },
-  kalshi: { color: "#22c55e", type: "market" },
-  polymarket: { color: "#8b5cf6", type: "market" },
-  datagolf_model: { color: "#f59e0b", type: "model" },
+  odds_api: { color: sourceHex("odds_api"), type: "market" },
+  kalshi: { color: sourceHex("kalshi"), type: "market" },
+  polymarket: { color: sourceHex("polymarket"), type: "market" },
+  datagolf_model: { color: sourceHex("datagolf_model"), type: "model" },
 };
 
 const SOURCE_LABELS: Record<string, string> = {

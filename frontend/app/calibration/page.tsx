@@ -11,6 +11,7 @@ import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 import { ece, mce, monthYear } from "@/lib/calibrationMath";
 import { getLeagueDisplay, LEAGUE_DISPLAY } from "@/lib/sportCategories";
+import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 
 // L2-127 (Alex's Option 4): the 1,000-outcome floor USED to HIDE buckets from the
 // By Source / By Category charts, which made a longshot category (golf, tennis)
@@ -78,15 +79,6 @@ const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   odds_api_spreads: "Spreads (Odds API)",
   odds_api_totals: "Totals (Odds API)",
   odds_api_bookmaker: "Per-Bookmaker (Odds API)",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  kalshi: "#2563eb",
-  polymarket: "#7c3aed",
-  odds_api: "#16a34a",
-  odds_api_spreads: "#0d9488",
-  odds_api_totals: "#059669",
-  odds_api_bookmaker: "#15803d",
 };
 
 function sourceLabel(src: string): string {
@@ -327,7 +319,7 @@ export default function CalibrationPage() {
   // label count is the full source/category total, as before.
   const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
     data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
-    color: SOURCE_COLORS[src] || COLORS[i % COLORS.length],
+    color: SOURCE_COLOR_REGISTRY[canonicalSourceKey(src)]?.hex || COLORS[i % COLORS.length],
     label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 

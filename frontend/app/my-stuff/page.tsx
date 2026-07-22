@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
 import { preloadFirebaseAuth } from "@/lib/firebase";
 import { fetchFeed, fetchMyTeamFutures } from "@/lib/api";
+import { sourceHex } from "@/lib/sourceColors";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, TeamFutureItem } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
@@ -436,11 +437,6 @@ const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
   kalshi: "Kalshi",
   polymarket: "Polymarket",
-};
-const SOURCE_COLORS: Record<string, { dot: string; text: string }> = {
-  polymarket: { dot: "bg-blue-500", text: "text-blue-400" },
-  kalshi: { dot: "bg-green-500", text: "text-green-400" },
-  odds_api: { dot: "bg-slate-400", text: "text-slate-300" },
 };
 
 /** Merged view of the same outcome across multiple sources. */
@@ -1002,16 +998,14 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
           {/* Source dots */}
           {isMultiSource && (
             <div className="flex items-center gap-1 flex-shrink-0">
-              {sources.map((s) => {
-                const colors = SOURCE_COLORS[s.source] || { dot: "bg-text-secondary", text: "text-text-muted" };
-                return (
-                  <div
-                    key={s.source}
-                    className={`w-1.5 h-1.5 rounded-full ${colors.dot}`}
-                    title={SOURCE_LABELS[s.source] || s.source}
-                  />
-                );
-              })}
+              {sources.map((s) => (
+                <div
+                  key={s.source}
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: sourceHex(s.source) }}
+                  title={SOURCE_LABELS[s.source] || s.source}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -1037,12 +1031,12 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
             {/* Per-source probabilities */}
             <div className="flex items-center gap-1.5">
               {sources.map((s) => {
-                const colors = SOURCE_COLORS[s.source] || { dot: "bg-text-secondary", text: "text-text-muted" };
                 const p = s.probability !== null ? Math.round(s.probability * 100) : null;
                 return (
                   <span
                     key={s.source}
-                    className={`text-[11px] font-mono font-semibold tabular-nums ${colors.text}`}
+                    className="text-[11px] font-mono font-semibold tabular-nums"
+                    style={{ color: sourceHex(s.source) }}
                     title={SOURCE_LABELS[s.source] || s.source}
                   >
                     {p !== null ? `${p}%` : "—"}

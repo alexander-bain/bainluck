@@ -7,13 +7,15 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import type { WinProbSourceMeta, ESPNHistoryPoint } from "@/lib/types";
+import { sourceHex } from "@/lib/sourceColors";
 
-/** Fallback source info for legacy events without win_prob_sources */
+/** Fallback source info for legacy events without win_prob_sources.
+ *  Colors come from the one source-color registry (@/lib/sourceColors). */
 const FALLBACK_SOURCES: Record<string, WinProbSourceMeta> = {
   betting: {
     display_name: "Betting Odds",
     type: "market",
-    color: "#374151",
+    color: sourceHex("betting"),
     description:
       "Consensus win probability derived from sportsbook moneyline odds, aggregated across multiple bookmakers.",
     methodology:
@@ -25,7 +27,7 @@ const FALLBACK_SOURCES: Record<string, WinProbSourceMeta> = {
   espn: {
     display_name: "ESPN",
     type: "model",
-    color: "#f97316",
+    color: sourceHex("espn"),
     dash_pattern: "6 3",
     description:
       "ESPN's proprietary predictive model that updates on every play during live games.",
@@ -38,7 +40,7 @@ const FALLBACK_SOURCES: Record<string, WinProbSourceMeta> = {
   stat_model: {
     display_name: "Bain Luck Model",
     type: "model",
-    color: "#8b5cf6",
+    color: sourceHex("stat_model"),
     dash_pattern: "4 4",
     description:
       "An open win probability model inspired by nflfastR and Pro-Football-Reference. Uses current score, time remaining, and the pregame Vegas spread.",

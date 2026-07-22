@@ -13,6 +13,7 @@ import type { FeedItem, FeedFuturesData, FeedFuturesOutcome } from "@/lib/types"
 import { formatProbability } from "@/lib/api";
 import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import type { GroupedMarket } from "@/lib/feedSections";
+import { sourceHex } from "@/lib/sourceColors";
 
 // ---------------------------------------------------------------------------
 // Source display helpers
@@ -24,18 +25,8 @@ const SOURCE_LABELS: Record<string, string> = {
   polymarket: "Polymarket",
 };
 
-const SOURCE_COLORS: Record<string, { dot: string; text: string }> = {
-  polymarket: { dot: "bg-blue-500", text: "text-blue-400" },
-  kalshi: { dot: "bg-green-500", text: "text-green-400" },
-  odds_api: { dot: "bg-slate-400", text: "text-slate-300" },
-};
-
 function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] || source;
-}
-
-function sourceColors(source: string) {
-  return SOURCE_COLORS[source] || { dot: "bg-text-secondary", text: "text-text-muted" };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,17 +151,14 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
 
         {/* Source legend */}
         <div className="px-3 pb-1.5 flex items-center gap-3">
-          {sources.map((src) => {
-            const colors = sourceColors(src);
-            return (
-              <div key={src} className="flex items-center gap-1">
-                <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
-                <span className={`text-[10px] ${colors.text}`}>
-                  {sourceLabel(src)}
-                </span>
-              </div>
-            );
-          })}
+          {sources.map((src) => (
+            <div key={src} className="flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceHex(src) }} />
+              <span className="text-[10px]" style={{ color: sourceHex(src) }}>
+                {sourceLabel(src)}
+              </span>
+            </div>
+          ))}
         </div>
 
         {/* Cross-source outcome comparison rows */}
@@ -196,7 +184,6 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
               <div className="flex items-center gap-2 flex-shrink-0">
                 {sources.map((src) => {
                   const prob = outcome.bySource[src];
-                  const colors = sourceColors(src);
                   if (prob === null || prob === undefined) {
                     return (
                       <span
@@ -210,7 +197,8 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
                   return (
                     <span
                       key={src}
-                      className={`w-10 text-right text-[11px] font-mono font-semibold ${colors.text}`}
+                      className="w-10 text-right text-[11px] font-mono font-semibold"
+                      style={{ color: sourceHex(src) }}
                     >
                       {formatProbability(prob)}
                     </span>

@@ -11,6 +11,7 @@
 
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animations";
+import { sourceHex } from "@/lib/sourceColors";
 
 interface SourceOutcome {
   id: number;
@@ -48,31 +49,7 @@ function formatSource(source: string): string {
   return names[source] || source;
 }
 
-function sourceColor(source: string): string {
-  switch (source) {
-    case "polymarket":
-      return "text-blue-400";
-    case "kalshi":
-      return "text-green-400";
-    case "odds_api":
-      return "text-slate-300";
-    default:
-      return "text-text-muted";
-  }
-}
-
-function sourceDot(source: string): string {
-  switch (source) {
-    case "polymarket":
-      return "bg-blue-500";
-    case "kalshi":
-      return "bg-green-500";
-    case "odds_api":
-      return "bg-slate-400";
-    default:
-      return "bg-text-secondary";
-  }
-}
+// Source dot + colored text both use the one source-color registry hex.
 
 /**
  * Merge outcomes across sources by name.
@@ -134,8 +111,8 @@ export default function CombinedMarketCard({
         <div className="flex items-center gap-3 mt-1.5">
           {sources.map((src) => (
             <div key={src} className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${sourceDot(src)}`} />
-              <span className={`text-[10px] ${sourceColor(src)}`}>
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceHex(src) }} />
+              <span className="text-[10px]" style={{ color: sourceHex(src) }}>
                 {formatSource(src)}
               </span>
             </div>
@@ -172,7 +149,8 @@ export default function CombinedMarketCard({
                 return (
                   <div
                     key={src}
-                    className={`w-14 text-right text-xs font-mono font-medium ${sourceColor(src)}`}
+                    className="w-14 text-right text-xs font-mono font-medium"
+                    style={{ color: sourceHex(src) }}
                   >
                     {(prob * 100).toFixed(0)}%
                   </div>

@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import CalibrationChart from "@/components/CalibrationChart";
 import DisagreementChart from "@/components/DisagreementChart";
+import { sourceHex } from "@/lib/sourceColors";
 
 const SOURCE_NAMES: Record<string, string> = {
   betting: "Betting Odds",
@@ -23,15 +24,6 @@ const SOURCE_NAMES: Record<string, string> = {
   kalshi: "Kalshi",
   polymarket: "Polymarket",
   mlb: "MLB Model",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  betting: "#374151",
-  espn: "#f97316",
-  stat_model: "#8b5cf6",
-  kalshi: "#22c55e",
-  polymarket: "#3b82f6",
-  mlb: "#06b6d4",
 };
 
 const SPORT_NAMES: Record<string, string> = {
@@ -272,7 +264,7 @@ export default function SourceIntelligencePage() {
                   className="h-full rounded-full"
                   style={{
                     width: `${Math.min(((0.25 - sa.brier) / 0.25) * 100, 100)}%`,
-                    backgroundColor: SOURCE_COLORS[sa.source] || "#6b7280",
+                    backgroundColor: sourceHex(sa.source),
                     opacity: 0.7,
                   }}
                 />
@@ -296,7 +288,7 @@ export default function SourceIntelligencePage() {
           <CalibrationChart
             series={source_accuracy.map(sa => ({
               label: SOURCE_NAMES[sa.source] || sa.source,
-              color: SOURCE_COLORS[sa.source] || "#6b7280",
+              color: sourceHex(sa.source),
               data: sa.buckets.map(b => ({
                 midpoint: b.idx * 10 + 5,
                 actual: Math.round(b.actual * 1000) / 10,
@@ -381,7 +373,7 @@ export default function SourceIntelligencePage() {
                       className="h-full rounded-full"
                       style={{
                         width: `${s.winRate * 100}%`,
-                        backgroundColor: SOURCE_COLORS[s.source] || "#6b7280",
+                        backgroundColor: sourceHex(s.source),
                         opacity: 0.6,
                       }}
                     />
