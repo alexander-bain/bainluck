@@ -49,7 +49,7 @@ struct ShareableFuturesCardView: View {
     }
 
     private var categoryLabel: String {
-        category.uppercased()
+        sportCategoryDisplayName(category).uppercased()
     }
 
     private var categoryEmoji: String {

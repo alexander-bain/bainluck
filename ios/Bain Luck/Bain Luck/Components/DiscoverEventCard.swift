@@ -55,7 +55,7 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var sportLabel: String {
-        (event.sportName ?? event.sport ?? "SPORTS").uppercased()
+        sportCategoryDisplayName(event.sportName ?? event.sport).uppercased()
     }
 
     private var statusText: String {
@@ -181,8 +181,12 @@ struct NativeEventDiscoverCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // Probability bar
-                if let homeProbability = event.currentOdds?.homeProbability,
+                // Probability bar — hidden once the game is done: a settled
+                // game's "Win Probability" is stale/meaningless (the result is
+                // the final score shown above), so we never surface a live-looking
+                // split on a FINAL card (Queue #238 settled-state honesty).
+                if !isDone,
+                   let homeProbability = event.currentOdds?.homeProbability,
                    let awayProbability = event.currentOdds?.awayProbability {
                     VStack(spacing: 6) {
                         HStack {

@@ -32,7 +32,7 @@ struct DistributionCardView: View {
     }
 
     private var categoryLabel: String {
-        (data.sportName ?? data.llmSportCategory ?? "Market").uppercased()
+        sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
     }
 
     private var resolvesText: String? {

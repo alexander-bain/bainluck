@@ -388,8 +388,15 @@ struct DiscoverView: View {
 
     private var filteredItems: [FeedItem] {
         let localFresh = vm.items.filter { !dismissed.contains(itemId($0)) }
-        let cooldownFiltered = localFresh.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
-        return cooldownFiltered.isEmpty ? localFresh : cooldownFiltered
+        // Drop settled/FINAL rot (resolved futures, completed games, past
+        // resolution dates) so a near-coin-flip season-series or a finished game
+        // never leads the feed (Queue #238). isStale was defined but never wired.
+        // Graceful fallback: if everything is stale, keep the fresh set rather
+        // than empty the feed (the #1091/#1043 empty-tab lesson).
+        let notStale = localFresh.filter { !isStale($0) }
+        let base = notStale.isEmpty ? localFresh : notStale
+        let cooldownFiltered = base.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
+        return cooldownFiltered.isEmpty ? base : cooldownFiltered
     }
 
     private var groupedItems: [DiscoverGroupedItem] {
