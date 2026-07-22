@@ -556,11 +556,20 @@ async def _fetch_concept(client: httpx.AsyncClient, concept_key: str) -> dict | 
     return data if isinstance(data, dict) else None
 
 
-async def _fetch_evolution_chart(client: httpx.AsyncClient, market_id: int) -> dict | None:
+async def _fetch_evolution_chart(
+    client: httpx.AsyncClient, market_id: int, champion: str | None = None
+) -> dict | None:
     try:
+        params: dict[str, Any] = {"hours": 8760, "top_n": 8}
+        # #232: odds_api winner-field markets never carry is_winner, so the freeze
+        # can't resolve the line by grade. Pass the concept's authoritative crown
+        # (won:true competitor) so /history resolves the champion's line by name —
+        # the SAME resolution the product's WinnerEvolutionChart requests.
+        if champion:
+            params["champion"] = champion
         resp = await client.get(
             f"{SETTLED_SENTINEL_API}/api/futures/{market_id}/history",
-            params={"hours": 8760, "top_n": 8},
+            params=params,
         )
     except Exception as exc:
         logger.info("Settled sentinel chart fetch failed for market %s: %s", market_id, exc)
@@ -619,8 +628,18 @@ async def _run_settled_concept_sentinel(
                                         "note": "not settled yet — settled contract not asserted"})
                 continue
 
-            evo_id = (payload.get("primary") or {}).get("evolution_market_id")
-            chart = await _fetch_evolution_chart(client, evo_id) if evo_id else None
+            primary = payload.get("primary") or {}
+            evo_id = primary.get("evolution_market_id")
+            # #232: the concept's authoritative crown (structural sole-survivor,
+            # #228) — the ONLY champion signal for odds_api winner fields that
+            # never grade is_winner. Exactly one won:true competitor, else None.
+            crowned = [c for c in (primary.get("competitors") or []) if c.get("won")]
+            champion = crowned[0].get("name") if len(crowned) == 1 else None
+            chart = (
+                await _fetch_evolution_chart(client, evo_id, champion=champion)
+                if evo_id
+                else None
+            )
 
             findings = run_all_checks(payload, chart)
             real = [f for f in findings if f["verdict"] == "REAL"]

@@ -349,6 +349,8 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 45. **`LIKE '%:something'` inside SQLAlchemy `text()` parses as a bind param** — the query raises on every run, and if wrapped in a catch-all, the function dies silently for months (`_fix_golf_commence_times` never ran). Escape or parameterize; and never catch-all around scheduled work without alerting.
 46. **`completed_at >= commence_time` is an invariant** — its violation means an earlier game's data merged onto the wrong event (439-row incident). The audit + Flow Sentinel guard it; treat any recurrence as a matching-layer P1.
 47. **Check `git log origin/master..HEAD` BEFORE committing in a shared tree** — a sibling lane's fresh local commit will ride your push (and a crank's commits can land under yours). Explicit-path staging + linear-history discipline per the handoff README.
+48. **Non-detached `heroku run` silently fails in the sandbox** — an interactive/non-detached `heroku run ...` aborts on an EPERM rendezvous and never executes the command (it is NOT just a log-capture issue). Use `heroku run:detached` and verify side effects via endpoints/db-query ~60s later, never trust the (empty) stdout. (#231/#232.)
+49. **Sentry issue `count` is LIFETIME, not recent** — the `count` field on a Sentry issue is its all-time event total; a stale/dormant bug can show thousands there while firing zero in the last 24h. Always read the 24h stats buckets (`?statsPeriod=24h` / `stats` on the issue) before triaging by volume — the r236 "2,585 events" alarm on `datagolf_freshness` was a dormant bug's lifetime count.
 
 ---
 

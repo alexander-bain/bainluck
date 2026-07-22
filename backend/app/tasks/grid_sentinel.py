@@ -773,6 +773,12 @@ async def _run_grid_sentinel(
             stats["filed"].append(file_grid_issue(lg["classified"]))
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
+    # #232: L2-153's cockpit card needs a wall-clock stamp to render precise
+    # staleness (a cached verdict without one reads as SILENT). TTL is 14d — far
+    # more than 2× the daily run interval — so a completed run is never evicted
+    # before the next one refreshes it.
+    from datetime import datetime as _dt, timezone as _tz
+    stats["generated_at"] = _dt.now(_tz.utc).isoformat()
 
     # Cache for the cockpit / ops read path.
     try:

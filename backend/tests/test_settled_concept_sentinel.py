@@ -270,7 +270,7 @@ def _patch_fetch(monkeypatch, payload, chart):
     async def fake_concept(client, key):
         return payload
 
-    async def fake_chart(client, mid):
+    async def fake_chart(client, mid, champion=None):
         return chart
 
     monkeypatch.setattr(scs, "_fetch_concept", fake_concept)

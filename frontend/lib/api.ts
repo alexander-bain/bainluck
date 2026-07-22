@@ -603,12 +603,16 @@ export async function fetchFuturesHistory(
   marketId: number,
   hours = 168,
   outcomeId?: number,
-  topN?: number
+  topN?: number,
+  champion?: string
 ): Promise<FuturesHistoryResponse> {
   const params = new URLSearchParams();
   params.set("hours", hours.toString());
   if (outcomeId) params.set("outcome_id", outcomeId.toString());
   if (topN) params.set("top_n", topN.toString());
+  // #232: settled winner-field champion name so /history resolves the winner's
+  // evolution line to 1.0 (odds_api winner fields never carry an is_winner grade).
+  if (champion) params.set("champion", champion);
 
   return apiFetch<FuturesHistoryResponse>(
     `/api/futures/${marketId}/history?${params.toString()}`

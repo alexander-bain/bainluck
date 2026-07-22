@@ -45,16 +45,25 @@ async def get_task_session():
         class_=AsyncSession,
         expire_on_commit=False
     )
-    async with session_maker() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-    await engine.dispose()
+    # engine.dispose() MUST run on every exit path — normal, exception, or the
+    # caller breaking early (GeneratorExit). Previously it sat after the
+    # `async with session_maker()` block with no finally, so any exception
+    # propagating out of the yielded body (e.g. a query hitting its
+    # statement_timeout in _compute_fair_fight_comparison) skipped it and leaked
+    # the freshly-created engine's connection pool → GC-reaped "non-checked-in
+    # connection" alerts (#1162, ~113/24h). The outer try/finally closes that hole.
+    try:
+        async with session_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+    finally:
+        await engine.dispose()
 
 
 def run_async(coro):

@@ -68,8 +68,15 @@ def _detect_elimination(history, threshold=0.005):
     return {"eliminated": False, "eliminated_at": None}
 
 
-def _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id_filter=None):
-    """Settled-means-settled evolution freeze (#1177, Queue #230).
+def _norm_outcome_name(s) -> str:
+    """Case/space-insensitive outcome-name key for champion-by-name matching."""
+    return (s or "").strip().casefold()
+
+
+def _apply_settled_winner_freeze(
+    market, outcome_history, outcome_names, outcome_id_filter=None, champion_name=None
+):
+    """Settled-means-settled evolution freeze (#1177, Queue #230/#232).
 
     When a market has a graded champion — exactly one outcome with
     ``is_winner=True`` — the champion's path-to-resolution line MUST end at 1.0
@@ -85,6 +92,15 @@ def _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome
     source is snapshot-richest. That means it also fires while the winner market
     is stuck open (the THOC26 class), as soon as the grade lands.
 
+    ``champion_name`` extends this to the odds_api winner-field class (#1177/#1196,
+    Queue #232): odds_api winner-field outcomes NEVER carry ``is_winner`` (the
+    field just fizzles — Spain 0.618 on WC-2026), so the ``is_winner`` path can't
+    fire. When no outcome is graded, the caller supplies the concept's
+    AUTHORITATIVE structural crown (``_apply_settled_crown`` — the sole bracket
+    survivor, not a raw price) and we resolve that champion's line by OUTCOME
+    NAME. We only accept an UNGRADED market here (``winners == []``); a graded
+    ``is_winner`` always takes precedence and a name arg is ignored.
+
     Read-side only (gotcha #21): appends/synthesizes a terminal CHART point;
     never writes snapshots or ``is_winner``. The terminal point carries
     settlement-time semantics (gotcha #22 spirit — the completed journey ends at
@@ -95,9 +111,16 @@ def _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome
     terminate at their own last real value.
     """
     winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
-    if len(winners) != 1:
-        return  # freeze only a single, unambiguous champion (co-winners: leave as-is)
-    champ = winners[0]
+    champ = None
+    if len(winners) == 1:
+        champ = winners[0]  # graded grade always wins (co-winners fall through → no-op)
+    elif not winners and champion_name:
+        norm = _norm_outcome_name(champion_name)
+        named = [o for o in (market.outcomes or []) if _norm_outcome_name(getattr(o, "name", "")) == norm]
+        if len(named) == 1:
+            champ = named[0]
+    if champ is None:
+        return  # freeze only a single, unambiguous champion
     # When the caller filtered to a single non-champion outcome, do not inject the
     # champion's line into a view that didn't ask for it.
     if outcome_id_filter is not None and outcome_id_filter != champ.id:
@@ -2851,6 +2874,12 @@ async def get_futures_history(
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
     top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
+    champion: Optional[str] = Query(
+        None,
+        description="Settled winner-field champion NAME (#232). When the market carries "
+        "no is_winner grade (odds_api winner fields never do), resolve this outcome's "
+        "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2861,6 +2890,11 @@ async def get_futures_history(
     futures like politics, economics, entertainment) to ensure meaningful
     chart data density.
     """
+    # Only a real, non-empty champion name is usable (direct/unit callers may pass
+    # the unresolved Query sentinel rather than None).
+    if not isinstance(champion, str) or not champion.strip():
+        champion = None
+
     # Verify market exists
     result = await db.execute(
         select(FuturesMarket)
@@ -2894,6 +2928,15 @@ async def get_futures_history(
             if getattr(o, "is_winner", False) and o.id not in _selected:
                 outcome_ids.append(o.id)
                 _selected.add(o.id)
+        # #232 — same guarantee for the odds_api winner-field class, where the
+        # champion is known only by NAME (no is_winner grade): force its line in
+        # even if it fizzled to a longshot, so its path can resolve below.
+        if champion and not any(getattr(o, "is_winner", False) for o in market.outcomes):
+            _cnorm = _norm_outcome_name(champion)
+            for o in market.outcomes:
+                if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
+                    outcome_ids.append(o.id)
+                    _selected.add(o.id)
 
     # --- Auto-extend for sparse markets ---
     # Try the requested window first. If too few snapshots, widen to 30d then 90d.
@@ -2994,7 +3037,7 @@ async def get_futures_history(
     # detection (which reads real eliminations) so the injected terminal point
     # never perturbs boundary inference. Source-independent: fires on the
     # ``is_winner`` grade even while the winner market is stuck ``status='open'``.
-    _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id)
+    _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id, champion)
 
     response: dict = {
         "market_id": market_id,

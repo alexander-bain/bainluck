@@ -53,10 +53,12 @@ export default function SettledPathChart({
   endDate,
   championName,
 }: SettledPathChartProps) {
-  // Widest window — a settled event's path spans the whole run.
+  // Widest window — a settled event's path spans the whole run. #232: pass the
+  // champion name so /history resolves the winner's line to 1.0 even when the
+  // charted source (odds_api winner fields) never graded is_winner and fizzled.
   const { data, isLoading } = useSWR(
-    ["event-settled-path", marketId],
-    () => fetchFuturesHistory(marketId, 8760, undefined, 8),
+    ["event-settled-path", marketId, championName],
+    () => fetchFuturesHistory(marketId, 8760, undefined, 8, championName ?? undefined),
     { revalidateOnFocus: false },
   );
 

@@ -624,9 +624,11 @@ async def build_game_state_section(db: AsyncSession) -> list[dict[str, Any]]:
     try:
         from app.utils.sport_keys import EXPECTED_GAME_STATE_INDICATORS
 
+        # asyncpg cannot run "SET LOCAL ...; SELECT ..." as one prepared
+        # statement (gotcha #45 class — #232) — it must be a separate execute in
+        # the same transaction, or the whole tile errors out.
         gs_sql = text(
-            "SET LOCAL statement_timeout = '15s';\n"
-            + _INDICATORS_BASE_SQL
+            _INDICATORS_BASE_SQL
             + """
             SELECT sport_key,
                    COUNT(*) AS total_events,
@@ -639,6 +641,7 @@ async def build_game_state_section(db: AsyncSession) -> list[dict[str, Any]]:
             ORDER BY total_events DESC
         """
         )
+        await db.execute(text("SET LOCAL statement_timeout = '15s'"))
         gs_result = await db.execute(gs_sql)
         gs_rows = gs_result.fetchall()
 
@@ -678,9 +681,10 @@ async def _fill_fixed_sport_buckets(
     game_state_section: list[dict[str, Any]],
 ) -> None:
     """For fixed-period sports, add met/under/over bucket counts in place."""
+    # Separate SET LOCAL from the CTE query — asyncpg rejects multi-command
+    # prepared statements (gotcha #45 class — #232).
     bucket_sql = text(
-        "SET LOCAL statement_timeout = '15s';\n"
-        + _INDICATORS_BASE_SQL
+        _INDICATORS_BASE_SQL
         + """
         SELECT sport_key, indicator_count, COUNT(*) AS cnt
         FROM per_event
@@ -688,6 +692,7 @@ async def _fill_fixed_sport_buckets(
         ORDER BY sport_key, indicator_count
     """
     )
+    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
     bucket_result = await db.execute(bucket_sql)
     bucket_rows = bucket_result.fetchall()
 

@@ -39,6 +39,35 @@ async def _eval_promote_enabled() -> bool:
         return True
 
 
+@router.post("/eval-promote/toggle")
+async def eval_promote_toggle(
+    request: Request,
+    secret: str = Query(None),
+    enabled: bool = Query(
+        None,
+        description="Desired state: true=engage steers, false=kill. Omit to flip current.",
+    ),
+):
+    """#232 Item 4: flip the eval-promote (#222) kill switch from the cockpit.
+
+    Fail-open flag: enabled writes ``1``, disabled writes ``0`` (an explicit off
+    token — see ``is_enabled_value``). L2-154 adds the cockpit button on top."""
+    _check_admin_secret(secret, request=request)
+
+    current = await _eval_promote_enabled()
+    desired = (not current) if enabled is None else bool(enabled)
+
+    from app.tasks.redis_state import get_async_redis_client
+
+    rc = get_async_redis_client()
+    try:
+        await rc.set(EVAL_PROMOTE_ENABLED_KEY, "1" if desired else "0")
+    finally:
+        await rc.aclose()
+
+    return {"enabled": desired, "previous": current, "key": EVAL_PROMOTE_ENABLED_KEY}
+
+
 @router.get("/label-pass/pending")
 async def label_pass_pending(
     request: Request, secret: str = Query(None),

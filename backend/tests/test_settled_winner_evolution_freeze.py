@@ -133,6 +133,68 @@ class TestApplySettledWinnerFreeze:
         _apply_settled_winner_freeze(market, oh, {100: "Spain"})
         assert oh[100]["history"][-1]["probability"] == 0.5
 
+    # --- #232: champion-by-NAME path (odds_api winner fields never grade) -------
+    def test_champion_name_resolves_when_no_is_winner_grade(self):
+        """WC-2026 class: odds_api winner field, Spain fizzled to 0.618, no
+        is_winner on any outcome — the concept's structural crown resolves it."""
+        now = datetime.now(timezone.utc)
+        spain = _make_outcome(100, "Spain", prob=0.618, is_winner=False)
+        france = _make_outcome(200, "France", prob=0.20, is_winner=False)
+        market = _make_market(outcomes=[spain, france])
+        oh = {
+            100: {"outcome_id": 100, "name": "Spain",
+                  "history": _hist([((now - timedelta(days=1)).isoformat(), 0.618)]),
+                  "eliminated": False, "eliminated_at": None},
+            200: {"outcome_id": 200, "name": "France",
+                  "history": _hist([((now - timedelta(days=1)).isoformat(), 0.20)]),
+                  "eliminated": False, "eliminated_at": None},
+        }
+        _apply_settled_winner_freeze(
+            market, oh, {100: "Spain", 200: "France"}, champion_name="Spain"
+        )
+        assert oh[100]["history"][-1]["probability"] == 1.0
+        assert oh[100]["history"][-1]["bookmaker"] == "settlement"
+        assert oh[200]["history"][-1]["probability"] == 0.20  # non-champion untouched
+        latest = [h["history"][-1]["probability"] for h in oh.values()]
+        assert sum(1 for p in latest if p >= 0.90) == 1  # exactly one resolves → Check C GREEN
+
+    def test_champion_name_matches_case_insensitively(self):
+        now = datetime.now(timezone.utc)
+        spain = _make_outcome(100, "Spain", prob=0.6, is_winner=False)
+        market = _make_market(outcomes=[spain])
+        oh = {100: {"outcome_id": 100, "name": "Spain",
+                    "history": _hist([((now - timedelta(days=1)).isoformat(), 0.6)]),
+                    "eliminated": False, "eliminated_at": None}}
+        _apply_settled_winner_freeze(market, oh, {100: "Spain"}, champion_name="  spain  ")
+        assert oh[100]["history"][-1]["probability"] == 1.0
+
+    def test_is_winner_grade_takes_precedence_over_name(self):
+        """A graded is_winner always wins; a conflicting name arg is ignored."""
+        now = datetime.now(timezone.utc)
+        spain = _make_outcome(100, "Spain", prob=0.5, is_winner=True)
+        france = _make_outcome(200, "France", prob=0.4, is_winner=False)
+        market = _make_market(outcomes=[spain, france])
+        oh = {
+            100: {"outcome_id": 100, "name": "Spain",
+                  "history": _hist([((now - timedelta(days=1)).isoformat(), 0.5)]),
+                  "eliminated": False, "eliminated_at": None},
+            200: {"outcome_id": 200, "name": "France",
+                  "history": _hist([((now - timedelta(days=1)).isoformat(), 0.4)]),
+                  "eliminated": False, "eliminated_at": None},
+        }
+        _apply_settled_winner_freeze(market, oh, {100: "Spain", 200: "France"}, champion_name="France")
+        assert oh[100]["history"][-1]["probability"] == 1.0  # graded Spain wins
+        assert oh[200]["history"][-1]["probability"] == 0.4  # France untouched
+
+    def test_champion_name_no_match_is_noop(self):
+        spain = _make_outcome(100, "Spain", prob=0.6, is_winner=False)
+        market = _make_market(outcomes=[spain])
+        oh = {100: {"outcome_id": 100, "name": "Spain",
+                    "history": _hist([("2026-01-01T00:00:00+00:00", 0.6)]),
+                    "eliminated": False, "eliminated_at": None}}
+        _apply_settled_winner_freeze(market, oh, {100: "Spain"}, champion_name="Portugal")
+        assert oh[100]["history"][-1]["probability"] == 0.6  # unknown champ → no-op
+
     def test_multiple_winners_is_noop(self):
         """Ambiguous grade (two is_winner) — do not fabricate a single champion."""
         a = _make_outcome(100, "A", prob=0.5, is_winner=True)
