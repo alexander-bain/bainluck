@@ -19,7 +19,9 @@ export default function LabelPassPage() {
     () => adminFetchJSON("/api/admin/label-pass/pending", secret)
   );
   const [index, setIndex] = useState(0);
-  const [history, setHistory] = useState<Array<{ id: number; verdict: string }>>([]);
+  const [history, setHistory] = useState<
+    Array<{ id: number; verdict: string; newId?: number; applied?: boolean }>
+  >([]);
   const [submitting, setSubmitting] = useState(false);
 
   const items = (data as Record<string, unknown[]>)?.items || [];
@@ -32,13 +34,15 @@ export default function LabelPassPage() {
     setSubmitting(true);
     const c = current as Record<string, unknown>;
     try {
-      await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
+      const res = (await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision_id: c.id, verdict, features: c.features || {} }),
-      });
-      // Cockpit (Alex-ops) funnel (measurement_spec §2). `applied:false` until
-      // #222 wires Accept to a real Discover-scoring term.
+      })) as { new_id?: number; applied?: boolean } | null;
+      // Cockpit (Alex-ops) funnel (measurement_spec §2). #222: `applied` now
+      // reflects reality — true when an Accept applied a live Discover-ranking
+      // term (kill switch on), false for reject/skip or when the switch is off.
+      const applied = verdict === "accept" ? Boolean(res?.applied) : false;
       if (verdict === "accept" || verdict === "reject" || verdict === "skip") {
         trackEvent("eval_verdict", {
           verdict,
@@ -46,11 +50,14 @@ export default function LabelPassPage() {
           proposal: ((c.decision as string) || "").replace("llm_proposed_", "") || undefined,
           item_name: (c.item_name as string) || undefined,
           category: (c.category as string) || undefined,
-          applied: false,
+          applied,
           surface: "label_pass",
         });
       }
-      setHistory((h) => [...h, { id: c.id as number, verdict }]);
+      setHistory((h) => [
+        ...h,
+        { id: c.id as number, verdict, newId: res?.new_id, applied },
+      ]);
       setIndex((i) => i + 1);
     } catch (e) {
       console.error(e);
@@ -58,11 +65,26 @@ export default function LabelPassPage() {
     setSubmitting(false);
   }, [current, submitting, secret]);
 
-  const handleUndo = useCallback(() => {
-    if (history.length === 0) return;
+  const handleUndo = useCallback(async () => {
+    if (history.length === 0 || !secret) return;
+    const last = history[history.length - 1];
+    // #222 server-side undo: delete the verdict row so any applied ranking boost
+    // is reverted and the proposal returns to the pending queue.
+    if (last.newId != null) {
+      try {
+        await adminFetchJSON("/api/admin/label-pass/undo", secret, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decision_id: last.newId }),
+        });
+        mutate();
+      } catch (e) {
+        console.error(e);
+      }
+    }
     setHistory((h) => h.slice(0, -1));
     setIndex((i) => Math.max(0, i - 1));
-  }, [history]);
+  }, [history, secret, mutate]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -109,11 +131,11 @@ export default function LabelPassPage() {
         <h1 className="text-xl font-bold">Label Speed Pass</h1>
         <span className="text-sm text-text-muted font-mono">{reviewed + 1} / {total}</span>
       </div>
-      {/* L2-142 Item 4 — honest copy until #222 (the eval-promote build) lands.
-          Verdicts train the scorer today; applying them live in Discover ranking
-          is rolling out. Flips to the "promotes + trains" wording when #222 ships. */}
+      {/* #222 shipped: verdicts now steer live Discover ranking AND train the
+          scorer. Accept applies a bounded, 14-day term; Reject suppresses + trains. */}
       <p className="text-xs text-text-muted mb-6 leading-relaxed">
-        Verdicts train the ranking scorer. Applying them live in Discover is rolling out (#222).
+        Accept promotes this market in Discover (bounded steer, expires in 14 days) and trains
+        the scorer. Reject suppresses it and trains the scorer. Undo (u) reverts the last steer.
       </p>
 
       {/* Card */}

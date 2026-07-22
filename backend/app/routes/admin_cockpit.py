@@ -1166,11 +1166,43 @@ async def _eval_queue(db: AsyncSession) -> dict:
         )
     ).scalar()
 
+    # #222: how many human-accepted steers are LIVE in Discover right now — i.e.
+    # accepted_* verdicts within the 14-day TTL. This is the observability half of
+    # human-in-the-ranking-loop: the number should track the taps Alex makes.
+    from app.utils.eval_promote import (
+        APPLIED_DECISIONS,
+        EVAL_PROMOTE_ENABLED_KEY,
+        is_enabled_value,
+        ttl_cutoff,
+    )
+
+    applied_boosts = (
+        await db.execute(
+            select(func.count(DiscoverReviewDecision.id)).where(
+                DiscoverReviewDecision.decision.in_(list(APPLIED_DECISIONS)),
+                DiscoverReviewDecision.created_at >= ttl_cutoff(),
+            )
+        )
+    ).scalar()
+
+    eval_promote_enabled = True
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        eval_promote_enabled = is_enabled_value(
+            get_redis_client().get(EVAL_PROMOTE_ENABLED_KEY)
+        )
+    except Exception:
+        eval_promote_enabled = True
+
     return {
         "pending_eval_count": len(pending),
         "pending_eval_sample": sample,
         "new_bug_reports": int(new_bugs or 0),
+        "applied_boosts_count": int(applied_boosts or 0),
+        "eval_promote_enabled": eval_promote_enabled,
         "verdict_endpoint": "/api/admin/label-pass/verdict",
+        "undo_endpoint": "/api/admin/label-pass/undo",
         "eval_href": "/admin/eval",
         "bug_reports_href": "/admin/bug-reports",
     }

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { adminFetchJSON } from "@/lib/adminFetch";
 import { trackEvent } from "@/lib/analytics";
 import FileThisButton from "@/components/admin/FileThisButton";
 
@@ -107,7 +107,10 @@ interface CockpitData {
     pending_eval_count: number;
     pending_eval_sample: EvalSample[];
     new_bug_reports: number;
+    applied_boosts_count?: number;
+    eval_promote_enabled?: boolean;
     verdict_endpoint: string;
+    undo_endpoint?: string;
     eval_href: string;
     bug_reports_href: string;
   };
@@ -251,21 +254,20 @@ export default function AdminCockpit() {
     if (!secret) return;
     setBusyId(item.id);
     try {
-      await adminFetch("/api/admin/label-pass/verdict", secret, {
+      const res = (await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision_id: item.id, verdict, features: {} }),
-      });
-      // Cockpit (Alex-ops) funnel (measurement_spec §2). `applied:false` until
-      // #222 wires Accept to a real Discover-scoring term — the event ships now
-      // so verdict volume is measured from day one.
+      })) as { applied?: boolean } | null;
+      // Cockpit (Alex-ops) funnel (measurement_spec §2). #222: `applied` reflects
+      // whether the Accept applied a live Discover-ranking term (kill switch on).
       trackEvent("eval_verdict", {
         verdict,
         decision_id: item.id,
         proposal: item.decision.replace("llm_proposed_", ""),
         item_name: item.item_name ?? undefined,
         category: item.category ?? undefined,
-        applied: false,
+        applied: verdict === "accept" ? Boolean(res?.applied) : false,
         surface: "cockpit",
       });
       await mutate();
@@ -531,18 +533,36 @@ export default function AdminCockpit() {
             <Link href={evalQ.eval_href} className="text-accent-brand hover:underline">
               {evalQ.pending_eval_count} pending
             </Link>
+            {evalQ.applied_boosts_count != null && (
+              <span
+                className={
+                  evalQ.eval_promote_enabled === false
+                    ? "text-accent-danger"
+                    : "text-text-secondary"
+                }
+                title={
+                  evalQ.eval_promote_enabled === false
+                    ? "Kill switch ON — applied steers are NOT affecting Discover"
+                    : "Human-accepted steers live in Discover (within 14-day TTL)"
+                }
+              >
+                {evalQ.applied_boosts_count} live boost
+                {evalQ.applied_boosts_count === 1 ? "" : "s"}
+                {evalQ.eval_promote_enabled === false ? " (off)" : ""}
+              </span>
+            )}
             <Link href={evalQ.bug_reports_href} className="text-accent-brand hover:underline">
               {evalQ.new_bug_reports} new bugs
             </Link>
           </div>
         </div>
-        {/* L2-142 Item 4 — honest copy until #222 (the eval-promote build) lands.
-            Every verdict already trains the interestingness scorer; Accept does
-            not yet steer Discover ranking. Flips to the "promotes + trains"
-            wording (and applied:true) the moment #222 ships. */}
+        {/* #222 shipped: Accept now applies a bounded, expiring, kill-switchable
+            steer to Discover ranking AND trains the scorer. The live-boost count
+            above tracks accepted steers within the 14-day TTL. */}
         <p className="text-micro text-text-muted mb-2 leading-relaxed">
-          Verdicts train the ranking scorer. Applying them live in Discover is
-          rolling out (#222).
+          Accept promotes a market in Discover (bounded, 14-day) and trains the
+          scorer; Reject suppresses + trains. Live-boost count reflects accepted
+          steers still in effect.
         </p>
 
         {evalQ.pending_eval_sample.length === 0 ? (

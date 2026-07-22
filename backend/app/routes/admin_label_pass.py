@@ -14,8 +14,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import DiscoverReviewDecision, FuturesMarket
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils.eval_promote import (
+    APPLIED_DECISIONS,
+    EVAL_DOWNRANK_EXACT,
+    EVAL_PROMOTE_ADJ,
+    EVAL_PROMOTE_ENABLED_KEY,
+    EVAL_PROMOTE_TTL_DAYS,
+    is_enabled_value,
+)
 
 router = APIRouter()
+
+
+async def _eval_promote_enabled() -> bool:
+    """Read the #222 kill switch (fail-open)."""
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        rc = get_async_redis_client()
+        raw = await rc.get(EVAL_PROMOTE_ENABLED_KEY)
+        await rc.aclose()
+        return is_enabled_value(raw)
+    except Exception:
+        return True
 
 
 @router.get("/label-pass/pending")
@@ -136,6 +157,24 @@ async def label_pass_verdict(
     else:
         new_decision = f"{body.verdict}ed_{action}"
 
+    # #222: an Accept applies a bounded, expiring, kill-switchable term to
+    # Discover ranking. Stamp the applied term onto the verdict row's features so
+    # it is a real audit trail (magnitude, when, whether the switch was live),
+    # and report `applied` so the client can log an honest GA `applied:true`.
+    applied = False
+    features = dict(body.features or proposal.features or {})
+    if new_decision in APPLIED_DECISIONS:
+        magnitude = EVAL_PROMOTE_ADJ if action == "promote" else -EVAL_DOWNRANK_EXACT
+        applied = await _eval_promote_enabled()
+        features["eval_promote"] = {
+            "magnitude": magnitude,
+            "action": action,
+            "applied": applied,
+            "ttl_days": EVAL_PROMOTE_TTL_DAYS,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "from_proposal": proposal.id,
+        }
+
     # Write new decision row with frozen features
     new_row = DiscoverReviewDecision(
         item_type=proposal.item_type,
@@ -146,9 +185,82 @@ async def label_pass_verdict(
         archetype=proposal.archetype,
         decision=new_decision,
         admin_notes=f"Speed-pass verdict on proposal #{proposal.id}",
-        features=body.features or proposal.features,
+        features=features or None,
     )
     db.add(new_row)
     await db.commit()
 
-    return {"status": "ok", "decision": new_decision, "new_id": new_row.id}
+    return {
+        "status": "ok",
+        "decision": new_decision,
+        "new_id": new_row.id,
+        "applied": applied,
+    }
+
+
+class UndoRequest(BaseModel):
+    # Reverse by the verdict row id returned from /verdict (preferred)...
+    decision_id: int | None = None
+    # ...or by target when the caller only knows the item.
+    item_type: str | None = None
+    item_id: str | None = None
+
+
+@router.post("/label-pass/undo")
+async def label_pass_undo(
+    request: Request,
+    body: UndoRequest, secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Server-side undo (#222 Rapid-undo): delete the most recent verdict row for a
+    target so any applied ranking boost is reverted AND the proposal returns to the
+    pending queue. Reverses accept/reject/skip alike."""
+    _check_admin_secret(secret, request=request)
+
+    verdict_decisions = [
+        "accepted_promote", "rejected_promote",
+        "accepted_downrank", "rejected_downrank",
+        "skipped",
+    ]
+
+    row = None
+    if body.decision_id is not None:
+        res = await db.execute(
+            select(DiscoverReviewDecision).where(
+                DiscoverReviewDecision.id == body.decision_id,
+                DiscoverReviewDecision.decision.in_(verdict_decisions),
+            )
+        )
+        row = res.scalar_one_or_none()
+    elif body.item_type and body.item_id:
+        res = await db.execute(
+            select(DiscoverReviewDecision)
+            .where(
+                DiscoverReviewDecision.item_type == body.item_type,
+                DiscoverReviewDecision.item_id == body.item_id,
+                DiscoverReviewDecision.decision.in_(verdict_decisions),
+            )
+            .order_by(DiscoverReviewDecision.created_at.desc())
+            .limit(1)
+        )
+        row = res.scalar_one_or_none()
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="provide decision_id or (item_type and item_id)",
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No verdict to undo")
+
+    reverted = row.decision
+    reverted_target = (row.item_type, row.item_id)
+    await db.delete(row)
+    await db.commit()
+
+    return {
+        "status": "reverted",
+        "reverted_decision": reverted,
+        "item_type": reverted_target[0],
+        "item_id": reverted_target[1],
+    }

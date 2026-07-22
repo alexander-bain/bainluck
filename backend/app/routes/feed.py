@@ -116,6 +116,16 @@ from app.tasks.enrich_markets import (
     _discover_llm_score_adjustment,
     _get_discover_llm_metadata,
 )
+from app.utils.eval_promote import (
+    EVAL_PROMOTE_ADJ as _EVAL_PROMOTE_ADJ,
+    EVAL_DOWNRANK_EXACT as _EVAL_DOWNRANK_EXACT,
+    EVAL_DOWNRANK_FAMILY as _EVAL_DOWNRANK_FAMILY,
+    EVAL_PROMOTE_ENABLED_KEY as _EVAL_PROMOTE_ENABLED_KEY,
+    APPLIED_DECISIONS as _EVAL_APPLIED_DECISIONS,
+    clamp_adj as _eval_clamp_adj,
+    is_enabled_value as _eval_is_enabled_value,
+    ttl_cutoff as _eval_ttl_cutoff,
+)
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.labeling_queue import (
     filter_reviewed_feed_items as _filter_reviewed_feed_items,
@@ -1730,15 +1740,19 @@ def _apply_manual_review_decision_map(
             continue
         if decision == "accepted_promote":
             if scope == "exact":
-                item["score"] = min(98, float(item.get("score") or 0) + 8)
+                adj = _eval_clamp_adj(_EVAL_PROMOTE_ADJ)
+                item["score"] = min(98, float(item.get("score") or 0) + adj)
                 # Mirror the manual steer onto the ordering score. #141/Item 1.
                 if "_rank_score" in item:
-                    item["_rank_score"] = float(item.get("_rank_score") or 0) + 8
+                    item["_rank_score"] = float(item.get("_rank_score") or 0) + adj
                 item["_review_decision"] = decision
                 item["_review_decision_scope"] = scope
                 item["_review_decision_scope_key"] = scope_key
+                item["_review_decision_adj"] = adj
         elif decision == "accepted_downrank":
-            penalty = 18 if scope == "exact" else 12
+            penalty = _eval_clamp_adj(
+                _EVAL_DOWNRANK_EXACT if scope == "exact" else _EVAL_DOWNRANK_FAMILY
+            )
             item["score"] = max(0, float(item.get("score") or 0) - penalty)
             if "_rank_score" in item:
                 item["_rank_score"] = max(
@@ -1788,6 +1802,24 @@ async def _apply_manual_review_decisions(
     if not feed_items:
         return
 
+    # #222 kill switch: one Redis flag zeroes ALL applied human steers at once.
+    # Fails open (absent/unreadable => enabled) so a Redis blip never silently
+    # drops human steering; only an explicit off token disengages.
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        _krc = get_async_redis_client()
+        _kill_raw = await _krc.get(_EVAL_PROMOTE_ENABLED_KEY)
+        await _krc.aclose()
+        if not _eval_is_enabled_value(_kill_raw):
+            logger.info("eval_promote kill switch engaged — applying no review steers")
+            return
+    except Exception:
+        logger.debug("eval_promote kill-switch read failed — failing open", exc_info=True)
+
+    # #222 TTL: verdicts older than 14 days decay so a stale judgment stops
+    # steering ranking. needs_*_fix tags are tag-only (no score change) but share
+    # the same freshness window.
     result = await db.execute(
         select(
             DiscoverReviewDecision.item_type,
@@ -1803,7 +1835,8 @@ async def _apply_manual_review_decisions(
                     "needs_design_fix",
                     "needs_data_fix",
                 ]
-            )
+            ),
+            DiscoverReviewDecision.created_at >= _eval_ttl_cutoff(),
         )
         .order_by(DiscoverReviewDecision.created_at.desc())
         .limit(1000)
