@@ -14,6 +14,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format, parseISO } from "date-fns";
+import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -227,27 +228,10 @@ export default function ScoreDifferentialChart({
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
-    /** Round an ISO timestamp to the start of its minute. */
-    const toMinuteKey = (timestamp: string): string => {
-      const d = parseISO(timestamp);
-      d.setSeconds(0, 0);
-      return d.toISOString();
-    };
-
-    const ensurePoint = (timestamp: string): ChartDataPoint => {
-      const minuteKey = toMinuteKey(timestamp);
-      let point = dataMap.get(minuteKey);
-      if (!point) {
-        point = {
-          timestamp: minuteKey,
-          time: format(parseISO(minuteKey), "h:mm a"),
-          projectedDiff: null,
-          actualDiff: null,
-        };
-        dataMap.set(minuteKey, point);
-      }
-      return point;
-    };
+    const ensurePoint = makeEnsurePoint<ChartDataPoint>(dataMap, () => ({
+      projectedDiff: null,
+      actualDiff: null,
+    }));
 
     // Seed ALL filtered history timestamps so x-axis matches the Win Probability chart.
     // Without this, points lacking projected_home_score would be skipped and the
@@ -372,15 +356,7 @@ export default function ScoreDifferentialChart({
         last = endFromParent;  // Match exactly, don't just extend
       }
 
-      first.setSeconds(0, 0);
-      last.setSeconds(0, 0);
-
-      const cursor = new Date(first.getTime());
-      cursor.setMinutes(cursor.getMinutes() + 1);
-      while (cursor <= last) {
-        ensurePoint(cursor.toISOString());
-        cursor.setMinutes(cursor.getMinutes() + 1);
-      }
+      fillMinuteGaps(first, last, ensurePoint);
     }
 
     // Ensure period boundary timestamps have matching chart categories
@@ -716,7 +692,7 @@ export default function ScoreDifferentialChart({
             {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_diff`}
-                type="monotone"
+                type="linear"
                 dataKey={`${bookmaker}_diff`}
                 stroke="rgba(0,0,0,0.12)"
                 strokeWidth={1}
@@ -730,7 +706,7 @@ export default function ScoreDifferentialChart({
             {/* Projected score differential (spread) */}
             {hasProjectedScoreData && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="projectedDiff"
                 name="Projected Spread"
                 stroke="#10b981"
@@ -758,7 +734,7 @@ export default function ScoreDifferentialChart({
             {/* Prediction market implied spread lines */}
             {pmSpreadData?.implied_spreads?.kalshi && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="pm_kalshi_spread"
                 name="Kalshi Implied"
                 stroke="#7c3aed"
@@ -771,7 +747,7 @@ export default function ScoreDifferentialChart({
             )}
             {pmSpreadData?.implied_spreads?.polymarket && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="pm_polymarket_spread"
                 name="Polymarket Implied"
                 stroke="#db2777"

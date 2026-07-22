@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
+import { makeEnsurePoint, toMinuteKey, fillMinuteGaps } from "@/lib/chartTimeline";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -455,29 +456,11 @@ export default function OddsChart({
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
-    /** Round an ISO timestamp to the start of its minute. */
-    const toMinuteKey = (timestamp: string): string => {
-      const d = parseISO(timestamp);
-      // Zero out seconds and milliseconds
-      d.setSeconds(0, 0);
-      return d.toISOString();
-    };
-
-    const ensurePoint = (timestamp: string): ChartDataPoint => {
-      const minuteKey = toMinuteKey(timestamp);
-      let point = dataMap.get(minuteKey);
-      if (!point) {
-        point = {
-          timestamp: minuteKey,
-          time: format(parseISO(minuteKey), "h:mm a"),
-          homeDelta: null,
-          espnDelta: null,
-          bainLuckDelta: null,
-        };
-        dataMap.set(minuteKey, point);
-      }
-      return point;
-    };
+    const ensurePoint = makeEnsurePoint<ChartDataPoint>(dataMap, () => ({
+      homeDelta: null,
+      espnDelta: null,
+      bainLuckDelta: null,
+    }));
 
     // Add aggregate data points (betting odds consensus). Values are the raw
     // home win probability on a 0–100 axis (single-axis, not ±50 delta).
@@ -675,15 +658,8 @@ export default function OddsChart({
         }
       }
 
-      if (first && last && first < last) {
-        first.setSeconds(0, 0);
-        last.setSeconds(0, 0);
-        const cursor = new Date(first.getTime());
-        cursor.setMinutes(cursor.getMinutes() + 1);
-        while (cursor <= last) {
-          ensurePoint(cursor.toISOString());
-          cursor.setMinutes(cursor.getMinutes() + 1);
-        }
+      if (first && last) {
+        fillMinuteGaps(first, last, ensurePoint);
       }
     }
 
@@ -1340,7 +1316,7 @@ export default function OddsChart({
             {!isMultiSource && bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_delta`}
-                type="monotone"
+                type="linear"
                 dataKey={`${bookmaker}_delta`}
                 stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1}
@@ -1356,7 +1332,7 @@ export default function OddsChart({
             {isMultiSource && resolvedSources.map((source) => (
               <Line
                 key={source.dataKey}
-                type="monotone"
+                type="linear"
                 dataKey={source.dataKey}
                 name={source.displayName}
                 stroke={source.color}
@@ -1373,7 +1349,7 @@ export default function OddsChart({
             {!isMultiSource && nonBettingSources.map((source) => (
               <Line
                 key={source.dataKey}
-                type="monotone"
+                type="linear"
                 dataKey={source.dataKey}
                 name={source.displayName}
                 stroke={source.color}
@@ -1388,7 +1364,7 @@ export default function OddsChart({
             {/* Legacy ESPN line (when winProbHistory not available and not multi-source) */}
             {!isMultiSource && !useNewWinProbData && filteredEspnHistory.length > 0 && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="espnDelta"
                 name="ESPN Model"
                 stroke="#f97316"
@@ -1405,7 +1381,7 @@ export default function OddsChart({
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
             {isMultiSource && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="bainLuckDelta"
                 name={BAIN_LUCK_CONFIG.displayName}
                 stroke={BAIN_LUCK_CONFIG.color}
@@ -1421,7 +1397,7 @@ export default function OddsChart({
                 the light-mode card (L2-131 "the blend line absent/gray"). ── */}
             {!isMultiSource && (
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="homeDelta"
                 name="Betting Odds"
                 stroke="#0f172a"
