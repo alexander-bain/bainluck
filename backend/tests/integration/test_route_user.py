@@ -690,7 +690,8 @@ async def test_query_team_futures_collapses_identity_duplicates():
         llm_sport_category="hockey", source="kalshi",
         resolution_date=None, canonical_market_key="nhl:champion:2026",
     )
-    q1_rows = [(outcome, market, 32, "icehockey_nhl")]
+    # 5th col (#237 Item 3): field_prob_sum — coherent (~1.0) so it isn't suppressed.
+    q1_rows = [(outcome, market, 32, "icehockey_nhl", 1.0)]
 
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[

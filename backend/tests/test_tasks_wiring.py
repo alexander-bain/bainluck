@@ -275,6 +275,7 @@ class TestBeatScheduleCompleteness:
         "grid-sentinel-daily",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
+        "sentry-snapshot-15min",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",

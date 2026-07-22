@@ -1720,6 +1720,17 @@ def settled_concept_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.sentry_snapshot")
+def sentry_snapshot(self):
+    """#237 Item 1: cache the top Sentry issues by 24h volume to Redis
+    (bainluck:sentry:top_24h) so the ops-snapshot endpoint reads a warm key instead
+    of calling Sentry live on the request path. No-ops (writes a no_token status)
+    when SENTRY_AUTH_TOKEN is absent. Light HTTP task — runs on the background
+    queue; the 60s soft limit keeps it clear of the global 300s hard limit."""
+    from app.tasks.sentry_snapshot import _run_sentry_snapshot
+    return _tracked_run("sentry_snapshot", _run_sentry_snapshot())
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -2454,6 +2465,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.recategorize_other",
         "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
         "kwargs": {"limit": 2000},
+    },
+    "sentry-snapshot-15min": {
+        # #237 Item 1: cache the top Sentry issues by 24h volume so the ops-snapshot
+        # endpoint reads a warm Redis key instead of calling Sentry live. Light HTTP
+        # task on the background queue; no-ops without SENTRY_AUTH_TOKEN.
+        "task": "app.tasks.sentry_snapshot",
+        "schedule": crontab(minute="*/15"),
     },
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",

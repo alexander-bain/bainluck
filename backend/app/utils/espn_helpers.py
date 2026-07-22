@@ -79,6 +79,27 @@ def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) ->
     return event_commence > now + slack
 
 
+_PREGAME_LIVE_GRACE = timedelta(minutes=15)  # tolerate commence jitter near start
+
+
+def espn_live_write_is_premature(event_commence, now, grace=_PREGAME_LIVE_GRACE) -> bool:
+    """True when ESPN reports a game live/in-progress (or supplies a win-prob) but the
+    event's own ``commence_time`` is still meaningfully in the future (beyond
+    ``grace``) — i.e. the game has NOT started yet (#1207).
+
+    ESPN occasionally publishes a pregame ``in`` status and a pregame win-probability
+    hours before first pitch (the observed case: an event flipped ``live`` + ESPN
+    win-prob ~4h early). Flipping ``status='live'`` or storing that win-prob then is
+    premature and makes the event page dishonest, so the caller skips the write until
+    the game actually starts. Distinct from ``espn_terminal_write_is_fold`` (a 2h
+    fold-detection tolerance for a wrong-sibling resolve): this is a small "not
+    started yet" grace on the event's OWN commence_time. Missing either side is not
+    premature (fail open)."""
+    if event_commence is None or now is None:
+        return False
+    return event_commence > now + grace
+
+
 # ---------------------------------------------------------------------------
 # Team upsert
 # ---------------------------------------------------------------------------
@@ -369,13 +390,28 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
             changed = True
             stats["espn_completed"] = stats.get("espn_completed", 0) + 1
     elif ee.status == "in" and event.status == "scheduled":
-        await session.execute(
-            _sql_update(Event)
-            .where(Event.id == event.id)
-            .values(status="live")
-        )
-        event.status = "live"
-        changed = True
+        # #1207 premature-live guard: ESPN can report a game "in" (and publish a
+        # pregame win-prob) hours before first pitch. Don't flip the event live
+        # until its own commence_time has actually arrived (commence correction
+        # above already re-aligned commence_time to ESPN's date when they diverge).
+        _now = datetime.now(timezone.utc)
+        if espn_live_write_is_premature(event.commence_time, _now):
+            logger.warning(
+                "ESPN premature-live guard: refused live status on event %d (%s vs %s) "
+                "— commence_time %s is still beyond the %s grace (now %s) (#1207)",
+                event.id, event.home_team_name, event.away_team_name,
+                event.commence_time.isoformat() if event.commence_time else None,
+                _PREGAME_LIVE_GRACE, _now.isoformat(),
+            )
+            stats["espn_premature_live_skipped"] = stats.get("espn_premature_live_skipped", 0) + 1
+        else:
+            await session.execute(
+                _sql_update(Event)
+                .where(Event.id == event.id)
+                .values(status="live")
+            )
+            event.status = "live"
+            changed = True
     elif espn_replay_unsettles(event.status, ee.status):
         # #1201 un-settle-on-replay: ESPN (the authoritative live source) reports
         # this game is IN PROGRESS, but we have it settled. That means a premature
@@ -418,6 +454,15 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     from app.tasks.espn_sync import _sanitize_period
 
     if ee.home_win_probability is None:
+        return False
+
+    # #1207 premature-live guard: ESPN publishes a pregame win-probability hours
+    # before first pitch. Don't store it (or the derived snapshot) until the game
+    # has actually started — a genuinely live/completed event has a past
+    # commence_time, so this only trips on the not-yet-started case.
+    _now = datetime.now(timezone.utc)
+    if espn_live_write_is_premature(event.commence_time, _now):
+        stats["espn_premature_winprob_skipped"] = stats.get("espn_premature_winprob_skipped", 0) + 1
         return False
 
     # #922: our own resolved status is the authoritative "game is over" signal
@@ -624,6 +669,19 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
             continue
 
         try:
+            # #1207 premature-live guard: don't birth an event as ``live`` when ESPN
+            # reports it "in" but its commence_time (ee.date) is still beyond the
+            # grace — that pregame "in" leak is the exact source of a game showing
+            # live hours before first pitch. Fall back to ``scheduled``.
+            _now = datetime.now(timezone.utc)
+            _espn_premature = ee.status == "in" and espn_live_write_is_premature(ee.date, _now)
+            if _espn_premature:
+                stats["espn_premature_live_skipped"] = stats.get("espn_premature_live_skipped", 0) + 1
+            _create_status = (
+                "live" if (ee.status == "in" and not _espn_premature) else (
+                    "completed" if ee.status in ("post", "final") else "scheduled"
+                )
+            )
             identity = _EI(
                 sport_key=sport_key,
                 home_team_name=espn_home,
@@ -631,9 +689,7 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 commence_time=ee.date,
                 claim=_EC("espn", ee.espn_id),
                 commence_time_source="espn",
-                status="live" if ee.status == "in" else (
-                    "completed" if ee.status in ("post", "final") else "scheduled"
-                ),
+                status=_create_status,
             )
             event, created = await _foc(session, identity)
 
@@ -645,7 +701,6 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
             # writing ESPN's live/terminal state here is exactly what produces the
             # completed_at < commence_time class. Skip the write and log so the flow
             # sentinel / audit surface it, rather than corrupt the sibling.
-            _now = datetime.now(timezone.utc)
             if not created and espn_terminal_write_is_fold(event.commence_time, _now):
                 logger.warning(
                     "ESPN fold guard: skipped write — game %s (%s vs %s, espn_id=%s) "
@@ -659,8 +714,9 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 stats["espn_fold_guard_skipped"] = stats.get("espn_fold_guard_skipped", 0) + 1
                 continue
 
-            # Write win probability snapshot
-            if ee.home_win_probability is not None:
+            # Write win probability snapshot (#1207: skip the pregame win-prob when
+            # ESPN reports "in" but the game hasn't started — same premature leak).
+            if ee.home_win_probability is not None and not _espn_premature:
                 _wps3 = dict(event.win_probability_sources or {})
                 _wps3["espn"] = round(ee.home_win_probability, 4)
                 await session.execute(

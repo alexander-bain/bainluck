@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from app.utils.espn_helpers import (
     commence_correction_inverts_completion,
     completion_stamp_inverts_commence,
+    espn_live_write_is_premature,
     espn_replay_unsettles,
     espn_terminal_write_is_fold,
 )
@@ -107,3 +108,37 @@ class TestEspnReplayUnsettles:
 
     def test_settled_event_reported_scheduled_does_not_unsettle(self):
         assert espn_replay_unsettles("closed", "pre") is False
+
+
+class TestEspnLiveWriteIsPremature:
+    """#1207 premature-live guard: an event must not flip live (nor store an ESPN
+    win-prob) while its own commence_time is still meaningfully in the future —
+    the observed defect was event 15165209 going live + ESPN win-prob ~4h early."""
+
+    def _now(self):
+        return _dt(2026, 7, 22, 15, 0)  # 3pm UTC; a game commencing 7pm hasn't started
+
+    def test_commence_hours_ahead_is_premature(self):
+        # The 4h-early case: ESPN says "in" but first pitch is 4h out.
+        assert espn_live_write_is_premature(self._now() + timedelta(hours=4), self._now()) is True
+
+    def test_started_event_is_not_premature(self):
+        # A genuinely live game (commence in the past) writes normally.
+        assert espn_live_write_is_premature(self._now() - timedelta(minutes=30), self._now()) is False
+
+    def test_within_grace_is_not_premature(self):
+        # Commence 10 min ahead (< 15 min grace) tolerates near-start jitter.
+        assert espn_live_write_is_premature(self._now() + timedelta(minutes=10), self._now()) is False
+
+    def test_just_beyond_grace_is_premature(self):
+        assert espn_live_write_is_premature(self._now() + timedelta(minutes=30), self._now()) is True
+
+    def test_missing_commence_is_not_premature(self):
+        assert espn_live_write_is_premature(None, self._now()) is False
+
+    def test_grace_is_tighter_than_fold_slack(self):
+        # A 1h-future commence is NOT a terminal-fold (2h slack) but IS premature
+        # for a live/win-prob write (15 min grace) — the two guards are distinct.
+        one_hour_out = self._now() + timedelta(hours=1)
+        assert espn_terminal_write_is_fold(one_hour_out, self._now()) is False
+        assert espn_live_write_is_premature(one_hour_out, self._now()) is True

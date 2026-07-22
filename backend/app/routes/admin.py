@@ -866,6 +866,155 @@ async def get_horizon_sentinel_last(
     return json.loads(raw)
 
 
+# ---------------------------------------------------------------------------
+# Ops snapshot (#237 Item 1) — one compact digest for ops rounds / Item-0 reads
+# ---------------------------------------------------------------------------
+
+_OPS_SNAPSHOT_CACHE: dict = {"at": 0.0, "data": None}
+_OPS_SNAPSHOT_TTL = 300  # 5 min
+
+
+def _ops_compact(payload) -> dict:
+    """Compact a cached sentinel/warm payload down to an ops digest: keep scalar
+    top-level fields (incl. ``generated_at``) verbatim and replace list values with
+    a ``<key>_count``. Nested dicts are dropped to stay small. Robust to whatever
+    schema each source persists."""
+    if not isinstance(payload, dict):
+        return {"status": "no_run_cached"}
+    out: dict = {}
+    for k, v in payload.items():
+        if v is None or isinstance(v, (str, int, float, bool)):
+            out[k] = v
+        elif isinstance(v, list):
+            out[f"{k}_count"] = len(v)
+    return out
+
+
+@router.get("/ops-snapshot")
+async def get_ops_snapshot(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    fresh: bool = Query(False, description="Bypass the 5-min cache and recompute"),
+):
+    """#237 Item 1: ONE compact JSON digest of production health so an ops round or
+    an Item-0 read is 1-2 calls instead of ~20. Composes only WARM sources (Redis
+    keys + task-metrics + quota); it never recomputes the ~25s link-rate/matured
+    queries and never calls Sentry live (the sentry field is served from the cached
+    ``sentry_snapshot`` beat). Every field is independently guarded — a cold cache
+    or Redis hiccup degrades that one field to a status object instead of 500ing the
+    whole snapshot. 5-min in-process cache (``fresh=true`` to bypass)."""
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+    import time as _time
+    from datetime import datetime, timezone
+
+    now = _time.time()
+    if not fresh and _OPS_SNAPSHOT_CACHE["data"] is not None:
+        if now - _OPS_SNAPSHOT_CACHE["at"] < _OPS_SNAPSHOT_TTL:
+            cached = dict(_OPS_SNAPSHOT_CACHE["data"])
+            cached["cache"] = "hit"
+            return cached
+
+    from app.tasks.redis_state import (
+        get_all_task_metrics,
+        get_odds_api_quota,
+        get_redis_client,
+        get_task_metrics,
+    )
+
+    r = get_redis_client()
+
+    def _read_json(key):
+        try:
+            raw = r.get(key)
+            return _json.loads(raw) if raw else None
+        except Exception:
+            return None
+
+    def _metric_subset(label):
+        try:
+            m = get_task_metrics(label) or {}
+            return {
+                "successes_24h": m.get("successes_24h"),
+                "failures_24h": m.get("failures_24h"),
+                "consecutive_failures": m.get("consecutive_failures"),
+                "health": m.get("health"),
+                "last_result_summary": m.get("last_result_summary"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": str(exc)[:120]}
+
+    snapshot: dict = {"generated_at": datetime.now(timezone.utc).isoformat(), "cache": "miss"}
+
+    # 1. Link rate + matured linkage (warm Redis keys — never recompute).
+    try:
+        lr = _read_json("bainluck:admin:link_rate") or {}
+        snapshot["link_rate"] = {
+            "overall": lr.get("overall"),
+            "generated_at": lr.get("generated_at"),
+        } if lr else {"status": "no_data"}
+    except Exception as exc:  # noqa: BLE001
+        snapshot["link_rate"] = {"status": "error", "error": str(exc)[:120]}
+    try:
+        ml = _read_json("bainluck:admin:matured_linkage")
+        snapshot["matured_linkage"] = _ops_compact(ml) if ml else {"status": "no_data"}
+    except Exception as exc:  # noqa: BLE001
+        snapshot["matured_linkage"] = {"status": "error", "error": str(exc)[:120]}
+
+    # 2. Coverage poll counts.
+    snapshot["coverage"] = {
+        "poll_kalshi": _metric_subset("poll_kalshi"),
+        "poll_polymarket": _metric_subset("poll_polymarket"),
+    }
+
+    # 3. Cal-beat health.
+    snapshot["cal_beat"] = _metric_subset("calibration_prices")
+
+    # 4. Time-horizon state (calibration time-horizon precompute).
+    try:
+        th = _read_json("bainluck:calibration:time_horizon")
+        snapshot["time_horizon"] = _ops_compact(th) if th else {"status": "no_data"}
+    except Exception as exc:  # noqa: BLE001
+        snapshot["time_horizon"] = {"status": "error", "error": str(exc)[:120]}
+
+    # 5. The three sentinel verdicts (+ generated_at, via _ops_compact).
+    snapshot["sentinels"] = {
+        "flow": _ops_compact(_read_json("bainluck:flow_sentinel:last")),
+        "calibration": _ops_compact(_read_json("bainluck:calibration_sentinel:last")),
+        "grid": _ops_compact(_read_json("bainluck:grid_sentinel:last")),
+    }
+
+    # 6. Quota.
+    try:
+        snapshot["quota"] = get_odds_api_quota()
+    except Exception as exc:  # noqa: BLE001
+        snapshot["quota"] = {"status": "error", "error": str(exc)[:120]}
+
+    # 7. Top Sentry 24h (cached beat — never a live Sentry call here).
+    snapshot["sentry"] = _read_json("bainluck:sentry:top_24h") or {"status": "no_data"}
+
+    # 8. Celery / queue health.
+    try:
+        depths = {}
+        for q in ("background", "realtime", "heavy"):
+            try:
+                depths[q] = r.llen(q)
+            except Exception:
+                depths[q] = None
+        health_counts: dict = {}
+        for m in get_all_task_metrics() or []:
+            h = m.get("health") or "unknown"
+            health_counts[h] = health_counts.get(h, 0) + 1
+        snapshot["celery"] = {"queue_depths": depths, "task_health": health_counts}
+    except Exception as exc:  # noqa: BLE001
+        snapshot["celery"] = {"status": "error", "error": str(exc)[:120]}
+
+    _OPS_SNAPSHOT_CACHE["at"] = now
+    _OPS_SNAPSHOT_CACHE["data"] = snapshot
+    return snapshot
+
+
 @router.post("/settled-concept-sentinel/run")
 async def trigger_settled_concept_sentinel(
     request: Request,

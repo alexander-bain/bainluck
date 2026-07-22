@@ -1295,6 +1295,43 @@ def _strict_team_name_matches(user_team: str, candidate: str) -> bool:
     return False
 
 
+# #237 Item 3: a coherent probability field sums to ~1.0; mirrors event_soccer's
+# _FIELD_SUM_MAX. An award/prop field whose YES prices sum far past 100% is an
+# illiquid Kalshi independent-binary ladder (one YES market per player), not a
+# legible probability field — the "Your Teams' Odds" surface should not let one
+# crowd out a team's coherent odds_api championship field.
+_TEAM_ODDS_COHERENT_FIELD_SUM_MAX = 1.60
+
+
+def _is_illiquid_binary_field(source: str | None, field_prob_sum) -> bool:
+    """True for a Kalshi independent-binary award/prop field whose outcome
+    probabilities sum well past 100% (the overrounded, illiquid ladder class).
+    Source-scoped to Kalshi because odds_api fields are single coherent markets;
+    a missing/None sum fails open (treated as coherent)."""
+    if source != "kalshi" or field_prob_sum is None:
+        return False
+    try:
+        return float(field_prob_sum) > _TEAM_ODDS_COHERENT_FIELD_SUM_MAX
+    except (TypeError, ValueError):
+        return False
+
+
+def _prefer_coherent_team_items(per_team_items: dict[int, list[dict]]) -> None:
+    """#237 Item 3, in place: when a team has at least one coherent candidate, drop
+    its illiquid-binary ones (keyed on the private ``_illiquid_binary`` flag); keep
+    the illiquid ones only when that is ALL the team has, so a followed team is
+    never emptied. Strips the private flag from every surviving item afterward.
+    Both directions matter: illiquid Kalshi is suppressed when a coherent field
+    exists, and the coherent field always survives."""
+    for tid, tid_items in per_team_items.items():
+        coherent = [it for it in tid_items if not it.get("_illiquid_binary")]
+        if coherent and len(coherent) < len(tid_items):
+            per_team_items[tid] = coherent
+    for tid_items in per_team_items.values():
+        for it in tid_items:
+            it.pop("_illiquid_binary", None)
+
+
 async def _query_team_futures(
     team_ids: list[int],
     db: AsyncSession,
@@ -1449,6 +1486,11 @@ async def _query_team_futures(
         select(
             FuturesOutcome.market_id,
             func.count().label("outcome_total"),
+            # #237 Item 3: field probability sum — a coherent probability field sums
+            # to ~1.0; an illiquid Kalshi independent-binary award/prop ladder (player
+            # MVP / passing-yards YES markets) sums far past 100%. Used to prefer the
+            # legible odds_api field over the overrounded Kalshi noise.
+            func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
         )
         .group_by(FuturesOutcome.market_id)
         .subquery()
@@ -1470,7 +1512,7 @@ async def _query_team_futures(
         team_conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
 
     query1 = (
-        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"))
+        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"), outcome_count_sq.c.field_prob_sum)
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
         .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
@@ -1502,7 +1544,7 @@ async def _query_team_futures(
         award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
 
         query2 = (
-            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"))
+            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"), outcome_count_sq.c.field_prob_sum)
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
             .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
@@ -1590,7 +1632,7 @@ async def _query_team_futures(
     # can't starve another (the "Celtics shows 1 of several" truncation).
     per_team_items: dict[int, list[dict]] = {}
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
-    for outcome, market, outcome_total, mkt_sport_key in list(rows1) + list(rows2):
+    for outcome, market, outcome_total, mkt_sport_key, field_prob_sum in list(rows1) + list(rows2):
         # Skip if we already have an outcome from this market
         if market.id in seen_market_ids:
             continue
@@ -1623,7 +1665,17 @@ async def _query_team_futures(
             "matched_team": matched,
             "canonical_market_key": market.canonical_market_key,
             "season_year": season_year,
+            # #237 Item 3 (private, stripped before return): illiquid Kalshi
+            # independent-binary award/prop ladder whose field sums far past 100%.
+            "_illiquid_binary": _is_illiquid_binary_field(market.source, field_prob_sum),
         })
+
+    # #237 Item 3: prefer coherent fields. An illiquid Kalshi independent-binary
+    # award ladder (a player's MVP / passing-yards YES markets, field summing far
+    # past 100%) can carry a higher raw YES probability than the team's coherent
+    # odds_api championship/division outcome, so it sorts first and crowds the
+    # legible field out of the per-team bucket.
+    _prefer_coherent_team_items(per_team_items)
 
     # Round-robin fill: strongest team (by its top market) leads each round.
     items: list[dict] = []
