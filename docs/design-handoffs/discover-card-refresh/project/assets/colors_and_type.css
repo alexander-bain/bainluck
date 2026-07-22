@@ -1,0 +1,224 @@
+/**
+ * Bain Luck Design System — Core Tokens
+ * Light mode only. Sourced from frontend/app/globals.css + design-tokens.css + tailwind.config.ts.
+ */
+
+:root {
+  /* ── SURFACES ── */
+  --surface-deep: #F5F5F7;        /* page background */
+  --surface-card: #FFFFFF;        /* card fill */
+  --surface-elevated: #F0F0F2;    /* hover state, inset chip */
+  --surface-border: #E5E7EB;      /* 1px card & divider border */
+
+  /* ── TEXT ── */
+  --text-primary: #111827;        /* headlines, dominant team */
+  --text-secondary: #6B7280;      /* body, labels */
+  --text-muted: #9CA3AF;          /* tertiary, underdog */
+  --text-inverse: #F8FAFC;        /* on dark chips */
+
+  /* ── ACCENTS ── */
+  --accent-live: #22C55E;         /* live game indicator, pulse dot */
+  --accent-brand: #10B981;        /* primary brand, CTAs, active nav */
+  --accent-futures: #8B5CF6;      /* futures markets, progression */
+  --accent-warning: #F59E0B;      /* highlight label, leader mark */
+  --accent-danger: #EF4444;       /* negative movement, downgrade */
+
+  /* ── EI SEVERITY (Excitement Index) ── */
+  --ei-incredible: #EF4444;       /* 90+ */
+  --ei-must-watch: #EF4444;       /* 80+ */
+  --ei-exciting:   #F97316;       /* 70+ */
+  --ei-engaging:   #F97316;       /* 60+ */
+  --ei-competitive:#EAB308;       /* 50+ */
+  --ei-average:    #EAB308;       /* 40+ */
+  --ei-quiet:      #6B7280;       /* 25+ */
+  --ei-flat:       #4B5563;       /* <25 */
+
+  /* ── WIN PROB SOURCES ── */
+  --src-odds:       #F8FAFC;
+  --src-espn:       #F97316;
+  --src-stat-model: #A855F7;
+  --src-kalshi:     #22C55E;
+  --src-polymarket: #3B82F6;
+  --src-mlb:        #0D9488;
+
+  /* ── DYNAMIC TEAM COLORS (set per-component via teamColorStyle()) ── */
+  --team-home-primary:   107 114 128;
+  --team-home-secondary: 156 163 175;
+  --team-away-primary:   107 114 128;
+  --team-away-secondary: 156 163 175;
+
+  /* ── TYPOGRAPHY ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+
+  /* Semantic type tokens — match tailwind.config.ts */
+  --type-display-size: 48px;
+  --type-display-weight: 700;
+  --type-display-tracking: -0.02em;
+  --type-display-lh: 1.1;
+
+  --type-title-1-size: 28px;
+  --type-title-1-weight: 600;
+  --type-title-1-tracking: -0.01em;
+
+  --type-title-2-size: 22px;
+  --type-title-2-weight: 600;
+  --type-title-2-tracking: -0.01em;
+
+  --type-title-3-size: 18px;
+  --type-title-3-weight: 600;
+
+  --type-body-size: 16px;
+  --type-body-weight: 400;
+
+  --type-caption-size: 14px;
+  --type-caption-weight: 400;
+  --type-caption-tracking: 0.01em;
+
+  --type-micro-size: 12px;
+  --type-micro-weight: 500;
+  --type-micro-tracking: 0.02em;
+
+  --type-micro-xs-size: 10px;
+  --type-micro-xs-weight: 600;
+  --type-micro-xs-tracking: 0.04em;
+
+  /* Probability numerals (JetBrains Mono) */
+  --type-prob-hero-size: 36px;    /* event detail hero */
+  --type-prob-lg-size:   28px;    /* card headline number */
+  --type-prob-md-size:   20px;    /* leaderboard row */
+  --type-prob-sm-size:   16px;    /* inline probability */
+  --type-prob-weight:    700;
+  --type-prob-hero-tracking: -0.03em;
+  --type-prob-lg-tracking:   -0.02em;
+
+  /* ── SPACING (4px baseline) ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── RADII ── */
+  --radius-card: 10px;     /* signature card radius */
+  --radius-sm: 6px;        /* chip, small button */
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;    /* league chip, live badge */
+
+  /* ── ELEVATION ── */
+  --shadow-card:       0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+  --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+  --shadow-glow:       0 0 20px rgba(16, 185, 129, 0.15);
+  --shadow-tooltip:    0 8px 24px rgba(0,0,0,0.12);
+
+  /* ── MOTION ── */
+  --duration-instant: 100ms;
+  --duration-fast:    150ms;
+  --duration-base:    200ms;
+  --duration-slow:    300ms;
+  --duration-prob:    400ms;
+  --ease-standard:    cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out:         ease-out;
+
+  /* ── LAYOUT ── */
+  --max-content: 1200px;
+}
+
+/* ── SEMANTIC ELEMENT DEFAULTS ── */
+html, body {
+  font-family: var(--font-sans);
+  background: var(--surface-deep);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1 {
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-lh);
+}
+h2 {
+  font-size: var(--type-title-1-size);
+  font-weight: var(--type-title-1-weight);
+  letter-spacing: var(--type-title-1-tracking);
+  line-height: 1.2;
+}
+h3 {
+  font-size: var(--type-title-2-size);
+  font-weight: var(--type-title-2-weight);
+  letter-spacing: var(--type-title-2-tracking);
+  line-height: 1.25;
+}
+h4 {
+  font-size: var(--type-title-3-size);
+  font-weight: var(--type-title-3-weight);
+  line-height: 1.3;
+}
+p, body {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  line-height: 1.5;
+}
+small, .caption {
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-tracking);
+  line-height: 1.4;
+}
+.micro {
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-tracking);
+}
+.micro-xs {
+  font-size: var(--type-micro-xs-size);
+  font-weight: var(--type-micro-xs-weight);
+  letter-spacing: var(--type-micro-xs-tracking);
+  text-transform: uppercase;
+}
+
+/* Probability numerals — the signature scoreboard treatment */
+.prob, .prob-hero, .prob-lg, .prob-md, .prob-sm {
+  font-family: var(--font-mono);
+  font-weight: var(--type-prob-weight);
+  font-variant-numeric: tabular-nums;
+}
+.prob-hero { font-size: var(--type-prob-hero-size); letter-spacing: var(--type-prob-hero-tracking); line-height: 1; }
+.prob-lg   { font-size: var(--type-prob-lg-size);   letter-spacing: var(--type-prob-lg-tracking);   line-height: 1; }
+.prob-md   { font-size: var(--type-prob-md-size);   letter-spacing: -0.02em; line-height: 1; }
+.prob-sm   { font-size: var(--type-prob-sm-size);   letter-spacing: -0.01em; line-height: 1; }
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Card base */
+.bl-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  transition: background var(--duration-base) var(--ease-out),
+              box-shadow var(--duration-base) var(--ease-out),
+              transform var(--duration-base) var(--ease-out);
+}
+.bl-card:hover {
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-card-hover);
+  transform: scale(1.005);
+}
+
+/* Live pulse */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+.pulse-live { animation: pulse-live 2s ease-in-out infinite; }

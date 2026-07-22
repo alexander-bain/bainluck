@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="assets/fonts.css">
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<style>
+  html, body { margin: 0; background: #ECECEF; }
+  *, *::before, *::after { box-sizing: border-box; }
+  @keyframes bl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
+</helmet>
+
+<div style="background: #ECECEF; min-height: 100vh; font-family: var(--font-sans); color: var(--text-primary); padding: 0 0 96px;">
+
+  <!-- ░░ COVER ░░ -->
+  <div style="max-width: 1180px; margin: 0 auto; padding: 56px 40px 8px;">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 28px;">
+      <img src="assets/logo-mark.svg" width="34" height="34" alt="Bain Luck" style="display:block;">
+      <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.01em;">Bain Luck</span>
+      <span style="width:1px; height:18px; background:var(--surface-border); margin:0 4px;"></span>
+      <span style="font-size: 13px; color: var(--text-secondary);">Discover</span>
+    </div>
+    <h1 style="font-size: 46px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; margin: 0 0 18px; max-width: 760px;">Discover card system refresh</h1>
+    <p style="font-size: 18px; line-height: 1.5; color: var(--text-secondary); max-width: 680px; margin: 0 0 32px; text-wrap: pretty;">Five card types for the default prediction-market feed — one refined standard card, two refined games, and two new formats. Every state, laid out for review and handoff.</p>
+
+    <!-- design rules strip -->
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom: 14px;">
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);">Light mode only</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);"><span style="font-family:var(--font-mono); font-weight:700; color:var(--text-primary);">62%</span> JetBrains Mono numerals</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);">10px card radius</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);">No bounces · 400ms probability</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);">Dry wire-service voice</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-pill); padding:6px 12px; font-size:12px; font-weight:500; color:var(--text-secondary);">Web + SwiftUI parity</span>
+    </div>
+  </div>
+
+  <!-- ░░ LEGEND ░░ -->
+  <div style="max-width: 1180px; margin: 0 auto; padding: 28px 40px 0;">
+    <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:22px 24px; display:flex; flex-wrap:wrap; gap:40px;">
+      <div style="min-width:240px;">
+        <div style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px;">State key</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <span style="display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm); min-width:78px; text-align:center;">Default</span> resting feed state</span>
+          <span style="display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm); min-width:78px; text-align:center;">Pre-guess</span> awaiting the tap</span>
+          <span style="display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:2px 7px; border-radius:var(--radius-sm); min-width:78px; text-align:center;">Correct</span> calm confirm — not celebratory</span>
+          <span style="display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-danger); background:rgba(239,68,68,0.10); padding:2px 7px; border-radius:var(--radius-sm); min-width:78px; text-align:center;">Incorrect</span> factual, no penalty drama</span>
+          <span style="display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary);"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm); min-width:78px; text-align:center;">Resolved</span> market settled</span>
+        </div>
+      </div>
+      <div style="min-width:260px; flex:1;">
+        <div style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px;">Swipe &amp; tap coexistence</div>
+        <p style="font-size:13px; line-height:1.5; color:var(--text-secondary); margin:0 0 10px; max-width:420px;">Every card keeps two persistent thumb targets top-right for <span style="color:var(--text-primary);">more / less like this</span>. The full-card swipe reveals a colored action backdrop behind the card — so the horizontal swipe never competes with in-card tap targets on game cards.</p>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span style="display:inline-flex; align-items:center; gap:6px; background:rgba(16,185,129,0.12); color:var(--accent-brand); padding:5px 11px; border-radius:var(--radius-pill); font-size:12px; font-weight:600;">Swipe right · More like this</span>
+          <span style="display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.10); color:var(--accent-danger); padding:5px 11px; border-radius:var(--radius-pill); font-size:12px; font-weight:600;">Swipe left · Less like this</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ░░ 01 · STANDARD MARKET CARD ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:64px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">01</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">Standard market card</h2>
+      <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); background:var(--surface-elevated); padding:3px 9px; border-radius:var(--radius-pill);">Refine</span>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:660px; margin:14px 0 0; text-wrap:pretty;">The probability numeral and the 24h movement delta are the product; image and hook support them. Two imagery directions to A/B — shown neutrally, same data, different emphasis.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:30px; margin-top:30px; align-items:flex-start;">
+
+      <!-- A — image-led -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">A — image-led</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;" style-hover="box-shadow:var(--shadow-card-hover);">
+          <div style="position:relative; aspect-ratio:16/10; background:#1F2937; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+            <span style="font-size:58px; opacity:0.16;">🎬</span>
+            <span style="position:absolute; right:9px; bottom:6px; font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:rgba(255,255,255,0.4);">image_url</span>
+            <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22));"></div>
+            <span style="position:absolute; top:9px; left:9px; display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#fff; background:rgba(255,255,255,0.18); backdrop-filter:blur(4px); padding:4px 9px; border-radius:var(--radius-pill);">🎬 Entertainment</span>
+            <div style="position:absolute; top:8px; right:8px; display:flex; gap:4px;">
+              <span style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:var(--radius-pill); background:rgba(255,255,255,0.18); color:#fff; backdrop-filter:blur(4px);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"></path><path d="M15 5.88L14 10h5.83a2 2 0 011.92 2.56l-2.33 8A2 2 0 0117.5 22H4a2 2 0 01-2-2v-8a2 2 0 012-2h2.76a2 2 0 001.79-1.11L12 2a3.13 3.13 0 013 3.88z"></path></svg></span>
+              <span style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:var(--radius-pill); background:rgba(255,255,255,0.18); color:#fff; backdrop-filter:blur(4px);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"></path><path d="M9 18.12L10 14H4.17a2 2 0 01-1.92-2.56l2.33-8A2 2 0 016.5 2H20a2 2 0 012 2v8a2 2 0 01-2 2h-2.76a2 2 0 00-1.79 1.11L12 22a3.13 3.13 0 01-3-3.88z"></path></svg></span>
+            </div>
+            <div style="position:absolute; left:14px; bottom:11px;">
+              <div style="display:flex; align-items:flex-end; gap:8px;">
+                <span style="font-family:var(--font-mono); font-weight:700; font-size:38px; letter-spacing:-0.03em; line-height:0.9; color:#fff;">64%</span>
+                <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#34D399; padding-bottom:5px; white-space:nowrap;">↑ 2.4</span>
+              </div>
+              <div style="font-size:12px; font-weight:500; color:rgba(255,255,255,0.85); margin-top:3px;">Yes · opens above $150M</div>
+            </div>
+          </div>
+          <div style="padding:13px 14px 14px;">
+            <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:6px;">Dune: Part Three opens above $150M domestic</div>
+            <div style="font-size:13px; line-height:1.5; color:var(--text-secondary); margin-bottom:13px; text-wrap:pretty;">Up 2.4 pts today; tracking 4 pts ahead of Part Two's opening-weekend pace. <span style="color:var(--accent-brand); font-weight:600;">See more</span></div>
+            <div style="display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text-muted);">
+              <span style="white-space:nowrap;">$1.2M vol</span><span>·</span><span style="white-space:nowrap;">Resolves Mar 15</span>
+            </div>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Probability overlays the scrimmed image — the treatment from today's card. Movement rides alongside it; the LLM hook + <span style="color:var(--accent-brand); font-weight:600;">See more</span> sits below.</p>
+      </div>
+
+      <!-- B — data-pure -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">B — data-pure</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;" style-hover="box-shadow:var(--shadow-card-hover);">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+            <div style="width:38px; height:38px; border-radius:var(--radius-md); background:rgba(245,158,11,0.14); display:flex; align-items:center; justify-content:center; font-size:19px;">🎬</div>
+            <div style="line-height:1.2;">
+              <div style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Entertainment</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Resolves Mar 15</div>
+            </div>
+            <div style="margin-left:auto; display:flex; gap:4px;">
+              <span style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:var(--radius-pill); color:var(--text-muted);" style-hover="color:var(--accent-brand); background:rgba(16,185,129,0.10);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"></path><path d="M15 5.88L14 10h5.83a2 2 0 011.92 2.56l-2.33 8A2 2 0 0117.5 22H4a2 2 0 01-2-2v-8a2 2 0 012-2h2.76a2 2 0 001.79-1.11L12 2a3.13 3.13 0 013 3.88z"></path></svg></span>
+              <span style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:var(--radius-pill); color:var(--text-muted);" style-hover="color:var(--accent-danger); background:rgba(239,68,68,0.08);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"></path><path d="M9 18.12L10 14H4.17a2 2 0 01-1.92-2.56l2.33-8A2 2 0 016.5 2H20a2 2 0 012 2v8a2 2 0 01-2 2h-2.76a2 2 0 00-1.79 1.11L12 22a3.13 3.13 0 01-3-3.88z"></path></svg></span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:flex-end; gap:12px; margin-bottom:12px;">
+            <span class="prob-hero" style="color:var(--text-primary);">64%</span>
+            <div style="padding-bottom:5px;">
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--accent-live); white-space:nowrap;">↑ 2.4</div>
+              <div style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); margin-top:2px;">24h</div>
+            </div>
+          </div>
+          <div style="display:flex; height:7px; gap:2px; margin-bottom:14px;">
+            <div style="width:64%; background:var(--accent-brand); border-radius:var(--radius-pill); box-shadow:inset 0 1px 2px rgba(0,0,0,0.1);"></div>
+            <div style="width:36%; background:var(--text-muted); opacity:0.3; border-radius:var(--radius-pill);"></div>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:6px;">Dune: Part Three opens above $150M domestic</div>
+          <div style="font-size:13px; line-height:1.5; color:var(--text-secondary); text-wrap:pretty; margin-bottom:11px;">Up 2.4 pts today; tracking 4 pts ahead of Part Two's pace. <span style="color:var(--accent-brand); font-weight:600;">See more</span></div>
+          <div style="font-size:11px; color:var(--text-muted);">$1.2M vol · 24h</div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Probability is the headline at 36px. Entity thumbnail replaces the photo — honors "no stock photography." Same LLM hook + <span style="color:var(--accent-brand); font-weight:600;">See more</span>.</p>
+      </div>
+
+      <!-- Swipe affordance demo -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Gesture</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Swipe-reveal backdrop</span>
+        </div>
+        <!-- swipe right -->
+        <div style="position:relative; border-radius:var(--radius-card); overflow:hidden;">
+          <div style="position:absolute; inset:0; background:rgba(16,185,129,0.12); display:flex; align-items:center; padding-left:20px; gap:10px; border-radius:var(--radius-card);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"></path><path d="M15 5.88L14 10h5.83a2 2 0 011.92 2.56l-2.33 8A2 2 0 0117.5 22H4a2 2 0 01-2-2v-8a2 2 0 012-2h2.76a2 2 0 001.79-1.11L12 2a3.13 3.13 0 013 3.88z"></path></svg>
+            <span style="font-size:13px; font-weight:600; color:var(--accent-brand);">More like this</span>
+          </div>
+          <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card-hover); padding:14px; transform:translateX(96px);">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏈 NFL</span></div>
+            <div style="display:flex; align-items:flex-end; gap:10px;"><span class="prob-lg" style="color:var(--text-primary);">71%</span><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-danger); padding-bottom:3px; white-space:nowrap;">↓ 1.1</span></div>
+            <div style="font-size:13px; font-weight:500; margin-top:6px;">Chiefs win the AFC West</div>
+          </div>
+        </div>
+        <!-- swipe left -->
+        <div style="position:relative; border-radius:var(--radius-card); overflow:hidden;">
+          <div style="position:absolute; inset:0; background:rgba(239,68,68,0.10); display:flex; align-items:center; justify-content:flex-end; padding-right:20px; gap:10px; border-radius:var(--radius-card);">
+            <span style="font-size:13px; font-weight:600; color:var(--accent-danger);">Less like this</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"></path><path d="M9 18.12L10 14H4.17a2 2 0 01-1.92-2.56l2.33-8A2 2 0 016.5 2H20a2 2 0 012 2v8a2 2 0 01-2 2h-2.76a2 2 0 00-1.79 1.11L12 22a3.13 3.13 0 01-3-3.88z"></path></svg>
+          </div>
+          <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card-hover); padding:14px; transform:translateX(-96px);">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">⛳ Golf</span></div>
+            <div style="display:flex; align-items:flex-end; gap:10px;"><span class="prob-lg" style="color:var(--text-primary);">19%</span><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-live); padding-bottom:3px; white-space:nowrap;">↑ 0.6</span></div>
+            <div style="font-size:13px; font-weight:500; margin-top:6px;">Scheffler wins the Masters</div>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">The whole card translates to reveal the action color behind it — the same gesture works identically on game cards, since the in-card tap targets never overlap the horizontal drag.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ░░ 02 · HIGHER / LOWER ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:72px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">02</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">Higher / Lower</h2>
+      <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); background:var(--surface-elevated); padding:3px 9px; border-radius:var(--radius-pill);">Refine</span>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:660px; margin:14px 0 0; text-wrap:pretty;">Guess whether the true probability sits higher or lower than the opening line. The reveal slides the true value onto the same track as the anchor; streak feedback is felt, never celebrated.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:30px; margin-top:30px; align-items:flex-start;">
+
+      <!-- PRE-GUESS -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Pre-guess</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:4px 10px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">4</span>
+              <span style="width:1px; height:11px; background:var(--surface-border);"></span>
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Best</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-muted);">11</span>
+            </span>
+            <span style="margin-left:auto; font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏀 NBA</span>
+          </div>
+          <div style="font-size:16px; font-weight:600; line-height:1.3; margin-bottom:4px;">Lakers make the 2026 playoffs</div>
+          <div style="font-size:13px; color:var(--text-secondary); margin-bottom:20px;">Higher or lower than the opening line?</div>
+
+          <div style="margin-bottom:22px;">
+            <div style="position:relative; height:36px;">
+              <div style="position:absolute; left:45%; top:0; transform:translateX(-50%); font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary); white-space:nowrap;">45%</div>
+              <div style="position:absolute; left:45%; top:20px; transform:translateX(-50%); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); white-space:nowrap;">Opened</div>
+            </div>
+            <div style="position:relative; height:8px; background:var(--surface-elevated); border-radius:var(--radius-pill);">
+              <div style="position:absolute; left:45%; top:-4px; bottom:-4px; width:2px; background:var(--text-primary);"></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px;">
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--text-secondary);" style-hover="background:var(--surface-elevated); color:var(--text-primary);">↓ Lower</span>
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--text-secondary);" style-hover="background:var(--surface-elevated); color:var(--text-primary);">↑ Higher</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Anchor sits on a 0–100 track. The true value is hidden until a guess lands.</p>
+      </div>
+
+      <!-- REVEALED — CORRECT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:2px 7px; border-radius:var(--radius-sm);">Revealed · correct</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px; border-left:3px solid var(--accent-brand);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; background:rgba(16,185,129,0.12); border-radius:var(--radius-pill); padding:4px 10px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-brand);">5</span>
+              <span style="width:1px; height:11px; background:rgba(16,185,129,0.3);"></span>
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); opacity:0.7;">Best</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-brand); opacity:0.7;">11</span>
+            </span>
+            <span style="margin-left:auto; font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏀 NBA</span>
+          </div>
+          <div style="font-size:16px; font-weight:600; line-height:1.3; margin-bottom:4px;">Lakers make the 2026 playoffs</div>
+          <div style="font-size:13px; color:var(--accent-brand); font-weight:500; margin-bottom:20px;">Higher — correct</div>
+
+          <div style="margin-bottom:18px;">
+            <div style="position:relative; height:36px;">
+              <div style="position:absolute; left:45%; top:0; transform:translateX(-50%); font-family:var(--font-mono); font-weight:500; font-size:12px; color:var(--text-muted); white-space:nowrap;">45%</div>
+              <div style="position:absolute; left:45%; top:19px; transform:translateX(-50%); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); white-space:nowrap;">Opened</div>
+              <div style="position:absolute; left:58%; top:-2px; transform:translateX(-50%); font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--accent-brand); white-space:nowrap;">58%</div>
+              <div style="position:absolute; left:58%; top:21px; transform:translateX(-50%); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); white-space:nowrap;">True</div>
+            </div>
+            <div style="position:relative; height:8px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;">
+              <div style="position:absolute; left:0; top:0; bottom:0; width:58%; background:var(--accent-brand); border-radius:var(--radius-pill);"></div>
+            </div>
+            <div style="position:relative; height:0;">
+              <div style="position:absolute; left:45%; top:-12px; width:2px; height:16px; background:var(--text-muted);"></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px;">
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--text-muted); opacity:0.5;">↓ Lower</span>
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--accent-brand); background:rgba(16,185,129,0.10); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--accent-brand);">↑ Higher ✓</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">True value slides in over 400ms and the bar fills with it. Confirmation is a quiet left-border and a check — no confetti, no sound.</p>
+      </div>
+
+      <!-- REVEALED — INCORRECT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-danger); background:rgba(239,68,68,0.10); padding:2px 7px; border-radius:var(--radius-sm);">Revealed · incorrect</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px; border-left:3px solid var(--accent-danger);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:4px 10px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-secondary);">0</span>
+              <span style="width:1px; height:11px; background:var(--surface-border);"></span>
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Best</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-muted);">11</span>
+            </span>
+            <span style="margin-left:auto; font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏒 NHL</span>
+          </div>
+          <div style="font-size:16px; font-weight:600; line-height:1.3; margin-bottom:4px;">Oilers win the Pacific Division</div>
+          <div style="font-size:13px; color:var(--text-secondary); margin-bottom:20px;">You guessed higher · true value was lower</div>
+
+          <div style="margin-bottom:18px;">
+            <div style="position:relative; height:36px;">
+              <div style="position:absolute; left:52%; top:0; transform:translateX(-50%); font-family:var(--font-mono); font-weight:500; font-size:12px; color:var(--text-muted); white-space:nowrap;">52%</div>
+              <div style="position:absolute; left:52%; top:19px; transform:translateX(-50%); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); white-space:nowrap;">Opened</div>
+              <div style="position:absolute; left:39%; top:-2px; transform:translateX(-50%); font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--text-primary); white-space:nowrap;">39%</div>
+              <div style="position:absolute; left:39%; top:21px; transform:translateX(-50%); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); white-space:nowrap;">True</div>
+            </div>
+            <div style="position:relative; height:8px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;">
+              <div style="position:absolute; left:0; top:0; bottom:0; width:39%; background:var(--text-muted); border-radius:var(--radius-pill);"></div>
+            </div>
+            <div style="position:relative; height:0;">
+              <div style="position:absolute; left:52%; top:-12px; width:2px; height:16px; background:var(--text-muted);"></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px;">
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--text-secondary);">↓ Lower</span>
+            <span style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--accent-danger); background:rgba(239,68,68,0.07); border-radius:var(--radius-md); padding:12px; font-weight:600; font-size:14px; color:var(--accent-danger);">↑ Higher ✕</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Streak resets to 0; best is preserved. The wrong choice is marked factually — the correct direction isn't scolded or animated away.</p>
+      </div>
+
+      <!-- ALT — split-tap -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Alt layout</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Split-tap, no buttons</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+          <div style="padding:14px 16px 12px;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="display:inline-flex; align-items:center; gap:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:4px 10px;">
+                <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span>
+                <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">4</span>
+              </span>
+              <span style="margin-left:auto; font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">⚾ MLB</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:center; gap:8px; padding:14px; background:rgba(16,185,129,0.06); border-bottom:1px solid var(--surface-border); color:var(--accent-brand); font-weight:600; font-size:14px;" style-hover="background:rgba(16,185,129,0.12);">↑ Higher</div>
+          <div style="text-align:center; padding:16px;">
+            <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:8px;">Dodgers win 95+ games</div>
+            <div style="display:inline-flex; align-items:baseline; gap:6px;"><span style="font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Opened</span><span style="font-family:var(--font-mono); font-weight:700; font-size:20px; color:var(--text-primary);">61%</span></div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:center; gap:8px; padding:14px; background:var(--surface-elevated); border-top:1px solid var(--surface-border); color:var(--text-secondary); font-weight:600; font-size:14px;" style-hover="background:rgba(239,68,68,0.07); color:var(--accent-danger);">↓ Lower</div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Tap the top or bottom half — larger thumb targets, anchor centered. Same reveal, fewer pixels of chrome.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ░░ 03 · WHICH IS HIGHER? DUEL ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:72px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">03</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">Which is higher? &mdash; duel</h2>
+      <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:3px 9px; border-radius:var(--radius-pill);">New</span>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:660px; margin:14px 0 0; text-wrap:pretty;">Two unrelated markets from different categories. Tap the one you think is more likely. Pairings only generate when the gap is ≥10 points, so there's always a defensibly correct answer — the user just experiences a fair question. The juxtaposition carries the comedy; the copy stays dry.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:30px; margin-top:30px; align-items:flex-start;">
+
+      <!-- PRE-GUESS -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-secondary); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Pre-guess</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+          <div style="display:flex; align-items:center; gap:6px; padding:14px 16px 12px;">
+            <span style="font-size:13px; font-weight:600; white-space:nowrap;">Which is higher?</span>
+            <span style="margin-left:auto; display:inline-flex; align-items:center; gap:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:3px 9px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--text-primary);">7</span>
+            </span>
+          </div>
+          <div style="display:flex; border-top:1px solid var(--surface-border); position:relative;">
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px;" style-hover="background:var(--surface-elevated);">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎤 Music</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(245,158,11,0.14); display:flex; align-items:center; justify-content:center; font-size:22px;">🎤</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3;">Taylor Swift announces engagement by July</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:18px; color:var(--text-muted); background:var(--surface-elevated); border:1px dashed var(--surface-border); border-radius:var(--radius-sm); padding:3px 14px;">?</div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px; border-left:1px solid var(--surface-border);" style-hover="background:var(--surface-elevated);">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏈 NFL</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(59,130,246,0.12); display:flex; align-items:center; justify-content:center; font-size:22px;">🏈</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3;">Seahawks win Super Bowl LXI</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:18px; color:var(--text-muted); background:var(--surface-elevated); border:1px dashed var(--surface-border); border-radius:var(--radius-sm); padding:3px 14px;">?</div>
+            </div>
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:30px; height:30px; border-radius:var(--radius-pill); background:var(--surface-card); border:1px solid var(--surface-border); display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; letter-spacing:0.04em; color:var(--text-muted); box-shadow:var(--shadow-card);">VS</div>
+          </div>
+          <div style="text-align:center; padding:11px; font-size:12px; color:var(--text-secondary); background:var(--surface-elevated); border-top:1px solid var(--surface-border);">Tap the more likely market</div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Both probabilities hidden. Category emoji + entity image set up the absurd pairing before any numbers appear.</p>
+      </div>
+
+      <!-- REVEALED — CORRECT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:2px 7px; border-radius:var(--radius-sm);">Revealed · correct</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+          <div style="display:flex; align-items:center; gap:6px; padding:14px 16px 12px;">
+            <span style="font-size:13px; font-weight:600; white-space:nowrap;">Which is higher?</span>
+            <span style="margin-left:auto; display:inline-flex; align-items:center; gap:7px; background:rgba(16,185,129,0.12); border-radius:var(--radius-pill); padding:3px 9px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--accent-brand);">8</span>
+            </span>
+          </div>
+          <div style="display:flex; border-top:1px solid var(--surface-border); position:relative;">
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px; background:rgba(16,185,129,0.06); box-shadow:inset 0 0 0 2px var(--accent-brand);">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎤 Music</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(245,158,11,0.14); display:flex; align-items:center; justify-content:center; font-size:22px;">🎤</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3;">Taylor Swift announces engagement by July</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:24px; color:var(--accent-brand); letter-spacing:-0.02em;">41%</div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px; border-left:1px solid var(--surface-border);">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏈 NFL</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(59,130,246,0.12); display:flex; align-items:center; justify-content:center; font-size:22px; opacity:0.6;">🏈</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3; color:var(--text-secondary);">Seahawks win Super Bowl LXI</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:24px; color:var(--text-muted); letter-spacing:-0.02em;">13%</div>
+            </div>
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:4px 10px; border-radius:var(--radius-pill); background:var(--text-primary); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--text-inverse); white-space:nowrap; box-shadow:var(--shadow-card);">28 pts</div>
+          </div>
+          <div style="text-align:center; padding:11px; font-size:12px; font-weight:500; color:var(--accent-brand); background:rgba(16,185,129,0.06); border-top:1px solid var(--surface-border);">Correct · 28 pts apart</div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">Both numerals animate in over 400ms. The gap is stated plainly; the picked side gets a quiet emerald ring. Feeds the same streak as Higher/Lower.</p>
+      </div>
+
+      <!-- REVEALED — INCORRECT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:340px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-danger); background:rgba(239,68,68,0.10); padding:2px 7px; border-radius:var(--radius-sm);">Revealed · incorrect</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+          <div style="display:flex; align-items:center; gap:6px; padding:14px 16px 12px;">
+            <span style="font-size:13px; font-weight:600; white-space:nowrap;">Which is higher?</span>
+            <span style="margin-left:auto; display:inline-flex; align-items:center; gap:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:3px 9px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span>
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--text-secondary);">0</span>
+            </span>
+          </div>
+          <div style="display:flex; border-top:1px solid var(--surface-border); position:relative;">
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px;">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏛 Politics</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(59,130,246,0.12); display:flex; align-items:center; justify-content:center; font-size:22px;">🏛</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3;">Powell still Fed chair on Jan 1</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:24px; color:var(--text-primary); letter-spacing:-0.02em;">71%</div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px 12px 16px; gap:9px; border-left:1px solid var(--surface-border); background:rgba(239,68,68,0.05); box-shadow:inset 0 0 0 2px var(--accent-danger);">
+              <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎮 Gaming</span>
+              <div style="width:46px; height:46px; border-radius:var(--radius-md); background:rgba(139,92,246,0.14); display:flex; align-items:center; justify-content:center; font-size:22px;">🎮</div>
+              <div style="font-size:12.5px; font-weight:600; line-height:1.3;">GTA 6 ships in 2026</div>
+              <div style="font-family:var(--font-mono); font-weight:700; font-size:24px; color:var(--accent-danger); letter-spacing:-0.02em;">44%</div>
+            </div>
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:4px 10px; border-radius:var(--radius-pill); background:var(--text-primary); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--text-inverse); white-space:nowrap; box-shadow:var(--shadow-card);">27 pts</div>
+          </div>
+          <div style="text-align:center; padding:11px; font-size:12px; font-weight:500; color:var(--text-secondary); background:rgba(239,68,68,0.05); border-top:1px solid var(--surface-border);">Powell was higher · 27 pts apart</div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:320px;">The picked side rings red, the true-higher side stays neutral with its number. Framed as a fact, not a loss.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ░░ 04 · HEAT MAP ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:72px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">04</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">Heat map</h2>
+      <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:3px 9px; border-radius:var(--radius-pill);">New format</span>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:680px; margin:14px 0 0; text-wrap:pretty;">For threshold ladders — families of binary markets on one entity that differ only by threshold. 3–8 cells; probability drives emerald intensity, so you read at a glance where belief crosses 50%. Thresholds ascend left→right; intensity fades with them.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:30px; margin-top:30px; align-items:flex-start;">
+
+      <!-- DEFAULT — movie RT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:360px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">5 cells</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎬 Entertainment</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">Resolves Mar 16</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:16px;">Dune: Part Three — Rotten Tomatoes score</div>
+          <div style="display:flex; gap:3px;">
+            <div style="flex:1; height:56px; background:#10B981; border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">92<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.76); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">81<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.52); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">64<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.26); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary);">38<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.11); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">15<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+          </div>
+          <div style="display:flex; gap:3px; margin-top:7px;">
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥70</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥75</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥80</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥85</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥90</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--surface-border);">
+            <span style="font-size:12px; color:var(--text-secondary);">Above 50% through</span>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-brand);">≥80</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">$840K vol</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:340px;">Each cell is its own binary market. The fade shows where conviction drops — the strip "believes" ≥80.</p>
+      </div>
+
+      <!-- RESOLVED — movie RT -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:360px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Resolved</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Final 82</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎬 Entertainment</span>
+            <span style="margin-left:auto; font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Resolved</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:16px;">Dune: Part Three — Rotten Tomatoes score</div>
+          <div style="display:flex; gap:3px;">
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.55); border-radius:var(--radius-sm); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">92<span style="font-size:0.6em; font-weight:700;">%</span></span><span style="font-size:11px; color:#fff;">✓</span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.55); border-radius:var(--radius-sm); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">81<span style="font-size:0.6em; font-weight:700;">%</span></span><span style="font-size:11px; color:#fff;">✓</span></div>
+            <div style="flex:1; height:56px; background:#10B981; border-radius:var(--radius-sm); box-shadow:0 0 0 2px var(--accent-brand), var(--shadow-glow); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">64<span style="font-size:0.6em; font-weight:700;">%</span></span><span style="font-size:11px; color:#fff;">✓</span></div>
+            <div style="flex:1; height:56px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-muted);">38<span style="font-size:0.6em; font-weight:700;">%</span></span><span style="font-size:11px; color:var(--text-muted);">✕</span></div>
+            <div style="flex:1; height:56px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-muted);">15<span style="font-size:0.6em; font-weight:700;">%</span></span><span style="font-size:11px; color:var(--text-muted);">✕</span></div>
+          </div>
+          <div style="display:flex; gap:3px; margin-top:7px;">
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥70</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥75</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--accent-brand); font-weight:700;">≥80</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">≥85</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">≥90</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--surface-border);">
+            <span style="font-size:12px; color:var(--text-secondary);">Final score</span>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary);">82</span>
+            <span style="font-size:12px; color:var(--text-secondary);">— cleared ≥80</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:340px;">YES cells keep their fill with a check; missed thresholds gray out. The landing cell gets the emerald ring + glow.</p>
+      </div>
+
+      <!-- DEFAULT — Fed rate -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:360px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Economics</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">📈 Economics</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">Resolves Dec 31</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:16px;">Fed funds rate at year-end (upper bound)</div>
+          <div style="display:flex; gap:3px;">
+            <div style="flex:1; height:56px; background:#10B981; border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">95<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.78); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">82<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.44); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary);">54<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.17); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">23<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.07); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">8<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+          </div>
+          <div style="display:flex; gap:3px; margin-top:7px;">
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary);">≥4.00</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary);">≥4.25</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary);">≥4.50</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary);">≥4.75</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary);">≥5.00</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--surface-border);">
+            <span style="font-size:12px; color:var(--text-secondary);">Above 50% through</span>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-brand);">≥4.50%</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">$3.1M vol</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:340px;">Same strip, numeric thresholds. The 54% cell is the knife-edge — visibly mid-tone.</p>
+      </div>
+
+      <!-- DEFAULT — temperature, 4 cells -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:360px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">4 cells</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">⛅ Weather</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">Resolves Aug 1</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:16px;">Phoenix July average high temperature</div>
+          <div style="display:flex; gap:3px;">
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.9); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">88<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.56); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:#fff;">67<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.28); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary);">41<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+            <div style="flex:1; height:56px; background:rgba(16,185,129,0.12); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">19<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+          </div>
+          <div style="display:flex; gap:3px; margin-top:7px;">
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥105°</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥108°</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥110°</div>
+            <div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);">≥112°</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--surface-border);">
+            <span style="font-size:12px; color:var(--text-secondary);">Above 50% through</span>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-brand);">≥108°</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">$420K vol</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:340px;">Fewer cells widen the bands — the format holds from 3 up to 8 thresholds.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ░░ 05 · COMPARISON ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:72px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">05</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">Comparison</h2>
+      <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--accent-brand); background:rgba(16,185,129,0.12); padding:3px 9px; border-radius:var(--radius-pill);">New format</span>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:700px; margin:14px 0 0; text-wrap:pretty;">A themed set of related markets, lined up so you can compare entities at a glance — which film scores highest, which company lists first, which city runs hottest. Two layouts: a ranked leaderboard, and a heat grid that turns a family of threshold markets into a comparison matrix.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:30px; margin-top:30px; align-items:flex-start;">
+
+      <!-- LEADERBOARD -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:360px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Leaderboard</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">💼 Business</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">Resolves Dec 31</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:6px;">Next to IPO — probability of listing in 2026</div>
+          <div style="font-size:13px; line-height:1.5; color:var(--text-secondary); margin-bottom:14px; text-wrap:pretty;">Stripe up 6 pts on funding-round reports; four names now above 40%. <span style="color:var(--accent-brand); font-weight:600;">See more</span></div>
+
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--surface-border);">
+            <span style="flex:1; font-size:13px; font-weight:600; color:var(--text-primary);">Stripe</span>
+            <div style="width:120px; height:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;"><div style="width:72%; height:100%; background:var(--accent-brand); border-radius:var(--radius-pill);"></div></div>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary); width:36px; text-align:right;">72%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--surface-border);">
+            <span style="flex:1; font-size:13px; font-weight:500; color:var(--text-primary);">Databricks</span>
+            <div style="width:120px; height:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;"><div style="width:65%; height:100%; background:var(--accent-brand); border-radius:var(--radius-pill);"></div></div>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-primary); width:36px; text-align:right;">65%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--surface-border);">
+            <span style="flex:1; font-size:13px; font-weight:500; color:var(--text-secondary);">Discord</span>
+            <div style="width:120px; height:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;"><div style="width:41%; height:100%; background:var(--accent-brand); opacity:0.55; border-radius:var(--radius-pill);"></div></div>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-secondary); width:36px; text-align:right;">41%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--surface-border);">
+            <span style="flex:1; font-size:13px; font-weight:500; color:var(--text-secondary);">Canva</span>
+            <div style="width:120px; height:7px; background:var(--surface-elevated); border-radius:var(--radius-pill); overflow:hidden;"><div style="width:33%; height:100%; background:var(--accent-brand); opacity:0.55; border-radius:var(--radius-pill);"></div></div>
+            <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-secondary); width:36px; text-align:right;">33%</span>
+          </div>
+          <div style="padding-top:10px; border-top:1px solid var(--surface-border); display:flex; align-items:center;">
+            <span style="font-size:12px; font-weight:600; color:var(--accent-brand);">Show more</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">9 markets · $2.4M vol</span>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:340px;">Each row is its own market, ranked. The pattern from today's card — name, bar, probability — applied to a theme. <span style="color:var(--accent-brand); font-weight:600;">See more</span> + Show more both present.</p>
+      </div>
+
+      <!-- HEAT GRID -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:392px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Default</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Heat grid · entities × thresholds</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎬 Entertainment</span>
+            <span style="margin-left:auto; font-size:11px; color:var(--text-muted);">Resolves Mar–Jun</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:6px;">2026 prestige films — Rotten Tomatoes score</div>
+          <div style="font-size:13px; line-height:1.5; color:var(--text-secondary); margin-bottom:14px; text-wrap:pretty;">The Odyssey leads critics' models; four films in contention. <span style="color:var(--accent-brand); font-weight:600;">See more</span></div>
+          <div style="display:flex; gap:3px; margin-bottom:5px;"><span style="width:116px; flex-shrink:0;"></span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥70</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥80</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥90</span></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">The Odyssey</span><div style="flex:1; height:40px; background:rgba(16,185,129,0.95); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">96<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.8); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">88<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.46); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">61<span style="font-size:0.6em; font-weight:700;">%</span></span></div></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">Dune: Part Three</span><div style="flex:1; height:40px; background:rgba(16,185,129,0.88); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">92<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.5); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">64<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.16); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">22<span style="font-size:0.6em; font-weight:700;">%</span></span></div></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">Wicked: For Good</span><div style="flex:1; height:40px; background:rgba(16,185,129,0.72); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">81<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.32); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">47<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.1); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">12<span style="font-size:0.6em; font-weight:700;">%</span></span></div></div>
+          <div style="display:flex; align-items:center; gap:3px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">Avatar: Fire &amp; Ash</span><div style="flex:1; height:40px; background:rgba(16,185,129,0.6); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:#fff;">74<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.26); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">38<span style="font-size:0.6em; font-weight:700;">%</span></span></div><div style="flex:1; height:40px; background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">9<span style="font-size:0.6em; font-weight:700;">%</span></span></div></div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:372px;">Scan a column to compare films at one threshold; scan a row for a film's whole curve. The heat map doing comparison work — exactly the Rotten Tomatoes case.</p>
+      </div>
+
+      <!-- HEAT GRID — RESOLVED -->
+      <div style="display:flex; flex-direction:column; gap:11px; width:392px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Resolved</span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Scores in</span>
+        </div>
+        <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:16px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎬 Entertainment</span>
+            <span style="margin-left:auto; font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted); background:var(--surface-elevated); padding:2px 7px; border-radius:var(--radius-sm);">Resolved</span>
+          </div>
+          <div style="font-size:15px; font-weight:600; line-height:1.3; margin-bottom:14px;">2026 prestige films — Rotten Tomatoes score</div>
+          <div style="display:flex; gap:3px; margin-bottom:5px;"><span style="width:116px; flex-shrink:0;"></span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥70</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥80</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">≥90</span><span style="width:42px; flex-shrink:0; text-align:right; font-family:var(--font-mono); font-size:10px; color:var(--text-muted);">Final</span></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">The Odyssey</span><div style="flex:1; height:40px; background:var(--accent-brand); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px;">✓</div><div style="flex:1; height:40px; background:var(--accent-brand); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px;">✓</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><span style="width:42px; flex-shrink:0; text-align:right; font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">89</span></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">Dune: Part Three</span><div style="flex:1; height:40px; background:var(--accent-brand); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px;">✓</div><div style="flex:1; height:40px; background:var(--accent-brand); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px;">✓</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><span style="width:42px; flex-shrink:0; text-align:right; font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">82</span></div>
+          <div style="display:flex; align-items:center; gap:3px; margin-bottom:4px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-primary);">Wicked: For Good</span><div style="flex:1; height:40px; background:var(--accent-brand); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px;">✓</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><span style="width:42px; flex-shrink:0; text-align:right; font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-primary);">71</span></div>
+          <div style="display:flex; align-items:center; gap:3px;"><span style="width:116px; flex-shrink:0; font-size:12.5px; font-weight:600; color:var(--text-secondary);">Avatar: Fire &amp; Ash</span><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><div style="flex:1; height:40px; background:var(--surface-elevated); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:13px;">✕</div><span style="width:42px; flex-shrink:0; text-align:right; font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--text-secondary);">64</span></div>
+        </div>
+        <p style="font-size:12px; line-height:1.5; color:var(--text-secondary); margin:0; max-width:372px;">On resolution each cell flips to its YES/NO outcome and the final score lands on the right — the grid becomes a scorecard.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ░░ 06 · ANNOTATED FEED ░░ -->
+  <div style="max-width:1180px; margin:0 auto; padding:80px 40px 0;">
+    <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;">
+      <span style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--text-muted);">06</span>
+      <h2 style="font-size:26px; font-weight:600; letter-spacing:-0.01em; margin:0;">The feed, in sequence</h2>
+    </div>
+    <p style="font-size:15px; line-height:1.55; color:var(--text-secondary); max-width:680px; margin:14px 0 0; text-wrap:pretty;">One column, five card types interleaved. Ranking logic is out of scope — this shows the visual rhythm and that game cards coexist with markets. Thumbs persist on every card; the swipe gesture is identical throughout.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:44px; margin-top:34px; align-items:flex-start;">
+
+      <!-- PHONE -->
+      <div style="width:392px; background:#0F172A; border-radius:34px; padding:10px; box-shadow:0 24px 70px rgba(0,0,0,0.18);">
+        <div style="background:var(--surface-deep); border-radius:26px; overflow:hidden;">
+          <!-- status bar -->
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 22px 5px; background:var(--surface-card);">
+            <span style="font-size:12px; font-weight:600; color:var(--text-primary); font-family:var(--font-mono);">9:41</span>
+            <div style="display:flex; gap:5px; align-items:center; color:var(--text-primary);">
+              <span style="font-size:10px;">▮▮▮</span><span style="font-size:11px;">📶</span><span style="font-size:11px;">🔋</span>
+            </div>
+          </div>
+          <!-- header -->
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 16px 10px; background:var(--surface-card); border-bottom:1px solid var(--surface-border);">
+            <img src="assets/logo-mark.svg" width="22" height="22" alt="">
+            <span style="font-size:15px; font-weight:700; letter-spacing:-0.01em;">Discover</span>
+            <span style="margin-left:auto; width:30px; height:30px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; color:var(--text-secondary);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg></span>
+          </div>
+          <!-- category chips -->
+          <div style="display:flex; gap:6px; padding:10px 16px; background:var(--surface-card); border-bottom:1px solid var(--surface-border); overflow:hidden;">
+            <span style="white-space:nowrap; font-size:12px; font-weight:600; color:var(--text-inverse); background:var(--text-primary); padding:5px 12px; border-radius:var(--radius-pill);">For you</span>
+            <span style="white-space:nowrap; font-size:12px; font-weight:500; color:var(--text-secondary); background:var(--surface-elevated); padding:5px 12px; border-radius:var(--radius-pill);">🏛 Politics</span>
+            <span style="white-space:nowrap; font-size:12px; font-weight:500; color:var(--text-secondary); background:var(--surface-elevated); padding:5px 12px; border-radius:var(--radius-pill);">🏈 NFL</span>
+            <span style="white-space:nowrap; font-size:12px; font-weight:500; color:var(--text-secondary); background:var(--surface-elevated); padding:5px 12px; border-radius:var(--radius-pill);">📈 Econ</span>
+          </div>
+
+          <!-- feed -->
+          <div style="padding:12px; display:flex; flex-direction:column; gap:12px;">
+
+            <!-- 1 · standard data-pure -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                <span style="width:20px; height:20px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">1</span>
+                <div style="width:30px; height:30px; border-radius:var(--radius-sm); background:rgba(245,158,11,0.14); display:flex; align-items:center; justify-content:center; font-size:15px;">🎬</div>
+                <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Entertainment</span>
+                <div style="margin-left:auto; display:flex; gap:2px; color:var(--text-muted);">
+                  <span style="width:24px; height:24px; display:flex; align-items:center; justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"></path><path d="M15 5.88L14 10h5.83a2 2 0 011.92 2.56l-2.33 8A2 2 0 0117.5 22H4a2 2 0 01-2-2v-8a2 2 0 012-2h2.76a2 2 0 001.79-1.11L12 2a3.13 3.13 0 013 3.88z"></path></svg></span>
+                  <span style="width:24px; height:24px; display:flex; align-items:center; justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"></path><path d="M9 18.12L10 14H4.17a2 2 0 01-1.92-2.56l2.33-8A2 2 0 016.5 2H20a2 2 0 012 2v8a2 2 0 01-2 2h-2.76a2 2 0 00-1.79 1.11L12 22a3.13 3.13 0 01-3-3.88z"></path></svg></span>
+                </div>
+              </div>
+              <div style="display:flex; align-items:flex-end; gap:9px; margin-bottom:9px;">
+                <span class="prob-hero" style="color:var(--text-primary); font-size:32px;">64%</span>
+                <span style="font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--accent-live); padding-bottom:4px; white-space:nowrap;">↑ 2.4</span>
+              </div>
+              <div style="display:flex; height:6px; gap:2px; margin-bottom:10px;"><div style="width:64%; background:var(--accent-brand); border-radius:var(--radius-pill);"></div><div style="width:36%; background:var(--text-muted); opacity:0.3; border-radius:var(--radius-pill);"></div></div>
+              <div style="font-size:14px; font-weight:600; line-height:1.3;">Dune: Part Three opens above $150M domestic</div>
+            </div>
+
+            <!-- 2 · duel -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+              <div style="display:flex; align-items:center; gap:8px; padding:12px 14px 10px;">
+                <span style="width:20px; height:20px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">2</span>
+                <span style="font-size:13px; font-weight:600; white-space:nowrap;">Which is higher?</span>
+                <span style="margin-left:auto; display:inline-flex; align-items:center; gap:6px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:3px 8px;"><span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-primary);">7</span></span>
+              </div>
+              <div style="display:flex; border-top:1px solid var(--surface-border); position:relative;">
+                <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:14px 10px; gap:7px;">
+                  <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎤 Music</span>
+                  <div style="width:36px; height:36px; border-radius:var(--radius-sm); background:rgba(245,158,11,0.14); display:flex; align-items:center; justify-content:center; font-size:17px;">🎤</div>
+                  <div style="font-size:11.5px; font-weight:600; line-height:1.25;">Taylor Swift engaged by July</div>
+                  <div style="font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--text-muted); border:1px dashed var(--surface-border); border-radius:var(--radius-sm); padding:2px 12px;">?</div>
+                </div>
+                <div style="flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:14px 10px; gap:7px; border-left:1px solid var(--surface-border);">
+                  <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏈 NFL</span>
+                  <div style="width:36px; height:36px; border-radius:var(--radius-sm); background:rgba(59,130,246,0.12); display:flex; align-items:center; justify-content:center; font-size:17px;">🏈</div>
+                  <div style="font-size:11.5px; font-weight:600; line-height:1.25;">Seahawks win Super Bowl LXI</div>
+                  <div style="font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--text-muted); border:1px dashed var(--surface-border); border-radius:var(--radius-sm); padding:2px 12px;">?</div>
+                </div>
+                <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:26px; height:26px; border-radius:var(--radius-pill); background:var(--surface-card); border:1px solid var(--surface-border); display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:var(--text-muted); box-shadow:var(--shadow-card);">VS</div>
+              </div>
+            </div>
+
+            <!-- 3 · heat map -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                <span style="width:20px; height:20px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">3</span>
+                <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">📈 Economics</span>
+              </div>
+              <div style="font-size:14px; font-weight:600; line-height:1.3; margin-bottom:12px;">Fed funds rate at year-end</div>
+              <div style="display:flex; gap:3px;">
+                <div style="flex:1; height:46px; background:#10B981; border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:#fff;">95<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+                <div style="flex:1; height:46px; background:rgba(16,185,129,0.78); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:#fff;">82<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+                <div style="flex:1; height:46px; background:rgba(16,185,129,0.44); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--text-primary);">54<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+                <div style="flex:1; height:46px; background:rgba(16,185,129,0.17); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--text-muted);">23<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+                <div style="flex:1; height:46px; background:rgba(16,185,129,0.07); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--text-muted);">8<span style="font-size:0.6em; font-weight:700;">%</span></span></div>
+              </div>
+              <div style="display:flex; gap:3px; margin-top:6px;"><div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-secondary);">≥4.00</div><div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-secondary);">≥4.25</div><div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-secondary);">≥4.50</div><div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-secondary);">≥4.75</div><div style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-secondary);">≥5.00</div></div>
+            </div>
+
+            <!-- 4 · higher/lower -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                <span style="width:20px; height:20px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">4</span>
+                <span style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-elevated); border-radius:var(--radius-pill); padding:3px 8px;"><span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">Streak</span><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-primary);">7</span></span>
+                <span style="margin-left:auto; font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏀 NBA</span>
+              </div>
+              <div style="font-size:14px; font-weight:600; line-height:1.3; margin-bottom:3px;">Lakers make the 2026 playoffs</div>
+              <div style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">Higher or lower than <span style="font-family:var(--font-mono); font-weight:700; color:var(--text-primary);">45%</span>?</div>
+              <div style="display:flex; gap:7px;">
+                <span style="flex:1; text-align:center; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:9px; font-weight:600; font-size:13px; color:var(--text-secondary);">↓ Lower</span>
+                <span style="flex:1; text-align:center; border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:9px; font-weight:600; font-size:13px; color:var(--text-secondary);">↑ Higher</span>
+              </div>
+            </div>
+
+            <!-- 5 · comparison (heat grid) -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                <span style="width:20px; height:20px; border-radius:var(--radius-pill); background:var(--surface-elevated); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">5</span>
+                <span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🎬 Entertainment</span>
+              </div>
+              <div style="font-size:14px; font-weight:600; line-height:1.3; margin-bottom:5px;">2026 films — Rotten Tomatoes score</div>
+              <div style="font-size:12px; line-height:1.45; color:var(--text-secondary); margin-bottom:12px;">The Odyssey leads critics' models. <span style="color:var(--accent-brand); font-weight:600;">See more</span></div>
+              <div style="display:flex; gap:3px; margin-bottom:4px;"><span style="width:96px; flex-shrink:0;"></span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-muted);">≥70</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-muted);">≥80</span><span style="flex:1; text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text-muted);">≥90</span></div>
+              <div style="display:flex; align-items:center; gap:3px; margin-bottom:3px;"><span style="width:96px; flex-shrink:0; font-size:11.5px; font-weight:600;">The Odyssey</span><div style="flex:1; height:32px; background:rgba(16,185,129,0.95); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:#fff;">96<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.8); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:#fff;">88<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.46); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-primary);">61<span style="font-size:0.6em;">%</span></span></div></div>
+              <div style="display:flex; align-items:center; gap:3px; margin-bottom:3px;"><span style="width:96px; flex-shrink:0; font-size:11.5px; font-weight:600;">Dune: Part 3</span><div style="flex:1; height:32px; background:rgba(16,185,129,0.88); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:#fff;">92<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.5); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:#fff;">64<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.16); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-muted);">22<span style="font-size:0.6em;">%</span></span></div></div>
+              <div style="display:flex; align-items:center; gap:3px;"><span style="width:96px; flex-shrink:0; font-size:11.5px; font-weight:600;">Wicked 2</span><div style="flex:1; height:32px; background:rgba(16,185,129,0.72); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:#fff;">81<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.32); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-primary);">47<span style="font-size:0.6em;">%</span></span></div><div style="flex:1; height:32px; background:rgba(16,185,129,0.1); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:center;"><span style="font-family:var(--font-mono); font-weight:700; font-size:11px; color:var(--text-muted);">12<span style="font-size:0.6em;">%</span></span></div></div>
+            </div>
+
+            <!-- 6 · standard image-led -->
+            <div style="background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); overflow:hidden;">
+              <div style="position:relative; aspect-ratio:16/9; background:var(--surface-elevated); display:flex; align-items:center; justify-content:center;">
+                <span style="font-size:34px; opacity:0.5;">🏈</span>
+                <span style="position:absolute; top:8px; left:8px; width:20px; height:20px; border-radius:var(--radius-pill); background:rgba(255,255,255,0.85); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--text-muted);">6</span>
+              </div>
+              <div style="padding:12px 14px 14px;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:7px;"><span style="font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted);">🏈 NFL</span><span style="margin-left:auto; font-size:10px; color:var(--text-muted);">Resolves Jan 4</span></div>
+                <div style="font-size:14px; font-weight:600; line-height:1.3; margin-bottom:9px;">Chiefs win the AFC West</div>
+                <div style="display:flex; align-items:flex-end; gap:9px;"><span class="prob-lg" style="color:var(--text-primary);">71%</span><span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--accent-danger); padding-bottom:3px; white-space:nowrap;">↓ 1.1</span></div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- bottom nav -->
+          <div style="display:flex; background:var(--surface-card); border-top:1px solid var(--surface-border); padding:10px 0 16px;">
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--accent-brand);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg><span style="font-size:9px; font-weight:600;">Discover</span></div>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--text-muted);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg><span style="font-size:9px; font-weight:500;">Search</span></div>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--text-muted);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0116 0"></path></svg><span style="font-size:9px; font-weight:500;">My stuff</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ANNOTATIONS -->
+      <div style="flex:1; min-width:280px; display:flex; flex-direction:column; gap:2px; padding-top:8px;">
+        <div style="display:flex; gap:13px; padding:14px 0; border-bottom:1px solid var(--surface-border);">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">1</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Standard market · data-pure</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">Probability leads at 32–36px. Thumbs sit top-right, always reachable.</div></div>
+        </div>
+        <div style="display:flex; gap:13px; padding:14px 0; border-bottom:1px solid var(--surface-border);">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">2</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Duel · cross-category</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">Injected periodically. The juxtaposition (music 🆚 football) is the hook before any number shows.</div></div>
+        </div>
+        <div style="display:flex; gap:13px; padding:14px 0; border-bottom:1px solid var(--surface-border);">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">3</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Heat map · threshold ladder</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">Appears when an entity has a family of threshold markets. The fade reads at a glance.</div></div>
+        </div>
+        <div style="display:flex; gap:13px; padding:14px 0; border-bottom:1px solid var(--surface-border);">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">4</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Higher / Lower · game</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">Shares one streak with the duel. The horizontal swipe still works — tap targets never overlap it.</div></div>
+        </div>
+        <div style="display:flex; gap:13px; padding:14px 0; border-bottom:1px solid var(--surface-border);">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">5</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Comparison · heat grid</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">A themed family of markets compared at once — films by RT score here; also IPOs, commodities, cities by temperature.</div></div>
+        </div>
+        <div style="display:flex; gap:13px; padding:14px 0;">
+          <span style="flex-shrink:0; width:24px; height:24px; border-radius:var(--radius-pill); background:var(--text-primary); color:var(--text-inverse); display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px; font-weight:700;">6</span>
+          <div><div style="font-size:14px; font-weight:600; margin-bottom:2px;">Standard market · image-led</div><div style="font-size:13px; line-height:1.5; color:var(--text-secondary);">The image-led twin of card 1 — same data, photo-forward. A/B against data-pure.</div></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- footer meter -->
+    <div style="margin-top:56px; padding:20px 0 0; border-top:1px solid var(--surface-border); display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <img src="assets/logo-mark.svg" width="20" height="20" alt="">
+      <span style="font-size:13px; color:var(--text-secondary);">5 card types · 18 states · Discover refresh</span>
+      <span style="margin-left:auto; font-size:12px; color:var(--text-muted);">Light mode · JetBrains Mono numerals · Web + SwiftUI parity</span>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
@@ -88,19 +89,24 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
 
   return (
     <div ref={swipe.ref} className="relative touch-pan-y select-none" {...swipe.handlers}>
-      {/* Swipe hint overlays */}
+      {/* Swipe-reveal backdrop (L2-160 — the handoff's "swipe & tap coexistence"
+          treatment). The colored action panel sits BEHIND the card and is revealed
+          as the whole card translates, so the horizontal drag never competes with
+          in-card tap targets on game cards. Right = more like this, left = less. */}
       {swipe.swipeAction === "like" && (
-        <div className="absolute inset-0 z-20 flex items-center justify-start pl-5 pointer-events-none">
-          <span className="rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm">More like this</span>
+        <div className="absolute inset-0 z-0 flex items-center justify-start gap-2.5 rounded-[10px] bg-emerald-500/10 pl-5 pointer-events-none">
+          <ThumbsUp size={20} strokeWidth={2} className="text-accent-brand" aria-hidden="true" />
+          <span className="text-sm font-semibold text-accent-brand">More like this</span>
         </div>
       )}
       {swipe.swipeAction === "dismiss" && (
-        <div className="absolute inset-0 z-20 flex items-center justify-end pr-5 pointer-events-none">
-          <span className="rounded-full bg-rose-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm">Less like this</span>
+        <div className="absolute inset-0 z-0 flex items-center justify-end gap-2.5 rounded-[10px] bg-rose-500/10 pr-5 pointer-events-none">
+          <span className="text-sm font-semibold text-accent-danger">Less like this</span>
+          <ThumbsDown size={20} strokeWidth={2} className="text-accent-danger" aria-hidden="true" />
         </div>
       )}
 
-      <div style={cardStyle}>
+      <div className="relative z-10" style={cardStyle}>
         {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
         {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
           <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />

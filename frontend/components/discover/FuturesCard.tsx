@@ -121,19 +121,18 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, distributionRows.length - shownRows.length);
 
     return (
-      <article className="relative overflow-hidden rounded-xl border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
         <DismissBtn onDismiss={onDismiss} />
         {trending && <TrendBadge />}
 
         <div className="p-3 pb-2">
+          {/* L2-160 — muted category header (no internal-taxonomy "Distribution"
+              pill; ruling: no internal taxonomy pills). Matches the handoff's
+              leaderboard header + the sibling ComparisonCard treatment. */}
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${catStyle.bg} ${catStyle.text}`}>
-              {category}
-            </span>
-            <span className="inline-flex items-center rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
-              Distribution
-            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <TemporalBadge badge={data.temporal_badge} />
+            {resolveText && <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>}
           </div>
           <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
 
@@ -164,7 +163,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className={`min-w-0 text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
-                        <MovementBadge m={row.movement} />
+                        <MovementBadge m={row.movement} prob={row.probability} />
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
                         <div
@@ -211,7 +210,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const pctDisplay = prob != null ? `${Math.round(prob * 100)}%` : null;
   const movementVal = leader?.movement;
   const movementUp = movementVal != null && movementVal > 0;
-  const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1
+  // L2-160 — respect the 5% placeholder floor: suppress the hero movement delta
+  // when the leader probability is a placeholder (illiquid ~5% floor), where the
+  // "movement" is noise rather than a real 24h shift.
+  const probIsPlaceholder = prob != null && prob <= 0.05;
+  const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1 && !probIsPlaceholder
     ? `${movementUp ? "↑" : "↓"} ${Math.abs(movementVal).toFixed(1)}`
     : null;
   // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
@@ -429,7 +432,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
       </div>
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
-          <MovementBadge m={leader.movement} />
+          <MovementBadge m={leader.movement} prob={leader.probability} />
           <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? `${Math.round(leader.probability * 100)}%` : "—"}</span>
         </div>
       )}
