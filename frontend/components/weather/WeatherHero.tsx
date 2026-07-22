@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { SOURCES, probColor, probLabel, sparkFrom } from "./data";
 import type { FeaturedMarket } from "./data";
 import { fetchWeatherFeatured } from "@/lib/weatherApi";
-import Sparkline from "./Sparkline";
+import Sparkline from "@/components/Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
 
@@ -174,7 +174,16 @@ export default function WeatherHero() {
 
               {/* Sparkline */}
               <div className="w-28 h-12 flex-shrink-0">
-                <Sparkline data={spark} color={probColor(current.prob)} />
+                <Sparkline
+                  data={spark}
+                  color={probColor(current.prob)}
+                  padX={3}
+                  padTop={3}
+                  padBottom={3}
+                  area="gradient"
+                  endDot
+                  animate
+                />
               </div>
             </div>
 

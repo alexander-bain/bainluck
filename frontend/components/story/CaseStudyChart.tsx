@@ -5,96 +5,35 @@
  * design-system tokens via `currentColor` (light-mode only).
  */
 import type { CaseStudyChart as ChartData } from "@/lib/story-content";
+import Sparkline from "@/components/Sparkline";
 
-const VW = 320;
-const VH = 132;
-const PAD_X = 10;
-const PAD_TOP = 14;
-const PAD_BOTTOM = 18;
-
+// L2-150: the annotated case-study line now rides the shared single-market renderer.
+// Geometry (320×132, big pads for label + caption), the 50% reference line, the flat
+// area fill, and the annotated moment are all preserved via Sparkline props.
 function LineChart({
   chart,
 }: {
   chart: Extract<ChartData, { type: "line" }>;
 }) {
   const { points, annotationIndex, annotationLabel, caption } = chart;
-  const n = points.length;
-  const usableW = VW - PAD_X * 2;
-  const usableH = VH - PAD_TOP - PAD_BOTTOM;
-
-  const x = (i: number) => PAD_X + (usableW * i) / (n - 1);
-  const y = (p: number) => PAD_TOP + usableH * (1 - p / 100);
-
-  const linePath = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p).toFixed(1)}`)
-    .join(" ");
-  const areaPath = `${linePath} L ${x(n - 1).toFixed(1)} ${(VH - PAD_BOTTOM).toFixed(
-    1
-  )} L ${x(0).toFixed(1)} ${(VH - PAD_BOTTOM).toFixed(1)} Z`;
-
-  const ai = Math.max(0, Math.min(n - 1, annotationIndex));
-  const ax = x(ai);
-  const ay = y(points[ai]);
-  const labelRight = ax > VW / 2;
-
   return (
-    <figure className="m-0">
-      <svg
-        viewBox={`0 0 ${VW} ${VH}`}
-        className="w-full h-auto"
-        role="img"
-        aria-label={`${caption}. ${annotationLabel}.`}
-      >
-        {/* 50% reference line */}
-        <line
-          x1={PAD_X}
-          x2={VW - PAD_X}
-          y1={y(50)}
-          y2={y(50)}
-          className="text-surface-border"
-          stroke="currentColor"
-          strokeWidth={1}
-          strokeDasharray="3 3"
-        />
-        {/* area fill */}
-        <path d={areaPath} className="text-accent-brand" fill="currentColor" fillOpacity={0.08} />
-        {/* probability line */}
-        <path
-          d={linePath}
-          className="text-accent-brand"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {/* annotated moment */}
-        <line
-          x1={ax}
-          x2={ax}
-          y1={ay}
-          y2={VH - PAD_BOTTOM}
-          className="text-text-muted"
-          stroke="currentColor"
-          strokeWidth={1}
-          strokeDasharray="2 2"
-        />
-        <circle cx={ax} cy={ay} r={5.5} className="text-accent-brand" fill="currentColor" />
-        <circle cx={ax} cy={ay} r={2.5} fill="#fff" />
-        <text
-          x={labelRight ? ax - 8 : ax + 8}
-          y={Math.max(PAD_TOP + 4, ay - 8)}
-          className="text-text-primary"
-          fill="currentColor"
-          fontSize={11}
-          fontWeight={600}
-          textAnchor={labelRight ? "end" : "start"}
-        >
-          {annotationLabel}
-        </text>
-      </svg>
-      <figcaption className="text-micro text-text-muted mt-1.5">{caption}</figcaption>
-    </figure>
+    <Sparkline
+      data={points}
+      domain={[0, 100]}
+      width={320}
+      height={132}
+      padX={10}
+      padTop={14}
+      padBottom={18}
+      stroke={2.5}
+      color="var(--accent-brand)"
+      area="flat"
+      referenceValue={50}
+      annotation={{ index: annotationIndex, label: annotationLabel }}
+      caption={caption}
+      ariaLabel={`${caption}. ${annotationLabel}.`}
+      className="w-full h-auto"
+    />
   );
 }
 

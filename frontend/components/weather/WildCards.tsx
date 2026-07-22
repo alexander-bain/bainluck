@@ -3,7 +3,7 @@
 import useSWR from "swr";
 import { probColor, probLabel, sparkFrom, type WildCard } from "./data";
 import { fetchWildCards } from "@/lib/weatherApi";
-import Sparkline from "./Sparkline";
+import Sparkline from "@/components/Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
 
@@ -133,7 +133,18 @@ export default function WildCards() {
               style={{ marginBottom: 12 }}
             >
               <ProbabilityNumber value={card.prob} size={42} />
-              <Sparkline data={spark} color={color} width={80} height={24} />
+              <Sparkline
+                data={spark}
+                color={color}
+                width={80}
+                height={24}
+                padX={3}
+                padTop={3}
+                padBottom={3}
+                area="gradient"
+                endDot
+                animate
+              />
             </div>
 
             {/* Footer */}

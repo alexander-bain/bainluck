@@ -1,9 +1,11 @@
 # THE CHART CENSUS
 
-**Queue:** L2-148 Item 2 (produced) · L2-149 (field-kernel consolidation applied) · **Produced:** 2026-07-21.
+**Queue:** L2-148 Item 2 (produced) · L2-149 (field-kernel consolidation) · L2-150 (single-market-kernel consolidation) · **Produced:** 2026-07-21, **updated:** 2026-07-22.
 **Purpose:** the "our side" half of the win-prob chart competitive audit ("Kalshi and ESPN are meaningfully better at data viz"). Step one is knowing exactly what we have before any redesign or taste call.
 
 > **L2-149 UPDATE (2026-07-21):** The field multi-line kernel has been consolidated onto **FuturesChart** (Part 2A finding executed). The two competing recharts engines — **EvolutionChart** and **TournamentChart** — are **deleted**. EvolutionView now renders FuturesChart directly (windowing/combined/highlight/round-markers preserved, colors shared with the leaderboard via a `outcomeColors` map); TournamentChart was already dead code (imported nowhere since the #883 refactor). FuturesChart's `fixedYAxis` is now the **NON-OPTIONAL default** (opt-out), so every field/futures surface honors principle 2. Implementation count **15 → 13**. Sections below are annotated with `[L2-149]` where the state changed; the original descriptive text is retained for history.
+
+> **L2-150 UPDATE (2026-07-22):** The **single-market line kernel (c)** has been consolidated onto ONE shared renderer, **`components/Sparkline.tsx`** (SSR-safe, no client hooks). Five copy-pasted single-market line/sparkline renderers now ride it: **event/Sparkline** (deleted), **weather/Sparkline** (deleted — its cubic **bezier is KILLED**, the last hand-rolled smoothing outlier), the **FuturesHero inline** `<path>` (replaced), the **politics-table inline** `Sparkline` (replaced — a census miss, it was never in the original 13), and **story/CaseStudyChart**'s `type:"line"` (its line/area/50%-ref/annotated-moment now come from the shared component via props; CaseStudyChart keeps only its `bars` variant). The shared component takes a `domain` mode (**default [0,100] pins probability honestly** per ruling #2; `[0,1]` for 0–1 inputs; `"auto"` for physical quantities) and the genuinely-needed variants (size, stroke, filled-area gradient/flat, end dot, reference line, annotation+label, caption, draw-on animation w/ CSS reduced-motion). Implementation count **13 → 11**. **NOTE on the miscategorization:** the original Part-3 kernel-(c) table lumped **ScoreDifferentialChart** and **DisagreementChart** under "single-market line," but they are NOT single-market — ScoreDiff is a 5-series recharts spread chart on a symmetric-around-0 axis, coupled to OddsChart's shared-x-axis scaffolding (duplication **class B**), and DisagreementChart is a hand-rolled *multi-source* admin chart sharing CalibrationChart's px/py skeleton (duplication **class D**). Folding either into a sparkline would be an architectural/taste call this queue explicitly forbade, so they are **recategorized to their true classes (B and D)** and left for those kernel passes — kernel (c) is now genuinely 1 renderer. This is why the count lands at 11, not the census's arithmetic "8" (which assumed all 6 kernel-(c) rows collapse). Sections below carry `[L2-150]` annotations.
 
 All paths under `frontend/`. Two rendering technologies coexist:
 - **recharts** (`recharts@^2.12.0`, the only chart lib in `package.json`) — OddsChart, ScoreDifferentialChart. `[L2-149]` EvolutionChart + TournamentChart **removed** — the recharts family is now the two single-game event charts only.
@@ -97,20 +99,18 @@ The single most-reused real chart; the backbone of every event-concept chart via
 - **Surfaces:** `components/weather/TemperatureMap.tsx` (weather page).
 - **Type:** probability histogram over temp buckets, single-source or grouped cross-source (Poly vs Kalshi) bars; peak bucket highlighted. **Chrome:** hover tooltips, peak labels, legend.
 
-### 12. `components/weather/Sparkline.tsx` — smoothed sparkline (SVG) ⚠️ smoothing outlier
-- **Surfaces:** `components/weather/WildCards.tsx`, `components/weather/WeatherHero.tsx`.
-- **Smoothing:** ❌ **VIOLATES** — builds a **cubic Catmull-Rom→bezier** path (`C${cp1x}…`, lines 37–52). The only true bezier sparkline in the codebase. **Chrome:** gradient area fill, draw-on animation, end dot.
+### 12. `components/weather/Sparkline.tsx` — smoothed sparkline (SVG) ⚠️ smoothing outlier — **`[L2-150]` DELETED**
+- **Status:** removed. WildCards + WeatherHero now render the shared **`components/Sparkline.tsx`** with `area="gradient" endDot animate`. The **cubic Catmull-Rom→bezier is KILLED** — the shared renderer draws raw `M/L` segments (ruling #1). *(Historical: built a `C${cp1x}…` bezier path, lines 37–52 — the only true bezier sparkline in the codebase; gradient area fill, draw-on animation, end dot.)*
 
-### 13. `components/event/Sparkline.tsx` — straight sparkline (SVG)
-- **Surfaces:** `components/event/EventLeaderboard.tsx`, `app/event/[domain]/[slug]/page.tsx`.
-- **Smoothing:** ✅ NONE — `<polyline>` straight segments (line 55; comment cites the "D1 bind" no-smoothing rule). **Color:** trend-based (green up / danger down / muted flat). `<2` points → null.
+### 13. `components/event/Sparkline.tsx` — straight sparkline (SVG) — **`[L2-150]` DELETED (→ `components/Sparkline.tsx`)**
+- **Status:** removed. EventLeaderboard now renders the shared **`components/Sparkline.tsx`** (`domain={[0,1]}`, trend color). *(Historical: `<polyline>` straight segments citing the "D1 bind" no-smoothing rule; trend-based color (green up / danger down / muted flat); `<2` points → null.)*
 
-### 14. `components/story/CaseStudyChart.tsx` — case-study visual (SVG, server-safe)
-- **Surfaces:** `components/story/CaseStudyCard.tsx` (data from `lib/story-content.ts`).
-- **Type:** `type:"line"` (prob line + 50% ref + annotated moment) OR `type:"bars"` (DOM bars). **Axis:** line maps prob 0–100 to fixed height. **Smoothing:** ✅ NONE — `M/L` segments. **Color:** design tokens via `currentColor`.
+### 14. `components/story/CaseStudyChart.tsx` — case-study visual (SVG, server-safe) — **`[L2-150]` line variant folded**
+- **Surfaces:** `components/story/CaseStudyCard.tsx` (data from `lib/story-content.ts`; rendered only from the two `"use client"` pages `app/about` + `app/admin/story`).
+- **Type:** `[L2-150]` the `type:"line"` variant (prob line + 50% ref + annotated moment + caption) now delegates entirely to the shared **`components/Sparkline.tsx`** (`area="flat" referenceValue={50} annotation={…} caption={…} domain={[0,100]}`); CaseStudyChart keeps only its `type:"bars"` (DOM bars) renderer + the type dispatcher. **Axis:** prob 0–100 fixed. **Smoothing:** ✅ NONE — `M/L`. It therefore stays counted as an implementation for its **bars** kernel (d), not the single-market line kernel (c).
 
-### 15. `components/FuturesHero.tsx` — inline mini sparkline (SVG, no separate component)
-- **Surfaces:** the futures hero. Inline `<svg viewBox="0 0 116 50">` `<path>` from `sparklinePoints` (lines 114–139), raw `M/L`, end dot, `var(--accent-brand)`. Renders only for ≥3 points. **Smoothing:** ✅ NONE. A fourth copy-pasted sparkline.
+### 15. `components/FuturesHero.tsx` — inline mini sparkline (SVG) — **`[L2-150]` replaced by shared `Sparkline`**
+- **Status:** the inline `<svg viewBox="0 0 116 50">` `<path>` (formerly lines 114–139) is replaced by the shared **`components/Sparkline.tsx`** (`domain={[0,1]}`, `color="var(--accent-brand)"`, `endDot`). FuturesHero itself remains (it is a hero layout, not a chart) but no longer carries its own chart implementation. **Smoothing:** ✅ NONE. *(Historical: raw `M/L`, end dot, `var(--accent-brand)`, ≥3 points — the fourth copy-pasted sparkline.)*
 
 ### Not a chart (noted to prevent mis-triage)
 - **The "golfLive" branch** — `components/event/EventLeaderboard.tsx:471`: `golfLive = live && competitors.some(c => c.thru != null || c.position != null)` → renders a golf leaderboard **TABLE** (pos · name · to-par · thru · win% · finish cols, "Missed cut" group), NOT a data-viz chart. Golf's actual chart treatment is the `greenTheme`/`timeMarkers` (R1–R4) props threaded into FuturesChart by the wrappers.
@@ -131,12 +131,13 @@ Same job (top-N probability lines over time) is now served by one implementation
 
 **B. OddsChart ↔ ScoreDifferentialChart — near-copy scaffolding.** Both replicate minute-bucket `ensurePoint`/`toMinuteKey`, gap-fill loop, forward-fill, per-source time-range `useMemo` filters, the vertical writing-mode team-label rail, period-boundary dedup, and the `sharedTicks`/`chartStartTime`/`chartEndTime` contract. Intentionally coupled (shared x-axis) but copy-pasted rather than sharing helpers.
 
-**C. FOUR sparkline implementations, no shared helper:**
-- `components/event/Sparkline.tsx` — `<polyline>` straight, trend-colored.
-- `components/weather/Sparkline.tsx` — cubic **bezier** (the smoothing outlier), area fill, animation.
-- `components/FuturesHero.tsx` inline `<path>` — straight `M/L`, end dot.
-- `components/story/CaseStudyChart.tsx` (line variant) — straight `M/L`, area fill, annotation.
-Same shape (min/max normalize → path), four copies, one of which smooths against principle 1.
+**C. `[L2-150]` RESOLVED — ONE shared single-market renderer now.** Was FOUR (really FIVE — the census missed one) copy-pasted sparkline implementations with no shared helper; consolidated onto **`components/Sparkline.tsx`**:
+- ~~`components/event/Sparkline.tsx`~~ — DELETED (trend-colored polyline → shared).
+- ~~`components/weather/Sparkline.tsx`~~ — DELETED; the cubic **bezier is killed** (was the smoothing outlier), area + animation preserved as shared-component props.
+- ~~`components/FuturesHero.tsx` inline~~ — replaced (straight `M/L`, end dot).
+- ~~`components/story/CaseStudyChart.tsx` (line variant)~~ — folded (straight `M/L`, area fill, annotation, 50%-ref, caption — all now shared props).
+- ~~`app/politics/page.tsx` inline `Sparkline`~~ — replaced (a fifth copy the census originally missed).
+Same shape (normalize → path), now one implementation that honors ruling #1 (no smoothing) and ruling #2 (fixed 0–100 for probability via a `domain` mode). *(Not folded: `app/categories/golf/page.tsx`'s `TrendSparkline` is a **multi-line** auto-scaled field mini-chart — kernel (b) territory, not single-market — so it stays out of this pass.)*
 
 **D. TWO hand-rolled "px/py-scale" SVG charts** — `CalibrationChart.tsx` and `DisagreementChart.tsx` share the same skeleton (`padL/padR/padT/padB`, `px()`/`py()` scale closures, `<rect>` bg, grid map, `<polyline>` series, rotated y-label, inline legend). Independent copies.
 
@@ -151,20 +152,20 @@ Same shape (min/max normalize → path), four copies, one of which smooths again
 
 ## PART 3 — COUNT: IMPLEMENTATIONS vs KERNELS
 
-**`[L2-149]` Distinct chart implementations: 13** (was 15; EvolutionChart + TournamentChart deleted). Excludes the 5 FuturesChart wrappers, the golfLive leaderboard table, and pure bar widgets:
+**`[L2-150]` Distinct chart implementations: 11** (was 13; then L2-150 deleted weather/Sparkline + event/Sparkline + the FuturesHero-inline chart, and added the one shared `components/Sparkline.tsx`). Excludes the 5 FuturesChart wrappers, the golfLive leaderboard table, and pure bar widgets:
 
-1. FuturesChart · 2. OddsChart · 3. ScoreDifferentialChart · 4. CalibrationChart · 5. DisagreementChart · 6. MarketMap(+Section) · 7. ThresholdSparkline · 8. TotalPointsSpectrum · 9. weather/DistributionPanel · 10. weather/Sparkline · 11. event/Sparkline · 12. story/CaseStudyChart · 13. FuturesHero inline sparkline.
+1. FuturesChart · 2. OddsChart · 3. ScoreDifferentialChart · 4. CalibrationChart · 5. DisagreementChart · 6. MarketMap(+Section) · 7. ThresholdSparkline · 8. TotalPointsSpectrum · 9. weather/DistributionPanel · 10. **`components/Sparkline.tsx`** (the shared single-market line kernel) · 11. story/CaseStudyChart (now `bars`-only + type dispatcher).
 
-**13 distinct implementations → 4 conceptual kernels:**
+**11 distinct implementations → 4 conceptual kernels:**
 
 | Kernel | Implementations | Redundancy |
 |--------|-----------------|-----------|
 | **(a) Duel 2-line** | OddsChart (home vs away across 50%), TwoSidedTimeline (FuturesChart `slice(0,2)`) | 2 |
 | **(b) Field multi-line** | **FuturesChart** (+ wrappers RaceToTitle/WinnerEvolution/SettledPath, and EvolutionView, all ride FuturesChart) | **`[L2-149]` 1 engine** (was 3) |
-| **(c) Single-market line** | DisagreementChart, ScoreDifferentialChart (spread-over-time), story/CaseStudyChart (line), event/Sparkline, weather/Sparkline, FuturesHero inline | **6 copies** |
+| **(c) Single-market line** | **`components/Sparkline.tsx`** (event leaderboard, weather ×2, politics, futures hero, story case-study line — all ride it) | **`[L2-150]` 1 renderer** (was 6, incl. 2 miscategorized — see below) |
 | **(d) Distribution** | CalibrationChart (reliability), MarketMap (density rail), ThresholdSparkline (threshold dots), TotalPointsSpectrum (scoring ladder), weather/DistributionPanel (histogram), story/CaseStudyChart (bars) | **6 unrelated renderers** |
 
-So **13 implementations collapse to 4 kernels**. `[L2-149]` closed kernel (b)'s 3-engine drift (now 1). Remaining redundancy: (c) has 6 copy-pasted line/sparkline renderers, (d) has 6 unrelated distribution renderers — candidates for a future pass.
+So **11 implementations collapse to 4 kernels**. `[L2-149]` closed kernel (b)'s 3-engine drift (3→1); `[L2-150]` closed kernel (c)'s copy-paste class (6→1). **`[L2-150]` recategorization:** the two rows the original table listed under (c) that are NOT single-market — **ScoreDifferentialChart** (5-series spread, symmetric axis, OddsChart-coupled scaffolding) and **DisagreementChart** (admin *multi-source*, px/py skeleton) — move to their true duplication classes **B** and **D** respectively (they were never sparklines; folding them would be an architectural/taste call). Remaining redundancy: **(d) has 6 unrelated distribution renderers** (incl. DisagreementChart↔CalibrationChart's shared px/py skeleton) — the next kernel pass. And **class B** (ScoreDiff↔OddsChart scaffolding) is its own follow-on.
 
 ---
 
@@ -172,15 +173,18 @@ So **13 implementations collapse to 4 kernels**. `[L2-149]` closed kernel (b)'s 
 
 | Principle | HONORED | VIOLATED |
 |-----------|---------|----------|
-| **NO smoothing** | FuturesChart (+all wrappers, +EvolutionView), CalibrationChart, DisagreementChart, event/Sparkline, CaseStudyChart, FuturesHero | **OddsChart, ScoreDifferentialChart** (recharts `type="monotone"`) + **weather/Sparkline** (cubic bezier). `[L2-149]` EvolutionChart + TournamentChart removed from this list — deleted. |
-| **Fixed 0–100 Y** | OddsChart (`[0,100]`), CalibrationChart (both axes), DisagreementChart, **FuturesChart (now default) + all its wrappers + EvolutionView** | (ScoreDiff is intentionally symmetric-around-0 — a spread, not a probability, so out of rubric.) `[L2-149]` the three prior offenders (EvolutionChart, TournamentChart, bare-FuturesChart default) are all resolved. |
+| **NO smoothing** | FuturesChart (+all wrappers, +EvolutionView), CalibrationChart, DisagreementChart, **`components/Sparkline.tsx`** (event/weather/politics/futures-hero/case-study line) | **OddsChart, ScoreDifferentialChart** (recharts `type="monotone"`). `[L2-150]` **weather/Sparkline's cubic bezier is KILLED** — it was the last hand-rolled smoothing outlier; the shared Sparkline draws raw `M/L`. `[L2-149]` EvolutionChart + TournamentChart deleted. Only the two recharts single-game charts still smooth. |
+| **Fixed 0–100 Y** | OddsChart (`[0,100]`), CalibrationChart (both axes), DisagreementChart, **FuturesChart (now default) + all its wrappers + EvolutionView**, **`[L2-150]` `components/Sparkline.tsx`** (probability `domain` defaults to [0,100]; physical quantities opt into `"auto"`) | (ScoreDiff is intentionally symmetric-around-0 — a spread, not a probability, so out of rubric.) `[L2-149]` EvolutionChart/TournamentChart/bare-FuturesChart offenders resolved; `[L2-150]` the single-market sparklines now pin probability honestly. |
 | **Prominent blend + faint sources** | **ONLY OddsChart Mode A** (`strokeWidth 3` blend vs `strokeWidth 1, opacity 0.28` sources) | FuturesChart, DisagreementChart draw contender lines at comparable weight. *(A field chart has no single blend line, so this principle is really an OddsChart/duel-kernel concern — out of scope for the field kernel.)* |
 | **Kalshi-minimal chrome** | FuturesChart, Calibration, Disagreement, sparklines | OddsChart / ScoreDiff carry the heaviest chrome (period lines, lead-change diamonds, dual legends) |
 
 ### Headline findings for the program (fact, not recommendation)
-1. `[L2-149 RESOLVED]` **The recharts field engines are gone.** Of the original 4 recharts charts, EvolutionChart + TournamentChart (both `type="monotone"`) are deleted; only OddsChart + ScoreDiff (the two single-game event charts) remain on recharts. weather/Sparkline's bezier is the last hand-rolled smoothing outlier.
-2. **The blend-hero treatment exists in exactly one place** (OddsChart Mode A). This is a duel-kernel property (one blend vs faint sources); the field kernel has no single blend line, so it is out of scope for FuturesChart.
-3. `[L2-149 RESOLVED]` **Fixed-axis is now the default in the field kernel.** FuturesChart defaults to `fixedYAxis` (opt-out); every field/futures surface honors principle 2 without remembering a prop.
-4. `[L2-149 RESOLVED]` **Kernel (b) is now 1 engine.** The field multi-line kernel is consolidated onto FuturesChart — findings 1 & 3 resolved for the futures/tournament surfaces, and the `slice(0,5)`-style drift class is closed (line selection + axis derived in one place).
+1. `[L2-149 RESOLVED]` **The recharts field engines are gone.** Of the original 4 recharts charts, EvolutionChart + TournamentChart (both `type="monotone"`) are deleted; only OddsChart + ScoreDiff (the two single-game event charts) remain on recharts.
+2. `[L2-150 RESOLVED]` **The last hand-rolled smoothing outlier is gone.** weather/Sparkline's cubic Catmull-Rom→bezier is killed; every hand-rolled line renderer now draws raw `M/L`. The only remaining smoothing violators are the two recharts single-game charts (OddsChart + ScoreDiff, `type="monotone"`) — the follow-on target.
+3. **The blend-hero treatment exists in exactly one place** (OddsChart Mode A). This is a duel-kernel property (one blend vs faint sources); the field kernel has no single blend line, so it is out of scope for FuturesChart.
+4. `[L2-149 RESOLVED]` **Fixed-axis is now the default in the field kernel** (FuturesChart `fixedYAxis` opt-out); `[L2-150 RESOLVED]` **and in the single-market kernel** (shared Sparkline `domain` defaults to [0,100] for probability).
+5. `[L2-149 RESOLVED]` **Kernel (b) is now 1 engine** (FuturesChart); `[L2-150 RESOLVED]` **kernel (c) is now 1 renderer** (`components/Sparkline.tsx`) — 6 copy-pasted rows collapsed to 1, with the 2 miscategorized charts (ScoreDiff, DisagreementChart) recategorized to their true classes B/D. Implementation count 15 → 13 → **11**.
 
-*This census was descriptive; the L2-149 annotations record the field-kernel consolidation that executed the standing rulings (no smoothing · fixed 0–100 · minimal chrome). Redesign/taste calls remain the next program's job.*
+**Remaining kernel work (candidates for the next queues):** kernel **(d)** distribution renderers (6 unrelated: Calibration/MarketMap/ThresholdSparkline/TotalPointsSpectrum/weather-DistributionPanel/CaseStudy-bars, incl. the Disagreement↔Calibration px/py-skeleton dup — duplication class D); and duplication **class B** (OddsChart↔ScoreDifferentialChart near-copy scaffolding + their two remaining `type="monotone"` smoothing violations).
+
+*This census is descriptive; the L2-149/L2-150 annotations record the field- and single-market-kernel consolidations that executed the standing rulings (no smoothing · fixed 0–100 · minimal chrome). Redesign/taste calls remain the next program's job.*

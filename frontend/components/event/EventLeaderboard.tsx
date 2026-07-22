@@ -17,7 +17,7 @@ import {
   isEliminatedCompetitor,
 } from "@/lib/eventConceptDisplay";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
-import Sparkline from "./Sparkline";
+import Sparkline from "@/components/Sparkline";
 import FreshnessChip from "./FreshnessChip";
 import { TeamCrest } from "./MatchupDuel";
 import EntityImage from "@/components/EntityImage";
@@ -343,7 +343,7 @@ function WinnerFieldRow({
       {/* Sparkline (real history only) */}
       {series.length >= 2 && (
         <div className="hidden sm:block shrink-0">
-          <Sparkline series={series} />
+          <Sparkline data={series} domain={[0, 1]} width={56} height={18} padX={1} padTop={1} padBottom={1} />
         </div>
       )}
 

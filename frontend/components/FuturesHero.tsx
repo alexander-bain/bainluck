@@ -1,6 +1,7 @@
 "use client";
 
 import { formatProbability } from "@/lib/api";
+import Sparkline from "@/components/Sparkline";
 
 interface FuturesHeroProps {
   name: string;
@@ -110,32 +111,17 @@ export function FuturesHero({
             </div>
           </div>
 
-          {/* Mini sparkline */}
+          {/* Mini sparkline — shared single-market renderer (L2-150). */}
           {sparklinePoints && sparklinePoints.length >= 3 && (
-            <svg viewBox="0 0 116 50" width={116} height={50} className="overflow-visible">
-              <path
-                d={sparklinePoints
-                  .map((p, i) => {
-                    const x = (i / (sparklinePoints.length - 1)) * 112 + 2;
-                    const y = 48 - p * 46;
-                    return `${i === 0 ? "M" : "L"}${x.toFixed(0)},${y.toFixed(0)}`;
-                  })
-                  .join(" ")}
-                fill="none"
-                stroke="var(--accent-brand)"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {sparklinePoints.length > 0 && (
-                <circle
-                  cx={114}
-                  cy={48 - sparklinePoints[sparklinePoints.length - 1] * 46}
-                  r={2.6}
-                  fill="var(--accent-brand)"
-                />
-              )}
-            </svg>
+            <Sparkline
+              data={sparklinePoints}
+              domain={[0, 1]}
+              width={116}
+              height={50}
+              color="var(--accent-brand)"
+              endDot
+              className="overflow-visible"
+            />
           )}
         </div>
       )}

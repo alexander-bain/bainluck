@@ -18,6 +18,7 @@ import type {
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
+import Sparkline from "@/components/Sparkline";
 import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 
@@ -153,32 +154,29 @@ function SubNav({
 }
 
 // ─────────────────────────────────────────────────────────
-// Sparkline + MoveChip atoms
+// CandidateSpark + MoveChip atoms
 // ─────────────────────────────────────────────────────────
 
-function Sparkline({ history, width = 60, height = 18 }: {
+// CandidateSpark — politics-table single-market spark. Uses the shared Sparkline
+// (L2-150 kernel-(c) consolidation); renders a fixed-size placeholder when there
+// is not enough real history so the table row layout never shifts.
+function CandidateSpark({ history, width = 60, height = 18 }: {
   history?: { t: string; p: number }[];
   width?: number;
   height?: number;
 }) {
-  if (!history || history.length < 2) return <span style={{ width, height, display: "inline-block" }} />;
-  const probs = history.map((h) => h.p);
-  const min = Math.min(...probs);
-  const max = Math.max(...probs);
-  const range = max - min || 1;
-  const d = probs
-    .map((p, i) => {
-      const x = (i / (probs.length - 1)) * width;
-      const y = height - ((p - min) / range) * (height - 2) - 1;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const change = probs[probs.length - 1] - probs[0];
-  const color = change > 0.5 ? "#16A34A" : change < -0.5 ? "#EF4444" : "#6B7280";
+  if (!history || history.length < 2) {
+    return <span style={{ width, height, display: "inline-block" }} />;
+  }
   return (
-    <svg width={width} height={height} style={{ overflow: "visible" }}>
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Sparkline
+      data={history.map((h) => h.p)}
+      width={width}
+      height={height}
+      padX={1}
+      padTop={1}
+      padBottom={1}
+    />
   );
 }
 
@@ -334,7 +332,7 @@ function PresBarRace({ sorted, sourceMode, data }: {
                 <div className={s.barFill} style={{ width: `${Math.max(prob * scale, 1.5)}%`, background: partyBg, opacity: i === 0 ? 0.7 : 0.45 }} />
               )}
             </div>
-            <span className={s.hideOnMobile}><Sparkline history={c.history} /></span>
+            <span className={s.hideOnMobile}><CandidateSpark history={c.history} /></span>
             <span className={s.hideOnMobile}><MoveChip change={c.change_7d} /></span>
             <span className={s.pct}>{prob.toFixed(1)}%</span>
           </div>
