@@ -36,6 +36,15 @@ _FIELD_OUTCOME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #1200: independent-binary overround ceiling. A field whose raw YES prices sum
+# FAR past 100% is a set of INDEPENDENT candidate binaries (a Kalshi 184-way Tour
+# de France GC field sums ~2.8x), NOT a coherent mutually-exclusive field — even
+# when it is mis-flagged ``mutually_exclusive=True`` upstream. Above this ceiling
+# the raw per-outcome YES price IS the honest win probability and must never be
+# squeezed to sum ~100%. Mirrors the event_cycling concept-adapter guard so the
+# raw /api/futures/{id} + search surfaces match it (gotcha #23).
+_FIELD_SUM_MAX = 1.60
+
 
 def is_placeholder_outcome_name(name: str | None) -> bool:
     """True for anonymized reserved-slot outcomes that must not display."""
@@ -71,9 +80,21 @@ def normalize_display_probs(
     ``mutually_exclusive`` from ``FuturesMarket.mutually_exclusive`` (reliable:
     Kalshi/DataGolf both flag make-cut/top-N False, winner fields True). Default
     True preserves every existing caller (search, awards/tennis/f1/election, etc.).
+
+    #1200: even when flagged ``mutually_exclusive=True``, a field whose RAW YES
+    prices sum FAR past 100% (> ``_FIELD_SUM_MAX``) is a set of INDEPENDENT
+    candidate binaries (Kalshi 184-way Tour de France GC field ≈ 2.8x), NOT a
+    coherent one-winner field. Squeezing that to ~100% dilutes a near-lock leader
+    into a false coin-flip (Pogačar 94.5% → 33.6%). Only a coherent (~1.0, mild-
+    vig) field gets the #23 squeeze; the overrounded field keeps its raw prices.
+    This mirrors the event_cycling concept-adapter guard and now also protects the
+    raw /api/futures/{id} detail + search surfaces that only had the flag gate.
     """
     if not mutually_exclusive:
         return  # non-ME participation family — raw per-outcome probs are honest
+    raw_sum = sum((o.get(key) or 0) for o in outcomes)
+    if raw_sum > _FIELD_SUM_MAX:
+        return  # independent-binary overround — raw YES price is the honest prob
     from app.routes.politics import _normalize_outcome_probs  # shared #23 util
 
     pct = [{"p": (o.get(key) or 0) * 100} for o in outcomes]

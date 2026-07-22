@@ -38,7 +38,10 @@ class TestPlaceholder:
 
 class TestNormalizeAndLeaderPick:
     def test_normalize_over_100(self):
-        outs = [{"probability": 0.8}, {"probability": 0.6}, {"probability": 0.4}]
+        # A coherent ME field with mild overround (sum 1.4, within _FIELD_SUM_MAX)
+        # squeezes to ~100%. (Sums far past that are independent binaries — see
+        # test_overrounded_independent_field_keeps_raw.)
+        outs = [{"probability": 0.6}, {"probability": 0.5}, {"probability": 0.3}]
         normalize_display_probs(outs)
         assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
 
@@ -70,13 +73,41 @@ class TestNormalizeAndLeaderPick:
         assert make_cut[1]["probability"] == 0.885
         assert sum(o["probability"] for o in make_cut) > 4.0, "not squashed to sum-1"
 
-    def test_make_cut_would_be_squashed_if_treated_as_mutually_exclusive(self):
-        # Guard the regression itself: the SAME make-cut field, if the ME gate is
-        # ever dropped (treated as mutually_exclusive=True), collapses to ~1% — the
-        # exact production bug. This documents why the gate must stay.
+    def test_make_cut_overround_protected_even_if_misflagged_me(self):
+        # #1200: the SAME make-cut field summing >> 100% (0.87+0.885+0.84 = 2.595)
+        # is ALSO protected by the raw-sum overround guard even when mis-flagged
+        # mutually_exclusive=True — the sum guard catches it before the squeeze.
+        # Defense in depth on top of the ME gate (both a mis-flag and a dropped
+        # gate now render raw). Previously this collapsed the leader to ~1%.
         make_cut = [{"probability": 0.87}, {"probability": 0.885}, {"probability": 0.84}]
+        assert sum(o["probability"] for o in make_cut) > 1.60  # over the ceiling
         normalize_display_probs(make_cut, mutually_exclusive=True)
-        assert make_cut[0]["probability"] < 0.5, "confirms the un-gated squash"
+        assert make_cut[0]["probability"] == 0.87, "overround field kept raw"
+
+    def test_overrounded_independent_field_keeps_raw(self):
+        # #1200: a 184-way independent-binary GC field (Kalshi Tour de France) sums
+        # ~281% (heavy overround). Even flagged mutually_exclusive=True, it must
+        # render RAW per-rider prices — never squeezed to ~100% (which crushed
+        # Pogačar's -1718/94.5% into a false 33.6% coin-flip). Regression guard.
+        field = [{"name": "Pogacar", "probability": 0.945}]
+        # 183 longshots so the field sums ~2.8x (independent binaries)
+        field += [{"name": f"r{i}", "probability": 0.01} for i in range(183)]
+        raw_sum = sum(o["probability"] for o in field)
+        assert raw_sum > 2.5, "sanity: heavy independent-binary overround"
+        normalize_display_probs(field, mutually_exclusive=True)
+        assert field[0]["probability"] == 0.945, "leader keeps raw 94.5%, not diluted"
+        assert sum(o["probability"] for o in field) == raw_sum, "field left raw"
+
+    def test_coherent_field_still_normalized_at_66_way(self):
+        # #1200 counterpart: a large but COHERENT field (World Cup 66-team winner,
+        # raw sum ~1.15 < ceiling) STILL normalizes — the guard keys on sum, not
+        # outcome count, so the WC champion display is unaffected.
+        field = [{"name": "Spain", "probability": 0.15}, {"name": "France", "probability": 0.15}]
+        field += [{"name": f"t{i}", "probability": 0.017} for i in range(50)]  # ~0.85
+        assert sum(o["probability"] for o in field) < 1.60
+        normalize_display_probs(field, mutually_exclusive=True)
+        # squeezed from ~1.15 down to ~1.0 (per-outcome 4dp rounding across 52 rows)
+        assert abs(sum(o["probability"] for o in field) - 1.0) < 0.02, "coherent field squeezed"
 
     def test_top_n_family_not_squashed(self):
         # Top-5 / top-N: N outcomes are simultaneously true (mutually_exclusive=False).
