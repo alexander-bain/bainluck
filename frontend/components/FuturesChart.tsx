@@ -2,49 +2,19 @@
 
 import { useMemo, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import {
+  SERIES_COLORS,
+  SERIES_COLORS_GOLD,
+  SERIES_COLORS_GREEN,
+  ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
+  COMBINED_SERIES_COLOR as COMBINED_COLOR,
+} from "@/lib/seriesColors";
 
-const DEFAULT_COLORS = [
-  "#2563eb", // blue
-  "#dc2626", // red
-  "#16a34a", // green
-  "#9333ea", // purple
-  "#ea580c", // orange
-  "#0891b2", // cyan
-  "#be185d", // pink
-  "#4f46e5", // indigo
-];
-
-const GOLD_COLORS = [
-  "#D4AF37", // gold (leader)
-  "#B8860B", // dark goldenrod
-  "#6b7280", // gray-500
-  "#9ca3af", // gray-400
-  "#d1d5db", // gray-300
-  "#6b7280",
-  "#9ca3af",
-  "#d1d5db",
-];
-
-const GREEN_COLORS = [
-  "#006747", // Augusta green (leader)
-  "#2d8659", // lighter green
-  "#6b7280", // gray-500
-  "#9ca3af", // gray-400
-  "#d1d5db", // gray-300
-  "#6b7280",
-  "#9ca3af",
-  "#d1d5db",
-];
-
-/** Eliminated-outcome line color — a muted grey so a knocked-out contender stays
- *  visible for context without competing with the live field (L2-149, migrated
- *  from EvolutionChart). */
-const ELIMINATED_COLOR = "#b5b9c3";
-
-/** Combined-probability line color — the summed line reads as a dark neutral so
- *  it never masquerades as one of the contenders (L2-149, migrated from
- *  EvolutionChart). */
-const COMBINED_COLOR = "#111827";
+// Series palettes live in the shared registry (L2-157, census class E). This
+// kernel is the flagship series surface, so its palette is the canonical one.
+const DEFAULT_COLORS = SERIES_COLORS;
+const GOLD_COLORS = SERIES_COLORS_GOLD;
+const GREEN_COLORS = SERIES_COLORS_GREEN;
 
 interface FuturesChartProps {
   historyData: FuturesOutcomeHistory[];

@@ -6,17 +6,18 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import {
+  SERIES_COLORS,
+  ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
+} from "@/lib/seriesColors";
 
 type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
 
-/** 10-color palette (white-bg optimized) shared with EvolutionLeaderboard so a
- *  chart line and its sidebar dot always match. L2-149: computed once here and
- *  handed to both FuturesChart (via outcomeColors) and the leaderboard. */
-const EVOLUTION_COLORS = [
-  "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
-  "#0369a1", "#92400e", "#4338ca", "#be185d", "#065f46",
-];
-const ELIMINATED_COLOR = "#b5b9c3";
+/** Canonical series palette from the shared registry (L2-157), shared with
+ *  EvolutionLeaderboard so a chart line and its sidebar dot always match. L2-149:
+ *  computed once here and handed to both FuturesChart (via outcomeColors) and the
+ *  leaderboard. */
+const EVOLUTION_COLORS = SERIES_COLORS;
 
 /** Last non-null probability of a series — its current/final value. Used to rank
  *  the selected set (color order + leaderboard order stay in lockstep). */

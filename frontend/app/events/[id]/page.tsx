@@ -41,11 +41,8 @@ import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
-  TAG_LABELS,
-  TAG_COLORS,
   hasAnyWinProbData,
   formatCountdown,
-  filterDisplayTags,
   resolveProbability,
   computeSharedChartDomain,
   computeRealStartTime,
@@ -356,7 +353,15 @@ export default function EventPage({ params }: EventPageProps) {
   // null (or its "Score data is not available" message) inside a card shell,
   // leaving an empty heading. Mirror the child's real data requirement
   // (hasProjectedScoreData || hasActualScoreData) at the parent gate.
-  const hasScoreDiffData = !!historyData && (
+  //
+  // L2-157 Item 4 (the 15165209 exhibit): "Score Differential" is an IN-GAME
+  // concept — actual score divergence over time. Pregame it renders as empty
+  // chrome (a bare header over a flat 0-0 ESPN snapshot or a projected-spread
+  // line masquerading as innings), which is worse than no chrome (the
+  // nothing>unhelpful ruling). Suppress it entirely until the game is in-game
+  // or later; the pregame odds-movement story lives in the Win Probability
+  // timeline above (time x-axis, with its own clean "tracking will begin" state).
+  const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
     (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
     ) ||
@@ -531,28 +536,11 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         </div>
 
-        {/* Tag chips — contextual labels from taxonomy */}
-        {(() => {
-          const tags = filterDisplayTags(event.event_tags);
-          if (!tags) return null;
-          return (
-            <div className="flex flex-wrap gap-1.5 justify-center px-4 pt-2">
-              {tags.map((tag: string) => {
-                const ns = tag.split(":")[0];
-                const color = TAG_COLORS[ns] || "bg-slate/10 text-text-muted";
-                const label = TAG_LABELS[tag] || tag.split(":")[1]?.replace(/_/g, " ");
-                return (
-                  <span
-                    key={tag}
-                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${color}`}
-                  >
-                    {label}
-                  </span>
-                );
-              })}
-            </div>
-          );
-        })()}
+        {/* L2-157 (Alex ruling): internal ranking taxonomy pills
+            ("competitive / regular season / Playoff Race / Major") are NOT user
+            information and are stripped from the hero. The hero's real estate is
+            game state — pregame start time + broadcast (above), LIVE the score
+            (below). Tags are still computed backend-side for ranking. */}
 
         {/* Teams + Score + Giant Probability — v2 centered layout */}
         <div className="px-5 sm:px-6 py-4 sm:py-5">

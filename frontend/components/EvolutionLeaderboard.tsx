@@ -5,16 +5,18 @@ import type {
   FuturesOutcomeHistory,
   DataGolfLeaderboardEntry,
 } from "@/lib/types";
+import {
+  SERIES_COLORS,
+  ELIMINATED_SERIES_COLOR,
+} from "@/lib/seriesColors";
 
 /**
- * Fallback dot palette. When EvolutionView supplies `outcomeColors` (L2-149) the
- * dots use that shared map so they match the FuturesChart lines exactly; this
- * local copy only applies when no map is passed.
+ * Fallback dot palette — the canonical shared series palette (L2-157). When
+ * EvolutionView supplies `outcomeColors` (L2-149) the dots use that shared map so
+ * they match the FuturesChart lines exactly; this registry palette only applies
+ * when no map is passed (and is the same one EvolutionView builds its map from).
  */
-const EVOLUTION_COLORS = [
-  "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
-  "#0369a1", "#92400e", "#4338ca", "#be185d", "#065f46",
-];
+const EVOLUTION_COLORS = SERIES_COLORS;
 
 interface EvolutionLeaderboardProps {
   historyData: FuturesOutcomeHistory[];
@@ -70,7 +72,7 @@ export function EvolutionLeaderboard({
       // fall back to the local eliminated-grey / index palette.
       color:
         outcomeColors?.get(o.outcome_id) ??
-        (o.eliminated ? "#b5b9c3" : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]),
+        (o.eliminated ? ELIMINATED_SERIES_COLOR : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]),
       eliminated: o.eliminated,
     }));
   }, [historyData, selectedOutcomeIds, outcomeColors]);

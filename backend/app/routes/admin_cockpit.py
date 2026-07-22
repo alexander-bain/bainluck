@@ -363,9 +363,12 @@ def _grid_sentinel_group() -> dict | None:
     is its VERDICT — RED only when a REAL defect survives the artifact registry —
     not the raw penalty score, which cried wolf on blend-hidden source
     disagreement. RED if any league has real defects; AMBER if none do but a
-    league carries explained artifacts/watches; GREEN when every league is clean.
-    Returns None (not a stale tile) before the first run is cached, so the caller
-    falls back to the raw audit score."""
+    league carries explained artifacts; GREEN when every league is clean.
+    WATCH items (source disagreement / illiquid extremes — blend-hidden, "never
+    RED" by design per CLAUDE.md) do NOT escalate the tile: a clean-but-watch grid
+    stays GREEN and surfaces a watch COUNT instead (L2-157 — amber misread as
+    trouble). Returns None (not a stale tile) before the first run is cached, so
+    the caller falls back to the raw audit score."""
     raw = _read_redis_json("bainluck:grid_sentinel:last")
     if not raw or "scorecard" not in raw:
         return None
@@ -391,7 +394,9 @@ def _grid_sentinel_group() -> dict | None:
         arts = int(lg.get("explained_artifacts") or 0)
         watch = int(lg.get("watch") or 0)
         any_real = any_real or real > 0
-        any_artifact = any_artifact or arts > 0 or watch > 0
+        # L2-157: watch is blend-hidden ("never RED") — it does NOT escalate to
+        # amber. Only genuine explained artifacts do.
+        any_artifact = any_artifact or arts > 0
         league = str(lg.get("league") or "?")
         issue = filed_by_league.get(league)
         rows.append({
@@ -401,7 +406,7 @@ def _grid_sentinel_group() -> dict | None:
             "real_defects": real,
             "explained_artifacts": arts,
             "watch": watch,
-            "status": "red" if real else ("amber" if (arts or watch) else "green"),
+            "status": "red" if real else ("amber" if arts else "green"),
             "issue": issue,
             "issue_url": _GH_ISSUE_URL.format(issue) if issue else None,
         })
@@ -412,6 +417,9 @@ def _grid_sentinel_group() -> dict | None:
         "mode": raw.get("mode"),
         "leagues_total": (raw.get("scorecard") or {}).get("leagues_total"),
         "leagues_red": (raw.get("scorecard") or {}).get("leagues_red"),
+        # L2-157: total blend-hidden watch items across leagues — surfaced as a
+        # count on a GREEN tile instead of misreading as amber "trouble".
+        "watch_total": sum(r["watch"] for r in rows),
         "duration_seconds": raw.get("duration_seconds"),
         # #232/Queue #234 Item 3: per-sentinel run stamp (see _flow_sentinel_group).
         "generated_at": raw.get("generated_at"),
@@ -828,12 +836,15 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     if grid_group:
         reds = [r for r in grid_group["per_league"] if r["status"] == "red"]
         scores = (audit or {}).get("scores") or {}
+        watch_total = grid_group.get("watch_total") or 0
         if reds:
             detail = "real defects: " + ", ".join(
                 f"{r['league']}({r['real_defects']})" for r in reds
             )
         else:
-            detail = "no real defects — " + ", ".join(
+            # L2-157: GREEN-with-watch reads as GREEN + a watch count, not amber.
+            watch_note = f"{watch_total} watch (blend-hidden)" if watch_total else "clean"
+            detail = f"no real defects · {watch_note} — " + ", ".join(
                 f"{r['league']}:{r['verdict']}" for r in grid_group["per_league"]
             )
         grid_context = [

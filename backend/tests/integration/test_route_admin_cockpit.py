@@ -22,6 +22,7 @@ from app.routes.admin_cockpit import (
     _feed_quality_empty_detail,
     _flow_sentinel_group,
     _fmt_duration,
+    _grid_sentinel_group,
     _hours_since,
     _link_tile_state_change,
     _red_sub_context,
@@ -400,6 +401,100 @@ class TestFlowSentinelGroup:
         with self._patch_redis(stats):
             group = _flow_sentinel_group()
         assert group["status"] == "green"
+
+
+class TestGridSentinelGroup:
+    """L2-157: the grid tile's VERDICT — watch is blend-hidden ("never RED") and
+    must NOT escalate to amber. A clean-but-watch grid stays GREEN + a count."""
+
+    @staticmethod
+    def _patch_redis(payload):
+        r = MagicMock()
+        r.get.return_value = json.dumps(payload) if payload is not None else None
+        return patch("app.tasks.redis_state.get_redis_client", return_value=r)
+
+    def test_no_run_cached_returns_none(self):
+        # Cold cache → None so the caller falls back to the raw-score tile.
+        with self._patch_redis(None):
+            assert _grid_sentinel_group() is None
+
+    def test_watch_only_is_green_not_amber(self):
+        # The core L2-157 fix: leagues with ONLY watch items stay GREEN.
+        stats = {
+            "scorecard": {
+                "leagues_total": 2,
+                "leagues_red": 0,
+                "per_league": [
+                    {"league": "mlb", "verdict": "green", "phase": "in_season",
+                     "real_defects": 0, "explained_artifacts": 0, "watch": 1},
+                    {"league": "nba", "verdict": "green", "phase": "in_season",
+                     "real_defects": 0, "explained_artifacts": 0, "watch": 2},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _grid_sentinel_group()
+        assert group["status"] == "green"
+        assert group["watch_total"] == 3
+        per = {r["league"]: r for r in group["per_league"]}
+        assert per["mlb"]["status"] == "green"
+        assert per["nba"]["status"] == "green"
+
+    def test_explained_artifacts_still_amber(self):
+        # Explained artifacts (season-window) ARE a legit amber — unchanged.
+        stats = {
+            "scorecard": {
+                "leagues_total": 1, "leagues_red": 0,
+                "per_league": [
+                    {"league": "nhl", "verdict": "amber", "phase": "offseason",
+                     "real_defects": 0, "explained_artifacts": 2, "watch": 0},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _grid_sentinel_group()
+        assert group["status"] == "amber"
+        assert group["per_league"][0]["status"] == "amber"
+
+    def test_real_defect_is_red(self):
+        stats = {
+            "scorecard": {
+                "leagues_total": 1, "leagues_red": 1,
+                "per_league": [
+                    {"league": "mlb", "verdict": "red", "phase": "in_season",
+                     "real_defects": 1, "explained_artifacts": 0, "watch": 3},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _grid_sentinel_group()
+        assert group["status"] == "red"
+        assert group["per_league"][0]["status"] == "red"
+
+    def test_mixed_watch_and_artifacts_overall_amber_watch_green(self):
+        # The live prod shape (2026-07-22): mlb/nba watch-only, nhl artifacts.
+        # Overall AMBER from nhl's real artifacts; mlb/nba per-league GREEN.
+        stats = {
+            "scorecard": {
+                "leagues_total": 3, "leagues_red": 0,
+                "per_league": [
+                    {"league": "mlb", "verdict": "green", "phase": "in_season",
+                     "real_defects": 0, "explained_artifacts": 0, "watch": 1},
+                    {"league": "nba", "verdict": "green", "phase": "in_season",
+                     "real_defects": 0, "explained_artifacts": 0, "watch": 2},
+                    {"league": "nhl", "verdict": "amber", "phase": "offseason",
+                     "real_defects": 0, "explained_artifacts": 2, "watch": 0},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _grid_sentinel_group()
+        assert group["status"] == "amber"
+        assert group["watch_total"] == 3
+        per = {r["league"]: r for r in group["per_league"]}
+        assert per["mlb"]["status"] == "green"
+        assert per["nba"]["status"] == "green"
+        assert per["nhl"]["status"] == "amber"
 
 
 class TestScheduleTextMatchesCrontab:
