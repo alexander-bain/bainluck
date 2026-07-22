@@ -872,6 +872,11 @@ async def _run_calibration_sentinel(
             stats["filed"].append(action)
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
+    # #1202: stamp a run-level wall clock so /calibration-sentinel/last and the
+    # cockpit can render age ("ran 6h ago") + apply the stale-RED silence check —
+    # the same generated_at the flow/grid/settled sentinels already persist (#232).
+    from datetime import datetime as _dt, timezone as _tz
+    stats["generated_at"] = _dt.now(_tz.utc).isoformat()
 
     # Cache the full run so it's inspectable without re-scanning (the backtest /
     # ops read path) — findings can be large, so keep 14 days, not forever.

@@ -54,6 +54,20 @@ def commence_correction_inverts_completion(new_commence, completed_at) -> bool:
     return completed_at < new_commence
 
 
+def espn_replay_unsettles(event_status, espn_status) -> bool:
+    """True when ESPN (the authoritative live source) reports a game IN PROGRESS
+    on an event we currently have SETTLED — the un-settle-on-replay signal (#1201).
+
+    A game that was prematurely settled (postponed → closed by the staleness net,
+    then rescheduled/replayed) or a wrong-sibling fold (gotcha #32) that never
+    really finished will be reported ``in`` by ESPN once it actually plays. That
+    is definitive proof the completed/closed state is wrong, so the caller reverts
+    the event to ``live`` and clears ``completed_at`` (removing any leftover
+    ``completed_at < commence_time`` inversion). Idempotent: the live→completed
+    branch re-settles it correctly once ESPN reports post/final again."""
+    return espn_status == "in" and event_status in ("completed", "closed")
+
+
 def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
     """True when writing terminal/live ESPN state onto an EXISTING event whose own
     ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game
@@ -362,6 +376,31 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         )
         event.status = "live"
         changed = True
+    elif espn_replay_unsettles(event.status, ee.status):
+        # #1201 un-settle-on-replay: ESPN (the authoritative live source) reports
+        # this game is IN PROGRESS, but we have it settled. That means a premature
+        # settle — a postponed game that got closed by the staleness net and was
+        # then rescheduled/replayed, OR a wrong-sibling fold (gotcha #32) whose
+        # settled state was never real. Either way the settled state is now
+        # definitively wrong: revert to live and CLEAR completed_at so a leftover
+        # inverted stamp (completed_at < commence_time) can't persist. Idempotent —
+        # once ESPN reports the replay as post/final again, the live→completed
+        # branch above re-settles it with a correct completed_at.
+        _prev_status = event.status
+        await session.execute(
+            _sql_update(Event)
+            .where(Event.id == event.id)
+            .values(status="live", completed_at=None)
+        )
+        event.status = "live"
+        event.completed_at = None
+        changed = True
+        stats["espn_unsettled_on_replay"] = stats.get("espn_unsettled_on_replay", 0) + 1
+        logger.warning(
+            "un-settle-on-replay: event %d (%s vs %s) was %s but ESPN reports LIVE "
+            "— reverted to live and cleared completed_at (#1201/gotcha #32)",
+            event.id, event.home_team_name, event.away_team_name, _prev_status,
+        )
 
     return changed
 

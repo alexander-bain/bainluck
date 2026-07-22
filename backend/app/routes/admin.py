@@ -747,6 +747,24 @@ async def get_flow_sentinel_last(
     return json.loads(raw)
 
 
+@router.get("/mlb-schedule-coverage")
+async def get_mlb_schedule_coverage(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    date: str = Query(None, description="YYYY-MM-DD (default today UTC)"),
+):
+    """#1201: the MLB schedule-diff sentinel check — every official MLB game that
+    day should map to exactly one of our events. Reconciles statsapi's official
+    schedule against our events and returns typed transitions (missing_event,
+    duplicate_events, premature_settle, postponed). Read-only; fails soft when
+    statsapi is unreachable (skipped, never a false RED)."""
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.schedule_coverage import run_mlb_schedule_coverage
+
+    return await run_mlb_schedule_coverage(date=date)
+
+
 @router.post("/grid-sentinel/run")
 async def trigger_grid_sentinel(
     request: Request,

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from app.utils.espn_helpers import (
     commence_correction_inverts_completion,
     completion_stamp_inverts_commence,
+    espn_replay_unsettles,
     espn_terminal_write_is_fold,
 )
 
@@ -79,3 +80,30 @@ class TestEspnTerminalWriteIsFold:
 
     def test_missing_commence_is_not_a_fold(self):
         assert espn_terminal_write_is_fold(None, self._now()) is False
+
+
+class TestEspnReplayUnsettles:
+    """#1201 un-settle-on-replay: a settled event that ESPN reports IN PROGRESS
+    (a postponed→replayed game, or a wrong-sibling fold that never really
+    finished) must revert from completed/closed to live."""
+
+    def test_completed_event_reported_in_progress_unsettles(self):
+        assert espn_replay_unsettles("completed", "in") is True
+
+    def test_closed_event_reported_in_progress_unsettles(self):
+        assert espn_replay_unsettles("closed", "in") is True
+
+    def test_scheduled_event_is_not_an_unsettle(self):
+        # scheduled → live is handled by a separate branch, not the un-settle path.
+        assert espn_replay_unsettles("scheduled", "in") is False
+
+    def test_live_event_is_not_an_unsettle(self):
+        assert espn_replay_unsettles("live", "in") is False
+
+    def test_settled_event_reported_final_does_not_unsettle(self):
+        # ESPN post/final on a settled row is the steady state, not a replay.
+        assert espn_replay_unsettles("completed", "post") is False
+        assert espn_replay_unsettles("completed", "final") is False
+
+    def test_settled_event_reported_scheduled_does_not_unsettle(self):
+        assert espn_replay_unsettles("closed", "pre") is False

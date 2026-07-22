@@ -57,6 +57,8 @@ Seven product rulings from the 2026-07-22 strategy session. These are standing c
 - **Volume = three signals, never one score** — market volume/liquidity informs ranking as three distinct signals (interestingness, blend trust, and surfacing) and must never be collapsed into a single "volume score." Rationale: a single score hides which lever is actually moving. Pairs with the parked volume-modulated blend-trust item (draft #11), which stays inside the fitted-skill methodology (`docs/aggregation-weighting-methodology.md`), never ad-hoc.
 - **Settled grids return GRADED** — settled grids/tables render the graded outcome ("settled means settled"), not a frozen live snapshot. One system-wide settled language across heroes, cards, props, charts, and grids.
 
+Filed as issues [#1201](https://github.com/alexander-bain/bainluck/issues/1201)–[#1211](https://github.com/alexander-bain/bainluck/issues/1211) (board reconciliation 2026-07-22, ops-lane r243). Canonical strategy: [`strategy_navigation_discoverability.md`](../.claude/handoff/strategy_navigation_discoverability.md).
+
 ## Active GitHub Execution Queue
 
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)
