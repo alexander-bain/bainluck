@@ -10,18 +10,6 @@ counted as authoritative.
 import inspect
 
 
-def _both_status_sources():
-    from app.tasks.precompute_backfill_winners_status import (
-        _precompute_backfill_winners_status,
-    )
-    from app.tasks.precompute_calibration import _precompute_calibration_main_impl  # noqa
-    a = inspect.getsource(_precompute_backfill_winners_status)
-    # the calibration twin embeds the same query in its main impl; grab module src
-    import app.tasks.precompute_calibration as pc
-    b = inspect.getsource(pc)
-    return a, b
-
-
 def test_needs_backfill_requires_no_resolution_source():
     """needs_backfill = the genuine gap = NOT has_winner AND NOT any_rsrc."""
     a = inspect.getsource(
@@ -48,15 +36,26 @@ def test_authoritative_set_excludes_heuristic_clean_resolution():
     assert "'clean_resolution'" not in a.split("AS authoritative")[0].split("authoritative")[-1] or "clean_resolution is" in a
 
 
-def test_calibration_twin_matches():
-    """The duplicate query in precompute_calibration must carry the same fix so
-    the two caches agree."""
-    import app.tasks.precompute_calibration as pc
-    b = inspect.getsource(pc)
-    assert "BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc" in b
-    assert "('api_settlement', 'game_score', 'box_score')" in b
-    assert "AS resolved_single_sided" in b
-    assert "AS heuristic_resolved" in b
+def test_backfill_winners_status_not_duplicated_in_coverage():
+    """#1199: the backfill-winners/status CTE must live ONLY in the dedicated
+    precompute_backfill_winners_status task (hourly :35, 2h TTL). It used to be
+    duplicated inside _snapshot_coverage_metrics as a second heavy query, which
+    pushed that daily task over its 600s soft_time_limit (~1/24h). The dedup is
+    the fix — guard that the coverage snapshot does NOT re-embed the twin (or the
+    SoftTimeLimit regression, and the #940 sync burden, both return)."""
+    from app.tasks.precompute_calibration import _snapshot_coverage_metrics
+    full = inspect.getsource(_snapshot_coverage_metrics)
+    # Strip comment lines so the guard checks real code, not the explanatory
+    # NOTE (which legitimately names the key/CTE it warns against re-adding).
+    code = "\n".join(
+        ln for ln in full.splitlines() if not ln.lstrip().startswith("#")
+    )
+    assert "bainluck:backfill_winners_status" not in code, (
+        "coverage snapshot re-embedded the backfill-winners cache write — it must "
+        "stay in the dedicated precompute_backfill_winners_status task (#1199)"
+    )
+    assert "AS resolved_single_sided" not in code
+    assert "market_status" not in code
 
 
 def test_no_is_winner_mutation_in_status_precompute():
