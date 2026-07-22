@@ -326,7 +326,10 @@ class TestPlaceholderFamily:
 
 class TestNormalizeSearchProbs:
     def test_over_threshold_normalizes_to_one(self):
-        outs = [{"probability": 0.80}, {"probability": 0.60}, {"probability": 0.40}]
+        # Coherent ME field with mild overround (sum 1.4, within _FIELD_SUM_MAX)
+        # squeezes to ~100%. (#1200: sums far past that are independent binaries
+        # and render raw — see test_overrounded_independent_field_kept_raw.)
+        outs = [{"probability": 0.60}, {"probability": 0.50}, {"probability": 0.30}]
         _normalize_search_outcome_probs(outs)
         assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
 
@@ -336,10 +339,18 @@ class TestNormalizeSearchProbs:
         assert outs == [{"probability": 0.62}, {"probability": 0.18}]
 
     def test_none_probs_safe(self):
-        outs = [{"probability": None}, {"probability": 0.9}, {"probability": 0.9}]
-        _normalize_search_outcome_probs(outs)  # 1.8 > 1.05 -> normalizes the non-None
+        outs = [{"probability": None}, {"probability": 0.6}, {"probability": 0.5}]
+        _normalize_search_outcome_probs(outs)  # 1.1 in-band -> normalizes the non-None
         assert outs[0]["probability"] is None
         assert abs(sum(o["probability"] for o in outs if o["probability"]) - 1.0) < 0.01
+
+    def test_overrounded_independent_field_kept_raw(self):
+        # #1200: a heavily-overrounded independent-binary field (raw sum > 1.60,
+        # e.g. a Kalshi grand-tour GC field) is NOT squeezed — raw YES price is
+        # the honest per-outcome win probability (search must match the detail page).
+        outs = [{"probability": 0.945}, {"probability": 0.90}, {"probability": 0.90}]
+        _normalize_search_outcome_probs(outs)
+        assert outs[0]["probability"] == 0.945
 
 
 class TestBuildTopOutcomes:
