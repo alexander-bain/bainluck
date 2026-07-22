@@ -377,3 +377,33 @@ class TestHeavyQueueRouting:
         registered = set(app.tasks.keys())
         unregistered = [t for t in HEAVY_TASKS if t not in registered]
         assert not unregistered, f"HEAVY_TASKS references unregistered tasks: {unregistered}"
+
+    def test_sentinels_route_to_heavy(self):
+        """#233: the 5 sentinels moved off the congested 2-slot `background`
+        queue (their morning 07:10-07:45 UTC fires were dying as no_run_cached)
+        onto `heavy`, which guarantees a free slot. Guard BOTH task_routes and
+        beat options so a future edit can't silently re-starve the alarms."""
+        from app.tasks import HEAVY_TASKS, celery_app as app
+        sentinels = {
+            "app.tasks.flow_sentinel",
+            "app.tasks.grid_sentinel",
+            "app.tasks.horizon_sentinel",
+            "app.tasks.settled_concept_sentinel",
+            "app.tasks.calibration_sentinel",
+        }
+        assert sentinels <= HEAVY_TASKS, (
+            f"sentinels missing from HEAVY_TASKS: {sentinels - HEAVY_TASKS}"
+        )
+        routes = app.conf.task_routes
+        misrouted = {
+            t: routes.get(t, {}).get("queue") for t in sentinels
+            if routes.get(t, {}).get("queue") != "heavy"
+        }
+        assert not misrouted, f"sentinels not routed to heavy in task_routes: {misrouted}"
+        bad_beat = {
+            name: entry.get("options", {}).get("queue")
+            for name, entry in app.conf.beat_schedule.items()
+            if entry["task"] in sentinels
+            and entry.get("options", {}).get("queue") != "heavy"
+        }
+        assert not bad_beat, f"sentinel beat entries not pinned to heavy: {bad_beat}"

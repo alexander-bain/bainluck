@@ -55,6 +55,11 @@ def get_redis_client(
         kwargs["socket_timeout"] = socket_timeout
     if socket_connect_timeout is not None:
         kwargs["socket_connect_timeout"] = socket_connect_timeout
+    # #1197: TCP keepalive + a health-check interval so a connection that Heroku
+    # Redis has idle-closed is PINGed and transparently recycled instead of
+    # failing its next reuse with a TLS [SSL: UNEXPECTED_EOF] handshake error.
+    kwargs["socket_keepalive"] = True
+    kwargs["health_check_interval"] = 25
 
     if REDIS_URL.startswith("rediss://"):
         return redis.from_url(
@@ -70,12 +75,21 @@ def get_async_redis_client():
     import ssl
     import redis.asyncio as aioredis
 
+    # #1197 / #969: bound the connect + keep pooled connections alive with a
+    # health-check interval so idle-reaped Heroku Redis connections recycle
+    # transparently rather than raising a TLS handshake ConnectionError.
+    stability = {
+        "socket_connect_timeout": 5,
+        "socket_keepalive": True,
+        "health_check_interval": 25,
+    }
     if REDIS_URL.startswith("rediss://"):
         return aioredis.from_url(
             REDIS_URL,
-            ssl_cert_reqs=ssl.CERT_NONE
+            ssl_cert_reqs=ssl.CERT_NONE,
+            **stability,
         )
-    return aioredis.from_url(REDIS_URL)
+    return aioredis.from_url(REDIS_URL, **stability)
 
 
 def compute_odds_hash(events_data: list) -> str:

@@ -92,6 +92,29 @@ celery_config = {
     "task_track_started": True,
     "task_time_limit": 300,  # 5 minute timeout
     "worker_prefetch_multiplier": 1,
+    # ------------------------------------------------------------------------
+    # Redis connection stability (#1197). The sustained TLS
+    # `[SSL: UNEXPECTED_EOF_WHILE_READING]` ConnectionError volume (~135-180/24h,
+    # firstSeen Feb) is Heroku-Redis idle-connection churn: the stacktrace lands
+    # in celery/backends/redis.py `get()` → `connect_check_health` → TLS
+    # `do_handshake`, i.e. a connection Heroku had idle-closed is being
+    # re-established and the handshake EOFs. TCP keepalive keeps pooled
+    # connections alive so they aren't idle-reaped (fewer reconnects = fewer
+    # handshake EOFs), and a health-check interval makes redis-py proactively
+    # PING+recycle a stale connection instead of failing on first reuse. Applied
+    # to BOTH the broker and the result backend (the trace is the backend; the
+    # sibling Sentry groups on the broker share the same root cause).
+    "redis_socket_keepalive": True,          # result-backend TCP keepalive
+    "redis_backend_health_check_interval": 25,
+    "redis_socket_connect_timeout": 5,       # bound the handshake (was unbounded)
+    "broker_transport_options": {
+        "socket_keepalive": True,
+        "health_check_interval": 25,
+    },
+    "result_backend_transport_options": {
+        "socket_keepalive": True,
+        "health_check_interval": 25,
+    },
 }
 
 if broker_use_ssl:
@@ -108,11 +131,12 @@ celery_app.conf.update(**celery_config)
 #   Never blocked by batch jobs.
 #
 # background (Standard-1X, concurrency=2):
-#   Short (<300s) hourly/daily batch tasks, matching-pipeline drivers
-#   (match_prediction_markets, poll_kalshi_markets, merges) and the
-#   sentinels (flow/grid/horizon/calibration). Latency-tolerant but must
-#   still fire promptly — so it must NOT share slots with 600s grinders.
-#   Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB dyno).
+#   Short (<300s) hourly/daily batch tasks and matching-pipeline drivers
+#   (match_prediction_markets, poll_kalshi_markets, merges). Latency-tolerant
+#   but must still fire promptly — so it must NOT share slots with 600s
+#   grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB
+#   dyno). NOTE (#233): the sentinels moved OFF background onto `heavy` — the
+#   ~40-beat, 2-slot queue was starving their morning fires (no_run_cached).
 #
 # heavy (Standard-1X, concurrency=2):
 #   ISOLATION LANE for the calibration precompute family — the user-facing
@@ -127,6 +151,15 @@ celery_app.conf.update(**celery_config)
 #   time_horizon, then precompute_calibration_main #223) that per-task
 #   minute-offset juggling could not durably solve.
 #
+#   Also here (#233): the 5 sentinels (flow/grid/horizon/settled daily
+#   07:10-07:45 UTC + calibration weekly). They are daily and cheap (~5s
+#   detect-only) — the antithesis of a slot-filler — but were dying as
+#   no_run_cached on the congested background queue every morning (#232's
+#   diagnosis). Their staggered daily fires never collide with the hourly
+#   :15 precompute, so the 2 heavy slots absorb them without starving the
+#   cache-warmers. Sentinels must fire PROMPTLY (they are alarms); heavy is
+#   the only lane that guarantees a free slot at 07:10-07:45.
+#
 #   Deliberately NOT here: the big backfills (backfill_winners 840s, the
 #   kalshi/polymarket backfills 600-960s). They stay on `background` where
 #   they have always lived — moving them here would just relocate the
@@ -135,10 +168,10 @@ celery_app.conf.update(**celery_config)
 #   contention on background was never the reported problem; calibration
 #   starvation was. So heavy stays a small, guaranteed-free calibration lane.
 #
-# HEAVY membership rule: the calibration/precompute cache-warmer family only.
-# Applied programmatically to both task_routes and the beat schedule's per-entry
-# `options["queue"]` (beat options override task_routes, so both must agree —
-# see the loop after the beat_schedule definition).
+# HEAVY membership rule: the calibration/precompute cache-warmer family + the
+# 5 sentinels (#233). Applied programmatically to both task_routes and the beat
+# schedule's per-entry `options["queue"]` (beat options override task_routes, so
+# both must agree — see the loop after the beat_schedule definition).
 # =============================================================================
 
 from kombu import Queue
@@ -177,11 +210,7 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.poll_kalshi_markets",        # ingest cadence
     "app.tasks.merge_duplicate_events",     # matching pipeline
     "app.tasks.merge_degenerate_combat_events",
-    "app.tasks.flow_sentinel",              # alarms — must fire promptly
-    "app.tasks.grid_sentinel",
-    "app.tasks.horizon_sentinel",
-    "app.tasks.settled_concept_sentinel",
-    "app.tasks.calibration_sentinel",
+    # NOTE: the 5 sentinels moved to HEAVY_TASKS (Queue #233) — see below.
     # the big backfills — deliberately NOT on heavy (see comment above)
     "app.tasks.backfill_winners",
     "app.tasks.backfill_kalshi_candlestick",
@@ -195,8 +224,9 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_team_identities",
 }
 
-# The heavy lane = the calibration/precompute cache-warmer family ONLY. Kept
-# explicit (not derived from decorators) so routing is greppable and stable.
+# The heavy lane = the calibration/precompute cache-warmer family PLUS the
+# daily/weekly sentinels (Queue #233). Kept explicit (not derived from
+# decorators) so routing is greppable and stable.
 HEAVY_TASKS = {
     "app.tasks.precompute_calibration_main",       # hourly :15 — the frozen one (#223)
     "app.tasks.compute_calibration_prices",        # cal_price (#183)
@@ -205,6 +235,20 @@ HEAVY_TASKS = {
     "app.tasks.precompute_source_intelligence",
     "app.tasks.snapshot_coverage_metrics",
     "app.tasks.precompute_backfill_winners_status",
+    # Sentinels (Queue #233): moved off `background` because the morning beats
+    # (flow 07:10 / grid 07:25 / horizon 07:40 / settled 07:45 UTC) were dying
+    # as no_run_cached on the congested ~40-beat, 2-slot background queue
+    # (#232's diagnosis). They are daily (calibration weekly) and cheap (~5s
+    # detect-only), so 2 heavy slots absorb them with room to spare — the hourly
+    # precompute (:15) never collides with the staggered :10/:25/:40/:45 fires.
+    # All 5 sentinels move together (the code has always treated them as one
+    # group); horizon at 07:40 is inside the protected window, so leaving it on
+    # background would keep a beat contending exactly where #233 needs quiet.
+    "app.tasks.flow_sentinel",
+    "app.tasks.grid_sentinel",
+    "app.tasks.horizon_sentinel",
+    "app.tasks.settled_concept_sentinel",
+    "app.tasks.calibration_sentinel",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -2357,20 +2401,20 @@ celery_app.conf.beat_schedule = {
         # #1054: self-serve calibration break detection → evidence pack → issue
         # filing. Weekly (Monday 06:20 UTC) — resolved-outcome cohorts move slowly,
         # and the new-format early-warning tier catches a broken format long before
-        # a 50K-outcome pileup, so a weekly cadence is enough. background queue.
+        # a 50K-outcome pileup, so a weekly cadence is enough. heavy queue (#233).
         "task": "app.tasks.calibration_sentinel",
         "schedule": crontab(minute=20, hour=6, day_of_week=1),  # Weekly Monday 06:20 UTC
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "flow-sentinel-daily": {
         # #1078: scripted user-flow acceptance sentinel against production. Daily
         # (07:10 UTC) — user-facing regressions (search break, unmerged dup,
         # empty live game, resolved-shown-as-live, dark charts, empty category)
         # need faster detection than the weekly calibration cadence. Files one
-        # deduped issue per failing flow. background queue.
+        # deduped issue per failing flow. heavy queue (#233 — no bg starvation).
         "task": "app.tasks.flow_sentinel",
         "schedule": crontab(minute=10, hour=7),  # Daily 07:10 UTC
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "grid-sentinel-daily": {
         # Queue #196: championship grid reliability sentinel. Daily (07:25 UTC,
@@ -2378,10 +2422,10 @@ celery_app.conf.beat_schedule = {
         # monotonicity, envelope corruption, stale-when-active futures) need
         # daily detection. Classifies findings against the season-window artifact
         # registry so RED means REAL; files one deduped issue per RED league.
-        # background queue.
+        # heavy queue (#233).
         "task": "app.tasks.grid_sentinel",
         "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "horizon-sentinel-daily": {
         # Queue #223: marquee-event early-warning sentinel. Daily (07:40 UTC,
@@ -2389,10 +2433,10 @@ celery_app.conf.beat_schedule = {
         # (app/config/majors_calendar.yaml) and escalates each major as it nears
         # (T-30 candidate, T-14 needs-page, T-7 marquee escalation,
         # IN-PROGRESS-WITHOUT-PAGE = P0), filing one deduped issue per uncovered
-        # event so a marquee never arrives without a page. background queue.
+        # event so a marquee never arrives without a page. heavy queue (#233).
         "task": "app.tasks.horizon_sentinel",
         "schedule": crontab(minute=40, hour=7),  # Daily 07:40 UTC
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "settled-concept-sentinel-daily": {
         # Queue #226: within ~24h of any marquee concept settling (THE HORIZON
@@ -2401,10 +2445,10 @@ celery_app.conf.beat_schedule = {
         # resolves, no double-graded round markets — classifying REAL vs EXPLAINED
         # so RED means REAL, filing one deduped issue per concept with REAL
         # defects. The guard #225 earned. Daily (07:45 UTC, after the horizon
-        # sentinel). background queue.
+        # sentinel). heavy queue (#233).
         "task": "app.tasks.settled_concept_sentinel",
         "schedule": crontab(minute=45, hour=7),  # Daily 07:45 UTC
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

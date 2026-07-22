@@ -2741,81 +2741,16 @@ async def _snapshot_coverage_metrics():
                 {src: f'{s["cal_prob_pct"]}% cal_prob' for src, s in snapshot["totals"].items()},
             )
 
-            # Also precompute the backfill-winners/status cache.
-            # This query is too heavy for the web dyno's 30s timeout
-            # but runs fine on the background worker.
-            try:
-                # #940 metric honesty (mirror of precompute_backfill_winners_status):
-                # needs_backfill = NO resolution_source (the genuine gap); split the
-                # rest of the no-winner-tradeable universe into authoritative
-                # (api_settlement/game_score/box_score — correct single-sided NO,
-                # gotcha #17) vs heuristic (pass2_loser/all_losers/clean_resolution —
-                # #754 correctness audit). Count-only, no mutation (gotcha #21).
-                status_result = await session.execute(
-                    text("""
-                        WITH market_status AS (
-                            SELECT fm.id, fm.source,
-                                BOOL_OR(fo.is_winner) AS has_winner,
-                                MAX(fo.current_probability) AS max_prob,
-                                BOOL_AND(fo.calibration_probability IS NULL
-                                         AND fo.opening_probability IS NULL) AS all_cal_null,
-                                BOOL_OR(fo.resolution_source IS NOT NULL) AS any_rsrc,
-                                BOOL_OR(fo.resolution_source IN
-                                        ('api_settlement', 'game_score', 'box_score'))
-                                    AS authoritative
-                            FROM futures_markets fm
-                            JOIN futures_outcomes fo ON fo.market_id = fm.id
-                            WHERE fm.status = 'resolved'
-                            GROUP BY fm.id, fm.source
-                        )
-                        SELECT source,
-                            COUNT(*) AS resolved_markets,
-                            COUNT(*) FILTER (
-                                WHERE (has_winner OR (max_prob IS NOT NULL AND max_prob <= 0.10))
-                                  AND NOT (all_cal_null AND source != 'datagolf')
-                            ) AS has_winner,
-                            COUNT(*) FILTER (
-                                WHERE NOT has_winner
-                                  AND NOT any_rsrc
-                                  AND NOT (all_cal_null AND source != 'datagolf')
-                                  AND (max_prob IS NULL OR max_prob > 0.10)
-                            ) AS needs_backfill,
-                            COUNT(*) FILTER (
-                                WHERE NOT has_winner AND authoritative
-                                  AND NOT (all_cal_null AND source != 'datagolf')
-                                  AND (max_prob IS NULL OR max_prob > 0.10)
-                            ) AS resolved_single_sided,
-                            COUNT(*) FILTER (
-                                WHERE NOT has_winner AND any_rsrc AND NOT authoritative
-                                  AND NOT (all_cal_null AND source != 'datagolf')
-                                  AND (max_prob IS NULL OR max_prob > 0.10)
-                            ) AS heuristic_resolved,
-                            COUNT(*) FILTER (
-                                WHERE all_cal_null AND source != 'datagolf'
-                            ) AS untradeable_excluded
-                        FROM market_status
-                        GROUP BY source
-                    """)
-                )
-                winner_status = {
-                    "sources": [
-                        {"source": r.source, "resolved": r.resolved_markets,
-                         "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
-                         "resolved_single_sided": r.resolved_single_sided,
-                         "heuristic_resolved": r.heuristic_resolved,
-                         "untradeable_excluded": r.untradeable_excluded}
-                        for r in status_result.all()
-                    ],
-                    "precomputed_at": datetime.now(timezone.utc).isoformat(),
-                }
-                rc.setex(
-                    "bainluck:backfill_winners_status",
-                    1800,
-                    json.dumps(winner_status, default=str),
-                )
-                logger.info("Precomputed backfill-winners/status cache")
-            except Exception as ws_err:
-                logger.warning("Failed to precompute winner status: %s", ws_err)
+            # NOTE (#1199): the backfill-winners/status cache (key
+            # `bainluck:backfill_winners_status`) used to be piggybacked here as a
+            # second heavy `market_status` CTE. That inline block was removed — the
+            # dedicated `precompute_backfill_winners_status` task now owns that key,
+            # runs HOURLY at :35 with a 2h TTL (always fresh), and writes the exact
+            # same shape. Running the CTE again here was pure duplicate compute and
+            # was the second heavy query occasionally pushing this daily snapshot
+            # over its 600s soft_time_limit (~1/24h SoftTimeLimitExceeded). With it
+            # gone the task runs a single LATERAL scan and completes well under the
+            # limit. Do NOT re-add it here.
 
     except Exception as e:
         stats["errors"].append(str(e)[:200])
