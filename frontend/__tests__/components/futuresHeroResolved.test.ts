@@ -19,14 +19,17 @@ describe("FuturesHero resolved hero (#883 L2-53)", () => {
     expect(code).toMatch(/\{!resolved && pct != null &&/);
   });
 
-  test("there is exactly one giant-number element, in the live block", () => {
-    const matches = code.match(/text-\[56px\]/g) || [];
-    expect(matches.length).toBe(1);
-    // it lives after the !resolved guard
+  test("the giant hero numeral(s) live only in the live block", () => {
+    // L2-161 Hero C introduced two 64px numeral renderings — the ambient-history
+    // branch and the plain fallback — both inside the same !resolved gate.
     const guardIdx = code.indexOf("!resolved && pct != null");
-    const numIdx = code.indexOf("text-[56px]");
     expect(guardIdx).toBeGreaterThan(-1);
-    expect(numIdx).toBeGreaterThan(guardIdx);
+    let idx = code.indexOf("text-[64px]");
+    expect(idx).toBeGreaterThan(-1); // at least one giant numeral exists
+    while (idx !== -1) {
+      expect(idx).toBeGreaterThan(guardIdx); // every one is behind the guard
+      idx = code.indexOf("text-[64px]", idx + 1);
+    }
   });
 
   test("resolved branch renders the Won/Resolved chip", () => {

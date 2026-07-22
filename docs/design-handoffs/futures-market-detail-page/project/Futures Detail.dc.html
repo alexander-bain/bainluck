@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+  <style>
+    *{box-sizing:border-box;}
+    html,body{margin:0;padding:0;}
+    @keyframes blpulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+    @keyframes blshim{0%{background-position:-360px 0;}100%{background-position:360px 0;}}
+  </style>
+</helmet>
+
+<div style="min-height:100vh;background:#E4E5EA;font-family:'Inter',-apple-system,system-ui,sans-serif;color:#111827;padding:56px 48px 96px;">
+
+  <!-- ===================== MASTHEAD ===================== -->
+  <div style="max-width:1180px;margin:0 auto 8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:22px;">
+      <div style="width:26px;height:26px;border-radius:7px;background:#10B981;display:flex;align-items:center;justify-content:center;font-size:15px;">🍀</div>
+      <span style="font-size:10px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#6B7280;">Bain Luck · Design Spec</span>
+    </div>
+    <h1 style="font-size:44px;font-weight:700;letter-spacing:-0.025em;line-height:1.05;margin:0 0 14px;max-width:760px;">Futures market detail page</h1>
+    <p style="font-size:16px;line-height:1.55;color:#4B5563;max-width:660px;margin:0 0 26px;">The page every Discover tap lands on. Their market pages exist to place a trade; ours exists to make a probability <em>legible</em>. Every transactional surface is stripped — that space buys meaning, history, and the one thing no rival page can show: <strong style="color:#111827;font-weight:600;">every source aggregated into a single number</strong>, with the disagreement one tap away.</p>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:30px;">
+      <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;border-radius:999px;padding:7px 14px 7px 11px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <span style="width:18px;height:18px;border-radius:5px;background:rgba(16,185,129,0.14);color:#10B981;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">1</span>
+        <span style="font-size:13px;font-weight:500;color:#374151;">Understand, never transact</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;border-radius:999px;padding:7px 14px 7px 11px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <span style="width:18px;height:18px;border-radius:5px;background:rgba(139,92,246,0.14);color:#8B5CF6;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">2</span>
+        <span style="font-size:13px;font-weight:500;color:#374151;">Aggregate every source into one number</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;border-radius:999px;padding:7px 14px 7px 11px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <span style="width:18px;height:18px;border-radius:5px;background:rgba(34,197,94,0.14);color:#16A34A;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">3</span>
+        <span style="font-size:13px;font-weight:500;color:#374151;">Mobile-first · native parity · 375px-safe</span>
+      </div>
+    </div>
+
+    <!-- LEGEND -->
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;">
+      <div style="flex:1;min-width:300px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:14px;">Numeral ladder · JetBrains Mono · tabular</div>
+        <div style="display:flex;align-items:baseline;gap:20px;flex-wrap:wrap;">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:56px;letter-spacing:-0.04em;line-height:1;color:#111827;">68<span style="font-size:28px;">%</span></span>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:36px;letter-spacing:-0.03em;line-height:1;color:#374151;">42%</span>
+            <div style="display:flex;align-items:baseline;gap:12px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;letter-spacing:-0.02em;color:#6B7280;">22%</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:#9CA3AF;">11%</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:14px;font-size:10px;color:#9CA3AF;font-family:'JetBrains Mono',monospace;">
+          <span>56 · hero</span><span>36 · leader</span><span>20 · row</span><span>16 · inline</span>
+        </div>
+      </div>
+      <div style="flex:1;min-width:300px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:14px;">Semantic roles</div>
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:center;gap:9px;font-size:12px;color:#374151;"><span style="width:13px;height:13px;border-radius:3px;background:#22C55E;"></span>Upward movement · live</div>
+          <div style="display:flex;align-items:center;gap:9px;font-size:12px;color:#374151;"><span style="width:13px;height:13px;border-radius:3px;background:#EF4444;"></span>Downward movement</div>
+          <div style="display:flex;align-items:center;gap:9px;font-size:12px;color:#374151;"><span style="width:13px;height:13px;border-radius:3px;background:#8B5CF6;"></span>Futures · aggregation</div>
+          <div style="display:flex;align-items:center;gap:9px;font-size:12px;color:#374151;"><span style="width:13px;height:13px;border-radius:3px;background:#F59E0B;"></span>Leader mark · resolution</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: HERO ===================== -->
+  <div style="max-width:1262px;margin:62px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">01 · Probability hero</span>
+      <span style="font-size:13px;color:#6B7280;">The moment after the tap. Three directions, basic → bold.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:28px;"></div>
+
+    <div style="display:flex;gap:26px;flex-wrap:wrap;">
+
+      <!-- HERO A — basic -->
+      <div style="width:392px;">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:11px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">A · By-the-book</span>
+          <span style="font-size:12px;color:#9CA3AF;">numeral + delta + sparkline</span>
+        </div>
+        <div style="border-radius:30px;overflow:hidden;background:#F5F5F7;box-shadow:0 10px 30px rgba(17,24,39,0.12),0 0 0 1px rgba(17,24,39,0.06);">
+          <div style="height:30px;background:#F5F5F7;"></div>
+          <div style="display:flex;align-items:center;padding:4px 18px 12px;gap:12px;">
+            <span style="font-size:18px;color:#6B7280;">‹</span>
+            <span style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">🎬 Box office</span>
+            <span style="margin-left:auto;font-size:16px;color:#9CA3AF;">⤴</span>
+          </div>
+          <div style="padding:4px 22px 26px;">
+            <div style="display:flex;gap:12px;margin-bottom:18px;">
+              <div style="width:40px;height:56px;border-radius:5px;background:linear-gradient(135deg,#1F2937,#374151);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;"><span style="font-size:7px;color:#9CA3AF;letter-spacing:0.06em;">POSTER</span></div>
+              <div>
+                <div style="font-size:17px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;">Avatar: Fire and Ash<br>opens above $150M</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:5px;">Resolves Dec 22 · domestic 3-day</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;">
+              <div>
+                <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.04em;color:#111827;line-height:1;"><span style="font-size:56px;">68</span><span style="font-size:26px;">%</span></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                  <span style="font-size:13px;font-weight:600;color:#111827;">Yes</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#16A34A;">↑ 11 pts</span>
+                </div>
+              </div>
+              <svg viewBox="0 0 116 50" width="116" height="50" style="overflow:visible;">
+                <path d="M2,44 L18,42 L34,43 L50,36 L64,34 L80,24 L96,18 L114,7" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="114" cy="7" r="2.6" fill="#10B981"/>
+              </svg>
+            </div>
+            <div style="margin-top:18px;padding-top:14px;border-top:1px solid #E5E7EB;display:flex;align-items:center;gap:8px;">
+              <span style="display:inline-flex;gap:2px;"><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <span style="font-size:12px;color:#6B7280;">Aggregated from <strong style="color:#374151;font-weight:600;">4 sources</strong></span>
+              <span style="margin-left:auto;font-size:12px;color:#9CA3AF;">Details ›</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HERO B — intermediate -->
+      <div style="width:392px;">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:11px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">B · Scoreboard bar</span>
+          <span style="font-size:12px;color:#9CA3AF;">yes/no bar carries the split</span>
+        </div>
+        <div style="border-radius:30px;overflow:hidden;background:#F5F5F7;box-shadow:0 10px 30px rgba(17,24,39,0.12),0 0 0 1px rgba(17,24,39,0.06);">
+          <div style="height:30px;background:#F5F5F7;"></div>
+          <div style="display:flex;align-items:center;padding:4px 18px 12px;gap:12px;">
+            <span style="font-size:18px;color:#6B7280;">‹</span>
+            <span style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">🎬 Box office</span>
+            <span style="margin-left:auto;font-size:16px;color:#9CA3AF;">⤴</span>
+          </div>
+          <div style="padding:4px 22px 26px;">
+            <div style="font-size:17px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;margin-bottom:18px;">Avatar: Fire and Ash opens above $150M</div>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:12px;">
+              <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.04em;color:#111827;line-height:1;"><span style="font-size:56px;">68</span><span style="font-size:26px;">%</span></div>
+              <div style="text-align:right;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#16A34A;">↑ 11 pts</span>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">since the trailer dropped</div>
+              </div>
+            </div>
+            <div style="display:flex;height:9px;gap:2px;margin-bottom:7px;">
+              <div style="width:68%;background:#10B981;border-radius:999px;box-shadow:inset 0 1px 2px rgba(0,0,0,0.12);"></div>
+              <div style="width:32%;background:#9CA3AF;opacity:.38;border-radius:999px;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;">
+              <span style="font-weight:600;color:#111827;">Yes 68%</span>
+              <span style="color:#9CA3AF;">No 32%</span>
+            </div>
+            <div style="margin-top:18px;padding-top:14px;border-top:1px solid #E5E7EB;display:flex;align-items:center;gap:8px;">
+              <span style="display:inline-flex;gap:2px;"><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <span style="font-size:12px;color:#6B7280;">Aggregated from <strong style="color:#374151;font-weight:600;">4 sources</strong></span>
+              <span style="margin-left:auto;font-size:12px;color:#9CA3AF;">Details ›</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HERO C — bold (ships) -->
+      <div style="width:392px;">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:11px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">C · Ambient history</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#10B981;background:rgba(16,185,129,0.12);padding:2px 8px;border-radius:999px;">ships</span>
+        </div>
+        <div style="border-radius:30px;overflow:hidden;background:#F5F5F7;box-shadow:0 10px 30px rgba(17,24,39,0.12),0 0 0 1px rgba(17,24,39,0.06);">
+          <div style="height:30px;background:#F5F5F7;"></div>
+          <div style="display:flex;align-items:center;padding:4px 18px 12px;gap:12px;">
+            <span style="font-size:18px;color:#6B7280;">‹</span>
+            <span style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">🎬 Box office</span>
+            <span style="margin-left:auto;font-size:16px;color:#9CA3AF;">⤴</span>
+          </div>
+          <div style="padding:4px 22px 26px;position:relative;">
+            <div style="display:flex;gap:12px;margin-bottom:16px;">
+              <div style="width:40px;height:56px;border-radius:5px;background:linear-gradient(135deg,#1F2937,#374151);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;"><span style="font-size:7px;color:#9CA3AF;letter-spacing:0.06em;">POSTER</span></div>
+              <div>
+                <div style="font-size:17px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;">Avatar: Fire and Ash<br>opens above $150M</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:5px;">Resolves Dec 22 · domestic 3-day</div>
+              </div>
+            </div>
+            <div style="position:relative;height:96px;margin:0 -22px;">
+              <svg viewBox="0 0 392 96" width="392" height="96" preserveAspectRatio="none" style="position:absolute;inset:0;">
+                <path d="M0,86 L40,82 L80,84 L130,70 L175,66 L230,46 L290,34 L392,12 L392,96 L0,96 Z" fill="#10B981" fill-opacity="0.07"/>
+                <path d="M0,86 L40,82 L80,84 L130,70 L175,66 L230,46 L290,34 L392,12" fill="none" stroke="#10B981" stroke-width="1.5" stroke-opacity="0.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <div style="position:absolute;left:22px;bottom:8px;display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.045em;color:#111827;line-height:1;"><span style="font-size:64px;">68</span><span style="font-size:28px;">%</span></div>
+              <div style="position:absolute;right:22px;bottom:14px;text-align:right;">
+                <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,0.13);padding:3px 9px;border-radius:999px;"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#16A34A;">↑ 11 pts</span></div>
+                <div style="font-size:12px;font-weight:600;color:#111827;margin-top:7px;">Yes</div>
+              </div>
+            </div>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid #E5E7EB;display:flex;align-items:center;gap:8px;">
+              <span style="display:inline-flex;gap:2px;"><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <span style="font-size:12px;color:#6B7280;">Aggregated from <strong style="color:#374151;font-weight:600;">4 sources</strong></span>
+              <span style="margin-left:auto;font-size:12px;color:#9CA3AF;">Details ›</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- CONTEXT LINE callout under the trio -->
+    <div style="margin-top:24px;background:#fff;border:1px solid #E5E7EB;border-left:3px solid #8B5CF6;border-radius:10px;padding:14px 18px;max-width:760px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:6px;">The context line · evidence-grounded, never filler</div>
+      <div style="font-size:15px;color:#111827;line-height:1.5;">“Up 11 pts since the trailer dropped.” <span style="color:#9CA3AF;">— one sentence, supplied by the snippet system, tied to a real event. If we have nothing to say, the line is omitted, not padded.</span></div>
+    </div>
+
+    <!-- ANNOTATED TWIN of Hero C -->
+    <div style="margin-top:42px;">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:18px;">
+        <span style="font-size:13px;font-weight:600;color:#111827;">Hero C · anatomy</span>
+        <span style="font-size:12px;color:#9CA3AF;">every decision in the block that carries the page</span>
+      </div>
+      <div style="display:flex;gap:46px;flex-wrap:wrap;align-items:flex-start;">
+
+        <!-- pinned frame -->
+        <div style="width:392px;position:relative;flex-shrink:0;">
+          <div style="border-radius:30px;overflow:hidden;background:#F5F5F7;box-shadow:0 10px 30px rgba(17,24,39,0.12),0 0 0 1px rgba(17,24,39,0.06);position:relative;">
+            <div style="height:30px;background:#F5F5F7;"></div>
+            <div style="display:flex;align-items:center;padding:4px 18px 12px;gap:12px;">
+              <span style="font-size:18px;color:#6B7280;">‹</span>
+              <span style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">🎬 Box office</span>
+              <span style="margin-left:auto;font-size:16px;color:#9CA3AF;">⤴</span>
+            </div>
+            <div style="padding:4px 22px 26px;position:relative;">
+              <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <div style="width:40px;height:56px;border-radius:5px;background:linear-gradient(135deg,#1F2937,#374151);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;"><span style="font-size:7px;color:#9CA3AF;letter-spacing:0.06em;">POSTER</span></div>
+                <div>
+                  <div style="font-size:17px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;">Avatar: Fire and Ash<br>opens above $150M</div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:5px;">Resolves Dec 22 · domestic 3-day</div>
+                </div>
+              </div>
+              <div style="position:relative;height:96px;margin:0 -22px;">
+                <svg viewBox="0 0 392 96" width="392" height="96" preserveAspectRatio="none" style="position:absolute;inset:0;">
+                  <path d="M0,86 L40,82 L80,84 L130,70 L175,66 L230,46 L290,34 L392,12 L392,96 L0,96 Z" fill="#10B981" fill-opacity="0.07"/>
+                  <path d="M0,86 L40,82 L80,84 L130,70 L175,66 L230,46 L290,34 L392,12" fill="none" stroke="#10B981" stroke-width="1.5" stroke-opacity="0.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div style="position:absolute;left:22px;bottom:8px;display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.045em;color:#111827;line-height:1;"><span style="font-size:64px;">68</span><span style="font-size:28px;">%</span></div>
+                <div style="position:absolute;right:22px;bottom:14px;text-align:right;">
+                  <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,0.13);padding:3px 9px;border-radius:999px;"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#16A34A;">↑ 11 pts</span></div>
+                  <div style="font-size:12px;font-weight:600;color:#111827;margin-top:7px;">Yes</div>
+                </div>
+              </div>
+              <div style="margin-top:14px;padding-top:14px;border-top:1px solid #E5E7EB;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;gap:2px;"><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+                <span style="font-size:12px;color:#6B7280;">Aggregated from <strong style="color:#374151;font-weight:600;">4 sources</strong></span>
+                <span style="margin-left:auto;font-size:12px;color:#9CA3AF;">Details ›</span>
+              </div>
+            </div>
+          </div>
+          <!-- pins -->
+          <span style="position:absolute;left:58px;top:92px;width:22px;height:22px;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);z-index:6;">1</span>
+          <span style="position:absolute;left:150px;top:206px;width:22px;height:22px;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);z-index:6;">2</span>
+          <span style="position:absolute;left:262px;top:158px;width:22px;height:22px;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);z-index:6;">3</span>
+          <span style="position:absolute;left:336px;top:190px;width:22px;height:22px;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);z-index:6;">4</span>
+          <span style="position:absolute;left:58px;top:268px;width:22px;height:22px;border-radius:999px;background:#8B5CF6;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(139,92,246,0.4);z-index:6;">5</span>
+        </div>
+
+        <!-- notes -->
+        <div style="flex:1;min-width:320px;max-width:440px;padding-top:6px;">
+          <div style="display:flex;flex-direction:column;gap:18px;">
+            <div style="display:flex;gap:12px;">
+              <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">1</span>
+              <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">Entity art, never stock</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">TMDB poster, team crest, or flag — whatever the market is about. Falls back to an initials chip, the same codepath the feed card uses. No photography, ever.</div></div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">2</span>
+              <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">64px hero numeral — the loudest thing on the page</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">One step above the event-detail 36px token. JetBrains Mono, tabular, −0.045em. The <strong>%</strong> drops to 28px so the integer dominates. Identical type to the feed card they just tapped — continuity is the whole point.</div></div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">3</span>
+              <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">Ambient history behind the number</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">The 7-day curve as texture — 1.5px line at 50% opacity, 7% area fill. It hints at the chart below without competing with the numeral. Same Evolution Chart line, just quieter.</div></div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">4</span>
+              <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">Movement delta · signed, tinted</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">↑ 11 pts in a green-tint pill (--accent-live); ↓ would carry --accent-danger. Stated in points, not a vague "trending up." The “Yes” label sits under it so the number's meaning is never ambiguous.</div></div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#8B5CF6;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">5</span>
+              <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">The aggregation mark — our signature</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">A 3-dot cluster + “from 4 sources” states plainly that this number is a blend, not one book's quote. Quiet by default; “Details ›” expands the per-source breakdown. This line is the thing no rival market page can print.</div></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: CORE STATES ===================== -->
+  <div style="max-width:1262px;margin:64px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">02 · Core states</span>
+      <span style="font-size:13px;color:#6B7280;">The full page, top to bottom. Binary default, then multi-outcome.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:30px;"></div>
+
+    <div style="display:flex;gap:48px;flex-wrap:wrap;align-items:flex-start;">
+
+      <!-- BINARY DEFAULT — full screen -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Binary · default</span>
+          <span style="font-size:12px;color:#9CA3AF;">a yes/no market · entertainment</span>
+        </div>
+        <!-- DEVICE -->
+        <div data-screen-label="Binary default" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <!-- status bar -->
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;font-size:12px;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <!-- top bar -->
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🎬 Box office</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <!-- hero (Hero C) -->
+            <div style="padding:4px 22px 0;position:relative;">
+              <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <div style="width:42px;height:60px;border-radius:6px;background:linear-gradient(135deg,#1F2937,#374151);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;"><span style="font-size:7px;color:#9CA3AF;letter-spacing:0.06em;">POSTER</span></div>
+                <div>
+                  <div style="font-size:18px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;">Avatar: Fire and Ash<br>opens above $150M</div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:5px;">Resolves Dec 22 · domestic 3-day</div>
+                </div>
+              </div>
+              <div style="position:relative;height:100px;margin:0 -22px;">
+                <svg viewBox="0 0 390 100" width="390" height="100" preserveAspectRatio="none" style="position:absolute;inset:0;">
+                  <path d="M0,90 L40,86 L80,88 L130,72 L175,68 L230,48 L290,34 L390,12 L390,100 L0,100 Z" fill="#10B981" fill-opacity="0.07"/>
+                  <path d="M0,90 L40,86 L80,88 L130,72 L175,68 L230,48 L290,34 L390,12" fill="none" stroke="#10B981" stroke-width="1.5" stroke-opacity="0.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div style="position:absolute;left:22px;bottom:8px;display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.045em;color:#111827;line-height:1;"><span style="font-size:66px;">68</span><span style="font-size:29px;">%</span></div>
+                <div style="position:absolute;right:22px;bottom:16px;text-align:right;">
+                  <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,0.13);padding:3px 9px;border-radius:999px;"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#16A34A;">↑ 11 pts</span></div>
+                  <div style="font-size:12px;font-weight:600;color:#111827;margin-top:7px;">Yes</div>
+                </div>
+              </div>
+            </div>
+            <!-- context line -->
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:14px 22px 16px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#4B5563;line-height:1.45;">Climbed 11 points the week the final trailer landed.</span>
+            </div>
+            <!-- aggregation strip (quiet, collapsed) -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:13px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;">
+              <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated from 4 sources</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">They agree within 3 points</div>
+              </div>
+              <span style="font-size:12px;color:#6B7280;font-weight:500;">Show ›</span>
+            </div>
+            <!-- history chart -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 14px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Probability · last 7 days</span>
+                <span style="margin-left:auto;display:flex;gap:3px;background:#F0F0F2;border-radius:8px;padding:2px;">
+                  <span style="font-size:11px;font-weight:600;color:#111827;background:#fff;border-radius:6px;padding:3px 9px;box-shadow:0 1px 2px rgba(0,0,0,0.06);">7d</span>
+                  <span style="font-size:11px;font-weight:500;color:#9CA3AF;padding:3px 9px;">30d</span>
+                  <span style="font-size:11px;font-weight:500;color:#9CA3AF;padding:3px 9px;">All</span>
+                </span>
+              </div>
+              <svg viewBox="0 0 362 196" width="100%" height="186" style="display:block;overflow:visible;">
+                <line x1="30" y1="14" x2="356" y2="14" stroke="#EEF0F3"/>
+                <line x1="30" y1="53" x2="356" y2="53" stroke="#EEF0F3"/>
+                <line x1="30" y1="92" x2="356" y2="92" stroke="#EEF0F3"/>
+                <line x1="30" y1="131" x2="356" y2="131" stroke="#EEF0F3"/>
+                <line x1="30" y1="170" x2="356" y2="170" stroke="#D1D5DB"/>
+                <text x="25" y="17" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">100</text>
+                <text x="25" y="56" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">75</text>
+                <text x="25" y="95" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">50</text>
+                <text x="25" y="134" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">25</text>
+                <text x="25" y="173" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                <path d="M30,81 L78,83 L126,79 L174,76 L222,79 L270,70 L318,67 L350,64" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="350" cy="64" r="3" fill="#10B981"/>
+                <text x="40" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">7d ago</text>
+                <text x="174" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">3d</text>
+                <text x="318" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">Today</text>
+              </svg>
+            </div>
+            <!-- resolution panel -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">
+                <span style="font-size:15px;font-weight:600;color:#111827;">Resolves Dec 22, 2026</span>
+                <span style="font-size:12px;color:#9CA3AF;white-space:nowrap;">in 195 days</span>
+              </div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Settles on Box Office Mojo's reported domestic 3-day opening gross.</div>
+            </div>
+            <!-- related constellation -->
+            <div style="padding:6px 0 4px;">
+              <div style="display:flex;align-items:center;padding:0 22px 11px;">
+                <span style="font-size:14px;font-weight:600;color:#111827;">More in this story</span>
+                <span style="margin-left:auto;font-size:12px;color:#9CA3AF;">Avatar 3</span>
+              </div>
+              <div style="display:flex;gap:10px;overflow:hidden;padding:0 14px 4px;">
+                <div style="flex:0 0 168px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                  <div style="font-size:12px;color:#374151;line-height:1.35;font-weight:500;margin-bottom:12px;">Opens above $200M</div>
+                  <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:#111827;">41<span style="font-size:12px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;">↑4</span></div>
+                </div>
+                <div style="flex:0 0 168px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                  <div style="font-size:12px;color:#374151;line-height:1.35;font-weight:500;margin-bottom:12px;">Best VFX nominee</div>
+                  <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:#111827;">88<span style="font-size:12px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;">—</span></div>
+                </div>
+                <div style="flex:0 0 60px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 0;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;justify-content:center;color:#9CA3AF;font-size:18px;">›</div>
+              </div>
+            </div>
+            <!-- meta footer -->
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:8px;">
+              <span style="font-size:11px;color:#9CA3AF;">$2.4M volume · 4 sources</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MULTI-OUTCOME 4 — full screen -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Multi-outcome · 4</span>
+          <span style="font-size:12px;color:#9CA3AF;">leader treatment + ranked field</span>
+        </div>
+        <div data-screen-label="Multi 4" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🏀 NBA · award</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <!-- hero: leader treatment -->
+            <div style="padding:4px 22px 0;">
+              <div style="font-size:18px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;margin-bottom:16px;">2026 NBA Finals MVP</div>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <div style="width:48px;height:48px;border-radius:12px;background:#0E2240;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;letter-spacing:-0.02em;flex-shrink:0;">NJ</div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:17px;font-weight:600;color:#111827;letter-spacing:-0.01em;">Nikola Jokić</div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:2px;">Denver · leads the field</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.035em;color:#111827;line-height:1;"><span style="font-size:38px;">34</span><span style="font-size:18px;">%</span></div>
+                  <div style="display:inline-flex;align-items:center;gap:4px;background:rgba(34,197,94,0.13);padding:2px 7px;border-radius:999px;margin-top:5px;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#16A34A;">↑ 2.1</span></div>
+                </div>
+              </div>
+            </div>
+            <!-- context line -->
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:16px 22px 14px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#4B5563;line-height:1.45;">Has led every snapshot since the conference finals opened.</span>
+            </div>
+            <!-- aggregation strip -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:13px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;">
+              <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated from 4 sources</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">Per-outcome blend across books</div>
+              </div>
+              <span style="font-size:12px;color:#6B7280;font-weight:500;">Show ›</span>
+            </div>
+            <!-- ranked field -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:6px 15px 8px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F0F0F2;">
+                <span style="width:18px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#F59E0B;flex-shrink:0;">1</span>
+                <span style="width:8px;height:8px;border-radius:2px;background:#C41E3A;flex-shrink:0;"></span>
+                <span style="flex:1;font-size:13px;font-weight:600;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Nikola Jokić</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;flex-shrink:0;">↑2.1</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#111827;min-width:40px;text-align:right;flex-shrink:0;">34%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F0F0F2;">
+                <span style="width:18px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:#9CA3AF;flex-shrink:0;">2</span>
+                <span style="width:8px;height:8px;border-radius:2px;background:#005EB8;flex-shrink:0;"></span>
+                <span style="flex:1;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Shai Gilgeous-Alexander</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#EF4444;flex-shrink:0;">↓0.8</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#6B7280;min-width:40px;text-align:right;flex-shrink:0;">22%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F0F0F2;">
+                <span style="width:18px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:#9CA3AF;flex-shrink:0;">3</span>
+                <span style="width:8px;height:8px;border-radius:2px;background:#1D4ED8;flex-shrink:0;"></span>
+                <span style="flex:1;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Jayson Tatum</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;flex-shrink:0;">↑0.3</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#6B7280;min-width:40px;text-align:right;flex-shrink:0;">14%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;">
+                <span style="width:18px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:#9CA3AF;flex-shrink:0;">4</span>
+                <span style="width:8px;height:8px;border-radius:2px;background:#0E7490;flex-shrink:0;"></span>
+                <span style="flex:1;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Luka Dončić</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;flex-shrink:0;">—</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#6B7280;min-width:40px;text-align:right;flex-shrink:0;">11%</span>
+              </div>
+            </div>
+            <!-- history chart (multi-line) -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 14px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Probability · full run</span>
+                <span style="margin-left:auto;display:flex;gap:3px;background:#F0F0F2;border-radius:8px;padding:2px;">
+                  <span style="font-size:11px;font-weight:500;color:#9CA3AF;padding:3px 9px;">7d</span>
+                  <span style="font-size:11px;font-weight:500;color:#9CA3AF;padding:3px 9px;">30d</span>
+                  <span style="font-size:11px;font-weight:600;color:#111827;background:#fff;border-radius:6px;padding:3px 9px;box-shadow:0 1px 2px rgba(0,0,0,0.06);">All</span>
+                </span>
+              </div>
+              <svg viewBox="0 0 362 196" width="100%" height="186" style="display:block;overflow:visible;">
+                <line x1="30" y1="14" x2="356" y2="14" stroke="#EEF0F3"/>
+                <line x1="30" y1="59" x2="356" y2="59" stroke="#EEF0F3"/>
+                <line x1="30" y1="104" x2="356" y2="104" stroke="#EEF0F3"/>
+                <line x1="30" y1="149" x2="356" y2="149" stroke="#EEF0F3"/>
+                <line x1="30" y1="170" x2="356" y2="170" stroke="#D1D5DB"/>
+                <text x="25" y="17" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">40</text>
+                <text x="25" y="62" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">30</text>
+                <text x="25" y="107" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">20</text>
+                <text x="25" y="152" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">10</text>
+                <text x="25" y="173" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                <path d="M30,98 C90,92 150,78 210,70 C270,62 320,56 350,53" fill="none" stroke="#C41E3A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,116 C90,118 150,112 210,108 C270,104 320,104 350,103" fill="none" stroke="#005EB8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,140 C90,138 150,134 210,132 C270,130 320,128 350,128" fill="none" stroke="#1D4ED8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,150 C90,148 150,146 210,144 C270,142 320,140 350,140" fill="none" stroke="#0E7490" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,158 C90,160 150,162 210,164 C270,167 320,168 350,168" fill="none" stroke="#B5B9C3" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.6" stroke-linecap="round"/>
+                <circle cx="350" cy="53" r="3" fill="#C41E3A"/>
+                <text x="40" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">Opened</text>
+                <text x="200" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">Apr</text>
+                <text x="345" y="188" text-anchor="middle" font-size="9" fill="#9CA3AF">Today</text>
+              </svg>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;">
+                <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#374151;"><span style="width:10px;height:2px;background:#C41E3A;"></span>Jokić</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;"><span style="width:10px;height:2px;background:#005EB8;"></span>SGA</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#9CA3AF;"><span style="width:10px;height:0;border-top:1px dashed #B5B9C3;"></span>Embiid · out</span>
+              </div>
+            </div>
+            <!-- resolution -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolves at the Finals · June 2026</div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Settles on the Bill Russell NBA Finals MVP award vote.</div>
+            </div>
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:4px;">
+              <span style="font-size:11px;color:#9CA3AF;">$5.1M volume · 4 sources · 8 outcomes</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MULTI-OUTCOME 10+ — full screen -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Multi-outcome · 10+</span>
+          <span style="font-size:12px;color:#9CA3AF;">a deep field · awards race</span>
+        </div>
+        <div data-screen-label="Multi 10" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🏆 Awards</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <!-- hero: leader treatment with poster -->
+            <div style="padding:4px 22px 0;">
+              <div style="font-size:18px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;margin-bottom:16px;">Best Picture · 98th Academy Awards</div>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <div style="width:44px;height:60px;border-radius:6px;background:linear-gradient(135deg,#3F2D52,#5B3F73);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;"><span style="font-size:7px;color:#D8C9E6;letter-spacing:0.04em;">POSTER</span></div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:17px;font-weight:600;color:#111827;letter-spacing:-0.01em;">Maestro's End</div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:2px;">Front-runner · 10 nominees</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.035em;color:#111827;line-height:1;"><span style="font-size:38px;">22</span><span style="font-size:18px;">%</span></div>
+                  <div style="display:inline-flex;align-items:center;gap:4px;background:rgba(34,197,94,0.13);padding:2px 7px;border-radius:999px;margin-top:5px;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#16A34A;">↑ 1.4</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:16px 22px 14px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#4B5563;line-height:1.45;">No nominee clears 25% — the most open field in six years.</span>
+            </div>
+            <!-- aggregation strip -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:13px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;">
+              <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated from 3 sources</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">Kalshi, Polymarket &amp; a stat model</div>
+              </div>
+              <span style="font-size:12px;color:#6B7280;font-weight:500;">Show ›</span>
+            </div>
+            <!-- full ranked field of 10 with mini bars -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:8px 15px 6px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;padding:6px 0 10px;border-bottom:1px solid #F0F0F2;margin-bottom:4px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">The field · all 10</span>
+                <span style="margin-left:auto;font-size:11px;color:#9CA3AF;">tap any to chart</span>
+              </div>
+              <!-- rows -->
+              <div style="display:flex;flex-direction:column;gap:11px;padding:8px 0 6px;">
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:#F59E0B;flex-shrink:0;">1</span><span style="width:18px;height:18px;border-radius:4px;background:#5B3F73;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">ME</span><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Maestro's End</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:88%;background:#8B5CF6;opacity:.7;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;flex-shrink:0;">↑1.4</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#111827;min-width:34px;text-align:right;flex-shrink:0;">22%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">2</span><span style="width:18px;height:18px;border-radius:4px;background:#1F6F54;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">SP</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">The Salt Path</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:72%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;flex-shrink:0;">↑0.6</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">18%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">3</span><span style="width:18px;height:18px;border-radius:4px;background:#8A5A2B;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">CP</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Cabin Pressure</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:56%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#EF4444;flex-shrink:0;">↓0.4</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">14%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">4</span><span style="width:18px;height:18px;border-radius:4px;background:#2B4D8A;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">NL</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Northern Lights</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:44%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;flex-shrink:0;">—</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">11%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">5</span><span style="width:18px;height:18px;border-radius:4px;background:#6B4A2B;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">IW</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Ironwood</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:36%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;flex-shrink:0;">↑0.9</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">9%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">6</span><span style="width:18px;height:18px;border-radius:4px;background:#7A2B4D;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">TD</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">The Diplomat</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:28%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;flex-shrink:0;">—</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">7%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">7</span><span style="width:18px;height:18px;border-radius:4px;background:#3F6B2B;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">GH</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Glasshouse</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:24%;background:#9CA3AF;opacity:.35;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;flex-shrink:0;">—</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#6B7280;min-width:34px;text-align:right;flex-shrink:0;">6%</span></div>
+                <div style="display:flex;align-items:center;gap:9px;opacity:0.78;"><span style="width:14px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:#9CA3AF;flex-shrink:0;">8</span><span style="width:18px;height:18px;border-radius:4px;background:#9CA3AF;color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">VL</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#6B7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Velvet</div><div style="height:3px;background:#F0F0F2;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:20%;background:#9CA3AF;opacity:.3;"></div></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;flex-shrink:0;">—</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#9CA3AF;min-width:34px;text-align:right;flex-shrink:0;">5%</span></div>
+              </div>
+              <div style="padding:9px 0 8px;border-top:1px solid #F0F0F2;font-size:12px;color:#6B7280;font-weight:500;text-align:center;">Show 2 more · 4% combined</div>
+            </div>
+            <!-- compact history -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 14px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;margin-bottom:12px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Top 4 · since nominations</span>
+              </div>
+              <svg viewBox="0 0 362 150" width="100%" height="140" style="display:block;overflow:visible;">
+                <line x1="30" y1="12" x2="356" y2="12" stroke="#EEF0F3"/>
+                <line x1="30" y1="56" x2="356" y2="56" stroke="#EEF0F3"/>
+                <line x1="30" y1="100" x2="356" y2="100" stroke="#EEF0F3"/>
+                <line x1="30" y1="128" x2="356" y2="128" stroke="#D1D5DB"/>
+                <text x="25" y="15" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">25</text>
+                <text x="25" y="59" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">15</text>
+                <text x="25" y="103" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">5</text>
+                <text x="25" y="131" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                <path d="M30,60 C90,54 150,44 210,40 C270,37 320,35 350,34" fill="none" stroke="#8B5CF6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,70 C90,68 150,60 210,54 C270,50 320,48 350,46" fill="none" stroke="#1F6F54" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,72 C90,74 150,72 210,70 C270,66 320,62 350,60" fill="none" stroke="#8A5A2B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M30,96 C90,90 150,84 210,80 C270,76 320,72 350,70" fill="none" stroke="#2B4D8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="350" cy="34" r="3" fill="#8B5CF6"/>
+                <text x="40" y="146" text-anchor="middle" font-size="9" fill="#9CA3AF">Noms</text>
+                <text x="350" y="146" text-anchor="end" font-size="9" fill="#9CA3AF">Today</text>
+              </svg>
+            </div>
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolves Mar 15, 2026</div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Settles on the Best Picture winner announced at the ceremony.</div>
+            </div>
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:4px;">
+              <span style="font-size:11px;color:#9CA3AF;">$3.8M volume · 3 sources · 10 nominees</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: GROUPED / LADDER ===================== -->
+  <div style="max-width:1262px;margin:64px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">03 · Grouped markets</span>
+      <span style="font-size:13px;color:#6B7280;">A threshold ladder — the Discover heat-strip, expanded with per-rung history.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:30px;"></div>
+
+    <div style="display:flex;gap:48px;flex-wrap:wrap;align-items:flex-start;">
+
+      <!-- THRESHOLD LADDER — full screen -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Threshold ladder</span>
+          <span style="font-size:12px;color:#9CA3AF;">P(score ≥ N) · a single resolving number</span>
+        </div>
+        <div data-screen-label="Ladder" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🍅 Critics</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <!-- hero -->
+            <div style="padding:4px 22px 0;">
+              <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <div style="width:42px;height:60px;border-radius:6px;background:linear-gradient(135deg,#3A1F1F,#5A2E2A);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;"><span style="font-size:7px;color:#E0B6A8;letter-spacing:0.05em;">POSTER</span></div>
+                <div>
+                  <div style="font-size:18px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;">Dune: Part Three<br>Tomatometer on release</div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:5px;">Resolves Mar 20 · critics score</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px;">
+                <div>
+                  <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.04em;color:#111827;line-height:1;"><span style="font-size:54px;">91</span><span style="font-size:24px;">%</span></div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                    <span style="font-size:13px;font-weight:600;color:#111827;">chance of Certified Fresh (≥ 80)</span>
+                  </div>
+                </div>
+                <div style="text-align:right;padding-bottom:4px;">
+                  <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,0.13);padding:3px 9px;border-radius:999px;"><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#16A34A;">↑ 4 pts</span></div>
+                  <div style="font-size:11px;color:#9CA3AF;margin-top:6px;">most likely 85–89</div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:14px 22px 16px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#4B5563;line-height:1.45;">First five reviews out of Venice all landed above 85.</span>
+            </div>
+            <!-- ladder card -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:8px 15px 10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;padding:6px 0 10px;border-bottom:1px solid #F0F0F2;margin-bottom:6px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Probability of clearing</span>
+                <span style="margin-left:auto;font-size:11px;color:#9CA3AF;">tap a rung for its history</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px;">
+                <!-- rung -->
+                <div style="display:flex;align-items:center;gap:11px;padding:7px 0;">
+                  <span style="width:44px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;flex-shrink:0;">≥ 60</span>
+                  <div style="flex:1;height:18px;background:#F0F0F2;border-radius:5px;overflow:hidden;"><div style="height:100%;width:98%;background:#0F9D63;border-radius:5px;"></div></div>
+                  <span style="width:38px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;text-align:right;flex-shrink:0;">98%</span>
+                  <span style="color:#D1D5DB;font-size:15px;flex-shrink:0;">›</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:11px;padding:7px 0;">
+                  <span style="width:44px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;flex-shrink:0;">≥ 70</span>
+                  <div style="flex:1;height:18px;background:#F0F0F2;border-radius:5px;overflow:hidden;"><div style="height:100%;width:94%;background:#159A66;border-radius:5px;"></div></div>
+                  <span style="width:38px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;text-align:right;flex-shrink:0;">94%</span>
+                  <span style="color:#D1D5DB;font-size:15px;flex-shrink:0;">›</span>
+                </div>
+                <!-- highlighted CF rung -->
+                <div style="display:flex;align-items:center;gap:11px;padding:9px 8px;margin:0 -8px;background:rgba(16,185,129,0.06);border-radius:8px;">
+                  <span style="width:44px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#0F9D63;flex-shrink:0;">≥ 80</span>
+                  <div style="flex:1;height:18px;background:#F0F0F2;border-radius:5px;overflow:hidden;"><div style="height:100%;width:91%;background:#1FA86E;border-radius:5px;"></div></div>
+                  <span style="width:38px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#0F9D63;text-align:right;flex-shrink:0;">91%</span>
+                  <span style="color:#D1D5DB;font-size:15px;flex-shrink:0;">›</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:11px;padding:7px 0;">
+                  <span style="width:44px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;flex-shrink:0;">≥ 90</span>
+                  <div style="flex:1;height:18px;background:#F0F0F2;border-radius:5px;overflow:hidden;"><div style="height:100%;width:58%;background:#5CC093;border-radius:5px;"></div></div>
+                  <span style="width:38px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;text-align:right;flex-shrink:0;">58%</span>
+                  <span style="color:#D1D5DB;font-size:15px;flex-shrink:0;">›</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:11px;padding:7px 0;">
+                  <span style="width:44px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;flex-shrink:0;">≥ 95</span>
+                  <div style="flex:1;height:18px;background:#F0F0F2;border-radius:5px;overflow:hidden;"><div style="height:100%;width:22%;background:#A7D8C0;border-radius:5px;"></div></div>
+                  <span style="width:38px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#6B7280;text-align:right;flex-shrink:0;">22%</span>
+                  <span style="color:#D1D5DB;font-size:15px;flex-shrink:0;">›</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;padding:9px 0 4px;margin-top:6px;border-top:1px solid #F0F0F2;">
+                <span style="width:9px;height:9px;border-radius:2px;background:#1FA86E;flex-shrink:0;"></span>
+                <span style="font-size:11px;color:#9CA3AF;">≥ 80 is the Certified Fresh line · darker = more likely</span>
+              </div>
+            </div>
+            <!-- distribution heat strip -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:12px;">Where it lands · probability mass</div>
+              <div style="display:flex;gap:3px;align-items:flex-end;height:64px;">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+                  <div style="width:100%;height:12%;background:rgba(16,185,129,0.22);border-radius:4px 4px 0 0;"></div>
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+                  <div style="width:100%;height:20%;background:rgba(16,185,129,0.32);border-radius:4px 4px 0 0;"></div>
+                </div>
+                <div style="flex:1.6;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+                  <div style="width:100%;height:62%;background:rgba(16,185,129,0.6);border-radius:4px 4px 0 0;"></div>
+                </div>
+                <div style="flex:1.6;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;position:relative;">
+                  <div style="position:absolute;top:-2px;left:50%;transform:translateX(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:#0F9D63;">36%</div>
+                  <div style="width:100%;height:100%;background:#1FA86E;border-radius:4px 4px 0 0;box-shadow:0 0 0 2px rgba(15,157,99,0.25);"></div>
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+                  <div style="width:100%;height:60%;background:rgba(16,185,129,0.55);border-radius:4px 4px 0 0;"></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:3px;margin-top:7px;font-family:'JetBrains Mono',monospace;font-size:9px;color:#9CA3AF;text-align:center;">
+                <span style="flex:1;">&lt;70</span><span style="flex:1;">70s</span><span style="flex:1.6;">80s</span><span style="flex:1.6;color:#0F9D63;font-weight:700;">90–94</span><span style="flex:1;">95+</span>
+              </div>
+            </div>
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolves on release day · Mar 20</div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Settles on the Rotten Tomatoes Tomatometer at 11:59pm ET, opening day.</div>
+            </div>
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:4px;">
+              <span style="font-size:11px;color:#9CA3AF;">$1.2M volume · 2 sources · 5 rungs</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ladder annotation note -->
+      <div style="flex:1;min-width:300px;max-width:380px;padding-top:44px;">
+        <div style="background:#fff;border:1px solid #E5E7EB;border-left:3px solid #10B981;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:10px;">Why a ladder, not eight cards</div>
+          <p style="font-size:13px;color:#4B5563;line-height:1.55;margin:0 0 12px;">A “≥ N” market is really one continuous question. Stacking it as eight separate yes/no cards (the old feed behavior) hides the shape. The ladder restores it: every rung is cumulative, the heat reads top-down, and the distribution strip shows <strong style="color:#111827;font-weight:600;">where the score actually lands</strong>.</p>
+          <p style="font-size:13px;color:#4B5563;line-height:1.55;margin:0;">Each rung carries a chevron — tap it and the history chart re-scopes to that single threshold. No rung is a buy button; it's a lens.</p>
+        </div>
+        <div style="margin-top:14px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:10px;">Heat encoding</div>
+          <div style="display:flex;gap:4px;margin-bottom:8px;">
+            <div style="flex:1;height:14px;background:#A7D8C0;border-radius:3px;"></div>
+            <div style="flex:1;height:14px;background:#5CC093;border-radius:3px;"></div>
+            <div style="flex:1;height:14px;background:#1FA86E;border-radius:3px;"></div>
+            <div style="flex:1;height:14px;background:#0F9D63;border-radius:3px;"></div>
+          </div>
+          <div style="font-size:12px;color:#6B7280;line-height:1.5;">Single-hue emerald ramp — lightness, not color, carries probability. Stays legible for color-vision deficiency and prints clean in the SwiftUI build.</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: SOURCE AGGREGATION ===================== -->
+  <div style="max-width:1180px;margin:64px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">04 · Source aggregation</span>
+      <span style="font-size:13px;color:#6B7280;">One number by default. The disagreement is one tap away — never a leaderboard.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:28px;"></div>
+
+    <div style="display:flex;gap:30px;flex-wrap:wrap;align-items:flex-start;">
+
+      <!-- COLLAPSED (default) -->
+      <div style="width:300px;">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:11px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Default · collapsed</span>
+        </div>
+        <div style="background:#F5F5F7;border-radius:22px;padding:18px;box-shadow:0 8px 24px rgba(17,24,39,0.10),0 0 0 1px rgba(17,24,39,0.05);">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:13px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;">
+            <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated from 4 sources</div>
+              <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">They agree within 3 points</div>
+            </div>
+            <span style="font-size:12px;color:#6B7280;font-weight:500;">Show ›</span>
+          </div>
+          <div style="font-size:11px;color:#9CA3AF;text-align:center;margin-top:12px;">Quiet. The blended number already lives in the hero.</div>
+        </div>
+      </div>
+
+      <!-- EXPANDED (pinned) -->
+      <div style="width:340px;position:relative;">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:11px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Tapped · expanded</span>
+        </div>
+        <div style="background:#F5F5F7;border-radius:22px;padding:18px;box-shadow:0 8px 24px rgba(17,24,39,0.10),0 0 0 1px rgba(17,24,39,0.05);position:relative;">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+            <div style="display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid #F0F0F2;">
+              <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated · 4 sources</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">recency-weighted median</div>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:#111827;">68%</span>
+            </div>
+            <!-- per-source rows -->
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0 9px;">
+              <span style="width:8px;height:8px;border-radius:2px;background:#22C55E;flex-shrink:0;"></span>
+              <span style="flex:1;font-size:13px;color:#374151;">Kalshi</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">67%</span>
+              <span style="color:#C7CBD3;font-size:13px;flex-shrink:0;">↗</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #F6F6F8;">
+              <span style="width:8px;height:8px;border-radius:2px;background:#3B82F6;flex-shrink:0;"></span>
+              <span style="flex:1;font-size:13px;color:#374151;">Polymarket</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">69%</span>
+              <span style="color:#C7CBD3;font-size:13px;flex-shrink:0;">↗</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #F6F6F8;">
+              <span style="width:8px;height:8px;border-radius:2px;background:#64748B;flex-shrink:0;"></span>
+              <span style="flex:1;font-size:13px;color:#374151;">The Odds API</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">68%</span>
+              <span style="color:#C7CBD3;font-size:13px;flex-shrink:0;">↗</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 0 4px;border-top:1px solid #F6F6F8;">
+              <span style="width:8px;height:8px;border-radius:2px;background:#A855F7;flex-shrink:0;"></span>
+              <span style="flex:1;font-size:13px;color:#374151;">Stat model</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">68%</span>
+              <span style="color:#C7CBD3;font-size:13px;flex-shrink:0;">↗</span>
+            </div>
+            <div style="padding:10px 0 2px;margin-top:6px;border-top:1px solid #F0F0F2;font-size:11px;color:#9CA3AF;">Updated 12m ago · order is alphabetical, never ranked</div>
+          </div>
+        </div>
+        <!-- pins -->
+        <span style="position:absolute;right:-9px;top:62px;width:22px;height:22px;border-radius:999px;background:#8B5CF6;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(139,92,246,0.4);z-index:6;">1</span>
+        <span style="position:absolute;right:-9px;top:300px;width:22px;height:22px;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);z-index:6;">2</span>
+      </div>
+
+      <!-- notes -->
+      <div style="flex:1;min-width:300px;max-width:430px;padding-top:34px;">
+        <div style="display:flex;flex-direction:column;gap:18px;">
+          <div style="display:flex;gap:12px;">
+            <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#8B5CF6;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">1</span>
+            <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">The blend is the headline, sources are the footnote</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">A recency-weighted median across every book pricing this exact question. We print one number and stand behind it; the per-source rows exist to show our work, not to start an argument about who's sharper.</div></div>
+          </div>
+          <div style="display:flex;gap:12px;">
+            <span style="width:22px;height:22px;flex-shrink:0;border-radius:999px;background:#111827;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;">2</span>
+            <div><div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:2px;">Alphabetical, never ranked · one quiet link each</div><div style="font-size:13px;color:#6B7280;line-height:1.5;">Rows sort by name so no source reads as "best." The ↗ is the page's <em>only</em> outbound surface — a source-attribution link, not a "trade on Kalshi" CTA. No prices to buy, no books to beat.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- DISAGREEMENT VARIANT -->
+    <div style="margin-top:36px;">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:16px;">
+        <span style="font-size:13px;font-weight:600;color:#111827;">When sources disagree &gt; 5 pts</span>
+        <span style="font-size:12px;color:#9CA3AF;">the block escalates and rises to sit just under the hero</span>
+      </div>
+      <div style="display:flex;gap:30px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="width:340px;background:#F5F5F7;border-radius:22px;padding:18px;box-shadow:0 8px 24px rgba(17,24,39,0.10),0 0 0 1px rgba(17,24,39,0.05);">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:rgba(245,158,11,0.15);color:#D97706;font-size:12px;flex-shrink:0;">⚖</span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Sources split · 13-point spread</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">we show the range, not a verdict</div>
+              </div>
+            </div>
+            <!-- range plot -->
+            <div style="position:relative;height:46px;margin:0 4px;">
+              <div style="position:absolute;left:0;right:0;top:30px;height:2px;background:#EEF0F3;border-radius:2px;"></div>
+              <!-- aggregated marker at ~66 (range 55-75 -> (66-55)/20=0.55) -->
+              <div style="position:absolute;left:55%;top:18px;width:2px;height:26px;background:#8B5CF6;"></div>
+              <div style="position:absolute;left:55%;top:0;transform:translateX(-50%);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#8B5CF6;">66%</div>
+              <!-- source dots: stat 58 ->15%, odds 64 ->45%, kalshi 69 ->70%, poly 71 ->80% -->
+              <div style="position:absolute;left:15%;top:25px;width:11px;height:11px;border-radius:999px;background:#A855F7;transform:translateX(-50%);box-shadow:0 0 0 2px #fff;"></div>
+              <div style="position:absolute;left:45%;top:25px;width:11px;height:11px;border-radius:999px;background:#64748B;transform:translateX(-50%);box-shadow:0 0 0 2px #fff;"></div>
+              <div style="position:absolute;left:70%;top:25px;width:11px;height:11px;border-radius:999px;background:#22C55E;transform:translateX(-50%);box-shadow:0 0 0 2px #fff;"></div>
+              <div style="position:absolute;left:80%;top:25px;width:11px;height:11px;border-radius:999px;background:#3B82F6;transform:translateX(-50%);box-shadow:0 0 0 2px #fff;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF;margin:2px 4px 0;">
+              <span>58 low</span><span>71 high</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:13px;padding-top:12px;border-top:1px solid #F0F0F2;">
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;"><span style="width:8px;height:8px;border-radius:999px;background:#A855F7;"></span>Stat model 58</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;"><span style="width:8px;height:8px;border-radius:999px;background:#64748B;"></span>Odds 64</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;"><span style="width:8px;height:8px;border-radius:999px;background:#22C55E;"></span>Kalshi 69</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;"><span style="width:8px;height:8px;border-radius:999px;background:#3B82F6;"></span>Poly 71</span>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:300px;max-width:430px;padding-top:6px;">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-left:3px solid #F59E0B;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:10px;">The disagreement is the story</div>
+            <p style="font-size:13px;color:#4B5563;line-height:1.55;margin:0 0 12px;">Kalshi shows only Kalshi; Polymarket only theirs. We're the one page that can show a 13-point split <strong style="color:#111827;font-weight:600;">in a single frame</strong> — and when it's this wide, the block stops being a footnote and climbs to sit directly under the hero.</p>
+            <p style="font-size:13px;color:#4B5563;line-height:1.55;margin:0;">Still neutral: a number line with four dots and a blended marker. No source is colored "right," no spread is called a mistake. The reader decides what a split means.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: EDGE STATES ===================== -->
+  <div style="max-width:1262px;margin:64px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">05 · Edge states</span>
+      <span style="font-size:13px;color:#6B7280;">Honest about thin data, factual at resolution, sized while loading.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:30px;"></div>
+
+    <div style="display:flex;gap:48px;flex-wrap:wrap;align-items:flex-start;">
+
+      <!-- SPARSE HISTORY -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Sparse history</span>
+          <span style="font-size:12px;color:#9CA3AF;">a market 3 days old · don't fake a curve</span>
+        </div>
+        <div data-screen-label="Sparse" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🏛 Economics</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <div style="padding:4px 22px 0;">
+              <div style="font-size:18px;font-weight:600;line-height:1.25;color:#111827;letter-spacing:-0.01em;margin-bottom:14px;">Fed cuts rates at the July meeting</div>
+              <div style="display:flex;align-items:flex-end;justify-content:space-between;">
+                <div>
+                  <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.04em;color:#111827;line-height:1;"><span style="font-size:54px;">38</span><span style="font-size:24px;">%</span></div>
+                  <div style="font-size:13px;font-weight:600;color:#111827;margin-top:8px;">Yes</div>
+                </div>
+                <div style="text-align:right;padding-bottom:4px;">
+                  <span style="font-size:12px;color:#9CA3AF;">Opened 3 days ago</span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:14px 22px 16px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#9CA3AF;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#9CA3AF;line-height:1.45;">Too new for a trend line — three snapshots so far.</span>
+            </div>
+            <!-- aggregation strip (2 sources) -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:13px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;">
+              <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.5;"></span></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:#111827;">Aggregated from 2 sources</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:1px;">Kalshi &amp; a rates model</div>
+              </div>
+              <span style="font-size:12px;color:#6B7280;font-weight:500;">Show ›</span>
+            </div>
+            <!-- sparse chart: 3 dots, honest -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 14px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Probability · since open</span>
+                <span style="margin-left:auto;display:flex;gap:3px;background:#F0F0F2;border-radius:8px;padding:2px;opacity:0.5;">
+                  <span style="font-size:11px;font-weight:600;color:#111827;background:#fff;border-radius:6px;padding:3px 9px;">3d</span>
+                  <span style="font-size:11px;font-weight:500;color:#C7CBD3;padding:3px 9px;">All</span>
+                </span>
+              </div>
+              <svg viewBox="0 0 362 170" width="100%" height="160" style="display:block;overflow:visible;">
+                <line x1="30" y1="14" x2="356" y2="14" stroke="#EEF0F3"/>
+                <line x1="30" y1="51" x2="356" y2="51" stroke="#EEF0F3"/>
+                <line x1="30" y1="88" x2="356" y2="88" stroke="#EEF0F3"/>
+                <line x1="30" y1="125" x2="356" y2="125" stroke="#EEF0F3"/>
+                <line x1="30" y1="148" x2="356" y2="148" stroke="#D1D5DB"/>
+                <text x="25" y="17" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">100</text>
+                <text x="25" y="91" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">50</text>
+                <text x="25" y="151" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                <!-- only 3 real points; straight segments, prominent dots -->
+                <path d="M58,100 L196,94 L334,90" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="58" cy="100" r="3.4" fill="#fff" stroke="#10B981" stroke-width="1.6"/>
+                <circle cx="196" cy="94" r="3.4" fill="#fff" stroke="#10B981" stroke-width="1.6"/>
+                <circle cx="334" cy="90" r="3.8" fill="#10B981"/>
+                <text x="58" y="164" text-anchor="middle" font-size="9" fill="#9CA3AF">3d ago</text>
+                <text x="196" y="164" text-anchor="middle" font-size="9" fill="#9CA3AF">2d ago</text>
+                <text x="334" y="164" text-anchor="end" font-size="9" fill="#9CA3AF">Today</text>
+              </svg>
+              <div style="margin-top:10px;padding:9px 11px;background:#F7F7F9;border-radius:8px;font-size:11px;color:#6B7280;line-height:1.45;">The curve fills in as the market ages. We plot what we have — never a smoothed guess.</div>
+            </div>
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolves Jul 30, 2026</div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Settles on the FOMC target-rate decision statement.</div>
+            </div>
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:4px;">
+              <span style="font-size:11px;color:#9CA3AF;">$210K volume · 2 sources · opened Mon</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RESOLVED -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Resolved</span>
+          <span style="font-size:12px;color:#9CA3AF;">factual · lowercase verb · no confetti</span>
+        </div>
+        <div data-screen-label="Resolved" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <span style="font-size:10px;color:#9CA3AF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">🏀 NBA · futures</span>
+              <span style="margin-left:auto;color:#9CA3AF;font-size:17px;">⤴</span>
+            </div>
+            <!-- hero: resolved factual -->
+            <div style="padding:4px 22px 0;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6B7280;background:#ECECEF;padding:3px 8px;border-radius:5px;">Resolved</span>
+                <span style="font-size:11px;color:#9CA3AF;">Jun 22, 2025</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;margin-bottom:4px;">
+                <div style="width:48px;height:48px;border-radius:12px;background:#0E2240;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;letter-spacing:-0.02em;flex-shrink:0;">DEN</div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:16px;font-weight:600;color:#111827;letter-spacing:-0.01em;line-height:1.25;">Nuggets win the 2025<br>NBA championship</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;margin-top:16px;padding:14px 16px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                <div style="display:flex;align-items:baseline;gap:1px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.03em;color:#9CA3AF;line-height:1;"><span style="font-size:34px;">18</span><span style="font-size:17px;">%</span></div>
+                <span style="font-size:20px;color:#C7CBD3;">→</span>
+                <span style="font-size:22px;font-weight:700;color:#0F9D63;letter-spacing:-0.01em;">won</span>
+                <span style="margin-left:auto;font-size:11px;color:#9CA3AF;text-align:right;line-height:1.4;">closed at<br>18% · settled yes</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:16px 22px 14px;">
+              <span style="width:5px;height:5px;border-radius:9px;background:#9CA3AF;margin-top:6px;flex-shrink:0;"></span>
+              <span style="font-size:13px;color:#4B5563;line-height:1.45;">Closed as the longest shot left in the field.</span>
+            </div>
+            <!-- final history: line rises to 100 -->
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 14px 12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;align-items:center;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;">Probability · full run to resolution</span>
+              </div>
+              <svg viewBox="0 0 362 170" width="100%" height="160" style="display:block;overflow:visible;">
+                <line x1="30" y1="14" x2="356" y2="14" stroke="#EEF0F3"/>
+                <line x1="30" y1="51" x2="356" y2="51" stroke="#EEF0F3"/>
+                <line x1="30" y1="88" x2="356" y2="88" stroke="#EEF0F3"/>
+                <line x1="30" y1="125" x2="356" y2="125" stroke="#EEF0F3"/>
+                <line x1="30" y1="148" x2="356" y2="148" stroke="#D1D5DB"/>
+                <text x="25" y="17" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">100</text>
+                <text x="25" y="91" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">50</text>
+                <text x="25" y="151" text-anchor="end" font-size="9" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                <path d="M30,124 C80,120 120,116 170,112 C210,108 250,96 300,72 C320,58 335,30 348,15" fill="none" stroke="#9CA3AF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="348" cy="15" r="3.6" fill="#0F9D63"/>
+                <line x1="348" y1="15" x2="348" y2="148" stroke="#0F9D63" stroke-width="1" stroke-dasharray="3 3" stroke-opacity="0.4"/>
+                <text x="40" y="164" text-anchor="middle" font-size="9" fill="#9CA3AF">Opened</text>
+                <text x="348" y="164" text-anchor="end" font-size="9" fill="#0F9D63" font-weight="600" font-family="Inter">Won</text>
+              </svg>
+            </div>
+            <div style="margin:0 14px 12px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+              <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolved Jun 22, 2025 · won</div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.45;">Denver defeated the field for the title. Settled on the NBA Finals result.</div>
+            </div>
+            <!-- related: what's next -->
+            <div style="padding:6px 0 4px;">
+              <div style="display:flex;align-items:center;padding:0 22px 11px;">
+                <span style="font-size:14px;font-weight:600;color:#111827;">What's next for Denver</span>
+              </div>
+              <div style="display:flex;gap:10px;overflow:hidden;padding:0 14px 4px;">
+                <div style="flex:0 0 178px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                  <div style="font-size:12px;color:#374151;line-height:1.35;font-weight:500;margin-bottom:12px;">Repeat as 2026 champion</div>
+                  <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:#111827;">14<span style="font-size:12px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#16A34A;">↑2</span></div>
+                </div>
+                <div style="flex:0 0 60px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 0;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;align-items:center;justify-content:center;color:#9CA3AF;font-size:18px;">›</div>
+              </div>
+            </div>
+            <div style="padding:16px 22px 28px;display:flex;align-items:center;gap:10px;border-top:1px solid #ECECEF;margin-top:8px;">
+              <span style="font-size:11px;color:#9CA3AF;">$8.9M final volume · 4 sources</span>
+              <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LOADING SKELETON -->
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:13px;">
+          <span style="font-size:13px;font-weight:600;color:#111827;">Loading</span>
+          <span style="font-size:12px;color:#9CA3AF;">sized to the layout · no spinner-in-a-void</span>
+        </div>
+        <div data-screen-label="Loading" style="padding:11px;background:#0A0B0E;border-radius:54px;box-shadow:0 18px 48px rgba(17,24,39,0.22),0 2px 10px rgba(0,0,0,0.16);width:412px;">
+          <div style="width:390px;background:#F5F5F7;border-radius:44px;overflow:hidden;position:relative;">
+            <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:108px;height:30px;background:#0A0B0E;border-radius:999px;z-index:20;"></div>
+            <div style="height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;">
+              <span style="font-size:14px;font-weight:600;color:#111827;letter-spacing:-0.01em;">9:41</span>
+              <span style="display:flex;align-items:center;gap:6px;color:#111827;">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2.2c2 0 3.9.8 5.3 2.1l1.2-1.3C12.9 1.2 10.5.3 8 .3S3.1 1.2 1.3 3l1.2 1.3C3.9 3 5.8 2.2 8 2.2z" opacity="0.9"/><path d="M8 5.6c1.1 0 2.1.4 2.8 1.2l1.2-1.3C10.9 4.4 9.5 3.8 8 3.8s-2.9.6-4 1.7l1.2 1.3c.7-.8 1.7-1.2 2.8-1.2z"/><circle cx="8" cy="9.2" r="1.4"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="17" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="1.5" height="4" rx="0.75" fill="currentColor" opacity="0.4"/></svg>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:2px 20px 10px;">
+              <span style="font-size:22px;color:#374151;line-height:1;">‹</span>
+              <div style="width:84px;height:10px;border-radius:5px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+            </div>
+            <!-- hero skeleton -->
+            <div style="padding:4px 22px 0;">
+              <div style="display:flex;gap:12px;margin-bottom:18px;">
+                <div style="width:42px;height:60px;border-radius:6px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;flex-shrink:0;"></div>
+                <div style="flex:1;padding-top:4px;">
+                  <div style="width:80%;height:14px;border-radius:5px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;margin-bottom:8px;"></div>
+                  <div style="width:55%;height:14px;border-radius:5px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;margin-bottom:10px;"></div>
+                  <div style="width:38%;height:9px;border-radius:5px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+                </div>
+              </div>
+              <div style="width:148px;height:56px;border-radius:10px;background:linear-gradient(90deg,#E4E4E8 25%,#EFEFF2 37%,#E4E4E8 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;margin-bottom:18px;"></div>
+            </div>
+            <div style="margin:0 14px 12px;height:62px;border-radius:10px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+            <div style="margin:0 14px 12px;height:228px;border-radius:10px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+            <div style="margin:0 14px 12px;height:90px;border-radius:10px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+            <div style="padding:8px 22px 30px;display:flex;gap:10px;">
+              <div style="flex:0 0 178px;height:78px;border-radius:10px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+              <div style="flex:0 0 120px;height:78px;border-radius:10px;background:linear-gradient(90deg,#E2E3E9 25%,#EEEFF3 37%,#E2E3E9 63%);background-size:720px 100%;animation:blshim 1.4s linear infinite;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===================== SECTION: DESKTOP ===================== -->
+  <div style="max-width:1262px;margin:64px auto 0;">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#111827;">06 · Desktop</span>
+      <span style="font-size:13px;color:#6B7280;">The mobile stack reflows into two columns. Same components, more room to breathe.</span>
+    </div>
+    <div style="height:1px;background:#D1D3D9;margin-bottom:30px;"></div>
+
+    <!-- browser window -->
+    <div data-screen-label="Desktop" style="width:1180px;max-width:100%;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 24px 60px rgba(17,24,39,0.20),0 0 0 1px rgba(17,24,39,0.06);">
+      <!-- chrome -->
+      <div style="height:42px;background:#EDEEF1;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid #E0E1E5;">
+        <span style="width:11px;height:11px;border-radius:999px;background:#FF5F57;"></span>
+        <span style="width:11px;height:11px;border-radius:999px;background:#FEBC2E;"></span>
+        <span style="width:11px;height:11px;border-radius:999px;background:#28C840;"></span>
+        <div style="margin-left:14px;flex:1;max-width:420px;height:24px;background:#fff;border-radius:7px;display:flex;align-items:center;gap:7px;padding:0 12px;font-size:12px;color:#9CA3AF;">
+          <span style="font-size:10px;">🔒</span>bainluck.com/m/avatar-fire-and-ash-150m
+        </div>
+      </div>
+      <!-- app -->
+      <div style="background:#F5F5F7;">
+        <!-- header -->
+        <div style="background:rgba(255,255,255,0.92);border-bottom:1px solid #E5E7EB;padding:0 32px;height:60px;display:flex;align-items:center;gap:24px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="width:24px;height:24px;border-radius:6px;background:#10B981;display:flex;align-items:center;justify-content:center;font-size:13px;">🍀</span>
+            <span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;color:#111827;">Bain Luck</span>
+          </div>
+          <div style="display:flex;gap:4px;margin-left:8px;">
+            <span style="font-size:13px;font-weight:600;color:#111827;padding:7px 12px;border-radius:8px;background:#F0F0F2;">Feed</span>
+            <span style="font-size:13px;font-weight:500;color:#9CA3AF;padding:7px 12px;">Search</span>
+            <span style="font-size:13px;font-weight:500;color:#9CA3AF;padding:7px 12px;">My stuff</span>
+          </div>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:14px;">
+            <div style="width:240px;height:34px;background:#F0F0F2;border-radius:9px;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:13px;color:#9CA3AF;"><span style="font-size:13px;">⌕</span>Search markets</div>
+            <div style="width:32px;height:32px;border-radius:999px;background:#0E2240;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;">AB</div>
+          </div>
+        </div>
+
+        <!-- content -->
+        <div style="max-width:1116px;margin:0 auto;padding:22px 32px 40px;">
+          <!-- back -->
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;font-size:12px;color:#9CA3AF;">
+            <span style="font-size:15px;color:#6B7280;">‹</span><span style="text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">🎬 Box office</span><span>· Avatar 3</span>
+          </div>
+
+          <!-- HERO BAND -->
+          <div style="display:flex;gap:36px;align-items:flex-start;margin-bottom:8px;">
+            <div style="display:flex;gap:18px;flex:1;">
+              <div style="width:76px;height:106px;border-radius:8px;background:linear-gradient(135deg,#1F2937,#374151);flex-shrink:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:7px;"><span style="font-size:8px;color:#9CA3AF;letter-spacing:0.06em;">POSTER</span></div>
+              <div style="padding-top:4px;">
+                <h2 style="font-size:26px;font-weight:600;letter-spacing:-0.02em;line-height:1.2;margin:0 0 6px;color:#111827;">Avatar: Fire and Ash opens above $150M</h2>
+                <div style="font-size:12px;color:#9CA3AF;margin-bottom:18px;">Resolves Dec 22, 2026 · domestic 3-day gross</div>
+                <div style="display:flex;align-items:flex-end;gap:22px;">
+                  <div style="display:flex;align-items:baseline;gap:2px;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:-0.045em;color:#111827;line-height:1;"><span style="font-size:72px;">68</span><span style="font-size:32px;">%</span></div>
+                  <div style="padding-bottom:8px;">
+                    <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,0.13);padding:4px 11px;border-radius:999px;margin-bottom:8px;"><span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#16A34A;">↑ 11 pts</span></div>
+                    <div style="font-size:14px;font-weight:600;color:#111827;">Yes · Climbed since the trailer dropped</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- key facts rail -->
+            <div style="width:300px;flex-shrink:0;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #F0F0F2;">
+                <span style="font-size:13px;color:#6B7280;">Volume</span><span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#111827;">$2.4M</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid #F0F0F2;">
+                <span style="font-size:13px;color:#6B7280;">Resolves in</span><span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#111827;">195 days</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding-top:11px;">
+                <span style="font-size:13px;color:#6B7280;">Sources</span>
+                <span style="display:inline-flex;align-items:center;gap:6px;"><span style="display:inline-flex;gap:2px;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span><span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#111827;">4</span></span>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:1px;background:#E5E7EB;margin:22px 0 24px;"></div>
+
+          <!-- TWO COLUMNS -->
+          <div style="display:flex;gap:24px;align-items:flex-start;">
+            <!-- main -->
+            <div style="flex:1.7;min-width:0;">
+              <!-- chart -->
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px 20px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.05);margin-bottom:24px;">
+                <div style="display:flex;align-items:center;margin-bottom:18px;">
+                  <span style="font-size:13px;font-weight:600;color:#111827;">Probability over time</span>
+                  <span style="margin-left:auto;display:flex;gap:3px;background:#F0F0F2;border-radius:8px;padding:2px;">
+                    <span style="font-size:12px;font-weight:500;color:#9CA3AF;padding:4px 12px;">24h</span>
+                    <span style="font-size:12px;font-weight:600;color:#111827;background:#fff;border-radius:6px;padding:4px 12px;box-shadow:0 1px 2px rgba(0,0,0,0.06);">7d</span>
+                    <span style="font-size:12px;font-weight:500;color:#9CA3AF;padding:4px 12px;">30d</span>
+                    <span style="font-size:12px;font-weight:500;color:#9CA3AF;padding:4px 12px;">All</span>
+                  </span>
+                </div>
+                <svg viewBox="0 0 700 280" width="100%" height="280" style="display:block;overflow:visible;">
+                  <line x1="34" y1="20" x2="690" y2="20" stroke="#EEF0F3"/>
+                  <line x1="34" y1="80" x2="690" y2="80" stroke="#EEF0F3"/>
+                  <line x1="34" y1="140" x2="690" y2="140" stroke="#EEF0F3"/>
+                  <line x1="34" y1="200" x2="690" y2="200" stroke="#EEF0F3"/>
+                  <line x1="34" y1="248" x2="690" y2="248" stroke="#D1D5DB"/>
+                  <text x="28" y="24" text-anchor="end" font-size="10" fill="#9CA3AF" font-family="JetBrains Mono,monospace">100</text>
+                  <text x="28" y="84" text-anchor="end" font-size="10" fill="#9CA3AF" font-family="JetBrains Mono,monospace">75</text>
+                  <text x="28" y="144" text-anchor="end" font-size="10" fill="#9CA3AF" font-family="JetBrains Mono,monospace">50</text>
+                  <text x="28" y="204" text-anchor="end" font-size="10" fill="#9CA3AF" font-family="JetBrains Mono,monospace">25</text>
+                  <text x="28" y="252" text-anchor="end" font-size="10" fill="#9CA3AF" font-family="JetBrains Mono,monospace">0</text>
+                  <path d="M34,128 C120,126 200,122 300,116 C380,111 440,118 520,104 C580,94 640,86 690,78" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="690" cy="78" r="3.4" fill="#10B981"/>
+                  <text x="40" y="268" text-anchor="middle" font-size="10" fill="#9CA3AF">Dec 1</text>
+                  <text x="360" y="268" text-anchor="middle" font-size="10" fill="#9CA3AF">Dec 4</text>
+                  <text x="688" y="268" text-anchor="end" font-size="10" fill="#9CA3AF">Today</text>
+                </svg>
+                <div style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding-top:12px;border-top:1px solid #F0F0F2;">
+                  <span style="width:5px;height:5px;border-radius:9px;background:#8B5CF6;margin-top:6px;flex-shrink:0;"></span>
+                  <span style="font-size:13px;color:#6B7280;line-height:1.45;">Climbed 11 points the week the final trailer landed — the steepest move since the market opened.</span>
+                </div>
+              </div>
+              <!-- related grid -->
+              <div>
+                <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:14px;">More in this story</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+                  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="font-size:13px;color:#374151;font-weight:500;line-height:1.35;margin-bottom:16px;">Opens above $200M</div>
+                    <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;color:#111827;">41<span style="font-size:13px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#16A34A;">↑4</span></div>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="font-size:13px;color:#374151;font-weight:500;line-height:1.35;margin-bottom:16px;">Best VFX nominee</div>
+                    <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;color:#111827;">88<span style="font-size:13px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9CA3AF;">—</span></div>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="font-size:13px;color:#374151;font-weight:500;line-height:1.35;margin-bottom:16px;">Highest-grossing 2026 film</div>
+                    <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;color:#111827;">34<span style="font-size:13px;">%</span></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EF4444;">↓2</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- aside -->
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:16px;">
+              <!-- aggregation expanded -->
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:15px 16px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                <div style="display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid #F0F0F2;">
+                  <span style="display:inline-flex;gap:2px;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.55;"></span><span style="width:6px;height:6px;border-radius:9px;background:#8B5CF6;opacity:.3;"></span></span>
+                  <div style="flex:1;"><div style="font-size:13px;font-weight:600;color:#111827;">Aggregated · 4 sources</div><div style="font-size:11px;color:#9CA3AF;margin-top:1px;">agree within 3 pts</div></div>
+                  <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:#111827;">68%</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;"><span style="width:8px;height:8px;border-radius:2px;background:#22C55E;"></span><span style="flex:1;font-size:13px;color:#374151;">Kalshi</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">67%</span><span style="color:#C7CBD3;font-size:13px;">↗</span></div>
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #F6F6F8;"><span style="width:8px;height:8px;border-radius:2px;background:#3B82F6;"></span><span style="flex:1;font-size:13px;color:#374151;">Polymarket</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">69%</span><span style="color:#C7CBD3;font-size:13px;">↗</span></div>
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #F6F6F8;"><span style="width:8px;height:8px;border-radius:2px;background:#64748B;"></span><span style="flex:1;font-size:13px;color:#374151;">The Odds API</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">68%</span><span style="color:#C7CBD3;font-size:13px;">↗</span></div>
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0 4px;border-top:1px solid #F6F6F8;"><span style="width:8px;height:8px;border-radius:2px;background:#A855F7;"></span><span style="flex:1;font-size:13px;color:#374151;">Stat model</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#111827;">68%</span><span style="color:#C7CBD3;font-size:13px;">↗</span></div>
+              </div>
+              <!-- resolution -->
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:15px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Resolution</div>
+                <div style="font-size:15px;font-weight:600;color:#111827;margin-bottom:6px;">Resolves Dec 22, 2026</div>
+                <div style="font-size:12px;color:#6B7280;line-height:1.5;">Settles on Box Office Mojo's reported domestic 3-day opening gross.</div>
+              </div>
+              <!-- share/footer -->
+              <div style="display:flex;align-items:center;gap:10px;padding:2px 4px;">
+                <span style="font-size:11px;color:#9CA3AF;">$2.4M volume · 4 sources</span>
+                <span style="margin-left:auto;font-size:12px;color:#6B7280;font-weight:500;">Share ⤴</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- desktop note -->
+    <div style="margin-top:22px;background:#fff;border:1px solid #E5E7EB;border-left:3px solid #8B5CF6;border-radius:10px;padding:16px 18px;max-width:760px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9CA3AF;margin-bottom:8px;">Reflow, not redesign</div>
+      <div style="font-size:14px;color:#4B5563;line-height:1.55;">Every component is the same one shipped to iPhone — the hero numeral, the Evolution Chart, the aggregation rows, the resolution panel. Desktop only changes the <strong style="color:#111827;font-weight:600;">arrangement</strong>: the vertical stack splits into chart-main + aside, the aggregation opens by default (there's room), and the key facts that were inline on mobile lift into a rail. No web-only interactions, so SwiftUI keeps full parity.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

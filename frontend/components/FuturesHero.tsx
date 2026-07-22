@@ -1,8 +1,5 @@
 "use client";
 
-import { formatProbability } from "@/lib/api";
-import Sparkline from "@/components/Sparkline";
-
 interface FuturesHeroProps {
   name: string;
   probability: number | null;
@@ -87,43 +84,67 @@ export function FuturesHero({
         </div>
       )}
 
-      {/* Live probability hero (big blended number) — unresolved markets only. */}
+      {/* Live probability hero (big blended number) — unresolved markets only.
+          Hero C (L2-161, the design's declared ships variant): when the hero
+          outcome's recent history is available, the 7-day curve sits *behind*
+          the 64px numeral as ambient texture (area fill + faint line), hinting
+          at the trend chart below without competing with it. The number stays
+          the loudest thing on the page. Falls back cleanly to a plain numeral
+          when there's no usable series. Ambient uses accent-brand — the single
+          blended line, never a per-source overlay (blend-only ruling). */}
       {!resolved && pct != null && (
-        <div className="flex items-end justify-between mb-3">
-          <div>
-            <div className="flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.04em] text-text-primary leading-none">
-              <span className="text-[56px]">{pct}</span>
-              <span className="text-[26px]">%</span>
+        <>
+          {sparklinePoints && sparklinePoints.length >= 3 ? (
+            <div className="relative h-[96px] mb-3">
+              <AmbientHistory points={sparklinePoints} />
+              <div className="absolute left-0 bottom-1 flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
+                <span className="text-[64px]">{pct}</span>
+                <span className="text-[28px]">%</span>
+              </div>
+              <div className="absolute right-0 bottom-2 flex flex-col items-end gap-1.5">
+                {movementStr && (
+                  <span
+                    className={`inline-flex items-center font-mono text-[13px] font-bold px-2 py-0.5 rounded-full ${
+                      movementUp
+                        ? "text-accent-live bg-accent-live/15"
+                        : "text-accent-danger bg-accent-danger/15"
+                    }`}
+                  >
+                    {movementStr}
+                  </span>
+                )}
+                {outcomeName && (
+                  <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2 mt-2">
-              {outcomeName && (
-                <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
-              )}
-              {movementStr && (
-                <span
-                  className={`font-mono text-[12px] font-bold ${
-                    movementUp ? "text-accent-live" : "text-accent-danger"
-                  }`}
-                >
-                  {movementStr}
-                </span>
-              )}
+          ) : (
+            <div className="flex items-end justify-between mb-3">
+              <div>
+                <div className="flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
+                  <span className="text-[64px]">{pct}</span>
+                  <span className="text-[28px]">%</span>
+                </div>
+                <div className="flex items-center gap-2 mt-2">
+                  {outcomeName && (
+                    <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
+                  )}
+                  {movementStr && (
+                    <span
+                      className={`inline-flex items-center font-mono text-[12px] font-bold px-2 py-0.5 rounded-full ${
+                        movementUp
+                          ? "text-accent-live bg-accent-live/15"
+                          : "text-accent-danger bg-accent-danger/15"
+                      }`}
+                    >
+                      {movementStr}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-
-          {/* Mini sparkline — shared single-market renderer (L2-150). */}
-          {sparklinePoints && sparklinePoints.length >= 3 && (
-            <Sparkline
-              data={sparklinePoints}
-              domain={[0, 1]}
-              width={116}
-              height={50}
-              color="var(--accent-brand)"
-              endDot
-              className="overflow-visible"
-            />
           )}
-        </div>
+        </>
       )}
 
       {/* Yes/No probability bar — live only (a settled market shows no live bar) */}
@@ -160,5 +181,49 @@ export function FuturesHero({
         <div className="text-[11px] text-text-muted mt-2">{resolveDate}</div>
       )}
     </div>
+  );
+}
+
+/**
+ * Ambient history layer (L2-161, Hero C). The hero outcome's recent probability
+ * curve as quiet texture behind the numeral: a faint area fill + a 50%-opacity
+ * line on a fixed 0–1 domain (no auto-scale — movement stays honestly
+ * proportional, matching the trend chart's fixed-axis principle). accent-brand,
+ * single blended line. Renders nothing below 3 points.
+ */
+function AmbientHistory({ points }: { points: number[] }) {
+  if (points.length < 3) return null;
+  const W = 392;
+  const H = 96;
+  const n = points.length;
+  // Fixed 0–1 domain (top padding so the peak never clips the numeral baseline).
+  const top = 8;
+  const usable = H - top;
+  const xy = points.map((p, i) => {
+    const x = (i / (n - 1)) * W;
+    const y = top + (1 - Math.min(1, Math.max(0, p))) * usable;
+    return [x, y] as const;
+  });
+  const line = xy.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${line} L${W},${H} L0,${H} Z`;
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      className="absolute inset-0 w-full h-full overflow-visible"
+      aria-hidden
+    >
+      <path d={area} fill="var(--accent-brand)" fillOpacity={0.07} />
+      <path
+        d={line}
+        fill="none"
+        stroke="var(--accent-brand)"
+        strokeOpacity={0.5}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
   );
 }

@@ -36,6 +36,7 @@ import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
+import { buildAmbientPoints } from "@/lib/futuresAmbient";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -432,6 +433,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // live probability. Falls back to the leader if no winner is flagged yet.
   const resolvedWinner = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
   const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
+  // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
+  // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
+  const ambientPoints = buildAmbientPoints(historyOutcomes, heroOutcome?.id ?? null);
 
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
   // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
@@ -498,6 +502,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
         categoryLabel={market.sport_name || market.llm_sport_category || undefined}
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
+        sparklinePoints={ambientPoints}
         resolved={isResolved}
         resolvedWon={resolvedWinner?.is_winner === true}
       />
