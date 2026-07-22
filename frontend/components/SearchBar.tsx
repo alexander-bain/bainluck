@@ -121,7 +121,10 @@ export default function SearchBar({
         ...curated.filter((c) => !backendKeys.has(c.event_key)),
         ...data.suggestions,
       ];
-      setSuggestions(merged);
+      // L2-158 Item 3 (frontend half): for team-name queries, float the matching
+      // team page to the top so "pats"/"celtics" lands on the team page first.
+      // (Backend relevance ranking is the separate gold-query program.)
+      setSuggestions(rankTeamsFirst(merged, q));
       setDidYouMean(data.did_you_mean ?? null);
       setIsOpen(merged.length > 0);
       // #993 Slice A: measure real exposure of the answer-in-typeahead so the
@@ -535,6 +538,35 @@ export default function SearchBar({
   );
 }
 
+
+/**
+ * Stable-partition typeahead suggestions so team pages matching the query rank
+ * first (L2-158 Item 3, frontend half). A team "strongly matches" when the
+ * query is a prefix of (or prefixed by) the team name, is contained in the name
+ * (>=3 chars), or exactly equals the abbreviation. Relative order is preserved
+ * within both the promoted and non-promoted groups; when nothing matches the
+ * list is returned unchanged.
+ */
+export function rankTeamsFirst(
+  list: TypeaheadSuggestion[],
+  query: string,
+): TypeaheadSuggestion[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
+  const isStrongTeam = (s: TypeaheadSuggestion): boolean => {
+    if (s.type !== "team") return false;
+    const name = (s.text || "").toLowerCase();
+    if (!name) return false;
+    if (name.startsWith(q) || q.startsWith(name)) return true;
+    if (q.length >= 3 && name.includes(q)) return true;
+    const abbr = (s.abbreviation || "").toLowerCase();
+    return abbr.length > 0 && abbr === q;
+  };
+  const promoted = list.filter(isStrongTeam);
+  if (promoted.length === 0) return list;
+  const rest = list.filter((s) => !isStrongTeam(s));
+  return [...promoted, ...rest];
+}
 
 function formatFuturesName(name: string): string {
   return name

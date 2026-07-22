@@ -7,7 +7,9 @@ import { fetchTeamPage } from "@/lib/api";
 import type { TeamPageResponse, ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
-import TeamNameLink from "@/components/TeamNameLink";
+import { getLeagueDisplay } from "@/lib/sportCategories";
+import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
+import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 
 export default function TeamPage() {
   const params = useParams();
@@ -45,7 +47,12 @@ export default function TeamPage() {
   // Document title
   useEffect(() => {
     if (data?.team) {
-      const label = data.team.sport_name || league.toUpperCase();
+      // Derive a clean league label from sport_key so the breadcrumb/title never
+      // carries stale season-phase copy (e.g. "MLB Preseason") baked into
+      // sport_name (L2-158 Item 3).
+      const label = data.team.sport_key
+        ? getLeagueDisplay(data.team.sport_key)
+        : data.team.sport_name || league.toUpperCase();
       document.title = `${data.team.name} — ${label} | Bain Luck`;
     }
   }, [data, league]);
@@ -85,7 +92,14 @@ export default function TeamPage() {
   const { team, upcoming_events, recent_events, futures, championship_path } =
     data;
   const leaguePath = `/sport/${sport}/${league}`;
-  const leagueLabel = team.sport_name || league.toUpperCase();
+  // Clean league label — derived from sport_key, not the stale sport_name copy.
+  const leagueLabel = team.sport_key
+    ? getLeagueDisplay(team.sport_key)
+    : team.sport_name || league.toUpperCase();
+
+  // Doubleheader detection: same opponent + same day → G1/G2 chips.
+  const upcomingGameNos = assignGameNumbers(upcoming_events);
+  const recentGameNos = assignGameNumbers(recent_events);
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -114,7 +128,7 @@ export default function TeamPage() {
         </Link>
         <span>/</span>
         <Link href={leaguePath} className="hover:text-text-primary">
-          {team.sport_name || league.toUpperCase()}
+          {leagueLabel}
         </Link>
         <span>/</span>
         <span className="text-text-primary">{team.name}</span>
@@ -183,13 +197,19 @@ export default function TeamPage() {
       {upcoming_events.length > 0 && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
-            {upcoming_events.some((e) => e.status === "live")
+            {upcoming_events.some((e) => isGameLive(e))
               ? "Live & Upcoming"
               : "Upcoming Games"}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {upcoming_events.map((event) => (
-              <GameCard key={event.id} event={event} teamName={team.name} sportKey={team.sport_key} />
+              <UpcomingGameCard
+                key={event.id}
+                game={event}
+                teamName={team.name}
+                teamColor={team.primary_color}
+                gameNo={upcomingGameNos[event.id]}
+              />
             ))}
           </div>
         </section>
@@ -203,7 +223,11 @@ export default function TeamPage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {recent_events.map((event) => (
-              <GameCard key={event.id} event={event} teamName={team.name} sportKey={team.sport_key} />
+              <RecentGameCard
+                key={event.id}
+                game={event}
+                gameNo={recentGameNos[event.id]}
+              />
             ))}
           </div>
         </section>
@@ -267,78 +291,6 @@ function ChampionshipCard({
   );
 }
 
-function GameCard({
-  event,
-  teamName,
-  sportKey,
-}: {
-  event: TeamPageResponse["upcoming_events"][0];
-  teamName: string;
-  sportKey?: string | null;
-}) {
-  const isHome =
-    event.home_team === teamName ||
-    (event as unknown as Record<string, unknown>).is_home === true;
-  const opponent = isHome ? event.away_team : event.home_team;
-  const wp = (event as unknown as Record<string, unknown>).win_probability as
-    | number
-    | null
-    | undefined;
-  const isLive = event.status === "live";
-  const isCompleted = event.status === "completed";
-
-  let score: string | null = null;
-  if (event.home_score !== null && event.away_score !== null) {
-    const teamScore = isHome ? event.home_score : event.away_score;
-    const oppScore = isHome ? event.away_score : event.home_score;
-    score = `${teamScore}–${oppScore}`;
-    if (isCompleted) {
-      score =
-        (teamScore ?? 0) > (oppScore ?? 0)
-          ? `W ${score}`
-          : (teamScore ?? 0) < (oppScore ?? 0)
-          ? `L ${score}`
-          : `T ${score}`;
-    }
-  }
-
-  return (
-    <Link
-      href={`/events/${event.id}`}
-      className="bg-surface-card border border-surface-border rounded-card p-4 hover:shadow-md transition-shadow flex items-center justify-between"
-    >
-      <div>
-        <div className="text-xs text-text-muted mb-0.5">
-          {isHome ? "vs" : "@"}{" "}
-          {isLive && (
-            <span className="text-accent-live font-medium">LIVE</span>
-          )}
-        </div>
-        <TeamNameLink
-          name={opponent}
-          sportKey={sportKey}
-          className="text-sm font-medium text-text-primary hover:underline"
-        />
-        <div className="text-xs text-text-secondary mt-0.5">
-          {isCompleted && score
-            ? score
-            : event.commence_time
-            ? formatTime(event.commence_time)
-            : "TBD"}
-        </div>
-      </div>
-      {wp !== null && wp !== undefined && (
-        <div className="text-right">
-          <div className="text-lg font-mono font-bold text-text-primary">
-            {Math.round(wp * 100)}%
-          </div>
-          <div className="text-xs text-text-muted">win prob</div>
-        </div>
-      )}
-    </Link>
-  );
-}
-
 function FutureRow({ item }: { item: TeamFutureItem }) {
   const tierLabels: Record<number, string> = {
     1: "Championship",
@@ -392,26 +344,4 @@ function FutureRow({ item }: { item: TeamFutureItem }) {
       </div>
     </Link>
   );
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diffH = (d.getTime() - now.getTime()) / 3600000;
-
-  if (diffH < 0) return "Recently";
-  if (diffH < 1) return `In ${Math.round(diffH * 60)} min`;
-  if (diffH < 24) {
-    return d.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }

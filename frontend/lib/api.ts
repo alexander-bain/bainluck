@@ -375,10 +375,39 @@ export interface ChampionshipPathEntry {
   movement: number | null;
 }
 
+/**
+ * Compact per-game shape returned by the team page endpoint
+ * (`backend/app/routes/teams.py::_format_event_brief`). This is intentionally
+ * NOT the full `Event` type — the team payload carries only the fields below.
+ * `win_probability` is the CURRENT aggregate for the team-in-question's side
+ * (home if `is_home`, else away); it is not a pre-game/closing line.
+ *
+ * L2-158: `pregame_win_probability` / `completed_at` are declared here but NOT
+ * yet emitted by the backend (filed gap — see teams.py `_format_event_brief`).
+ * The recent-result "we had them at X%" + upset treatment reads them when they
+ * land; until then recent cards stay result-first (a settled game's current
+ * win_probability is the frozen outcome, not a pre-game expectation).
+ */
+export interface TeamGameBrief {
+  id: number;
+  home_team: string;
+  away_team: string;
+  home_score: number | null;
+  away_score: number | null;
+  status: "scheduled" | "live" | "completed" | "closed";
+  commence_time: string | null;
+  sport_key: string | null;
+  is_home: boolean;
+  opponent: string;
+  win_probability: number | null; // 0-1, team-relative, current aggregate
+  pregame_win_probability?: number | null; // 0-1, team-relative, pre-game/closing (backend gap)
+  completed_at?: string | null;
+}
+
 export interface TeamPageResponse {
   team: TeamPageTeam;
-  upcoming_events: Event[];
-  recent_events: Event[];
+  upcoming_events: TeamGameBrief[];
+  recent_events: TeamGameBrief[];
   futures: TeamFutureItem[];
   championship_path: ChampionshipPathEntry[];
 }

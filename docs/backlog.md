@@ -45,6 +45,18 @@ Four forward-looking program epics filed from the strategy discussion. Linked he
 - [idea] **Events Horizon scanner** — prop-ecosystem-richness detection + two-way calendar audit so a marquee page never has to be asked for (the majors-page early-warning, pairs with the horizon sentinel / `majors_calendar.yaml`). Issue: [#1169](https://github.com/alexander-bain/bainluck/issues/1169). `type:feature` `priority:p2`.
 - [parked] **"Lucky" label tamagotchi** — gamified family labeling: P1 rater-reliability + known-answer seeding → P2 pet UI → P3 family accounts/widget. Issue: [#1170](https://github.com/alexander-bain/bainluck/issues/1170). `type:feature` `parked`.
 
+## Rulings 2026-07-22 (Fable + Alex)
+
+Seven product rulings from the 2026-07-22 strategy session. These are standing constraints that shape navigation, ranking, and settled-state surfaces — treat them like the two standing rulings in `CLAUDE.md` (§Product Priorities). Canonical strategy write-up: `docs/strategy_navigation_discoverability.md` (Fable, forthcoming). Execution packets staged from the board-reconciliation intake (`.claude/handoff/issue_drafts_2026-07-22.md`, drafts #1–#12); team-page v1.5 (draft #10) shipped as L2-158.
+
+- **EI off cards until overhaul** — the Excitement Index stops rendering on user-facing cards until the EI system is redesigned. The *compute* stays (feed ranking, demotion exceptions, and audits keep using it); only the card chrome is removed. Rationale: raw EI numbers are not legible to casual fans and misrepresent a still-immature metric.
+- **Internal taxonomy pills never on user surfaces** — internal classification tokens (llm_sport_category, archetype/format tags, story keys, etc.) are ranking/plumbing inputs only and must never appear as visible pills/labels. Rationale: they leak internal structure and read as noise.
+- **Discover stays home** — Discover remains the default landing surface. A future Today tab sits below/beside it (later call), not in front of it. Rationale: Discover is the North-Star exploration surface; don't displace it.
+- **Today tab accepted in concept — story-cap + card-as-door** — the Sports tab evolves into a finite, shared, story-grained front page (5–15 STORY cards that are *doors* to hubs: live marquee + just-settled + next 48h). The cap is on STORIES, not cards; each card is a door, not a terminal. Blocked-by hub quality (#1169 scanner + marquee ladder), just-settled pin (Queue #235 Item 4), and the story-as-ranking-unit refactor.
+- **Story = the ranking unit on ranked surfaces** — on ranked surfaces, the unit that competes for a slot is the STORY, not the individual market/card. Dedup and caps operate on stories; one story occupies one slot regardless of how many markets it spans.
+- **Volume = three signals, never one score** — market volume/liquidity informs ranking as three distinct signals (interestingness, blend trust, and surfacing) and must never be collapsed into a single "volume score." Rationale: a single score hides which lever is actually moving. Pairs with the parked volume-modulated blend-trust item (draft #11), which stays inside the fitted-skill methodology (`docs/aggregation-weighting-methodology.md`), never ad-hoc.
+- **Settled grids return GRADED** — settled grids/tables render the graded outcome ("settled means settled"), not a frozen live snapshot. One system-wide settled language across heroes, cards, props, charts, and grids.
+
 ## Active GitHub Execution Queue
 
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)
