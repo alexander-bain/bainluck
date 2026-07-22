@@ -10,6 +10,7 @@ import {
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import AdminCockpit from "@/components/admin/AdminCockpit";
+import SentinelsCard from "@/components/admin/SentinelsCard";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import DiagnosisCard from "@/components/admin/DiagnosisCard";
@@ -1360,6 +1361,11 @@ export default function AdminDashboard() {
           and the quick human-eval queue. Renders above the full ops dashboard;
           all existing sub-pages stay reachable via the sidebar. */}
       <AdminCockpit />
+
+      {/* L2-153: the sentinel family's own cockpit presence — a silent guard
+          (no run cached / stale beyond 1.5× its beat) reads RED so it can't go
+          dark unnoticed (the r236 catch). Reads the three /last endpoints. */}
+      <SentinelsCard />
 
       {error && (
         <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-lg">{error.message}</div>
