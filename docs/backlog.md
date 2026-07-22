@@ -36,6 +36,15 @@ Plan of record: [`docs/execution-plan-2026-07-13.md`](execution-plan-2026-07-13.
 - [ready] **Tech calibration census** — genuine ~10pp on 1,534 outcomes (distinct from #182 weather liquidity artifact). Per-bucket forensic before any fix. Issue: [#1082](https://github.com/alexander-bain/bainluck/issues/1082).
 - [shipped] **iOS build fix** — duplicate FlowLayout redeclaration (dogfood blocker), fixed e512bed4 (Queue #184 Item 1). Issue: [#1083](https://github.com/alexander-bain/bainluck/issues/1083) (closed; Alex re-runs xcodebuild to confirm).
 
+## Strategy programs filed 2026-07-21 (Fable/Ops intake)
+
+Four forward-looking program epics filed from the strategy discussion. Linked here from the backlog per the GitHub-workflow split (Ops filed the issues; this heading is the strategic anchor).
+
+- [idea] **Chart Excellence program** — one `WinProbChart` system: census every chart surface → competitive audit → taste rulings → design → migrate all surfaces onto it. Issue: [#1167](https://github.com/alexander-bain/bainluck/issues/1167). `area:event-details` `type:quality` `priority:p1`.
+- [idea] **Moments Engine** — a `game_moments` stream + prob-delta join to drive chart key-moments, THE DIVERGENCE (in-game vs script), and richer #871 line-move explanations. Issue: [#1168](https://github.com/alexander-bain/bainluck/issues/1168). `area:event-details` `type:feature` `priority:p2`.
+- [idea] **Events Horizon scanner** — prop-ecosystem-richness detection + two-way calendar audit so a marquee page never has to be asked for (the majors-page early-warning, pairs with the horizon sentinel / `majors_calendar.yaml`). Issue: [#1169](https://github.com/alexander-bain/bainluck/issues/1169). `type:feature` `priority:p2`.
+- [parked] **"Lucky" label tamagotchi** — gamified family labeling: P1 rater-reliability + known-answer seeding → P2 pet UI → P3 family accounts/widget. Issue: [#1170](https://github.com/alexander-bain/bainluck/issues/1170). `type:feature` `parked`.
+
 ## Active GitHub Execution Queue
 
 - [ready] Odds API quota audit: prefer sport-level odds endpoint + free /events pre-flight. Issue: [#835](https://github.com/alexander-bain/bainluck/issues/835)

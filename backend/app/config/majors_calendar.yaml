@@ -43,6 +43,20 @@ majors:
     date_confidence: confirmed
     notes: "The 2026 Grande Boucle. Finishes in Paris. Item 3 builds the cycling adapter."
 
+  - name: "FIFA World Cup 2026"
+    slug: world-cup-2026
+    concept_key: "event:soccer:world-cup-2026"
+    domain: soccer
+    start: 2026-06-11
+    end: 2026-07-19
+    archetype: winner_field
+    marquee: true
+    date_confidence: confirmed
+    notes: "USA/Canada/Mexico, 48 teams. The marquee sporting event on earth — the
+      soccer winner-field adapter (event_soccer.py) surfaces the trophy field + the
+      104-match bracket. Final 2026-07-19 (Spain 1-0 Argentina). Added so the
+      settled-concept sentinel guards its switch into settled language (Queue #228)."
+
   - name: "The Open Championship 2026"
     slug: the-open-championship
     concept_key: "event:golf:the-open-championship"

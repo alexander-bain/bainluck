@@ -585,6 +585,44 @@ def _drop_slot_duplicate_phantoms(games: list, elim: dict[str, dict]) -> list:
     return [g for g in games if id(g) not in drop]
 
 
+def _apply_settled_crown(
+    competitors: list[dict], status: str, price_threshold: float = _WON_PRICE_THRESHOLD
+) -> None:
+    """Crown the settled champion in place (display-only, never a data write —
+    gotcha #21). No-op unless the tournament is settled and no competitor is already
+    crowned (``is_winner`` already graded takes precedence — never double-crown).
+
+    STRUCTURE-FIRST (Alex #210 — the bracket decides, not the price): when exactly
+    ONE nation still survives elimination with a real (>0) price, it won the trophy
+    by bracket result. The runner-up is OUT (its last match was the final it lost)
+    and every other nation either lost earlier or never qualified (a 0%-priced
+    phantom in the odds_api field). Crowning the sole survivor reads the AUTHORITATIVE
+    official result off the settled bracket even though the odds_api winner market
+    froze at pre-final prices and never graded to 100% (the "Spain 0.587 / Argentina
+    0.435" fizzle, WC-2026) — it does not invent a result.
+
+    Falls back to the raw-price crown (top >= ``price_threshold``) only when the
+    field has NOT collapsed to a lone survivor — the grading-lag window where one
+    team already sits near-certain. Assumes ``competitors`` is sorted with the top
+    probability first (as build_event leaves it)."""
+    if status != "settled" or not competitors:
+        return
+    if any(c.get("won") for c in competitors):
+        return
+    survivors = [
+        c
+        for c in competitors
+        if not (c.get("eliminated") or {}).get("out") and (c.get("probability") or 0) > 0
+    ]
+    if len(survivors) == 1:
+        survivors[0]["won"] = True
+        survivors[0]["probability"] = 1.0
+        return
+    top = competitors[0]
+    if (top.get("probability") or 0) >= price_threshold:
+        top["won"] = True
+
+
 class SoccerEventAdapter:
     """Event-concept adapter for soccer tournaments (winner_field). Resolves
     ``event:soccer:<slug>`` into the generic envelope: the trophy WINNER field as the
@@ -844,11 +882,8 @@ class SoccerEventAdapter:
         else:
             status = "settled"
 
-        # Crown a price-settled champion during the grading-lag window (display-only).
-        if status == "settled" and competitors and not any(c["won"] for c in competitors):
-            top = competitors[0]
-            if (top.get("probability") or 0) >= _WON_PRICE_THRESHOLD:
-                top["won"] = True
+        # Crown the settled champion (display-only, never a data write — gotcha #21).
+        _apply_settled_crown(competitors, status)
 
         # --- Fun props (Item 1d): census the WC prop markets, publish what exists -
         props = build_props_list(all_wc_markets)

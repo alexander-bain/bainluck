@@ -1977,13 +1977,60 @@ async def _precompute_calibration_main():
     return {"status": "ok", "buckets": len(bucket_dicts), "outcomes": total_outcomes}
 
 
+def _time_horizon_payload(horizons_result: dict) -> dict:
+    """Assemble the served time-horizon payload from whatever horizons are computed.
+
+    Additive over the historical shape (``horizons`` + ``description`` +
+    ``generated_at``): also carries ``complete`` and ``missing`` so the endpoint can
+    serve a PARTIAL result (e.g. 3/4 horizons) instead of the "computing" placeholder
+    when one horizon is slow/poison — the #1171 fix (never publish nothing)."""
+    missing = [label for label, _ in _HORIZONS if label not in horizons_result]
+    return {
+        "horizons": horizons_result,
+        "complete": not missing,
+        "missing": missing,
+        "description": (
+            "Calibration at multiple time horizons for non-event markets "
+            "(elections, economics, entertainment, etc.). Each horizon shows "
+            "prediction accuracy using the last available snapshot N days "
+            "before market resolution."
+        ),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _publish_time_horizon(rc, horizons_result: dict) -> None:
+    """Publish the currently-computed horizons to the served main key. Safe to call
+    after every horizon: an OOM SIGKILL or statement_timeout on a LATER horizon can
+    then never strand the endpoint on "computing" — it serves the horizons done so
+    far (#1171: the main key was previously written ONLY after all 4 completed, so a
+    single poison horizon blocked the whole payload forever)."""
+    if not horizons_result:
+        return
+    try:
+        rc.set(
+            "bainluck:calibration:time_horizon",
+            json.dumps(_time_horizon_payload(horizons_result)),
+            ex=_CACHE_TTL,
+        )
+    except Exception as exc:  # noqa: BLE001 — publish is best-effort, never fatal
+        logger.warning("time-horizon: main-key publish failed: %s", exc)
+
+
 async def _compute_time_horizon_calibration():
     """Compute time-horizon calibration and store in Redis.
 
     Bounded + chunked + resumable (Item 1, Queue #220/221): each horizon runs
     under a per-query statement_timeout, completed horizons are persisted to a
     WIP accumulator, and an internal deadline stops the run cleanly (resuming the
-    remaining horizons next beat) so it never hits the 600s soft limit again."""
+    remaining horizons next beat) so it never hits the 600s soft limit again.
+
+    #1171 (Queue #228): each horizon is ISOLATED (a statement_timeout / OOM-adjacent
+    DB error on one horizon rolls back and continues — one poison horizon never
+    kills the task, gotcha #42), and the served main key is published after EVERY
+    completed horizon (partial-first) so the endpoint serves 3/4 horizons instead of
+    "computing" forever when one horizon is persistently slow. The WIP cursor is
+    only cleared once all four are present."""
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
@@ -2015,9 +2062,10 @@ async def _compute_time_horizon_calibration():
             elapsed = time.monotonic() - start
             if elapsed + _HORIZON_STMT_TIMEOUT_S > _HORIZON_DEADLINE_S:
                 rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+                _publish_time_horizon(rc, horizons_result)  # serve partial now (#1171)
                 logger.info(
                     "time-horizon: deadline at %.0fs, %d/%d horizons done — "
-                    "persisted WIP, resuming next run",
+                    "persisted WIP + published partial, resuming next run",
                     elapsed, len(horizons_result), len(_HORIZONS),
                 )
                 return {
@@ -2104,8 +2152,27 @@ async def _compute_time_horizon_calibration():
             if days > 0:
                 params["days"] = days
 
-            result = await db.execute(horizon_sql, params)
-            rows = result.all()
+            # ISOLATE the one risky op (#1171): the LATERAL probe is what hits the
+            # per-horizon statement_timeout — a QueryCanceledError here was
+            # previously UNCAUGHT and killed the whole task, so one persistently
+            # slow horizon (the poison T-0) blocked all four from ever publishing.
+            # Catch, roll back, and DEFER this horizon to the next run; the horizons
+            # already computed stay in WIP and are served (gotcha #42: one bad item
+            # must never wipe the whole pass).
+            try:
+                result = await db.execute(horizon_sql, params)
+                rows = result.all()
+            except Exception as exc:  # noqa: BLE001 — statement_timeout / transient DB
+                logger.warning(
+                    "time-horizon: horizon %s failed (%s) — rolled back, deferring "
+                    "to next run; %d/%d horizons already computed are unaffected",
+                    label, type(exc).__name__, len(horizons_result), len(_HORIZONS),
+                )
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                continue
 
             bucket_dicts = []
             for r in rows:
@@ -2138,6 +2205,7 @@ async def _compute_time_horizon_calibration():
                     "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
                 }
                 rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+                _publish_time_horizon(rc, horizons_result)  # serve partial (#1171)
                 continue
 
             # Aggregate for MCE
@@ -2216,25 +2284,29 @@ async def _compute_time_horizon_calibration():
                 "mce_by_category": mce_by_category,
             }
             # Persist immediately so a later horizon's slowness (or the deadline
-            # guard firing next iteration) can never discard this one.
+            # guard firing next iteration) can never discard this one — and publish
+            # the served main key NOW so the endpoint reflects each horizon as it
+            # lands, never stranded on "computing" if a later horizon dies (#1171).
             rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+            _publish_time_horizon(rc, horizons_result)
 
-        response = {
-            "horizons": horizons_result,
-            "description": (
-                "Calibration at multiple time horizons for non-event markets "
-                "(elections, economics, entertainment, etc.). Each horizon shows "
-                "prediction accuracy using the last available snapshot N days "
-                "before market resolution."
-            ),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-    # Every horizon is present — publish the full payload and clear the WIP cursor.
-    rc.set("bainluck:calibration:time_horizon", json.dumps(response), ex=_CACHE_TTL)
-    rc.delete(_TIME_HORIZON_WIP_KEY)
-    logger.info("Cached time-horizon calibration in Redis (%d horizons)", len(horizons_result))
-    return {"status": "ok", "horizons": len(horizons_result)}
+    # Publish whatever is computed. When all four are present this is the full
+    # payload and the WIP cursor is cleared; otherwise it is an honest PARTIAL
+    # (``complete: false``, ``missing: [...]``) that the endpoint still serves —
+    # the missing horizon(s) retry next run (#1171: never publish nothing).
+    _publish_time_horizon(rc, horizons_result)
+    complete = len(horizons_result) == len(_HORIZONS)
+    if complete:
+        rc.delete(_TIME_HORIZON_WIP_KEY)
+    logger.info(
+        "time-horizon: published %d/%d horizons (%s)",
+        len(horizons_result), len(_HORIZONS), "complete" if complete else "partial",
+    )
+    return {
+        "status": "ok" if complete else "partial",
+        "horizons": len(horizons_result),
+        "total": len(_HORIZONS),
+    }
 
 
 # ---------------------------------------------------------------------------

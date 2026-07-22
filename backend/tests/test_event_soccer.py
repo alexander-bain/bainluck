@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from app.utils.event_soccer import (
     SOCCER_TOURNAMENTS,
+    _apply_settled_crown,
     _completed_result,
     _is_real_winner_outcome,
     _match_is_real,
@@ -470,3 +471,56 @@ class TestWcPropMarket:
         assert 3 not in ids  # winner field excluded
         assert ids[0] == 2  # higher volume_24h ranks first
         assert props[0]["top_outcomes"][0]["name"] == "Song A"
+
+
+def _comp(name, prob, out=False, won=False):
+    """A settled-crown competitor dict as build_event emits it."""
+    return {"name": name, "probability": prob, "won": won, "eliminated": {"out": out, "round": None}}
+
+
+class TestApplySettledCrown:
+    """Queue #228 Item 2: the settled World Cup must crown a champion even when the
+    odds_api winner field froze at pre-final prices and never graded to 100%. The
+    sole surviving nation (won the final by bracket structure) is the champion —
+    Alex #210, the bracket decides, not the price. Guards the "settled marquee with
+    NO champion" defect (Spain 0.587, zero won:true)."""
+
+    def test_sole_survivor_crowned_over_frozen_price(self):
+        # WC-2026 live shape: Spain the lone survivor at a frozen 0.587, runner-up
+        # Argentina OUT (lost the final), the rest never-qualified 0%-priced phantoms.
+        competitors = [
+            _comp("Spain", 0.587),
+            _comp("Iceland", 0.0),        # never-qualified phantom, out=false, prob 0
+            _comp("Italy", 0.0),
+            _comp("Argentina", 0.0, out=True),  # lost the final
+        ]
+        _apply_settled_crown(competitors, "settled")
+        spain = next(c for c in competitors if c["name"] == "Spain")
+        assert spain["won"] is True
+        assert spain["probability"] == 1.0  # settled means settled — lifted to 100%
+        assert sum(1 for c in competitors if c["won"]) == 1  # exactly one champion
+
+    def test_no_crown_when_two_survivors_below_threshold(self):
+        # Final not yet settled: two real survivors, neither near-certain → no crown
+        # (never guess a champion from a split price).
+        competitors = [_comp("Spain", 0.55), _comp("Argentina", 0.45)]
+        _apply_settled_crown(competitors, "settled")
+        assert not any(c["won"] for c in competitors)
+
+    def test_price_crown_fallback_when_not_lone_survivor(self):
+        # Grading-lag window: one team already near-certain but a stale sibling still
+        # carries a tiny price → price crown still fires on the top competitor.
+        competitors = [_comp("Spain", 0.985), _comp("Argentina", 0.02)]
+        _apply_settled_crown(competitors, "settled")
+        assert competitors[0]["won"] is True
+
+    def test_never_double_crown_when_already_graded(self):
+        # is_winner already graded → structure/price crown must not touch it.
+        competitors = [_comp("Argentina", 1.0, won=True), _comp("Spain", 0.5)]
+        _apply_settled_crown(competitors, "settled")
+        assert [c["name"] for c in competitors if c["won"]] == ["Argentina"]
+
+    def test_noop_when_not_settled(self):
+        competitors = [_comp("Spain", 0.9)]
+        _apply_settled_crown(competitors, "live")
+        assert not any(c["won"] for c in competitors)
