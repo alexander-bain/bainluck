@@ -4,9 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import { adminFetchJSON } from "@/lib/adminFetch";
+import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { trackEvent } from "@/lib/analytics";
 import FileThisButton from "@/components/admin/FileThisButton";
+import { killSwitchView, interpretToggleStatus } from "@/lib/evalPromoteSwitch";
 
 // --- Types (matches GET /api/admin/cockpit) ---
 
@@ -246,6 +247,48 @@ export default function AdminCockpit() {
   );
 
   const [busyId, setBusyId] = useState<number | null>(null);
+  // Kill switch (Item 1). `toggleUnavailable` is set when the toggle endpoint
+  // 404s (#232 not deployed yet) so the button hides instead of crashing.
+  const [toggleBusy, setToggleBusy] = useState(false);
+  const [toggleUnavailable, setToggleUnavailable] = useState(false);
+
+  async function toggleEvalPromote(currentlyEnabled: boolean) {
+    if (!secret || !data) return;
+    const view = killSwitchView(currentlyEnabled, toggleUnavailable);
+    if (view.confirmMessage && !window.confirm(view.confirmMessage)) return;
+
+    const nextEnabled = !currentlyEnabled;
+    setToggleBusy(true);
+    try {
+      const res = await adminFetch("/api/admin/eval-promote/toggle", secret, {
+        method: "POST",
+      });
+      const outcome = interpretToggleStatus(res.status);
+      if (outcome === "unavailable") {
+        // Endpoint not deployed yet — feature-detect and hide the button.
+        setToggleUnavailable(true);
+        return;
+      }
+      if (outcome === "error") return; // leave state; next refresh reconciles
+
+      trackEvent("eval_promote_toggle", {
+        enabled: nextEnabled,
+        surface: "cockpit",
+      });
+      // Optimistic: reflect the new state immediately, then revalidate.
+      await mutate(
+        {
+          ...data,
+          eval_queue: { ...data.eval_queue, eval_promote_enabled: nextEnabled },
+        },
+        { revalidate: true },
+      );
+    } catch {
+      // Network error — non-fatal; next refresh reconciles.
+    } finally {
+      setToggleBusy(false);
+    }
+  }
 
   async function submitVerdict(
     item: EvalSample,
@@ -551,6 +594,32 @@ export default function AdminCockpit() {
                 {evalQ.eval_promote_enabled === false ? " (off)" : ""}
               </span>
             )}
+            {/* Item 1 — one-tap kill switch. Hidden when the state is unknown
+                (#231 field absent) or the toggle endpoint 404s (#232 not
+                deployed). Disabling confirms first — it zeroes all live boosts. */}
+            {(() => {
+              const ks = killSwitchView(evalQ.eval_promote_enabled, toggleUnavailable);
+              if (!ks.visible) return null;
+              return (
+                <button
+                  onClick={() => toggleEvalPromote(ks.enabled)}
+                  disabled={toggleBusy}
+                  title={
+                    ks.enabled
+                      ? "Kill switch: turn OFF live eval-promote steering"
+                      : "Turn ON live eval-promote steering"
+                  }
+                  className={
+                    "rounded-md px-2 py-0.5 text-micro font-medium disabled:opacity-50 " +
+                    (ks.enabled
+                      ? "bg-accent-danger/10 text-accent-danger hover:bg-accent-danger/20"
+                      : "bg-green-500/10 text-green-600 hover:bg-green-500/20")
+                  }
+                >
+                  {toggleBusy ? "…" : ks.label}
+                </button>
+              );
+            })()}
             <Link href={evalQ.bug_reports_href} className="text-accent-brand hover:underline">
               {evalQ.new_bug_reports} new bugs
             </Link>

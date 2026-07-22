@@ -52,7 +52,9 @@ describe("evaluateSentinel — fresh-green", () => {
     expect(v.detail).toContain("0 red");
   });
 
-  it("flow: clean run with no timestamp reads GREEN (age unknown → 'ran (cached)')", () => {
+  it("flow: clean run with no timestamp reads GREEN with 'age unknown' fallback", () => {
+    // Pre-#232 transition state: a flow payload with no generated_at still reads
+    // GREEN (never a false RED); age degrades to "age unknown", not "ran (cached)".
     const payload = {
       scorecard: { flows_total: 8, flows_passed: 8, flows_failed: 0, per_flow: [] },
     };
@@ -60,7 +62,32 @@ describe("evaluateSentinel — fresh-green", () => {
     expect(v.status).toBe("green");
     expect(v.headline).toBe("GREEN");
     expect(v.detail).toBe("8/8 flows passing");
-    expect(v.ageText).toBe("ran (cached)");
+    expect(v.ageText).toBe("age unknown");
+  });
+
+  it("flow: post-#232 payload with generated_at reads a real age", () => {
+    // #232 adds generated_at to flow + grid too; the generic lastRunMs picks it
+    // up so precise ages + stale-RED now apply to all three rows.
+    const payload = {
+      generated_at: iso(6 * HOUR),
+      scorecard: { flows_total: 8, flows_passed: 8, flows_failed: 0, per_flow: [] },
+    };
+    const v = evaluateSentinel(flow, payload, false, NOW);
+    expect(v.status).toBe("green");
+    expect(v.ageText).toBe("ran 6h ago");
+  });
+
+  it("grid: post-#232 stale run (older than 1.5× beat) overrides to SILENT-RED", () => {
+    // The stale-RED logic now applies to grid as well once it carries a timestamp.
+    const payload = {
+      generated_at: iso(40 * HOUR),
+      scorecard: { leagues_total: 5, leagues_green: 5, leagues_red: 0, per_league: [] },
+    };
+    const v = evaluateSentinel(grid, payload, false, NOW);
+    expect(v.status).toBe("red");
+    expect(v.headline).toBe("SILENT");
+    expect(v.ageText).toBe("ran 40h ago");
+    expect(v.detail).toContain("older than 1.5×");
   });
 });
 

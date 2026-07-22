@@ -65,11 +65,12 @@ export interface SentinelView {
   ageText: string; // "ran 2h ago" / "no run cached" / "unreachable"
 }
 
-// Best-effort last-run timestamp. Only the settled-concept payload carries one
-// (`generated_at`); flow + grid do not persist a timestamp, so age is unknown for
-// them once populated (documented limitation — the no_run_cached silence check
-// below still fires for all three, which is the exact r236 state). Returns ms or
-// null.
+// Last-run timestamp. As of #232 all three sentinels persist `generated_at`
+// (ISO) in their cached `/last` payload, so real ages ("ran 6h ago") + the
+// >1.5×-beat stale-RED check below apply uniformly to flow, grid, and settled.
+// The null return is a defensive fallback for the deploy-transition window
+// (a pre-#232 payload with no timestamp) — it degrades to "age unknown", never
+// a false RED. Returns ms or null.
 function lastRunMs(payload: Record<string, unknown> | null): number | null {
   if (!payload) return null;
   const gen = payload["generated_at"];
@@ -200,7 +201,9 @@ export function evaluateSentinel(
     };
   }
 
-  const ageText = ageMs != null ? humanizeAge(ageMs) : "ran (cached)";
+  // Post-#232 all three carry generated_at, so ageMs is normally set; the
+  // "age unknown" fallback only shows during the deploy-transition window.
+  const ageText = ageMs != null ? humanizeAge(ageMs) : "age unknown";
   if (red) {
     return { status: "red", headline: "RED", detail, ageText };
   }
