@@ -278,6 +278,37 @@ _NON_GAME_KEYWORDS = (
     "grand slam", "open", "masters", "medal", "gold",
 )
 
+# Futures/season-long descriptors that disqualify a "A vs B" *matchup* from being
+# treated as a single game. A real bare-matchup name is exactly "Team A vs Team B";
+# when the second capture greedily absorbs a trailing descriptor (e.g. the
+# "Saints Season Series Winner" away name from "Panthers vs. Saints Season Series
+# Winner"), that descriptor is the tell that this is a season-long futures market,
+# not a game. This is deliberately a NARROWER list than _NON_GAME_KEYWORDS: tokens
+# prone to real team-name collisions ("gold" → Gold Coast Titans, "open"/"masters"
+# → tournaments used as prefixes, "grand slam") are excluded so we never reject a
+# legitimate matchup. See gotcha: futures season-series were auto-created as bogus
+# "closed" games with cross-league mascot logos.
+_MATCHUP_NON_GAME_KEYWORDS = (
+    "season series", "series winner", "regular season", "season sweep",
+    "series", "championship", "title", "trophy", "award", "mvp",
+    "super bowl", "pennant", "division", "conference", "playoff",
+    "world series", "stanley cup", "premier league", "la liga",
+    "champions league", "medal", "winner", "to win",
+)
+
+
+def _has_futures_matchup_keyword(*names: str) -> bool:
+    """True if any of the given (matchup name / team name) strings contains a
+    season-long / futures descriptor that disqualifies it from being a game.
+    """
+    for name in names:
+        if not name:
+            continue
+        lowered = name.lower()
+        if any(kw in lowered for kw in _MATCHUP_NON_GAME_KEYWORDS):
+            return True
+    return False
+
 # ── Dash matchup false positive prevention ───────────────────────────────────
 # "English Premier League – 2nd Place" or "The Masters - Winner" are NOT matchups.
 # These are standings/rankings/award markets that happen to use a dash separator.
@@ -377,7 +408,13 @@ def _check_game_level(name: str) -> bool:
         return True
     if _TO_BEAT_RE.match(name):
         return True
-    if _BARE_MATCHUP_RE.match(name):
+    m = _BARE_MATCHUP_RE.match(name)
+    if m:
+        # A season-long futures ("Panthers vs. Saints Season Series Winner")
+        # matches this pattern because the second capture greedily absorbs the
+        # trailing descriptor. Reject it so it is NOT auto-created as a game.
+        if _has_futures_matchup_keyword(name, m.group(1), m.group(2)):
+            return False
         return True
     m = _DASH_MATCHUP_RE.match(name)
     if m:
@@ -385,6 +422,8 @@ def _check_game_level(name: str) -> bool:
         # Prevents "English Premier League – 2nd Place" false positives
         team_a = m.group(1).strip()
         team_b = m.group(2).strip()
+        if _has_futures_matchup_keyword(name, team_a, team_b):
+            return False
         if _looks_like_team_name(team_a) and _looks_like_team_name(team_b):
             return True
         return False  # Dash pattern matched but sides aren't team names
@@ -528,6 +567,11 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     if m:
         team_a = m.group(1).strip()
         team_b = m.group(2).strip()
+        # A season-long futures ("Panthers vs. Saints Season Series Winner")
+        # matches here because team_b absorbs the trailing descriptor. Do not
+        # treat it as a game matchup (prevents bogus event auto-creation).
+        if _has_futures_matchup_keyword(market_name, team_a, team_b):
+            return None
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="bare_matchup")
 
     # "Team A - Team B" (dash matchup)
@@ -535,6 +579,8 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     if m:
         team_a = m.group(1).strip()
         team_b = m.group(2).strip()
+        if _has_futures_matchup_keyword(market_name, team_a, team_b):
+            return None
         # Validate both sides are team names (not rankings like "2nd Place")
         if _looks_like_team_name(team_a) and _looks_like_team_name(team_b):
             return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="dash_matchup")

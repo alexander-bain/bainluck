@@ -7196,6 +7196,42 @@ _team_cache_time: float = 0
 _TEAM_CACHE_TTL = 300  # 5 minutes
 
 
+def _dedupe_team_name_lookup(teams) -> dict:
+    """Map team names → Team object with a cross-league ambiguity guard.
+
+    A bare mascot ("Panthers", "Saints") is an ``alternate_names`` entry for
+    teams across multiple leagues (Carolina Panthers NFL, Florida Panthers NHL,
+    Pittsburgh Panthers NCAAF, ...). A plain last-write-wins map would attach
+    whichever team happened to load last — a WRONG cross-league logo (the bug in
+    Alex's native-Discover screenshot, Queue #238). So any name key that resolves
+    to teams in more than one distinct sport/league is dropped, yielding no logo
+    (colored-box fallback) rather than a wrong one. Full team names
+    ("Carolina Panthers") are unique per league and are retained.
+    """
+    lookup: dict = {}
+    key_sport: dict = {}
+    ambiguous: set = set()
+
+    def _register(key, team):
+        if not key or key in ambiguous:
+            return
+        if key not in lookup:
+            lookup[key] = team
+            key_sport[key] = team.sport_id
+        elif key_sport.get(key) != team.sport_id:
+            # Cross-league collision on this exact name → ambiguous, drop it.
+            ambiguous.add(key)
+            lookup.pop(key, None)
+            key_sport.pop(key, None)
+
+    for team in teams:
+        _register(team.name, team)
+        for alt_name in (team.alternate_names or []):
+            _register(alt_name, team)
+
+    return lookup
+
+
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     """Build a mapping of team names to Team objects for color/logo data.
 
@@ -7227,13 +7263,9 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     )
     teams = result.scalars().all()
 
-    # Build full lookup: map all known names to team objects
-    full_lookup = {}
-    for team in teams:
-        full_lookup[team.name] = team
-        if team.alternate_names:
-            for alt_name in team.alternate_names:
-                full_lookup[alt_name] = team
+    # Build full lookup: map all known names to team objects, with a
+    # cross-league ambiguity guard (see _dedupe_team_name_lookup).
+    full_lookup = _dedupe_team_name_lookup(teams)
 
     _team_cache = full_lookup
     _team_cache_time = now

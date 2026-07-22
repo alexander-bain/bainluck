@@ -210,6 +210,41 @@ class TestIsGameLevelMarket:
             "NBA: Will the Lakers win the championship?", "championship", 1,
         )
 
+    # --- Season-series / futures bare-matchup guard (Queue #238) ---
+    # "A vs. B Season Series Winner" is a season-long futures, NOT a game. It
+    # must NOT be auto-created as a bogus closed game with cross-league logos.
+    def test_season_series_bare_matchup_rejected(self):
+        assert not is_game_level_market(
+            "Pro Football: Panthers vs. Saints Season Series Winner",
+            "football", 1,
+        )
+
+    def test_season_series_stripped_prefix_rejected(self):
+        assert not is_game_level_market(
+            "Panthers vs. Saints Season Series Winner", "football", 1,
+        )
+
+    def test_season_series_dash_matchup_rejected(self):
+        assert not is_game_level_market(
+            "Cowboys - Commanders Season Series Winner", "football", 1,
+        )
+
+    def test_series_winner_variants_rejected(self):
+        for name in (
+            "Saints vs. Buccaneers Season Series Winner",
+            "Colts vs Jaguars Regular Season Winner",
+            "Bears vs Packers Division Winner",
+        ):
+            assert not is_game_level_market(name, "football", 1), name
+
+    def test_real_game_with_collision_prone_mascot_still_game(self):
+        """A real single game must stay game-level even when a team name would
+        collide with a _NON_GAME_KEYWORDS token ("gold" in Gold Coast)."""
+        assert is_game_level_market(
+            "Gold Coast Titans vs Brisbane Broncos", "rugbyleague", 1,
+        )
+        assert is_game_level_market("Panthers vs. Saints", "football", 1)
+
 
 # =============================================================================
 # extract_matchup
