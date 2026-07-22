@@ -68,6 +68,99 @@ def _detect_elimination(history, threshold=0.005):
     return {"eliminated": False, "eliminated_at": None}
 
 
+def _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id_filter=None):
+    """Settled-means-settled evolution freeze (#1177, Queue #230).
+
+    When a market has a graded champion — exactly one outcome with
+    ``is_winner=True`` — the champion's path-to-resolution line MUST end at 1.0
+    at settlement time, regardless of which source's snapshots we happened to
+    chart. odds_api can fizzle to a longshot value on a settled field (Spain
+    0.587 on the World Cup, Ryan Fox on the Open) while Kalshi resolves to ~1.0;
+    #225 Item 3 already forces the winner's OUTCOME into the chart, but its LINE
+    still ends wherever the charted source left it. This resolves the ending.
+
+    Source-independent by design: it keys on the graded ``is_winner`` flag, NOT
+    on the winner market's ``status`` (Kalshi settled winner markets stay
+    ``status='open'`` — gotcha #33 — so status is unreliable) and NOT on which
+    source is snapshot-richest. That means it also fires while the winner market
+    is stuck open (the THOC26 class), as soon as the grade lands.
+
+    Read-side only (gotcha #21): appends/synthesizes a terminal CHART point;
+    never writes snapshots or ``is_winner``. The terminal point carries
+    settlement-time semantics (gotcha #22 spirit — the completed journey ends at
+    the finish, not fabricated mid-event movement): its timestamp is the
+    settlement time (``resolution_date`` clamped to now, since Kalshi
+    ``resolution_date`` can be a future close-time artifact — gotcha #14), and is
+    never placed before the last real data point. Non-champion lines are left to
+    terminate at their own last real value.
+    """
+    winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
+    if len(winners) != 1:
+        return  # freeze only a single, unambiguous champion (co-winners: leave as-is)
+    champ = winners[0]
+    # When the caller filtered to a single non-champion outcome, do not inject the
+    # champion's line into a view that didn't ask for it.
+    if outcome_id_filter is not None and outcome_id_filter != champ.id:
+        return
+
+    now = datetime.now(timezone.utc)
+    settle_ts = now
+    rd = getattr(market, "resolution_date", None)
+    if rd is not None:
+        if rd.tzinfo is None:
+            rd = rd.replace(tzinfo=timezone.utc)
+        settle_ts = min(rd, now)  # clamp future Kalshi close-times to now (gotcha #14)
+
+    entry = outcome_history.get(champ.id)
+    if entry and entry.get("history"):
+        last = entry["history"][-1]
+        last_ts = None
+        try:
+            last_ts = datetime.fromisoformat(str(last.get("timestamp")))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            last_ts = None
+        last_prob = last.get("probability")
+        # Already resolved (the charted source converged to ~1.0) — the line
+        # already ends at the win; nothing to add, just clear any spurious
+        # elimination flag a fizzle-then-recover pattern may have set.
+        if last_prob is not None and last_prob >= 0.999:
+            entry["eliminated"] = False
+            entry["eliminated_at"] = None
+            return
+        term_ts = settle_ts
+        if last_ts is not None and term_ts <= last_ts:
+            term_ts = last_ts + timedelta(seconds=1)
+        entry["history"].append(
+            {
+                "timestamp": term_ts.isoformat(),
+                "probability": 1.0,
+                "american_odds": None,
+                "bookmaker": "settlement",
+            }
+        )
+        entry["eliminated"] = False
+        entry["eliminated_at"] = None
+    else:
+        # Champion carried no charted snapshots at all — synthesize a minimal
+        # terminal resolve point so the winner line exists and resolves.
+        outcome_history[champ.id] = {
+            "outcome_id": champ.id,
+            "name": outcome_names.get(champ.id, getattr(champ, "name", None) or "Unknown"),
+            "history": [
+                {
+                    "timestamp": settle_ts.isoformat(),
+                    "probability": 1.0,
+                    "american_odds": None,
+                    "bookmaker": "settlement",
+                }
+            ],
+            "eliminated": False,
+            "eliminated_at": None,
+        }
+
+
 def _detect_round_boundaries_from_eliminations(outcome_histories, existing_boundaries):
     """Detect round boundaries from simultaneous elimination patterns."""
     if existing_boundaries:
@@ -2895,6 +2988,13 @@ async def get_futures_history(
     round_boundaries = _detect_round_boundaries_from_eliminations(
         outcome_history, explicit_boundaries
     )
+
+    # Settled-means-settled evolution freeze (#1177, Queue #230): resolve the
+    # graded champion's line to 1.0 at settlement time. Runs AFTER round-boundary
+    # detection (which reads real eliminations) so the injected terminal point
+    # never perturbs boundary inference. Source-independent: fires on the
+    # ``is_winner`` grade even while the winner market is stuck ``status='open'``.
+    _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id)
 
     response: dict = {
         "market_id": market_id,

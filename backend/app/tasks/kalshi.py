@@ -2313,6 +2313,43 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
     return stats
 
 
+def _order_settled_scan_list(
+    priority: list[str],
+    all_series: list[str],
+    partial_settled: set[str],
+    cursor_pos: int,
+    window: int = 100,
+    boost_cap: int = 40,
+) -> tuple[list[str], int]:
+    """Build the scheduled settled-events scan order (Queue #230 de-starvation).
+
+    Order: priority series first, then actively-settling non-priority series
+    ("partial-settled" = a series carrying BOTH resolved and open kalshi markets)
+    boosted ahead of the rotation window, then the cursor-rotated remainder.
+
+    A partial-settled series is one where a just-concluded event is likely
+    waiting to be finished — e.g. a major whose winner market is stuck
+    ``status='open'`` (gotcha #33) while its sibling markets already resolved.
+    Boosting these means they settle within one run instead of waiting up to the
+    full ~38-run rotation (the THOC26 / "won't settle" class). The signal is
+    DB-truth (our own resolved/open mix), so it is immune to Kalshi's unreliable
+    future-dated ``resolution_date``/``commence_time`` (gotcha #14) that would
+    defeat a date-based heuristic.
+
+    ``boost_cap`` bounds the front-load so peak-season mixed-state series cannot
+    consume the whole time budget; the cursor still advances every run, so cold
+    (never-settled) series are not starved. Returns ``(check_list, next_pos)``.
+    """
+    priority_set = set(priority)
+    non_priority = [s for s in all_series if s not in priority_set]
+    rotated = non_priority[cursor_pos:] + non_priority[:cursor_pos]
+    next_pos = (cursor_pos + window) % max(len(non_priority), 1)
+    boost = [s for s in non_priority if s in partial_settled][:boost_cap]
+    boost_set = set(boost)
+    win = [s for s in rotated if s not in boost_set][:window]
+    return list(priority) + boost + win, next_pos
+
+
 async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str] | None = None):
     """Recover historical prices and fix market status from Kalshi settled events.
 
@@ -2377,14 +2414,23 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
     # instead of a hardcoded list that misses esports, baseball HR, soccer BTTS, etc.
     async with get_task_session() as session:
         series_result = await session.execute(text("""
-                SELECT DISTINCT regexp_replace(external_id, '-.*', '') AS series_prefix
+                SELECT regexp_replace(external_id, '-.*', '') AS series_prefix,
+                       bool_or(status = 'resolved') AS has_resolved,
+                       bool_or(status = 'open') AS has_open
                 FROM futures_markets
                 WHERE source = 'kalshi'
                   AND status IN ('open', 'resolved')
                   AND external_id ~ '^KX'
+                GROUP BY 1
                 ORDER BY 1
             """))
-        SERIES_PREFIXES = [r[0] for r in series_result.all()]
+        _series_rows = series_result.all()
+        SERIES_PREFIXES = [r[0] for r in _series_rows]
+        # #230 de-starvation: series carrying BOTH resolved and open kalshi
+        # markets are actively settling — a just-concluded event (e.g. a major
+        # whose winner market is stuck status='open', gotcha #33) is likely
+        # waiting inside. These get boosted ahead of the scheduled rotation.
+        _partial_settled = {r[0] for r in _series_rows if r[1] and r[2]}
     # #227 Item 2: a targeted trigger pins the scan to specific series prefixes
     # (case-insensitive prefix match) so an already-settled event is recovered
     # NOW rather than on the rotation. Scheduled runs pass nothing → unchanged.
@@ -2499,10 +2545,13 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                 else:
                     _series_cursor_key = "bainluck:settled_series_cursor"
                     _cursor_pos = int(_rc.get(_series_cursor_key) or 0)
-                    non_priority = [s for s in SERIES_PREFIXES if s not in _PRIORITY_SERIES]
-                    rotated = non_priority[_cursor_pos:] + non_priority[:_cursor_pos]
-                    check_list = _PRIORITY_SERIES + rotated[:100]
-                    _next_pos = (_cursor_pos + 100) % max(len(non_priority), 1)
+                    # #230: boost actively-settling ('partial-settled') non-
+                    # priority series ahead of the rotation window so overdue
+                    # settlements (the THOC26 stuck-open class) are captured
+                    # within one run, not after the full ~38-run rotation.
+                    check_list, _next_pos = _order_settled_scan_list(
+                        _PRIORITY_SERIES, SERIES_PREFIXES, _partial_settled, _cursor_pos
+                    )
                     _rc.setex(_series_cursor_key, 86400 * 14, str(_next_pos))
 
                 # Just use the check_list directly — the early exit per series
