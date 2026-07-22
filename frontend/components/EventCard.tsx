@@ -8,7 +8,6 @@ import { getLeagueDisplay } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
-import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
@@ -213,9 +212,6 @@ export default function EventCard({
                     : highlightLabel || "LIVE"}
                 </span>
               )}
-              {isLive && (event.ei || event.pulse) && (
-                <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
-              )}
               {!isLive && !isFinished && (
                 <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
@@ -223,7 +219,6 @@ export default function EventCard({
                 <>
                   {finishedDateStr && <span className="text-micro-xs text-text-muted">{finishedDateStr}</span>}
                   <span className="text-micro-xs text-text-muted uppercase">Final</span>
-                  {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
                 </>
               )}
               {/* Pin button */}

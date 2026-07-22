@@ -301,8 +301,9 @@ export default function EventConceptPage() {
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
 
       {/* Hero: co-equal two-sided timeline (combat), soccer container hero (the live
-          /next match duel), or the winner-field race chart. Settled events show the
-          path-to-resolution chart below instead. */}
+          /next match duel), or the winner-field chart. L2-156 Item 5: a settled
+          winner-field event LEADS with the completed-journey chart in the hero slot
+          (Alex expects the chart at the top), not buried at the bottom of the page. */}
       {isCoEqual ? (
         <TwoSidedTimeline
           competitors={competitors}
@@ -311,9 +312,18 @@ export default function EventConceptPage() {
         />
       ) : soccerHero ? (
         <SoccerContainerHero matchups={fightChildren} />
-      ) : (
-        hasWinnerField &&
-        !isSettled && (
+      ) : hasWinnerField ? (
+        isSettled ? (
+          evolutionId ? (
+            <SettledPathChart
+              marketId={evolutionId}
+              domain={event.domain}
+              startDate={event.start_date}
+              endDate={event.end_date}
+              championName={settledChampion(competitors)?.name ?? null}
+            />
+          ) : null
+        ) : (
           <RaceToTitleChart
             competitors={competitors}
             domain={event.domain}
@@ -321,7 +331,7 @@ export default function EventConceptPage() {
             endDate={event.end_date}
           />
         )
-      )}
+      ) : null}
 
       {hasWinnerField && (
         <EventLeaderboard
@@ -390,7 +400,10 @@ export default function EventConceptPage() {
         <ScoringRecordsLadders items={data.children} />
       )}
 
-      {isSettled && evolutionId && (
+      {/* Non-winner-field settled events (combat/soccer) keep the completed-journey
+          chart here at the foot; winner-field settled events render it in the hero
+          slot at the top instead (L2-156 Item 5), so this must not double-render. */}
+      {isSettled && evolutionId && !hasWinnerField && (
         <SettledPathChart
           marketId={evolutionId}
           domain={event.domain}

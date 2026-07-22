@@ -52,7 +52,6 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     if (tags.some(t => t.includes("upset"))) contextLines.push("Upset alert — underdog has a real chance");
     if (tags.some(t => t.includes("playoff"))) contextLines.push("Playoff implications on the line");
   }
-  if (data.ei && data.ei.score >= 60) contextLines.push(`Excitement Index: ${data.ei.score}/100 — ${data.ei.label}`);
   const shareUrl = buildDiscoverShareUrl(`/events/${data.id}`, "event", data.id);
   const homeProbability = formatShareProbability(homeProb);
   const awayProbability = formatShareProbability(awayProb);

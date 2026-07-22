@@ -47,10 +47,18 @@ export function AnimatedProbability({ value, className, resolved }: { value: num
 export function MovementBadge({ m }: { m: number | null | undefined }) {
   if (!m || Math.abs(m) < 0.02) return null;
   const up = m > 0;
+  const pts = Math.abs(Math.round(m * 100));
+  // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
+  // fans can't tell without a label, so spell it out on hover / for screen readers.
+  const label = `${up ? "Up" : "Down"} ${pts} point${pts === 1 ? "" : "s"} in the last 24h`;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}>
-      <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
-      {Math.abs(Math.round(m * 100))}%
+    <span
+      title={label}
+      aria-label={label}
+      className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
+    >
+      <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
+      {pts}%
     </span>
   );
 }

@@ -160,7 +160,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                     key={`${row.label}-${index}`}
                     className="grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1"
                   >
-                    <span className="font-mono text-xs font-semibold tabular-nums text-text-muted">{index + 1}</span>
+                    <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${index + 1} by probability`} aria-label={`Rank ${index + 1}`}>{index + 1}</span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className={`min-w-0 text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
@@ -214,6 +214,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const movementStr = movementVal != null && Math.abs(movementVal) >= 0.1
     ? `${movementUp ? "↑" : "↓"} ${Math.abs(movementVal).toFixed(1)}`
     : null;
+  // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
+  const movementTitle = movementVal != null
+    ? `${movementUp ? "Up" : "Down"} ${Math.abs(movementVal).toFixed(1)} points in the last 24h`
+    : undefined;
   if (variantB) {
     // ── Variant B: data-pure (no image) ──
     return (
@@ -237,7 +241,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               <span className="font-mono font-bold text-4xl tracking-tight leading-none text-text-primary tabular-nums">{pctDisplay}</span>
               {movementStr && (
                 <div className="pb-1">
-                  <div className={`font-mono font-bold text-[15px] whitespace-nowrap ${movementUp ? "text-accent-live" : "text-accent-danger"}`}>{movementStr}</div>
+                  <div className={`font-mono font-bold text-[15px] whitespace-nowrap ${movementUp ? "text-accent-live" : "text-accent-danger"}`} title={movementTitle}>{movementStr}</div>
                   <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted mt-0.5">24h</div>
                 </div>
               )}
@@ -300,7 +304,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <div className="flex items-end gap-2">
               <span className="font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums">{pctDisplay}</span>
               {movementStr && (
-                <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`}>{movementStr}</span>
+                <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`} title={movementTitle} aria-label={movementTitle}>{movementStr}</span>
               )}
             </div>
             <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1">{leader.name}</div>

@@ -343,20 +343,20 @@ function MatchupCard({
         </span>
       </div>
 
-      {/* EI badge for exciting games */}
-      {game.ei != null && game.ei >= 65 && (
+      {/* Upset flag for exciting games (Excitement Index display removed pending overhaul — L2-156) */}
+      {isUpset && (
         <div
           style={{
             padding: '2px 0',
             fontSize: 8,
             fontWeight: 700,
-            color: game.ei >= 80 ? 'var(--mm-gold)' : 'var(--mm-wood-accent)',
+            color: 'var(--mm-gold)',
             background: 'rgba(255, 215, 0, 0.06)',
             textAlign: 'center',
             borderTop: '1px solid rgba(139, 69, 19, 0.15)',
           }}
         >
-          {isUpset ? 'UPSET ' : ''}EI {game.ei}
+          UPSET
         </div>
       )}
     </div>

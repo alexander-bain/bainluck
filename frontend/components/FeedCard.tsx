@@ -413,11 +413,6 @@ function EventFeedCard({
                 {item.headline}
               </span>
             )}
-            {(data.ei || data.pulse) && (
-              <span className="bg-accent-brand/10 text-accent-brand px-1.5 py-0.5 rounded text-[11px] font-medium flex-shrink-0">
-                EI {(data.ei || data.pulse)!.score}
-              </span>
-            )}
             <PersonalizedBadge
               personalized={item.personalized}
               multiplier={item.multiplier}

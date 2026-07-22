@@ -270,19 +270,7 @@ export default function BracketGrid({ bracket }: BracketProps) {
             fontSize: '10px',
           }}
         >
-          {game.ei !== null ? (
-            <span
-              style={{
-                fontWeight: '700',
-                color: `var(--mm-gold)`,
-                padding: '2px 6px',
-                borderRadius: '4px',
-                background: `rgba(255, 215, 0, 0.1)`,
-              }}
-            >
-              EI {game.ei}
-            </span>
-          ) : null}
+          {/* Excitement Index display removed pending overhaul — L2-156 */}
 
           {upset && (
             <span

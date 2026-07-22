@@ -151,6 +151,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // Request more history for markets that haven't been updated recently,
   // so the chart isn't empty when the last poll was days ago.
   const historyHours = useMemo(() => {
+    // L2-156 Item 4 — settled markets show the FULL life (open → resolution).
+    // Anchor the window to the market's open (created_at) so the whole trend is
+    // visible; otherwise a settled market's movement predates the trailing
+    // default window and the chart looks flat (exhibit market 37094267).
+    const isSettledMarket =
+      market?.status === "resolved" ||
+      (market?.resolution_date != null && new Date(market.resolution_date) < new Date());
+    if (isSettledMarket && market?.created_at) {
+      const hoursSinceOpen =
+        (Date.now() - new Date(market.created_at).getTime()) / (1000 * 60 * 60);
+      // Reach back to the open (+ a small buffer), floored at 7d, capped at ~180d.
+      return Math.min(Math.max(Math.ceil(hoursSinceOpen + 24), 168), 4320);
+    }
     if (!market?.updated_at) return 168; // 7 days default
     const hoursSinceUpdate = (Date.now() - new Date(market.updated_at).getTime()) / (1000 * 60 * 60);
     // If last update was >3 days ago, expand the window to cover it
@@ -158,7 +171,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       return Math.min(Math.ceil(hoursSinceUpdate + 48), 720); // up to 30 days
     }
     return 168; // 7 days
-  }, [market?.updated_at]);
+  }, [market?.status, market?.resolution_date, market?.created_at, market?.updated_at]);
 
   const {
     data: historyData,
@@ -272,16 +285,43 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     )[0];
   }, [market?.outcomes]);
 
-  // #883 blend-only detail page: the chart defaults to the SINGLE leader blend
-  // line (the answer), not every outcome at once. Users can still add lines from
-  // the outcomes table below; this only seeds the default once per market.
+  // L2-156 Item 2 — the chart is never an empty "select outcomes below" state.
+  // Default to the top 2-3 outcomes; on a settled market default to the WINNER
+  // (is_winner, which may not be the highest current probability) + runner-up.
+  // Only seed ids that actually have history rows, so the chart renders on first
+  // paint rather than filtering down to nothing. Seeds once per market.
   const didInitSelection = useRef(false);
   useEffect(() => {
-    if (!didInitSelection.current && leader) {
-      didInitSelection.current = true;
-      setSelectedOutcomes(new Set([leader.id]));
+    if (didInitSelection.current) return;
+    if (!market?.outcomes || market.outcomes.length === 0) return;
+
+    const byProb = [...market.outcomes].sort(
+      (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
+    );
+    const settled = market.status === "resolved";
+    let seeds: FuturesOutcome[];
+    if (settled) {
+      const winner = market.outcomes.find((o) => o.is_winner === true) ?? byProb[0];
+      const runnerUp = byProb.find((o) => o.id !== winner.id);
+      seeds = runnerUp ? [winner, runnerUp] : [winner];
+    } else {
+      seeds = byProb.slice(0, 3);
     }
-  }, [leader]);
+
+    // Prefer ids that have history rows. If history hasn't loaded yet, fall back to
+    // the computed seed — the effect re-runs when historyOutcomes arrives.
+    const historyIds = new Set(historyOutcomes.map((o) => o.outcome_id));
+    let seedIds = seeds.map((o) => o.id);
+    if (historyIds.size > 0) {
+      const withHistory = seedIds.filter((id) => historyIds.has(id));
+      if (withHistory.length > 0) seedIds = withHistory;
+    }
+
+    if (seedIds.length > 0) {
+      didInitSelection.current = true;
+      setSelectedOutcomes(new Set(seedIds));
+    }
+  }, [market?.outcomes, market?.status, historyOutcomes]);
 
   // #883: the clarification that EXPLAINS the blend line's movement (#871-style,
   // deterministic from opening vs current — no per-source detail, blend-only).

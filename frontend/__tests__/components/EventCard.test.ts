@@ -79,7 +79,10 @@ describe("EventCard", () => {
     expect(html).toContain("LIVE");
     expect(html).toContain("Opened");
     expect(html).toContain("55/45");
-    expect(html).toContain("🫀 88");
+    // L2-156 Item 1: Excitement Index display is stripped from cards (still computed
+    // in the backend for ranking). The EI badge must not render.
+    expect(html).not.toContain("🫀 88");
+    expect(html).not.toContain("Excitement Index");
   });
 
   it("treats not-yet-started live events as pregame (no live badge)", () => {

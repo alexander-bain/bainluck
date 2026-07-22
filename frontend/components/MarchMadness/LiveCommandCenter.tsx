@@ -166,9 +166,6 @@ export default function LiveCommandCenter({ games }: LiveCommandCenterProps) {
                 }}
               >
                 <span>{game.score_home ?? "-"}</span>
-                <span style={{ fontSize: "10px", color: "var(--mm-text-dim)" }}>
-                  {game.ei ? `EI ${game.ei}` : ""}
-                </span>
                 <span>{game.score_away ?? "-"}</span>
               </div>
             </button>
