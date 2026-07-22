@@ -237,6 +237,22 @@ class TestIsGameLevelMarket:
         ):
             assert not is_game_level_market(name, "football", 1), name
 
+    def test_head_to_head_win_total_rejected(self):
+        """#1220: season-aggregate 'Head-to-Head Win Total' (game-prop colon
+        form) is NOT a game and must not auto-link to a single game event."""
+        for name in (
+            "Tampa Bay vs Pittsburgh: Head-to-Head Win Total",
+            "NFL: Tampa Bay vs Pittsburgh: Head-to-Head Win Total",
+            "Chiefs vs Patriots: Season Win Total",
+        ):
+            assert not is_game_level_market(name, "football", 1), name
+            assert extract_matchup(name) is None, name
+
+    def test_real_game_prop_still_game_level(self):
+        """Real single-game props must stay game-level (not over-screened)."""
+        assert is_game_level_market("Lakers vs Celtics: Total Points", "basketball", 1)
+        assert is_game_level_market("Chiefs at Eagles: Spread", "football", 1)
+
     def test_real_game_with_collision_prone_mascot_still_game(self):
         """A real single game must stay game-level even when a team name would
         collide with a _NON_GAME_KEYWORDS token ("gold" in Gold Coast)."""

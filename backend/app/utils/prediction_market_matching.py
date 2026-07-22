@@ -309,6 +309,29 @@ def _has_futures_matchup_keyword(*names: str) -> bool:
             return True
     return False
 
+
+# Season-aggregate phrases that never appear in a single-GAME market (even a
+# game prop like "Team A vs Team B: Total Points"). These compare two teams over
+# a whole season ("Head-to-Head Win Total", "Season Win Total") and were being
+# mislinked to closed single-game events via the game-prop colon form (#1220,
+# sibling of the "Season Series Winner" bare-matchup class). Screened up front so
+# BOTH the matchup and game-prop paths reject them, while real props survive.
+_SEASON_AGGREGATE_KEYWORDS = (
+    "head-to-head", "head to head", "win total", "wins total",
+    "season win", "season wins", "regular season win",
+    "make the playoffs", "make playoffs", "to make the playoffs",
+    "season series", "season sweep",
+)
+
+
+def _is_season_aggregate_name(name: str) -> bool:
+    """True if a market name describes a season-long, two-team aggregate (win
+    total / head-to-head / playoff-berth) rather than a single game."""
+    if not name:
+        return False
+    lowered = name.lower()
+    return any(kw in lowered for kw in _SEASON_AGGREGATE_KEYWORDS)
+
 # ── Dash matchup false positive prevention ───────────────────────────────────
 # "English Premier League – 2nd Place" or "The Masters - Winner" are NOT matchups.
 # These are standings/rankings/award markets that happen to use a dash separator.
@@ -392,6 +415,11 @@ def is_game_level_market(
 def _check_game_level(name: str) -> bool:
     """Check if a (possibly prefix-stripped) market name is game-level."""
     if not name:
+        return False
+
+    # Season-long two-team aggregates ("...: Head-to-Head Win Total") match the
+    # game-prop pattern but are NOT games — reject up front (#1220).
+    if _is_season_aggregate_name(name):
         return False
 
     # Game prop format ("Team A at Team B: Points") IS game-level — it's
@@ -525,6 +553,11 @@ def _normalize_variants(market_name: str) -> list:
 def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     """Core matchup extraction logic."""
     if not market_name:
+        return None
+
+    # Season-long two-team aggregates are not games (#1220) — do not extract a
+    # matchup, so they are never auto-linked/created as game events.
+    if _is_season_aggregate_name(market_name):
         return None
 
     # Game prop format: "Team A at/vs Team B: Stat Type"
