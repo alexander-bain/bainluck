@@ -62,7 +62,7 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
         sources: {},
       })),
     };
-    return <TournamentCard tournament={tournament} />;
+    return <TournamentCard tournament={tournament} whatHit={td.marquee_whathit === true} />;
   }
 
   if (item.type === "concept") {
@@ -733,11 +733,17 @@ function FuturesFeedCard({
 
 function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData }) {
   const { track } = useAnalyticsContext();
-  const isLive = data.status === "live";
+  // L2-159: a just-settled marquee concept (T+36h WHAT-HIT window, #235 flag)
+  // leads with THE RESULT — settled-means-settled grammar ("cards show results").
+  // The flag can only be true post-settlement, so it wins over any live framing.
+  const whatHit = data.marquee_whathit === true;
+  const isLive = !whatHit && data.status === "live";
+  const winner = data.winner?.trim() || null;
+  const resultSummary = data.result_summary?.trim() || null;
   return (
     <Link
       href={eventPath(data.key)}
-      aria-label={data.name}
+      aria-label={whatHit ? `${data.name} — final result` : data.name}
       onClick={() =>
         track("concept_card_click", {
           market_id: 0,
@@ -754,6 +760,12 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
       >
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
+            {whatHit && (
+              <span className="flex items-center gap-1 bg-accent-brand/15 text-accent-brand px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                <span aria-hidden>🏁</span>
+                FINAL
+              </span>
+            )}
             {isLive && (
               <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
@@ -765,7 +777,8 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
                 Marquee
               </span>
             )}
-            {item.headline && !isLive && (
+            {/* WHAT-HIT suppresses the live/countdown headline — the result is the story. */}
+            {item.headline && !isLive && !whatHit && (
               <span className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 {item.headline}
               </span>
@@ -780,8 +793,28 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
         <div className="text-sm font-semibold text-text-primary line-clamp-2">
           {data.name}
         </div>
-        {item.reason && (
-          <p className="text-xs text-text-secondary mt-0.5">{item.reason}</p>
+        {whatHit ? (
+          // Result-first: champion name + "won" chip where the payload provides it;
+          // otherwise an honest settled line inviting the recap. Never fabricated.
+          winner ? (
+            <div className="flex items-center flex-wrap gap-1.5 mt-1">
+              <span className="text-sm font-bold text-text-primary truncate">{winner}</span>
+              <span className="bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0">
+                Won
+              </span>
+              {resultSummary && (
+                <span className="text-xs text-text-secondary truncate">{resultSummary}</span>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-text-secondary mt-0.5">
+              {resultSummary || "Final result — see the recap"}
+            </p>
+          )
+        ) : (
+          item.reason && (
+            <p className="text-xs text-text-secondary mt-0.5">{item.reason}</p>
+          )
         )}
       </div>
     </Link>

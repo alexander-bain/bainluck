@@ -18,7 +18,13 @@ interface TournamentCardProps {
 export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick, onShare }: TournamentCardProps) {
   const leader = data.golfers?.[0];
   const leaderProbability = formatShareProbability(leader?.probability);
-  const shareText = leader && leaderProbability
+  // L2-159 / #235 Item 4: just-settled marquee tournament (T+36h WHAT-HIT window)
+  // leads result-first — the leader is the CHAMPION, live movement is suppressed,
+  // settled-means-settled grammar ("cards show results").
+  const whatHit = data.marquee_whathit === true;
+  const shareText = leader && whatHit
+    ? `${leader.name} won ${data.name} on Bain Luck.`
+    : leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
   // L2-65: route into the event concept page (/event/[key]) — the richer surface
@@ -30,11 +36,23 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
       <DismissBtn onDismiss={onDismiss} />
       <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
         <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
+        {whatHit && (
+          <div className="absolute top-3 right-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">🏁 Final</div>
+        )}
         {leader && (
           <>
-            <AnimatedProbability value={Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
-            <div className="text-white/70 text-sm mt-1">{leader.name}</div>
-            <MovementBadge m={leader.movement_24h} />
+            {whatHit ? (
+              <>
+                <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg text-center px-4">{leader.name}</div>
+                <div className="mt-1.5 bg-white/20 text-white text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full">Champion · Won</div>
+              </>
+            ) : (
+              <>
+                <AnimatedProbability value={Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
+                <div className="text-white/70 text-sm mt-1">{leader.name}</div>
+                <MovementBadge m={leader.movement_24h} />
+              </>
+            )}
           </>
         )}
       </div>

@@ -930,6 +930,11 @@ export interface FeedTournamentData {
   }[];
   market_ids: number[];
   source_count: number;
+  // #235 Item 4 / L2-159: calendar-flagged marquee tournament. `marquee_whathit`
+  // is true only in the T+36h post-settlement window — the card renders the
+  // result-first ("what happened") framing instead of the live/upcoming one.
+  is_marquee?: boolean;
+  marquee_whathit?: boolean;
 }
 
 // Event-concept feed card (#999 B3 / L2-84) — a tournament/card (UFC 329, …)
@@ -942,6 +947,16 @@ export interface FeedConceptData {
   start_date?: string | null;
   is_major: boolean;
   fight_count: number;
+  entry_count?: number;
+  // #235 Item 4 / L2-159: marquee-pin state. `marquee_whathit` is true only in
+  // the T+36h post-settlement window — the card leads with THE RESULT.
+  is_marquee?: boolean;
+  marquee_whathit?: boolean;
+  // Result fields, surfaced result-first when `marquee_whathit` is true and the
+  // payload provides them ("where the payload provides it" — graceful/optional so
+  // no winner is ever fabricated when the backend hasn't graded a champion yet).
+  winner?: string | null;
+  result_summary?: string | null;
 }
 
 // Theme/comparison bundle: one feed slot that folds several same-theme markets

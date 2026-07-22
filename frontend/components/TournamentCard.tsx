@@ -23,13 +23,19 @@ interface TournamentCardProps {
   leaderboard?: GolfLeaderboardPlayer[];
   /** Override link destination */
   href?: string;
+  /**
+   * L2-159 / #235 Item 4: just-settled marquee tournament (T+36h WHAT-HIT
+   * window). Leads result-first — the leader row becomes the CHAMPION, the live
+   * pulse is suppressed, settled-means-settled grammar ("cards show results").
+   */
+  whatHit?: boolean;
 }
 
 // ============================================================================
 // Main Component — Feed-Native Hero (Variant 3)
 // ============================================================================
 
-export default function TournamentCard({ tournament, leaderboard, href: hrefOverride }: TournamentCardProps) {
+export default function TournamentCard({ tournament, leaderboard, href: hrefOverride, whatHit = false }: TournamentCardProps) {
   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
   // Golf tournament rows land on the bespoke golf tournament detail surface
   // (/categories/golf/tournaments/[slug]) — it carries the live DataGolf
@@ -53,8 +59,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
     return <CupCard tournament={tournament} href={href} />;
   }
 
-  // Determine live status
-  const isLive = _isLive(tournament);
+  // Determine live status. A just-settled WHAT-HIT card is never "live" (even if
+  // residual 24h movement lingers) — it leads with the champion, not a pulse.
+  const isLive = !whatHit && _isLive(tournament);
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
 
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
@@ -70,6 +77,12 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
             <div>
               <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
                 <span>⛳ {tourLabel}</span>
+                {whatHit && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-brand uppercase tracking-wide">
+                    <span aria-hidden>🏁</span>
+                    Final
+                  </span>
+                )}
                 {isLive && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
                     <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
@@ -78,7 +91,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       : "LIVE"}
                   </span>
                 )}
-                {!isLive && (tournament.start_date || tournament.commence_time) && (
+                {!isLive && !whatHit && (tournament.start_date || tournament.commence_time) && (
                   <span className="text-text-tertiary">
                     {_formatTournamentDate(tournament.start_date || (tournament.commence_time ?? null), tournament.end_date ?? null)}
                   </span>
@@ -99,12 +112,20 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                 <span className="text-base font-semibold">%</span>
               </div>
               <div>
-                <div className="text-sm font-semibold">{leader.name}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold">{leader.name}</span>
+                  {whatHit && (
+                    <span className="bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0">
+                      Won
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-text-secondary">
-                  Leader
+                  {whatHit ? "Champion" : "Leader"}
                   {leader.score && <> · {leader.score}</>}
-                  {leader.hole && <> · {leader.hole}</>}
-                  {leader.movement != null && Math.abs(leader.movement) > 0.001 && (
+                  {/* No live "% today" movement once settled — the result is fixed. */}
+                  {!whatHit && leader.hole && <> · {leader.hole}</>}
+                  {!whatHit && leader.movement != null && Math.abs(leader.movement) > 0.001 && (
                     <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
                       {" "}{leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}% today
                     </span>
