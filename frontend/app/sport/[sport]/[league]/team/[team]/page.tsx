@@ -12,6 +12,7 @@ import { getLeagueDisplay } from "@/lib/sportCategories";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
+import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
 import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
@@ -131,9 +132,33 @@ export default function TeamPage() {
 
   // Hero headline number — the team's "price" is its championship probability
   // (the blend-is-the-product ruling: one number per question). Prefer the
-  // tier-1 Championship entry; fall back to the strongest available path step.
-  const headline =
-    championship_path.find((e) => e.tier === 1) ?? championship_path[0] ?? null;
+  // dedicated championship path (tier-1 Championship, else strongest step). When
+  // the backend ships an empty champ-path but the futures payload still carries
+  // the season markets (the live Red Sox case), fall back to the best season
+  // future so the signature number never silently disappears.
+  const headline: { label: string; probability: number; movement: number | null } | null =
+    (() => {
+      const pathEntry =
+        championship_path.find((e) => e.tier === 1) ?? championship_path[0] ?? null;
+      if (pathEntry && pathEntry.probability !== null) {
+        return {
+          label: pathEntry.label,
+          probability: pathEntry.probability,
+          movement: pathEntry.movement,
+        };
+      }
+      const pick = pickJourneyFuture(futures);
+      if (!pick || pick.probability === null) return null;
+      const item = futures.find(
+        (f) => f.market_id === pick.marketId && f.outcome_id === pick.outcomeId,
+      );
+      const tierLabel: Record<number, string> = { 1: "Championship", 2: "Conference", 4: "Division" };
+      return {
+        label: tierLabel[item?.market_tier ?? 1] ?? "Championship",
+        probability: pick.probability,
+        movement: item?.probability_change_24h ?? null,
+      };
+    })();
 
   // Division race (supplementary; null when it can't be shown honestly).
   const race = buildDivisionRace(grid, team.id, team.name);
@@ -222,7 +247,7 @@ export default function TeamPage() {
           </div>
         </div>
         {/* Headline number — the team's championship "price" + 24h delta. */}
-        {headline && headline.probability !== null && (
+        {headline && (
           <div className="ml-auto flex flex-col items-end gap-0.5">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
               {headline.label}

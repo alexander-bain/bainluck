@@ -22,11 +22,32 @@ const GRID_SLUG_MAP: Record<string, string> = {
   baseball_mlb: "mlb",
 };
 
+// Season-phase suffixes a team's sport.key can carry (e.g.
+// "baseball_mlb_preseason") that must be stripped before mapping — the grid is
+// keyed on the canonical league, not the phase. This is the same stale-phase
+// copy L2-158 Item 3 stripped for the breadcrumb label.
+const SEASON_PHASE_SUFFIXES = [
+  "_preseason",
+  "_postseason",
+  "_regular_season",
+  "_regular",
+  "_playoffs",
+  "_spring_training",
+];
+
+function stripSeasonPhase(sportKey: string): string {
+  for (const suffix of SEASON_PHASE_SUFFIXES) {
+    if (sportKey.endsWith(suffix)) return sportKey.slice(0, -suffix.length);
+  }
+  return sportKey;
+}
+
 /** Resolve the championship-grid slug for a sport_key, or null when unknown. */
 export function sportKeyToGridSlug(sportKey: string | null | undefined): string | null {
   if (!sportKey) return null;
-  if (GRID_SLUG_MAP[sportKey]) return GRID_SLUG_MAP[sportKey];
+  const canonical = stripSeasonPhase(sportKey);
+  if (GRID_SLUG_MAP[canonical]) return GRID_SLUG_MAP[canonical];
   // Fallback: strip the leading provider prefix ("baseball_mlb" → "mlb").
-  const suffix = sportKey.split("_").slice(1).join("_");
-  return suffix || sportKey;
+  const suffix = canonical.split("_").slice(1).join("_");
+  return suffix || canonical;
 }

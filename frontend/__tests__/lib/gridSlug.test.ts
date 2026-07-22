@@ -14,6 +14,13 @@ describe("sportKeyToGridSlug", () => {
     expect(sportKeyToGridSlug("soccer_spain_la_liga")).toBe("la-liga");
   });
 
+  test("strips season-phase suffixes before mapping (the Red Sox live case)", () => {
+    expect(sportKeyToGridSlug("baseball_mlb_preseason")).toBe("mlb");
+    expect(sportKeyToGridSlug("basketball_nba_postseason")).toBe("nba");
+    expect(sportKeyToGridSlug("americanfootball_nfl_regular_season")).toBe("nfl");
+    expect(sportKeyToGridSlug("icehockey_nhl_playoffs")).toBe("nhl");
+  });
+
   test("falls back to stripping the provider prefix for unknown keys", () => {
     expect(sportKeyToGridSlug("cricket_ipl")).toBe("ipl");
   });
