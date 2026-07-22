@@ -2557,6 +2557,303 @@ async def _correct_both_winner_guess_side():
     return stats
 
 
+async def _grade_date_passed_binaries():
+    r"""Grade open "by <past-date>?" Polymarket binaries whose No side is near-certain.
+
+    Every price grader is gated ``fm.status='resolved'``, so a binary that
+    Polymarket left ``open`` (never re-synced to resolved) with a lapsed deadline
+    NEVER grades — it sits open forever showing "No 97%" with no is_winner. When the
+    deadline is provably in the past (resolution_date < NOW() - 3d) and the No side
+    is near-certain (>= 0.95), the event did NOT happen by the stated date, so No
+    wins.
+
+    Tightly predicated (gotcha #21 — never guess a winner on a live question):
+      - polymarket source, status='open' (never touch resolved/closed markets)
+      - resolution_date < NOW() - INTERVAL '3 days' (deadline provably lapsed)
+      - market name is a "by <date>?" binary (name ~* '\yby\y' AND name ~ '\?')
+      - EXACTLY 2 outcomes, exactly one 'Yes' + one 'No'
+      - SUM(is_winner) = 0 (nothing already graded)
+      - the No outcome's current_probability >= 0.95 (near-certain the event lapsed)
+
+    Sets No is_winner=true, Yes false, resolution_source='date_passed' (terminal
+    tier — overwritable by a later authoritative Gamma/CLOB settlement) and flips
+    fm.status='resolved' in the SAME phase so status and winner stay coupled
+    ("settled means settled"). Idempotent: once resolved the market no longer
+    matches the status='open' read. Verified vs futures
+    13792363/13792364/13792365/13792367.
+    """
+    stats = {"markets": 0, "winners_set": 0, "losers_set": 0, "errors": []}
+    try:
+        # Read-side FIRST: identify candidate market ids (the grouped predicate runs
+        # once), then couple two id-keyed writes per batch so partial progress
+        # persists (mirrors the gotcha #13 per-market-commit pattern).
+        ids: list = []
+        async with get_task_session() as session:
+            rows = await session.execute(text(r"""
+                SELECT fm.id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.source = 'polymarket'
+                  AND fm.status = 'open'
+                  AND fm.resolution_date < NOW() - INTERVAL '3 days'
+                  AND fm.name ~* '\yby\y'
+                  AND fm.name ~ '\?'
+                GROUP BY fm.id
+                HAVING COUNT(*) = 2
+                   AND SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND SUM(CASE WHEN lower(fo.name) = 'yes' THEN 1 ELSE 0 END) = 1
+                   AND SUM(CASE WHEN lower(fo.name) = 'no' THEN 1 ELSE 0 END) = 1
+                   AND MAX(CASE WHEN lower(fo.name) = 'no'
+                                THEN fo.current_probability END) >= 0.95
+                LIMIT 5000
+            """))
+            ids = [r[0] for r in rows.fetchall()]
+        stats["markets"] = len(ids)
+
+        BATCH = 200
+        for i in range(0, len(ids), BATCH):
+            chunk = ids[i:i + BATCH]
+            async with get_task_session() as session:
+                # No side wins, Yes side loses; date_passed is terminal-tier so a
+                # later authoritative settlement can still overwrite it.
+                res = await session.execute(
+                    text(
+                        "UPDATE futures_outcomes "
+                        "SET is_winner = (lower(name) = 'no'), "
+                        "resolution_source = 'date_passed', "
+                        "last_updated = NOW() "
+                        "WHERE market_id = ANY(:ids) "
+                        "RETURNING is_winner"
+                    ),
+                    {"ids": chunk},
+                )
+                out = res.all()
+                stats["winners_set"] += sum(1 for r in out if r[0])
+                stats["losers_set"] += sum(1 for r in out if not r[0])
+                # Couple status to the winner write (settled means settled).
+                await session.execute(
+                    text(
+                        "UPDATE futures_markets SET status = 'resolved' "
+                        "WHERE id = ANY(:ids) AND status = 'open'"
+                    ),
+                    {"ids": chunk},
+                )
+                await session.commit()
+        if stats["winners_set"]:
+            logger.info(
+                "Date-passed binary grading: resolved %d markets (No wins), "
+                "%d winners / %d losers set",
+                stats["markets"], stats["winners_set"], stats["losers_set"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Date-passed binary grading error: %s", e)
+    return stats
+
+
+_LADDER_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12, "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _parse_outcome_date(name: str):
+    """Best-effort (year, month, day) sort key from a by-when ladder outcome name.
+
+    Returns a comparable tuple or None if no date is present. Handles 'July 1',
+    'Jul 1', 'July 1, 2026', '2026-07-01', '7/1', '7/1/2026'. Missing year → 0 so
+    year-less names still sort by month/day (they only ever compare within one
+    ladder). Used ONLY to pick the earliest winner; unparseable names fall back to
+    the DB ordinal in the caller.
+    """
+    if not name:
+        return None
+    s = name.strip().lower()
+    # ISO: 2026-07-01
+    m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # Month name + day (+ optional year): "july 1", "jul 1, 2026"
+    m = re.search(r"\b([a-z]{3,9})\.?\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?\b", s)
+    if m and m.group(1) in _LADDER_MONTHS:
+        year = int(m.group(3)) if m.group(3) else 0
+        return (year, _LADDER_MONTHS[m.group(1)], int(m.group(2)))
+    # Numeric M/D(/Y): "7/1", "7/1/2026"
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", s)
+    if m:
+        year = int(m.group(3)) if m.group(3) else 0
+        return (year, int(m.group(1)), int(m.group(2)))
+    return None
+
+
+async def _collapse_bywhen_ladder_winners():
+    r"""Collapse a multi-winner by-when date ladder to its single earliest winner.
+
+    ``_backfill_from_current_probability`` crowns EVERY outcome with cp >= 0.95 and
+    has no winner-count cap, so a cumulative by-when ladder ("... by July 1?",
+    "by July 2?", ...) ends with ALL date outcomes is_winner=true once the event has
+    happened. In a single-answer ladder only the earliest satisfied date is the real
+    answer; the later dates are trivially-true carryovers that poison calibration
+    (SUM winners > 1).
+
+    A mutually_exclusive market with SUM(is_winner) > 1 is a CLEAR invariant
+    violation (a single-champion partition can hold exactly one winner) — the one
+    case gotcha #21 sanctions correcting. We keep is_winner=true ONLY on the
+    earliest-date outcome (date parsed from the outcome name; ties fall back to the
+    lowest DB ordinal) and flip every later co-winner to false. Modeled on
+    ``_correct_both_winner_guess_side``: read-first / id-keyed / batched writes with
+    a SET LOCAL statement_timeout so the correlated read can't bust the soft limit;
+    only the is_winner flag flips (resolution_source untouched) so it's idempotent.
+
+    Conservative extras (tighter than the base ask, gotcha #21): a candidate market
+    must have NO authoritative (tier-3) winner and NO pass3_threshold winner (so a
+    real settlement is never nulled and a LEGITIMATE cumulative numeric-threshold
+    ladder — Over 3.5 maps AND Over 4.5 maps, both truly YES — is left untouched),
+    AND at least one of its winners must parse as a DATE (so a people/team mex
+    partition like "Wimbledon Winner" is never arbitrarily collapsed by ordinal —
+    those are left for evidence review / authoritative re-settlement).
+
+    Verified vs futures 37094267 (July 1/2/3/6 all won → keep only July 1).
+    """
+    stats = {
+        "markets_collapsed": 0, "flipped": 0, "batches": 0,
+        "skipped_no_date": 0, "errors": [],
+    }
+    try:
+        # Read-side: candidate markets + their winner outcomes (id, name). The heavy
+        # grouped predicate runs ONCE, bounded, not per-row under a held lock.
+        rows_by_market: dict = {}
+        try:
+            async with get_task_session() as session:
+                await session.execute(text("SET LOCAL statement_timeout = '50s'"))
+                rows = await session.execute(text(r"""
+                    SELECT w.market_id, w.id, w.name
+                    FROM futures_outcomes w
+                    WHERE w.is_winner = true
+                      AND w.market_id IN (
+                          SELECT fo.market_id
+                          FROM futures_outcomes fo
+                          JOIN futures_markets m ON fo.market_id = m.id
+                          WHERE fo.is_winner = true
+                            AND (m.mutually_exclusive = true
+                                 OR m.name ~* '\y(by|when)\y')
+                          GROUP BY fo.market_id
+                          HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1
+                             AND SUM(CASE WHEN fo.is_winner
+                                       AND fo.resolution_source = 'pass3_threshold'
+                                       THEN 1 ELSE 0 END) = 0
+                             AND SUM(CASE WHEN fo.is_winner
+                                       AND COALESCE(fo.resolution_source, '')
+                                           IN """ + AUTHORITATIVE_SOURCES_SQL + r"""
+                                       THEN 1 ELSE 0 END) = 0
+                      )
+                    ORDER BY w.market_id, w.id
+                    LIMIT 20000
+                """))
+                for market_id, oid, name in rows.fetchall():
+                    rows_by_market.setdefault(market_id, []).append((oid, name))
+        except Exception as e:
+            stats["errors"].append(f"ladder_read_timeout: {str(e)[:100]}")
+            logger.warning("By-when ladder read bailed (bounded): %s", e)
+
+        # Selection: keep the earliest-date winner per market; collect loser ids.
+        # A market with ZERO date-parseable winners is skipped entirely — it is not
+        # a date ladder, and collapsing it by arbitrary ordinal could null a real
+        # champion (the Wimbledon-partition hazard).
+        loser_ids: list = []
+        for outs in rows_by_market.values():
+            parsed = [(oid, name, _parse_outcome_date(name or "")) for oid, name in outs]
+            if not any(p[2] is not None for p in parsed):
+                stats["skipped_no_date"] += 1
+                continue
+            ordered = sorted(
+                parsed,
+                key=lambda p: (0, p[2], p[0]) if p[2] is not None
+                else (1, (9999, 99, 99), p[0]),
+            )
+            loser_ids.extend(oid for oid, _, _ in ordered[1:])
+            stats["markets_collapsed"] += 1
+
+        # Write-side: tiny id-keyed UPDATEs committed per batch (bounds the longest
+        # uninterrupted op). Idempotent: an already-false row won't rematch.
+        BATCH = 200
+        for i in range(0, len(loser_ids), BATCH):
+            chunk = loser_ids[i:i + BATCH]
+            async with get_task_session() as session:
+                result = await session.execute(
+                    text(
+                        "UPDATE futures_outcomes SET is_winner = false, "
+                        "last_updated = NOW() "
+                        "WHERE id = ANY(:ids) AND is_winner = true"
+                    ),
+                    {"ids": chunk},
+                )
+                await session.commit()
+                stats["flipped"] += result.rowcount
+            stats["batches"] += 1
+        if stats["flipped"]:
+            logger.info(
+                "By-when ladder collapse: nulled %d later co-winners across %d "
+                "ladders (kept earliest-date winner each; %d skipped as non-date)",
+                stats["flipped"], stats["markets_collapsed"], stats["skipped_no_date"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("By-when ladder collapse error: %s", e)
+    return stats
+
+
+async def _clear_premature_open_winners():
+    """Null is_winner on non-resolved markets unless written by an authoritative source.
+
+    ``resolution_authority`` has no market-status concept, so a heuristic/soft
+    grader could stamp is_winner=true on a market Polymarket/Kalshi still has
+    ``open`` (gotcha: settled means settled — a live question must not show a
+    winner). This enforces ``can_write_winner``: on a market whose status is NOT in
+    ('resolved','closed'), only an authoritative (tier-3) settlement may assert a
+    winner; every guess-family or source-less winner is premature and cleared.
+
+    Predicate (tight — never touches a real settlement, gotcha #21):
+      - fm.status NOT IN ('resolved', 'closed')
+      - fo.is_winner = true
+      - fo.resolution_source IS NULL OR fo.resolution_source IN GUESS_FAMILY_SOURCES
+
+    Authoritative/deterministic/terminal winners on open markets are LEFT (a
+    date_passed or box_score winner is self-justifying) — only NULL/guess-family is
+    swept. Nulls both is_winner and resolution_source. Verified vs kalshi futures
+    109327 (Yes 0.94, is_winner=true, status=open).
+    """
+    stats = {"cleared": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = false,
+                        resolution_source = NULL,
+                        last_updated = NOW()
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status NOT IN ('resolved', 'closed')
+                      AND fo.is_winner = true
+                      AND (fo.resolution_source IS NULL
+                           OR fo.resolution_source IN """ + GUESS_FAMILY_SOURCES_SQL + """)
+                """))
+            stats["cleared"] = r.rowcount
+            await session.commit()
+        if stats["cleared"]:
+            logger.info(
+                "Premature open-market winner sweep: nulled %d guess/None winners "
+                "on non-resolved markets",
+                stats["cleared"],
+            )
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Premature open-market winner sweep error: %s", e)
+    return stats
+
+
 async def _get_halftime_score(session, event_id: int):
     """Reconstruct halftime score from scoring_plays or box_score_data period scores."""
     result = await session.execute(
@@ -4478,7 +4775,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
     async with get_task_session() as session:
         stuck = await session.execute(
-            text("""
+            text(r"""
                 SELECT fm.id, fm.external_id, fm.group_type,
                        fm.market_metadata->>'polymarket_event_id' AS poly_event_id
                 FROM futures_markets fm
@@ -4486,7 +4783,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 WHERE fm.source = 'polymarket'
                   AND fm.status = 'resolved'
                   AND fm.id > :last_id
-                GROUP BY fm.id, fm.mutually_exclusive, fm.resolution_date
+                GROUP BY fm.id, fm.mutually_exclusive, fm.resolution_date, fm.name
                 HAVING BOOL_OR(
                     COALESCE(fo.resolution_source, '') NOT IN ('api_settlement', 'clean_resolution')
                 )
@@ -4498,7 +4795,11 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                 -- so the envelope crowns exactly one. Recency-bounded to ~90d
                 -- because Gamma market data ages out (gotcha #35) — older ones
                 -- can't be re-fetched and are left for the curve-exclusion net.
-                OR (fm.mutually_exclusive
+                -- Widened: a by-when DATE ladder crowned with >1 winner is the same
+                -- bug but is often NOT flagged mutually_exclusive, so it slipped the
+                -- net. OR-in a by-when name match so those get authoritatively
+                -- re-settled too (the local collapse phase is the read-side backstop).
+                OR ((fm.mutually_exclusive OR fm.name ~* '\yby\y' OR fm.name ~* '\ywhen\y')
                     AND SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1
                     AND fm.resolution_date > NOW() - INTERVAL '90 days')
                 ORDER BY fm.id ASC
@@ -5315,6 +5616,16 @@ async def _resolve_winners_only(limit: int = 2000):
         "losers": prob_stats.get("clean_losers", 0),
     }
 
+    # Resolver-hygiene phases (Item 1). All three are cheap, idempotent, tightly
+    # predicated set-based repairs that run in this dedicated resolver (NOT only in
+    # the starvation-prone _backfill_all_winners tail), so they execute every cycle:
+    #   (A) grade open "by <past-date>?" poly binaries whose No side is near-certain
+    #   (B) collapse a multi-winner by-when date ladder to its earliest-date winner
+    #   (C) clear premature guess/None winners stamped on non-resolved markets
+    stats["date_passed"] = await _grade_date_passed_binaries()
+    stats["bywhen_collapse"] = await _collapse_bywhen_ladder_winners()
+    stats["premature_open_cleared"] = await _clear_premature_open_winners()
+
     # Phase 2b: upgrade pass2_guess LOSERS → clean_resolution
     # Only upgrade losers (is_winner=false) at extremes — these are
     # unambiguously correct. Winners at extremes might be wrong guesses
@@ -5682,6 +5993,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Like its siblings above it is budget-guarded out on heavy cycles, so it
     # ALSO runs as a dedicated beat (correct_both_winner_guess_side).
     both_winner_stats = await _correct_both_winner_guess_side()
+    # Resolver-hygiene (Item 1): mirror the date-passed grade + by-when ladder
+    # collapse here too (both also run every cycle in _resolve_winners_only). Cheap,
+    # idempotent set-based repairs; safe in the un-budget-guarded core section.
+    date_passed_stats = await _grade_date_passed_binaries()
+    bywhen_collapse_stats = await _collapse_bywhen_ladder_winners()
 
     if _budget_left() < _BUDGET_MARGIN_S:
         return _partial_result("candlestick_trades")

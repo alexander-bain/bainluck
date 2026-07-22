@@ -4004,6 +4004,21 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over):
     return opening_over
 
 
+def _event_is_really_finished(event, now) -> bool:
+    """True only when an event is genuinely settled.
+
+    A row can be status=completed/closed while its ``commence_time`` is still in
+    the FUTURE — a corrupt shape (#46 invariant violation; gotcha #32 family)
+    produced when a forward commence_time overwrite folded onto a wrong sibling.
+    Such a row must NOT render as settled (no fake winner / settled-0-0 hero;
+    props show the pregame script; chart renders live), so we require the start
+    time to be at or before ``now`` in addition to the terminal status.
+    """
+    if event.status not in ("completed", "closed"):
+        return False
+    return event.commence_time is None or event.commence_time <= now
+
+
 def _build_props_script(player_props, event_is_finished):
     """#195: flatten graded/priced player props into the PropsSection contract.
 
@@ -4191,7 +4206,7 @@ async def get_game_markets(
     # BUT do enforce sport compatibility as a safety net against cross-sport
     # mislinkage (e.g., baseball World Series market linked to a cricket event).
     # Sport filtering uses sport_id OR llm_sport_category — either must match.
-    event_is_finished = event.status in ("completed", "closed")
+    event_is_finished = _event_is_really_finished(event, datetime.now(timezone.utc))
     linked_filters = [FuturesMarket.event_id == event_id]
     if event.sport_id and expected_category:
         # Safety net: only show markets whose sport matches the event's sport.
@@ -5035,7 +5050,7 @@ async def get_related_futures(
 
     # Include markets regardless of status — many Kalshi markets have status=NULL
     # (never explicitly set). For completed events, also include resolved/closed.
-    event_is_finished = event.status in ("completed", "closed")
+    event_is_finished = _event_is_really_finished(event, datetime.now(timezone.utc))
     rf_status_filter = (
         or_(
             FuturesMarket.status.in_(("open", "resolved", "closed")),
@@ -5373,7 +5388,7 @@ async def get_related_futures(
     # For completed/closed events, game-specific markets are always hidden —
     # their probabilities are stale (markets may not have resolved in our data).
     # Season-long markets (championship, MVP, awards) always show.
-    event_is_finished = event.status in ("completed", "closed")
+    event_is_finished = _event_is_really_finished(event, now)
     event_commence_time = event.commence_time
     GAME_TIME_WINDOW = timedelta(hours=6)  # ±6h for game market matching
 
@@ -5996,7 +6011,7 @@ async def get_event_odds_history(
     # so users can always see the full probability history.
     # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
-    is_finished = event.status in ("completed", "closed")
+    is_finished = _event_is_really_finished(event, now)
 
     if response and is_finished:
         response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=300"

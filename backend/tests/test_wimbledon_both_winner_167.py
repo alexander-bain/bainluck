@@ -73,3 +73,62 @@ class TestPhase3ReSettlesMultiWinnerMex:
         )
         assert "PolymarketAPIService" in src
         assert "api_settlement" in src
+
+
+class TestByWhenLadderSingleWinner:
+    """Item 1 (B): a multi-winner by-when DATE ladder collapses to its earliest.
+
+    _backfill_from_current_probability crowns EVERY cp>=0.95 outcome, so a
+    cumulative by-when ladder ("... by July 1?", "by July 2?", ...) ends with ALL
+    date outcomes is_winner=true. Only the earliest date is the real answer; the
+    later carryovers poison calibration (SUM winners > 1). The collapse keeps the
+    earliest-date winner and flips the rest, correcting a clear mex invariant
+    violation (gotcha #21 — the one case correcting is sanctioned).
+    """
+
+    def _src(self):
+        return inspect.getsource(backfill_winners._collapse_bywhen_ladder_winners)
+
+    def test_targets_multi_winner_bywhen_ladders(self):
+        src = self._src()
+        assert "SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1" in src
+        # by-when trigger: mutually_exclusive OR a by/when market name.
+        assert "m.mutually_exclusive = true" in src
+        assert r"m.name ~* '\y(by|when)\y'" in src
+
+    def test_protects_authoritative_and_threshold_ladders(self):
+        # A candidate must have NO authoritative winner (never null a settlement)
+        # and NO pass3_threshold winner (legit cumulative numeric ladders stay).
+        src = self._src()
+        assert "AUTHORITATIVE_SOURCES_SQL" in src
+        assert "pass3_threshold" in src
+
+    def test_only_flips_is_winner_flag(self):
+        # Mirrors the guess-side pass: only is_winner flips, resolution_source is
+        # never rewritten and no new winner is asserted (idempotent).
+        src = self._src()
+        assert "SET is_winner = false" in src
+        assert "resolution_source" not in src.split("UPDATE futures_outcomes SET is_winner = false")[1]
+
+    def test_requires_a_parseable_date_before_collapsing(self):
+        # A market with zero date-parseable winners is skipped (never collapse a
+        # people/team partition like "Wimbledon Winner" by arbitrary ordinal).
+        src = self._src()
+        assert "_parse_outcome_date" in src
+        assert "skipped_no_date" in src
+
+    def test_wired_into_resolver(self):
+        assert "_collapse_bywhen_ladder_winners(" in inspect.getsource(
+            backfill_winners._resolve_winners_only
+        )
+
+    def test_gamma_net_widened_for_bywhen_ladders(self):
+        # The authoritative Gamma re-settle net drops the hard mutually_exclusive
+        # requirement, OR-ing in a by-when name match so non-flagged ladders are
+        # caught too (while keeping the mex path and the 90d recency bound).
+        src = inspect.getsource(
+            backfill_winners._backfill_polymarket_winners_from_api
+        )
+        assert r"fm.name ~* '\yby\y'" in src
+        assert "fm.mutually_exclusive OR fm.name" in src
+        assert "INTERVAL '90 days'" in src

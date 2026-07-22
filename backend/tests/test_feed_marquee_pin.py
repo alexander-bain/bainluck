@@ -4,11 +4,14 @@ The pin pass moves in-progress, calendar-flagged marquee concepts/tournaments to
 the very top, preserving everyone else's order, and NEVER empties the feed
 (gotcha #42/#43 — the guard must be provable in both directions)."""
 
+from datetime import datetime, timedelta, timezone
+
 from app.routes.feed import _pin_marquee_items
 from app.utils.majors_calendar import (
     calendar_entry_by_concept_key,
     load_calendar,
     marquee_concept_keys,
+    marquee_pin_state,
 )
 
 
@@ -71,3 +74,76 @@ class TestSharedCalendar:
 
     def test_calendar_loads(self):
         assert len(load_calendar()) >= 5
+
+
+class TestMarqueePinWindow:
+    """#235 Item 4: the T+36h post-settlement WHAT-HIT pin window.
+
+    Uses a synthetic single-entry calendar so the assertions don't drift as real
+    dates pass. Settlement = midnight UTC after the ``end`` day."""
+
+    KEY = "event:test:marquee"
+    ENTRIES = {
+        KEY: {
+            "concept_key": KEY,
+            "marquee": True,
+            "start": "2026-07-04",
+            "end": "2026-07-26",  # settlement anchor = 2026-07-27 00:00 UTC
+        },
+        "event:test:not-marquee": {
+            "concept_key": "event:test:not-marquee",
+            "marquee": False,
+            "start": "2026-07-04",
+            "end": "2026-07-26",
+        },
+    }
+    SETTLEMENT = datetime(2026, 7, 27, 0, 0, tzinfo=timezone.utc)
+
+    def _state(self, now):
+        return marquee_pin_state(self.KEY, now, entries=self.ENTRIES)
+
+    def test_live_during_event(self):
+        now = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+        assert self._state(now) == "live"
+
+    def test_live_on_finish_day(self):
+        # The whole end day still reads live (the finish happens that afternoon).
+        now = datetime(2026, 7, 26, 17, 0, tzinfo=timezone.utc)
+        assert self._state(now) == "live"
+
+    def test_still_pinned_at_t_plus_12h(self):
+        now = self.SETTLEMENT + timedelta(hours=12)
+        assert self._state(now) == "whathit"  # guard direction 1: still pinned
+
+    def test_gone_by_t_plus_48h(self):
+        now = self.SETTLEMENT + timedelta(hours=48)
+        assert self._state(now) is None  # guard direction 2: dropped
+
+    def test_boundary_at_36h_is_inclusive_exclusive(self):
+        # Exactly at +36h the window has closed (half-open [settlement, +36h)).
+        assert self._state(self.SETTLEMENT + timedelta(hours=36)) is None
+        assert self._state(self.SETTLEMENT + timedelta(hours=35, minutes=59)) == "whathit"
+
+    def test_before_event_is_none(self):
+        now = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+        assert self._state(now) is None
+
+    def test_non_marquee_never_pins(self):
+        now = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+        assert marquee_pin_state("event:test:not-marquee", now, entries=self.ENTRIES) is None
+
+    def test_unknown_key_is_none(self):
+        now = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+        assert marquee_pin_state("event:test:absent", now, entries=self.ENTRIES) is None
+
+    def test_naive_now_is_treated_as_utc(self):
+        now = datetime(2026, 7, 20, 12, 0)  # naive
+        assert self._state(now) == "live"
+
+    def test_real_tdf_entry_resolves(self):
+        # Against the live calendar, the TdF concept keys have a valid marquee entry.
+        entries = calendar_entry_by_concept_key()
+        during = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+        assert marquee_pin_state(
+            "event:cycling:tour-de-france-2026", during, entries=entries
+        ) == "live"

@@ -166,6 +166,7 @@ class TestSourcePriority:
             away_team_name="GSW",
             commence_time=datetime(2026, 4, 16, 2, 0, tzinfo=timezone.utc),
             commence_time_source="odds_api",
+            completed_at=None,
         )
         identity = EventIdentity(
             sport_key="basketball_nba",
@@ -199,6 +200,7 @@ class TestSourcePriority:
             home_team_name="Celtics",
             commence_time=datetime(2026, 4, 16, 0, 0, tzinfo=timezone.utc),
             commence_time_source="odds_api",
+            completed_at=None,
         )
         identity = EventIdentity(
             sport_key="basketball_nba",
@@ -211,6 +213,59 @@ class TestSourcePriority:
         _update_fields_by_priority(event, identity)
         assert event.home_team_name == "Boston Celtics"
         assert event.commence_time == datetime(2026, 4, 16, 0, 30, tzinfo=timezone.utc)
+
+    def test_refuses_commence_move_that_inverts_completion(self):
+        """#46/gotcha #32: a higher-priority source must NOT push commence_time
+        AFTER an already-completed event's completed_at (the wrong-sibling fold
+        that produced Orioles@Red Sox row 15175875: completed_at 02:32Z, incoming
+        commence 17:35Z). The commence_time move is refused; other fields apply."""
+        original_commence = datetime(2026, 7, 22, 2, 0, tzinfo=timezone.utc)
+        event = MagicMock(
+            home_team_name="Red Sox",
+            away_team_name="Orioles",
+            commence_time=original_commence,
+            commence_time_source="odds_api",
+            completed_at=datetime(2026, 7, 22, 2, 32, 14, tzinfo=timezone.utc),
+        )
+        identity = EventIdentity(
+            sport_key="baseball_mlb",
+            home_team_name="Boston Red Sox",
+            away_team_name="Baltimore Orioles",
+            # Forward commence AFTER completed_at → would invert the invariant.
+            commence_time=datetime(2026, 7, 22, 17, 35, tzinfo=timezone.utc),
+            claim=EventClaim("espn", "401866758"),
+            commence_time_source="espn",
+        )
+        _update_fields_by_priority(event, identity)
+        # commence_time (and its source) must be untouched.
+        assert event.commence_time == original_commence
+        assert event.commence_time_source == "odds_api"
+        # But higher-priority team-name updates still apply.
+        assert event.home_team_name == "Boston Red Sox"
+        assert event.away_team_name == "Baltimore Orioles"
+
+    def test_allows_non_inverting_commence_update_on_completed_event(self):
+        """A normal (non-inverting) commence correction on a completed event —
+        incoming commence stays at/before completed_at — is still applied."""
+        event = MagicMock(
+            home_team_name="Red Sox",
+            away_team_name="Orioles",
+            commence_time=datetime(2026, 7, 22, 17, 30, tzinfo=timezone.utc),
+            commence_time_source="odds_api",
+            completed_at=datetime(2026, 7, 22, 21, 0, tzinfo=timezone.utc),
+        )
+        corrected = datetime(2026, 7, 22, 17, 35, tzinfo=timezone.utc)
+        identity = EventIdentity(
+            sport_key="baseball_mlb",
+            home_team_name="Boston Red Sox",
+            away_team_name="Baltimore Orioles",
+            commence_time=corrected,  # still before completed_at → no inversion
+            claim=EventClaim("espn", "401866758"),
+            commence_time_source="espn",
+        )
+        _update_fields_by_priority(event, identity)
+        assert event.commence_time == corrected
+        assert event.commence_time_source == "espn"
 
 
 # ============================================================================

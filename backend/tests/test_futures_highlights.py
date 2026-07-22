@@ -125,6 +125,37 @@ class TestComputeFuturesHighlight:
         assert result.flags.has_moderate_movement is True
         assert "moderate_movement_24h" in result.reasons
 
+    def test_near_zero_outcome_is_not_top_mover(self):
+        """#235 Item 2: a ~0%-probability nominee with a large *relative* delta
+        (a single thin trade on a placeholder) must NOT headline as the mover."""
+        outcomes = [
+            # Gigi Hadid @ 0.35% ticking +0.3pt — huge relative move, still ~0%.
+            {"name": "Gigi Hadid", "probability": 0.0035,
+             "probability_change_24h": 0.06, "rank": 3, "rank_change_24h": 0,
+             "opening_probability": 0.0005},
+            # A real leader with a smaller-but-material move above the floor.
+            {"name": "Real Leader", "probability": 0.40,
+             "probability_change_24h": 0.055, "rank": 1, "rank_change_24h": 0,
+             "opening_probability": 0.345},
+        ]
+        result = compute_futures_highlight(outcomes=outcomes)
+        assert result.top_mover_name == "Real Leader"
+        assert result.top_mover_name != "Gigi Hadid"
+
+    def test_all_near_zero_movers_yield_no_top_mover(self):
+        """If every mover is below the probability floor, there is no top mover."""
+        outcomes = [
+            {"name": "Nominee A", "probability": 0.003,
+             "probability_change_24h": 0.09, "rank": 1, "rank_change_24h": 0,
+             "opening_probability": 0.0005},
+            {"name": "Nominee B", "probability": 0.001,
+             "probability_change_24h": 0.08, "rank": 2, "rank_change_24h": 0,
+             "opening_probability": 0.0005},
+        ]
+        result = compute_futures_highlight(outcomes=outcomes)
+        assert result.top_mover_name is None
+        assert result.flags.has_major_movement is False
+
     def test_leader_change_detected(self):
         """When the #1 rank has changed, it's detected."""
         outcomes = [

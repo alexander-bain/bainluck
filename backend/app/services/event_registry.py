@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, Sport
+from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.name_normalization import names_match
 
 logger = logging.getLogger(__name__)
@@ -308,8 +309,26 @@ def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:
         if identity.away_team_name:
             event.away_team_name = identity.away_team_name
         if identity.commence_time:
-            event.commence_time = identity.commence_time
-            event.commence_time_source = identity.commence_time_source or identity.claim.source
+            # Guard (#46 invariant; gotcha #32 family): refuse to move
+            # commence_time to a value AFTER an already-completed event's
+            # completed_at. That inversion (completed_at < commence_time) means we
+            # folded a higher-priority source's forward commence_time onto the
+            # WRONG sibling (series row-reuse / doubleheader). The ESPN write path
+            # already guards this; the registry did not. Only the commence_time
+            # move is refused — team-name updates above still apply.
+            if event.completed_at is not None and commence_correction_inverts_completion(
+                identity.commence_time, event.completed_at
+            ):
+                logger.warning(
+                    "Refusing commence_time move on completed event %s: incoming "
+                    "commence=%s is AFTER completed_at=%s (would invert #46 "
+                    "invariant — likely wrong-sibling match from source %s)",
+                    event.id, identity.commence_time, event.completed_at,
+                    identity.claim.source,
+                )
+            else:
+                event.commence_time = identity.commence_time
+                event.commence_time_source = identity.commence_time_source or identity.claim.source
 
 
 # ── Sport resolution cache ──────────────────────────────────────────

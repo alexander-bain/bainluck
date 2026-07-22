@@ -55,6 +55,12 @@ DETERMINISTIC_SOURCES: frozenset[str] = frozenset({
 
 # Tier 1 — terminal/soft: structural losers/voids (deterministic, no winner) and
 # the soft "clean" close-probability resolution. Overwritable by a hard result.
+#
+# `date_passed` grades an open "by <past-date>?" Polymarket binary whose deadline
+# has lapsed and whose No side sits near-certain (>= 0.95): the event provably did
+# NOT happen by the stated date, so No wins. It is deterministic-from-the-clock but
+# NOT the venue's own settlement, so it lives in the terminal tier — a later
+# authoritative Gamma/CLOB settlement (tier 3) may overwrite it.
 TERMINAL_SOURCES: frozenset[str] = frozenset({
     "clean_resolution",
     "pass2_loser",
@@ -62,6 +68,7 @@ TERMINAL_SOURCES: frozenset[str] = frozenset({
     "did_not_play",
     "withdrew",
     "no_pregame_trading",
+    "date_passed",
 })
 
 # Tier 0 — guess-family: heuristic inferences with no cited authority. These are
@@ -114,6 +121,20 @@ def is_guess_family(source: str | None) -> bool:
 def is_authoritative(source: str | None) -> bool:
     """True if the source is an external settlement (tier 3)."""
     return source in AUTHORITATIVE_SOURCES
+
+
+def can_write_winner(market_status: str | None, source: str | None) -> bool:
+    """True if `source` is allowed to assert is_winner on a market in this status.
+
+    The invariant (#845 status-awareness): a winner may only stand on a market
+    that has actually settled (`resolved`/`closed`) OR — regardless of market
+    status — when written by an authoritative external settlement (tier 3), which
+    is self-justifying (the venue said so). Every other write on a still-open
+    market is premature and must be cleared (`_clear_premature_open_winners`).
+
+    Fail-safe on unknown status: only an authoritative source may write when the
+    market status is anything other than resolved/closed."""
+    return (market_status in {"resolved", "closed"}) or is_authoritative(source)
 
 
 def is_downgrade(existing: str | None, new: str | None) -> bool:

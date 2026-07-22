@@ -131,6 +131,68 @@ class TestNormalizeAndLeaderPick:
         assert any(o["name"] == "Other" for o in outs)
 
 
+class TestPlaceholderMidpointStrip:
+    """#1201: strip Kalshi untraded-midpoint (exactly-0.5) placeholders from a
+    CORRUPTED mutually-exclusive field before the overround guard, so a real
+    leader isn't left showing an absurd raw price (Drake Maye 26.5% for SB MVP)."""
+
+    def test_corrupted_mvp_field_normalizes_real_outcomes(self):
+        # Mirrors market 479: dozens of untraded candidates parked at EXACTLY 0.5
+        # inflate the field sum past the #1200 ceiling, so WITHOUT the strip the
+        # whole field renders raw. With the strip, the 12 placeholders are dropped
+        # and the coherent real field (leader 0.06 among many small candidates)
+        # normalizes to sum ~1.0 with the leader at low single digits.
+        placeholders = [{"name": f"Untraded {i}", "probability": 0.5} for i in range(12)]
+        real = [{"name": "Drake Maye", "probability": 0.06}]
+        real += [{"name": f"Cand {i}", "probability": 0.03} for i in range(38)]
+        outs = placeholders + real
+        assert sum(o["probability"] for o in outs) > 3.0  # corrupted (1967%-style)
+        # After stripping the 12 placeholders the real field sums ~1.20 — over the
+        # 105% overround threshold (so it normalizes) yet within the #1200 band.
+
+        normalize_display_probs(outs, mutually_exclusive=True)
+
+        # Placeholders removed; only the real outcomes remain.
+        assert len(outs) == 39
+        assert all(o["probability"] != 0.5 for o in outs)
+        # Real field normalized to ~100%.
+        assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.02
+        # Leader is now low single digits — NOT the absurd raw 26.5%/6%-raw.
+        leader = max(o["probability"] for o in outs)
+        assert leader < 0.10, f"leader should be low single digits, got {leader}"
+
+    def test_legit_two_way_coinflip_untouched(self):
+        # A genuine 2-way Yes/No at 0.5/0.5 (only 2 halves) must NOT be stripped.
+        outs = [{"name": "Yes", "probability": 0.5}, {"name": "No", "probability": 0.5}]
+        normalize_display_probs(outs, mutually_exclusive=True)
+        assert len(outs) == 2
+        assert outs[0]["probability"] == 0.5
+        assert outs[1]["probability"] == 0.5
+
+    def test_coherent_field_with_a_single_half_untouched(self):
+        # A coherent one-winner field summing ~1.0 with a single legit 0.5 leader
+        # must be left as-is (no placeholder run → no strip; sum in band → kept).
+        outs = [
+            {"name": "Chiefs", "probability": 0.5},
+            {"name": "Bills", "probability": 0.3},
+            {"name": "Eagles", "probability": 0.2},
+        ]
+        normalize_display_probs(outs, mutually_exclusive=True)
+        assert len(outs) == 3
+        assert outs[0]["probability"] == 0.5
+        assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
+
+    def test_independent_binary_field_without_halves_still_raw(self):
+        # #1200 regression: an overrounded independent-binary field with NO 0.5
+        # run (varied prices) is untouched by the strip and kept RAW by the guard.
+        field = [{"name": "Pogacar", "probability": 0.945}]
+        field += [{"name": f"r{i}", "probability": 0.01} for i in range(183)]
+        raw_sum = sum(o["probability"] for o in field)
+        normalize_display_probs(field, mutually_exclusive=True)
+        assert field[0]["probability"] == 0.945
+        assert sum(o["probability"] for o in field) == raw_sum
+
+
 class TestDetailUsesSharedPipeline:
     """_format_market_detail must route through the shared rules (not its old
     garbage-only filter). Assert on source rather than a brittle full-market mock

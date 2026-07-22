@@ -353,6 +353,11 @@ FUTURES_WEIGHTS = {
 MAJOR_MOVEMENT_THRESHOLD = 0.05    # 5% change in 24h
 MODERATE_MOVEMENT_THRESHOLD = 0.02 # 2% change
 SOURCE_DIVERGENCE_THRESHOLD = 0.05 # 5% disagreement between sources
+# #235 Item 2: a near-0% outcome ticking a few tenths of a point (a single thin
+# trade on a placeholder nominee — e.g. "Gigi Hadid 0.35% +0.3%") is NOT a story.
+# An outcome must clear this absolute-probability floor before it can headline as
+# the top mover. Suppresses the never-traded-placeholder 24h-move display class.
+MOVER_MIN_PROBABILITY = 0.05       # 5% floor to be eligible as a "mover"
 
 # Volume thresholds (24h trading volume in contracts/dollars)
 HIGH_VOLUME_THRESHOLD = 50_000     # $50K+ 24h volume = high interest
@@ -583,8 +588,10 @@ def compute_futures_highlight(
             opening_prob = o.get("opening_probability")
             current_prob = o.get("probability")
 
-            # Track biggest mover
-            if change_24h > biggest_change:
+            # Track biggest mover — but only if the outcome itself clears the
+            # probability floor. A ~0%-probability nominee is not a story no matter
+            # how large its relative delta (#235 Item 2).
+            if change_24h > biggest_change and (current_prob or 0) >= MOVER_MIN_PROBABILITY:
                 biggest_change = change_24h
                 biggest_mover_name = o.get("name")
 

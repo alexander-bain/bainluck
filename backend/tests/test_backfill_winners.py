@@ -2303,3 +2303,106 @@ class TestClearRunningPhaseLatch:
         src = inspect.getsource(_backfill_all_winners)
         # partial-budget-guard return AND full completion both drop the latch
         assert src.count("_clear_backfill_running_phase()") >= 2
+
+
+class TestResolverHygieneDatePassed:
+    """Item 1 (A): _grade_date_passed_binaries — grade lapsed open poly binaries."""
+
+    def _src(self):
+        import inspect
+        from app.tasks.backfill_winners import _grade_date_passed_binaries
+
+        return inspect.getsource(_grade_date_passed_binaries)
+
+    def test_predicate_is_tightly_gated(self):
+        src = self._src()
+        assert "fm.source = 'polymarket'" in src
+        assert "fm.status = 'open'" in src
+        assert "fm.resolution_date < NOW() - INTERVAL '3 days'" in src
+        assert r"fm.name ~* '\yby\y'" in src
+        assert r"fm.name ~ '\?'" in src
+        # exactly two Yes/No outcomes, nothing already graded, No near-certain
+        assert "COUNT(*) = 2" in src
+        assert "SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0" in src
+        assert ">= 0.95" in src
+
+    def test_writes_date_passed_and_couples_status(self):
+        src = self._src()
+        assert "resolution_source = 'date_passed'" in src
+        # No side wins, and the market is flipped resolved in the same phase.
+        assert "is_winner = (lower(name) = 'no')" in src
+        assert "status = 'resolved'" in src
+
+    def test_wired_into_both_entrypoints(self):
+        import inspect
+        from app.tasks.backfill_winners import (
+            _backfill_all_winners,
+            _resolve_winners_only,
+        )
+
+        assert "_grade_date_passed_binaries(" in inspect.getsource(_resolve_winners_only)
+        assert "_grade_date_passed_binaries(" in inspect.getsource(_backfill_all_winners)
+
+
+class TestResolverHygienePrematureOpenWinners:
+    """Item 1 (C): _clear_premature_open_winners — sweep guess/None open winners."""
+
+    def _src(self):
+        import inspect
+        from app.tasks.backfill_winners import _clear_premature_open_winners
+
+        return inspect.getsource(_clear_premature_open_winners)
+
+    def test_only_touches_non_resolved_markets(self):
+        src = self._src()
+        assert "fm.status NOT IN ('resolved', 'closed')" in src
+        assert "fo.is_winner = true" in src
+
+    def test_uses_guess_family_constant_not_inline_tuple(self):
+        # Must route through the canonical constant (drift-scan forbids inlining).
+        src = self._src()
+        assert "GUESS_FAMILY_SOURCES_SQL" in src
+        assert "fo.resolution_source IS NULL" in src
+
+    def test_nulls_winner_and_source(self):
+        src = self._src()
+        assert "is_winner = false" in src
+        assert "resolution_source = NULL" in src
+
+    def test_wired_into_resolver(self):
+        import inspect
+        from app.tasks.backfill_winners import _resolve_winners_only
+
+        assert "_clear_premature_open_winners(" in inspect.getsource(_resolve_winners_only)
+
+
+class TestByWhenLadderDateParser:
+    """Item 1 (B): _parse_outcome_date earliest-date selection helper."""
+
+    def test_parses_month_name_forms(self):
+        from app.tasks.backfill_winners import _parse_outcome_date
+
+        assert _parse_outcome_date("July 1") == (0, 7, 1)
+        assert _parse_outcome_date("Jul 6") == (0, 7, 6)
+        assert _parse_outcome_date("July 1, 2026") == (2026, 7, 1)
+
+    def test_parses_iso_and_numeric(self):
+        from app.tasks.backfill_winners import _parse_outcome_date
+
+        assert _parse_outcome_date("2026-07-01") == (2026, 7, 1)
+        assert _parse_outcome_date("7/1/2026") == (2026, 7, 1)
+
+    def test_unparseable_returns_none(self):
+        from app.tasks.backfill_winners import _parse_outcome_date
+
+        assert _parse_outcome_date("Linda Nosková") is None
+        assert _parse_outcome_date("") is None
+        assert _parse_outcome_date(None) is None
+
+    def test_earliest_date_sorts_first(self):
+        # The July 1/2/3/6 ladder: July 1 must be the kept (earliest) winner.
+        from app.tasks.backfill_winners import _parse_outcome_date
+
+        names = ["July 6", "July 2", "July 1", "July 3"]
+        earliest = min(names, key=lambda n: _parse_outcome_date(n))
+        assert earliest == "July 1"

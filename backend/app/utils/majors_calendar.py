@@ -9,6 +9,7 @@ or empties the feed.
 
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,3 +53,60 @@ def calendar_entry_by_concept_key(path: str | Path | None = None) -> dict[str, d
         if ck:
             out[str(ck)] = e
     return out
+
+
+def _as_utc_date(value: Any) -> date | None:
+    """Coerce a YAML date field (date, datetime, or 'YYYY-MM-DD' str) to a date."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def marquee_pin_state(
+    concept_key: str,
+    now: datetime,
+    entries: dict[str, dict[str, Any]] | None = None,
+    post_settlement_hours: int = 36,
+) -> str | None:
+    """Return the marquee-pin state for a concept_key at ``now``.
+
+    Purely calendar-date driven (source-independent — Kalshi settled markets stay
+    status='open', gotcha #33, and the odds_api winner-field can fizzle without ever
+    flipping to settled, so market/event state is an unreliable window anchor).
+
+    Windows, anchored on the calendar entry's inclusive end DAY (settlement = the
+    UTC midnight AFTER the ``end`` date, so the whole finish day still counts live):
+      - "live"    while  start 00:00 UTC  <=  now  <  settlement
+      - "whathit" while  settlement       <=  now  <  settlement + post_settlement_hours
+      - None      otherwise (not yet a marquee window, or the pin has expired)
+
+    Only entries flagged ``marquee: true`` with a ``concept_key`` are pinnable;
+    everything else returns None. Defensive: bad/missing dates return None.
+    """
+    if entries is None:
+        entries = calendar_entry_by_concept_key()
+    entry = entries.get(str(concept_key))
+    if not entry or not entry.get("marquee"):
+        return None
+    start_d = _as_utc_date(entry.get("start"))
+    end_d = _as_utc_date(entry.get("end"))
+    if start_d is None or end_d is None:
+        return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    start_dt = datetime.combine(start_d, time.min, tzinfo=timezone.utc)
+    # Settlement = midnight after the end day, so the finish day itself reads "live".
+    settlement_dt = datetime.combine(end_d, time.min, tzinfo=timezone.utc) + timedelta(days=1)
+    whathit_end = settlement_dt + timedelta(hours=post_settlement_hours)
+    if start_dt <= now < settlement_dt:
+        return "live"
+    if settlement_dt <= now < whathit_end:
+        return "whathit"
+    return None

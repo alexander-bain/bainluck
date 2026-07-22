@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
     User, UserPin, UserFavorite, UserPreference, Team, Sport,
-    FuturesMarket, FuturesOutcome,
+    FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
 from app.utils.name_normalization import names_match as _names_match
@@ -1339,6 +1339,83 @@ async def _query_team_futures(
     if not teams:
         return {"items": [], "teams": [], "total_count": 0}
 
+    # ── Identity-collapse duplicate Team rows before matching ──
+    # Bare-location dupes ("Boston" dup of "Boston Bruins"; "New England" dup of
+    # "New England Revolution") share the SAME (sport_id, espn_id) as the canonical
+    # row but carry a bare name and ZERO team_identity_mapping rows. A null-espn
+    # dupe ("Boston Celtics" espn_id=NULL vs "Boston Celtics" espn_id=2) shares the
+    # canonical's name+sport. Without collapse a followed team surfaces twice
+    # (two matched_team + two teams_list entries) and its ILIKE patterns double up.
+    # Collapse is STRICTLY within sport_id — never merge a same-name different-sport
+    # team (NFL "New England Patriots" must not fold into MLS "New England Revolution").
+    # id_to_canonical maps EVERY loaded team id (dup + canonical) → the canonical id
+    # so the team_id FK match, matched_team, and teams_list all dedup.
+    id_to_canonical: dict[int, int] = {tid: tid for tid in teams}
+    if len(teams) > 1:
+        # One query for identity-mapping row counts across all loaded team ids.
+        tim_counts: dict[int, int] = {}
+        tim_result = await db.execute(
+            select(TeamIdentityMapping.team_id, func.count().label("n"))
+            .where(TeamIdentityMapping.team_id.in_(list(teams.keys())))
+            .group_by(TeamIdentityMapping.team_id)
+        )
+        for _tid, _n in tim_result.all():
+            tim_counts[_tid] = _n
+
+        def _norm_team_name(nm: str | None) -> str:
+            return _re.sub(r"\s+", " ", (nm or "").strip().lower())
+
+        # Union-find over loaded teams (within sport only). Two teams merge when
+        # they share a non-null espn_id OR a normalized name (same sport).
+        parent: dict[int, int] = {tid: tid for tid in teams}
+
+        def _find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def _union(a: int, b: int) -> None:
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        team_list = list(teams.values())
+        for i in range(len(team_list)):
+            for j in range(i + 1, len(team_list)):
+                a, b = team_list[i], team_list[j]
+                if a.sport_id != b.sport_id:
+                    continue  # NEVER merge across sports
+                same_espn = bool(a.espn_id) and bool(b.espn_id) and str(a.espn_id) == str(b.espn_id)
+                a_norm = _norm_team_name(a.name)
+                same_name = bool(a_norm) and a_norm == _norm_team_name(b.name)
+                if same_espn or same_name:
+                    _union(a.id, b.id)
+
+        # Pick the canonical row per cluster: most identity-mapping rows, tiebreak
+        # longest name (the bare-location dup has the shorter name).
+        clusters: dict[int, list[Team]] = {}
+        for t in team_list:
+            clusters.setdefault(_find(t.id), []).append(t)
+
+        collapsed_teams: dict[int, Team] = {}
+        id_to_canonical = {}
+        for members in clusters.values():
+            canonical = max(
+                members,
+                key=lambda m: (tim_counts.get(m.id, 0), len(m.name or "")),
+            )
+            collapsed_teams[canonical.id] = canonical
+            for m in members:
+                id_to_canonical[m.id] = canonical.id
+
+        teams = collapsed_teams
+        # Remap sport categories onto the canonical ids.
+        remapped_cats: dict[int, str] = {}
+        for _tid, _cat in team_sport_categories.items():
+            remapped_cats[id_to_canonical.get(_tid, _tid)] = _cat
+        team_sport_categories = remapped_cats
+
     # Build ILIKE patterns from FULL team names only — no alternate_names,
     # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
     # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
@@ -1398,9 +1475,14 @@ async def _query_team_futures(
         .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
         .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
         .where(and_(*market_base_filters, or_(*team_conditions)))
+        # Item 2: order by current probability so a team's HEADLINE markets
+        # (championship/conference/division/awards) enter the window before noise.
+        # Movement is only a TIEBREAKER — a stable low-movement season championship
+        # (~-0.00002/day) previously sorted to the bottom and got truncated by the
+        # limit*5 cap, so a followed team showed 1 of several real markets.
         .order_by(
-            func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
             FuturesOutcome.current_probability.desc().nulls_last(),
+            func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
         )
         .limit(limit * 5)
     )
@@ -1453,9 +1535,12 @@ async def _query_team_futures(
             else:
                 market_sport_cat = root
 
-        # Direct team_id match (always correct — team_id is sport-scoped)
-        if outcome.team_id and outcome.team_id in teams:
-            t = teams[outcome.team_id]
+        # Direct team_id match (always correct — team_id is sport-scoped).
+        # Resolve dup ids onto the canonical row so a market linked to a
+        # bare-location dupe still matches the followed canonical team.
+        canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
+        if canonical_id and canonical_id in teams:
+            t = teams[canonical_id]
             return {
                 "id": t.id,
                 "name": t.name,
@@ -1497,8 +1582,13 @@ async def _query_team_futures(
                     }
         return None
 
-    # Process both result sets: team matches (query 1) + award matches (query 2)
-    items = []
+    # Process both result sets: team matches (query 1) + award matches (query 2).
+    # Item 2: bucket candidate items per matched team (preserving the query sort
+    # order — highest-probability headline markets first), then interleave
+    # round-robin up to `limit`. This guarantees every followed team gets its
+    # headline markets in before the limit fills, so one team with many markets
+    # can't starve another (the "Celtics shows 1 of several" truncation).
+    per_team_items: dict[int, list[dict]] = {}
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
     for outcome, market, outcome_total, mkt_sport_key in list(rows1) + list(rows2):
         # Skip if we already have an outcome from this market
@@ -1517,7 +1607,7 @@ async def _query_team_futures(
         # BR52: Extract season/year for card subtitle display.
         season_year = _extract_season_year(market.canonical_market_key, market.name)
 
-        items.append({
+        per_team_items.setdefault(matched["id"], []).append({
             "outcome_id": outcome.id,
             "outcome_name": outcome.name,
             "market_id": market.id,
@@ -1535,8 +1625,27 @@ async def _query_team_futures(
             "season_year": season_year,
         })
 
-        if len(items) >= limit:
-            break
+    # Round-robin fill: strongest team (by its top market) leads each round.
+    items: list[dict] = []
+    if per_team_items:
+        ordered_team_ids = sorted(
+            per_team_items.keys(),
+            key=lambda tid: (per_team_items[tid][0].get("probability") or 0),
+            reverse=True,
+        )
+        depth = 0
+        while len(items) < limit:
+            progressed = False
+            for tid in ordered_team_ids:
+                bucket = per_team_items[tid]
+                if depth < len(bucket):
+                    items.append(bucket[depth])
+                    progressed = True
+                    if len(items) >= limit:
+                        break
+            if not progressed:
+                break
+            depth += 1
 
     # Build teams list for share link
     teams_list = [

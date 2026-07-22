@@ -638,6 +638,87 @@ async def test_shared_team_futures_returns_shape(client, mock_db):
 
 
 # ===========================================================================
+# _query_team_futures — identity-duplicate collapse (Item 1)
+# ===========================================================================
+
+def _ns_team(**kw):
+    """Lightweight Team stand-in for _query_team_futures (attribute holder)."""
+    from types import SimpleNamespace
+    kw.setdefault("roster_players", None)
+    kw.setdefault("logo_url_small", None)
+    kw.setdefault("logo_url", None)
+    kw.setdefault("primary_color", None)
+    return SimpleNamespace(**kw)
+
+
+def _result_all(rows):
+    r = MagicMock()
+    r.all.return_value = rows
+    return r
+
+
+@pytest.mark.asyncio
+async def test_query_team_futures_collapses_identity_duplicates():
+    """Two Team rows sharing (sport_id, espn_id) collapse to ONE matched_team /
+    one teams_list entry; a same-name different-sport team is NOT merged."""
+    from app.routes.user import _query_team_futures
+    from types import SimpleNamespace
+
+    # Canonical hockey team + its bare-location dup (same sport_id + espn_id).
+    bruins = _ns_team(id=574, name="Boston Bruins", sport_id=1, espn_id="1")
+    boston = _ns_team(id=12682, name="Boston", sport_id=1, espn_id="1")  # dup
+    # Same NAME, different sport — must stay separate (never merge across sports).
+    card_nfl = _ns_team(id=100, name="Cardinals", sport_id=2, espn_id="22")
+    card_mlb = _ns_team(id=101, name="Cardinals", sport_id=4, espn_id="24")
+
+    teams_rows = [
+        (bruins, "icehockey_nhl"),
+        (boston, "icehockey_nhl"),
+        (card_nfl, "americanfootball_nfl"),
+        (card_mlb, "baseball_mlb"),
+    ]
+    # identity-mapping counts: canonical Bruins has rows, bare "Boston" has none.
+    tim_rows = [(574, 3), (100, 2), (101, 2)]  # 12682 absent → 0
+
+    # One market linked to the DUP id (12682) — should resolve to canonical 574.
+    outcome = SimpleNamespace(
+        id=1, name="Boston Bruins", team_id=12682,
+        current_probability=0.3, probability_change_24h=0.0, rank=1,
+    )
+    market = SimpleNamespace(
+        id=10, name="NHL Champion 2026", market_tier=1,
+        llm_sport_category="hockey", source="kalshi",
+        resolution_date=None, canonical_market_key="nhl:champion:2026",
+    )
+    q1_rows = [(outcome, market, 32, "icehockey_nhl")]
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _result_all(teams_rows),   # 1: load teams
+        _result_all(tim_rows),     # 2: identity-mapping counts
+        _result_all(q1_rows),      # 3: query1 (no query2 — no roster players)
+    ])
+
+    data = await _query_team_futures([574, 12682, 100, 101], db, limit=20)
+
+    # teams_list deduped: Bruins collapsed to one, both Cardinals kept separate.
+    team_ids = {t["id"] for t in data["teams"]}
+    assert team_ids == {574, 100, 101}, team_ids
+    assert 12682 not in team_ids  # bare-location dup folded away
+    bruins_entries = [t for t in data["teams"] if t["id"] == 574]
+    assert len(bruins_entries) == 1
+    assert bruins_entries[0]["name"] == "Boston Bruins"  # canonical name won
+
+    # Same-name different-sport teams both survive.
+    assert 100 in team_ids and 101 in team_ids
+
+    # The market linked to the DUP id resolves to the canonical matched_team.
+    assert len(data["items"]) == 1
+    assert data["items"][0]["matched_team"]["id"] == 574
+    assert data["items"][0]["matched_team"]["name"] == "Boston Bruins"
+
+
+# ===========================================================================
 # Unit tests for helper functions
 # ===========================================================================
 

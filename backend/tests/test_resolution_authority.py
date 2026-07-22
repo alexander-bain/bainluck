@@ -23,6 +23,7 @@ from app.utils.resolution_authority import (
     SINGLE_WINNER_GUESS_SOURCES_SQL,
     TERMINAL_SOURCES,
     authority_tier,
+    can_write_winner,
     is_authoritative,
     is_downgrade,
     is_guess_family,
@@ -80,6 +81,57 @@ class TestDowngradeGuard:
     def test_helpers(self):
         assert is_guess_family("pass2_guess") and not is_guess_family("api_settlement")
         assert is_authoritative("api_settlement") and not is_authoritative("pass2_guess")
+
+
+class TestDatePassedTerminalSource:
+    """Item 1 (A): the date_passed grader is a terminal-tier source."""
+
+    def test_date_passed_is_terminal(self):
+        assert "date_passed" in TERMINAL_SOURCES
+        assert authority_tier("date_passed") == 1
+
+    def test_date_passed_is_not_authoritative_or_guess(self):
+        # Terminal, so a later authoritative settlement may overwrite it, and it is
+        # NOT a poison-class guess (it's deterministic-from-the-clock).
+        assert not is_authoritative("date_passed")
+        assert not is_guess_family("date_passed")
+
+    def test_date_passed_is_classified(self):
+        # The drift/completeness guard requires every written source be in the
+        # ladder — date_passed is written by _grade_date_passed_binaries.
+        assert "date_passed" in KNOWN_SOURCES
+
+    def test_authoritative_overwrites_date_passed(self):
+        assert is_downgrade("date_passed", "pass2_guess")  # guess can't downgrade it
+        assert not is_downgrade("date_passed", "api_settlement")  # settlement upgrades
+
+
+class TestCanWriteWinner:
+    """Item 1 (C): winners may only stand on settled markets OR from authority."""
+
+    def test_authoritative_source_bypasses_status(self):
+        # An external settlement is self-justifying regardless of market status.
+        assert can_write_winner("open", "api_settlement")
+        assert can_write_winner("suspended", "clob_authoritative")
+        assert can_write_winner(None, "datagolf_settlement")
+
+    def test_resolved_or_closed_status_allows_any_source(self):
+        assert can_write_winner("resolved", "pass2_guess")
+        assert can_write_winner("closed", "clean_resolution")
+        assert can_write_winner("resolved", None)
+
+    def test_open_market_forbids_non_authoritative(self):
+        # The #109327 case: a guess/soft/None winner on an open market is premature.
+        assert not can_write_winner("open", "pass2_guess")
+        assert not can_write_winner("open", "clean_resolution")  # terminal, not tier-3
+        assert not can_write_winner("open", "box_score")  # deterministic, not tier-3
+        assert not can_write_winner("open", None)
+        assert not can_write_winner("open", "date_passed")
+
+    def test_unknown_status_fails_safe(self):
+        # Anything not resolved/closed only lets an authoritative source through.
+        assert not can_write_winner("suspended", "pass2_guess")
+        assert can_write_winner("suspended", "api_settlement")
 
 
 class TestCanonicalSqlFragment:

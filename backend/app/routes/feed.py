@@ -62,6 +62,7 @@ from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import (
     compute_futures_highlight,
     CATEGORY_BASE_SCORES,
+    MOVER_MIN_PROBABILITY,
     SPORTS_CATEGORY_BASE,
 )
 from app.utils.feed_market_quality import (
@@ -2058,6 +2059,36 @@ def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
             ),
         },
     }
+
+
+_GENERIC_BINARY_NAMES = {"yes", "no"}
+
+
+def _strip_mixed_binary_meta(outcomes: list) -> list:
+    """#235 Item 2: drop a Yes/No *parent binary* from a candidate distribution.
+
+    A non-neg-risk Polymarket event ("Who will Taylor Swift's bridesmaids be?")
+    folds its base "will it happen at all" Yes/No sub-market AND every nominee
+    sub-market onto one parent market (`polymarket_event`). The card then mixes a
+    generic "No 64.5% / Yes 35.5%" pair with the nominee list (Gigi Hadid 0.35%,
+    …) — a binary merged into a candidate field.
+
+    When the outcome list contains BOTH a generic Yes/No pair AND >=2 non-generic
+    named candidates, the Yes/No meta is stripped so the card renders a clean
+    nominee distribution. A pure binary market (only Yes/No, no named candidates)
+    is returned untouched — one side at 0.5 there is legitimate.
+    """
+    named = [
+        o for o in outcomes
+        if (getattr(o, "name", "") or "").strip().lower() not in _GENERIC_BINARY_NAMES
+    ]
+    generic = [
+        o for o in outcomes
+        if (getattr(o, "name", "") or "").strip().lower() in _GENERIC_BINARY_NAMES
+    ]
+    if generic and len(named) >= 2:
+        return named
+    return outcomes
 
 
 def _normalize_feed_probabilities(
@@ -5656,7 +5687,15 @@ async def _score_futures(
             source_count=source_count,
         )
 
-        # Build compact futures data for the feed
+        # #235 Item 2: segregate a Yes/No parent binary out of a mixed candidate
+        # field so the card renders a clean nominee distribution (never a binary
+        # merged into a candidate list). Pure binary markets pass through untouched.
+        card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
+
+        # Build compact futures data for the feed. #235 Item 2: null the 24h
+        # movement badge for near-0% outcomes — a thin placeholder nominee ticking
+        # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
+        # display class).
         top_outcomes_data = [
             {
                 "id": o.id,
@@ -5668,10 +5707,11 @@ async def _score_futures(
                 "movement": (
                     float(o.probability_change_24h)
                     if o.probability_change_24h
+                    and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                     else None
                 ),
             }
-            for o in sorted_outcomes[:3]  # Show top 3 in feed card
+            for o in card_outcomes[:3]  # Show top 3 in feed card
         ]
 
         # Humanize Yes/No outcome names for feed card display (BR49)
@@ -5686,7 +5726,7 @@ async def _score_futures(
         # outcomes whose raw probabilities are meaningful — normalizing them
         # flattens an 81% leader to 33% when the top 3 are all high.
         top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, sorted_outcomes
+            top_outcomes_data, card_outcomes
         )
 
         source_names = (
@@ -5696,6 +5736,8 @@ async def _score_futures(
             if market.canonical_market_key
             else [market.source]
         )
+        # #235 Item 2: card_outcomes has the mixed Yes/No meta stripped; movement
+        # nulled for near-0% placeholder nominees.
         all_outcomes_for_card = [
             {
                 "name": o.name,
@@ -5707,17 +5749,18 @@ async def _score_futures(
                 "movement": (
                     float(o.probability_change_24h)
                     if o.probability_change_24h is not None
+                    and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                     else None
                 ),
             }
-            for o in sorted_outcomes
+            for o in card_outcomes
         ]
         is_effectively_resolved = market.status == "resolved"
         discover_card = classify_discover_card_archetype(
             name=market.name,
             category=market.llm_sport_category,
             outcomes=all_outcomes_for_card,
-            outcome_count=len(market.outcomes),
+            outcome_count=len(card_outcomes),
             source_count=source_count,
             sources=source_names,
             group_id=market.group_id,
@@ -6160,13 +6203,22 @@ async def _score_golf_tournaments(
     if not tournaments:
         return []
 
-    # Queue #223 Item 2: calendar-flagged marquee concept keys (best-effort).
+    # Queue #223 Item 2 / #235 Item 4: calendar-flagged marquee entries (best-effort).
     try:
-        from app.utils.majors_calendar import marquee_concept_keys
+        from app.utils.majors_calendar import (
+            calendar_entry_by_concept_key,
+            marquee_concept_keys,
+            marquee_pin_state,
+        )
 
         _marquee_keys = marquee_concept_keys()
+        _marquee_entries = calendar_entry_by_concept_key()
     except Exception:
         _marquee_keys = set()
+        _marquee_entries = {}
+
+        def marquee_pin_state(*_a, **_k):  # type: ignore[misc]
+            return None
 
     feed_items: list[dict] = []
 
@@ -6255,9 +6307,23 @@ async def _score_golf_tournaments(
             "source_count": len(set(t.get("market_sources", []))),
         }
 
-        # Item 2: marquee pin when the tournament is a calendar-flagged marquee AND live.
+        # Item 2 / #235 Item 4: marquee pin. A calendar-flagged marquee tournament
+        # pins while live AND through the T+36h WHAT-HIT window (calendar-date driven,
+        # superseding the 12h grace in _tournament_is_live for marquee tournaments).
+        # A non-marquee tournament keeps its live-only pin behavior unchanged.
         _is_marquee = t.get("key") in _marquee_keys
         data["is_marquee"] = _is_marquee
+        _pin_state = (
+            marquee_pin_state(t["key"], now, entries=_marquee_entries)
+            if _is_marquee
+            else None
+        )
+        data["marquee_whathit"] = _pin_state == "whathit"
+        _marquee_pinned = (
+            _pin_state in ("live", "whathit")
+            if _is_marquee
+            else bool(_is_marquee and _tournament_is_live(t, now))
+        )
 
         feed_items.append(
             {
@@ -6266,7 +6332,7 @@ async def _score_golf_tournaments(
                 "reason": reason,
                 "headline": headline,
                 "data": data,
-                "_marquee_pin": bool(_is_marquee and _tournament_is_live(t, now)),
+                "_marquee_pin": _marquee_pinned,
                 "_sort_time": (
                     datetime.fromisoformat(t["commence_time"]).timestamp()
                     if t.get("commence_time")
@@ -6441,8 +6507,11 @@ async def _score_event_concepts(
         from app.utils.event_ufc import list_ufc_card_concepts
 
         try:
+            # "settled" is admitted so a just-finished marquee card can hold its
+            # WHAT-HIT pin (Queue #235 Item 4); non-marquee settled concepts are
+            # dropped again in the build loop below.
             concepts += await list_ufc_card_concepts(
-                db, statuses=("upcoming", "live"), limit=12
+                db, statuses=("upcoming", "live", "settled"), limit=12
             )
         except Exception as e:
             logger.warning("Feed: failed to list UFC card concepts: %s", e)
@@ -6453,7 +6522,7 @@ async def _score_event_concepts(
 
         try:
             concepts += await list_f1_gp_concepts(
-                db, statuses=("upcoming", "live"), limit=8
+                db, statuses=("upcoming", "live", "settled"), limit=8
             )
         except Exception as e:
             logger.warning("Feed: failed to list F1 GP concepts: %s", e)
@@ -6464,27 +6533,43 @@ async def _score_event_concepts(
 
         try:
             concepts += await list_cycling_concepts(
-                db, statuses=("upcoming", "live"), limit=6
+                db, statuses=("upcoming", "live", "settled"), limit=6
             )
         except Exception as e:
             logger.warning("Feed: failed to list cycling concepts: %s", e)
 
-    # Queue #223 Item 2: which concept keys are calendar-flagged marquee. Loaded
-    # once per feed build; best-effort (empty set on any failure — no pin, no crash).
+    # Queue #223 Item 2 / #235 Item 4: calendar-flagged marquee entries. Loaded once
+    # per feed build; best-effort (empty map on any failure — no pin, no crash).
     try:
-        from app.utils.majors_calendar import marquee_concept_keys
+        from app.utils.majors_calendar import (
+            calendar_entry_by_concept_key,
+            marquee_pin_state,
+        )
 
-        _marquee_keys = marquee_concept_keys()
+        _marquee_entries = calendar_entry_by_concept_key()
     except Exception:
-        _marquee_keys = set()
+        _marquee_entries = {}
+
+        def marquee_pin_state(*_a, **_k):  # type: ignore[misc]
+            return None
 
     feed_items: list[dict] = []
     for c in concepts:
+        # #235 Item 4: pin state is calendar-date driven — "live" during the event,
+        # "whathit" for T+36h after settlement, None otherwise. Non-marquee concepts
+        # always return None here (harmless — score/status still govern them).
+        pin_state = marquee_pin_state(c["key"], now, entries=_marquee_entries)
+        _is_marquee = c["key"] in _marquee_entries and bool(
+            _marquee_entries[c["key"]].get("marquee")
+        )
+        # A settled concept is only admitted to hold its WHAT-HIT pin; otherwise a
+        # finished (non-whathit) concept is dropped exactly as before.
+        if c.get("status") == "settled" and pin_state != "whathit":
+            continue
         score = _score_event_concept(c, now)
         if score <= 0:
             continue
         latest = c.get("latest_commence")
-        _is_marquee = c["key"] in _marquee_keys
         feed_items.append(
             {
                 "type": "concept",
@@ -6502,9 +6587,12 @@ async def _score_event_concepts(
                     "entry_count": c.get("entry_count", 0),
                     # Item 2: calendar-flagged marquee => pinned atop the feed while live.
                     "is_marquee": _is_marquee,
+                    # #235 Item 4: true only in the post-settlement window — the card
+                    # renders the "what happened" framing instead of the live one.
+                    "marquee_whathit": pin_state == "whathit",
                 },
-                # Item 2: an in-progress marquee concept pins to the very top.
-                "_marquee_pin": bool(_is_marquee and c.get("status") == "live"),
+                # #235 Item 4: pin while live OR in the T+36h WHAT-HIT window.
+                "_marquee_pin": pin_state in ("live", "whathit"),
                 "_sort_time": latest.timestamp() if latest is not None else 0,
             }
         )

@@ -92,6 +92,28 @@ def normalize_display_probs(
     """
     if not mutually_exclusive:
         return  # non-ME participation family — raw per-outcome probs are honest
+
+    # #1201: strip Kalshi untraded-midpoint placeholders from a CORRUPTED ME field.
+    # An illiquid Kalshi independent-binary field (e.g. the 79-way Super Bowl MVP,
+    # market 479) parks every UNTRADED candidate at EXACTLY 0.5 — the bid/ask
+    # midpoint with no trades (gotcha #17/#23). Dozens of 0.5s inflate the field
+    # sum to ~19.7 (1967%), tripping the #1200 overround guard so the WHOLE field
+    # renders RAW and a real 0.265 leader (Drake Maye) shows an absurd 26.5% to win
+    # a single-game MVP. Excluding the placeholders first brings the coherent field
+    # back into the normalizable band so the real outcomes squeeze sensibly.
+    #
+    # Predicate is deliberately narrow so nothing else is touched: >=10 outcomes at
+    # EXACTLY 0.5 AND a raw sum far past any coherent field (>3). A legitimate 2-way
+    # Yes/No coin-flip (2 sides at 0.5) is untouched; a coherent one-winner field
+    # (no run of exact-0.5 placeholders, sum near 1.0) is untouched; a genuine
+    # independent-binary field like the Tour de France GC (varied prices, no 0.5
+    # run) is untouched and still keeps its raw prices via the #1200 guard below.
+    half_count = sum(1 for o in outcomes if o.get(key) == 0.5)
+    if half_count >= 10 and sum((o.get(key) or 0) for o in outcomes) > 3.0:
+        kept = [o for o in outcomes if o.get(key) != 0.5]
+        if kept:
+            outcomes[:] = kept  # drop the untraded-midpoint placeholders in place
+
     raw_sum = sum((o.get(key) or 0) for o in outcomes)
     if raw_sum > _FIELD_SUM_MAX:
         return  # independent-binary overround — raw YES price is the honest prob
