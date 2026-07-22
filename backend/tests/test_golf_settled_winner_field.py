@@ -69,11 +69,48 @@ def test_makecut_099_prices_never_pollute_the_field():
         [_Outcome(n, cur=0.99) for n in FIELD],
     )
     golfers, *_ = _assemble_completed_winner_field([winner_mkt, makecut])
-    # No golfer should carry the 0.99 make-cut price as their win probability.
-    assert all((g["probability"] or 0) < 0.9 for g in golfers), [
+    # #229 freeze: no golfer carries the 0.99 make-cut price — the field is frozen
+    # to champion 1.0 / everyone else 0.0.
+    assert all(g["probability"] in (0.0, 1.0) for g in golfers), [
         (g["name"], g["probability"]) for g in golfers
     ]
-    assert next(g for g in golfers if g["won"])["name"] == "Golfer 03"
+    champ = next(g for g in golfers if g["won"])
+    assert champ["name"] == "Golfer 03"
+    assert champ["probability"] == 1.0
+
+
+def test_settled_field_frozen_champion_one_field_zero():
+    # #229 core: settled winner market whose current_probability has been
+    # re-polluted by post-event polling (gotcha #33) — the graded champion carries
+    # a stale LONGSHOT price (0.004) BELOW the field's live favorites. The freeze
+    # must display champion 1.0 and every loser 0.0 regardless of the live price.
+    outcomes = [_Outcome(n, cur=0.05) for n in FIELD]
+    outcomes[7] = _Outcome("Golfer 07", cur=0.004, is_winner=True)  # crowned longshot
+    outcomes[2] = _Outcome("Golfer 02", cur=0.30)  # live favorite (lost)
+    winner_mkt = _Market(1, "The Open Championship Winner", "datagolf", outcomes)
+    golfers, *_ = _assemble_completed_winner_field([winner_mkt])
+    champ = next(g for g in golfers if g["won"])
+    assert champ["name"] == "Golfer 07"
+    assert champ["probability"] == 1.0  # frozen up from the stale 0.004
+    assert golfers[0]["name"] == "Golfer 07"  # champion sorts first
+    assert all(g["probability"] == 0.0 for g in golfers if not g.get("won"))
+    # Ordering among losers still honours the pre-settlement price: the live
+    # favorite (Golfer 02, 0.30) sorts ahead of the 0.05 field.
+    losers = [g["name"] for g in golfers if not g.get("won")]
+    assert losers[0] == "Golfer 02"
+
+
+def test_ungraded_window_not_frozen():
+    # Settle-in-reality → settle-in-DB window: no is_winner graded yet. The freeze
+    # must NOT fire (we don't know the champion) — live prices stand.
+    winner_mkt = _Market(
+        1, "The Open Championship Winner", "datagolf",
+        [_Outcome(n, cur=0.05 + i * 0.01) for i, n in enumerate(FIELD)],
+    )
+    golfers, *_ = _assemble_completed_winner_field([winner_mkt])
+    assert not any(g.get("won") for g in golfers)
+    # No 1.0/0.0 freeze — the live distribution is preserved.
+    assert all(0.0 < (g["probability"] or 0) < 1.0 for g in golfers)
 
 
 def test_out_of_field_kalshi_name_dropped():

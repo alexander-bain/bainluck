@@ -108,14 +108,29 @@ def test_champion_hero_multiple_winners_is_real():
     assert "champions" in real[0]["detail"]
 
 
-def test_champion_hero_non_top_winner_is_real():
+def test_champion_hero_wrong_crown_when_field_frozen():
+    # #229 facet A: the field IS frozen (leader Ryan Fox at 0.999) but the crown
+    # sits on a different, low competitor — a genuinely mis-graded hero (WORST).
     p = green_payload()
-    # Crown a low-probability competitor while the leader stays uncrowned.
     p["primary"]["competitors"][0]["won"] = False
     p["primary"]["competitors"][3]["won"] = True  # Matt McCarty @ 0.004
     real = [f for f in scs.check_champion_hero(p) if f["verdict"] == "REAL"]
     assert len(real) == 1
-    assert "not the" in real[0]["detail"]
+    assert real[0]["facet"] == "wrong-crown"
+    assert "WRONG CROWN" in real[0]["detail"]
+
+
+def test_champion_hero_stale_probs_when_field_unfrozen():
+    # #229 facet B (the Open case): the crown is CORRECT (won:true) but the settled
+    # field was never frozen — nobody near 100%, so the graded champion shows a
+    # stale longshot price BELOW the live field (gotcha #33 re-pollution).
+    p = green_payload()
+    p["primary"]["competitors"][0]["probability"] = 0.004  # Ryan Fox — graded, stale price
+    p["primary"]["competitors"][5]["probability"] = 0.089  # a live favorite tops the field
+    real = [f for f in scs.check_champion_hero(p) if f["verdict"] == "REAL"]
+    assert len(real) == 1
+    assert real[0]["facet"] == "correct-crown-stale-probs"
+    assert "STALE PROBS" in real[0]["detail"]
 
 
 def test_champion_hero_non_winner_kind_is_real():

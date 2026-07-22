@@ -2068,11 +2068,29 @@ def _assemble_completed_winner_field(
         }
 
     # Champion(s) first, then pre-settlement probability desc, then name — a
-    # longshot winner is crowned above the field's higher-priced favorites.
+    # longshot winner is crowned above the field's higher-priced favorites. The
+    # sort runs on the PRE-settlement price so the runner-up favorites still order
+    # near the top; only the displayed number is frozen below.
     golfers = sorted(
         golfer_map.values(),
         key=lambda g: (0 if g.get("won") else 1, -(g.get("probability") or 0.0), g["name"]),
     )
+
+    # Settled-means-settled (#229): once a champion is graded, FREEZE the displayed
+    # field — champion 1.0, everyone else 0.0. Kalshi settled winner markets stay
+    # status='open' (gotcha #33), so the winner-market polling keeps re-polluting
+    # FuturesOutcome.current_probability; without this freeze the crowned champion
+    # displays a stale live longshot price BELOW the field (Ryan Fox 0.004 vs the
+    # field's 0.089 — the settled-concept sentinel check-A RED, #228/#229) and the
+    # evolution history re-anchors to it (_reconcile_history_to_blend). The freeze
+    # only fires when a champion is known — during the settle-in-reality →
+    # settle-in-DB window (is_winner not yet graded) the live pre-settlement prices
+    # stand, since there is nothing better to show. Matches the soccer/WC settled
+    # field (event_soccer._apply_settled_crown: champion 1.0, eliminated 0.0).
+    if any(g.get("won") for g in golfers):
+        for g in golfers:
+            g["probability"] = 1.0 if g.get("won") else 0.0
+
     for i, g in enumerate(golfers):
         g["rank"] = i + 1
     return golfers, market_ids, market_names, market_sources

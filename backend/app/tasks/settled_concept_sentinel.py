@@ -73,6 +73,14 @@ WALL_MAX = 3         # > this many outcomes at >= WALL_PROB in the field = a 0.9
 # non-winner market class (a prop / placement / squash contaminant).
 _WINNER_KINDS = {"winner_field", "winner", "bracket"}
 
+# A settled field is "frozen" when some competitor sits at/near 100% — i.e. the
+# settled-means-settled freeze ran (champion 1.0, field 0.0). Below this, the
+# field is still a live/pre-settlement distribution (nobody graded to 1.0), the
+# signature of the correct-crown-stale-probs class (#229): the champion is graded
+# (won:true) but the winner market is re-polluting current_probability (gotcha
+# #33) so the crown displays a stale price below the live field.
+_FROZEN_WINNER_THRESHOLD = 0.90
+
 # Round-leader / round-finish market families (field-shaped, golfer/competitor
 # name outcomes). Field membership + round-resolution checks scope to these.
 _ROUND_LEADER_RE = re.compile(r"round\s+\d+\s+leader|end of round\s+\d+\s+leader", re.I)
@@ -174,21 +182,46 @@ def check_champion_hero(payload: dict) -> list[dict]:
             }
         )
     else:
-        # Exactly one winner — it must be the top-probability competitor.
+        # Exactly one winner — it must be the top-probability competitor. When it
+        # is not, report the two facets DISTINCTLY (#229) so RED diagnoses itself:
+        #   * wrong-crown (WORST): the field IS frozen (some competitor at ~100%)
+        #     but the won:true flag sits on a different, lower-prob competitor — a
+        #     genuinely mis-graded hero.
+        #   * correct-crown-stale-probs: nobody is near 100% (the field is still a
+        #     live/pre-settlement distribution); the crown is right but the settled
+        #     freeze never ran, so the champion shows a re-polluted price below the
+        #     live field (gotcha #33). The window between settle-in-reality and
+        #     settle-in-DB, and the golf.py freeze that closes it.
         winner = winners[0]
         wprob = winner.get("probability") or 0.0
         top = max((c.get("probability") or 0.0) for c in competitors)
         if wprob + 1e-9 < top:
             leader = max(competitors, key=lambda c: c.get("probability") or 0.0)
-            out.append(
-                {
-                    "check": "champion_hero",
-                    "verdict": "REAL",
-                    "detail": f"crowned champion `{winner.get('name')}` ({wprob:.3f}) is not the "
-                    f"top-probability competitor `{leader.get('name')}` ({top:.3f}) — a "
-                    "non-winner was graded as the hero.",
-                }
-            )
+            if top >= _FROZEN_WINNER_THRESHOLD:
+                out.append(
+                    {
+                        "check": "champion_hero",
+                        "verdict": "REAL",
+                        "facet": "wrong-crown",
+                        "detail": f"WRONG CROWN — the settled field is frozen to a champion "
+                        f"(`{leader.get('name')}` at {top:.3f}) but the won:true flag sits on a "
+                        f"different competitor `{winner.get('name')}` ({wprob:.3f}) — the champion "
+                        "flag is on the wrong competitor (a mis-graded hero).",
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "check": "champion_hero",
+                        "verdict": "REAL",
+                        "facet": "correct-crown-stale-probs",
+                        "detail": f"STALE PROBS — crowned champion `{winner.get('name')}` "
+                        f"({wprob:.3f}) is graded but shows a stale price below the live field "
+                        f"(top `{leader.get('name')}` at {top:.3f}); the settled winner field was "
+                        "never frozen — polling is re-polluting current_probability on the "
+                        "stuck-open winner market (gotcha #33). Expected: champion 1.0, field 0.0.",
+                    }
+                )
     return out
 
 
