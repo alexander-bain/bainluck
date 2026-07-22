@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin:0; padding:0; background:#F5F5F7; color:#111827; font-family:'Inter',-apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:#BD3039; text-decoration:none; }
+  a:hover { color:#9E2830; }
+  @keyframes pulse-live { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+</style>
+</helmet>
+
+<header style="position:sticky;top:0;z-index:40;background:rgba(245,245,247,0.85);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid #E5E7EB">
+  <div style="max-width:1100px;margin:0 auto;padding:0 16px;height:56px;display:flex;align-items:center;gap:12px">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px"><img src="assets/logo-mark.svg" alt="" style="width:24px;height:24px">Bain Luck</div>
+    <div style="margin-left:auto;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF">MLB · AL East</div>
+    <div style="width:28px;height:28px;border-radius:50%;background:#10B981;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">AB</div>
+  </div>
+</header>
+
+<main style="max-width:1100px;margin:0 auto;padding:16px 16px 48px;display:flex;flex-direction:column;gap:12px">
+
+  <section data-screen-label="Team hero" style="background:#FFFFFF;border:1px solid #E5E7EB;border-left:3px solid #BD3039;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div style="width:60px;height:60px;border-radius:12px;background:#BD3039;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;letter-spacing:-0.01em;flex-shrink:0">BOS</div>
+    <div style="display:flex;flex-direction:column;gap:4px;min-width:180px">
+      <h1 style="margin:0;font-size:26px;font-weight:700;letter-spacing:-0.01em;line-height:1.1">Boston Red Sox</h1>
+      <div style="font-size:13px;color:#6B7280">13-15 · 3rd in AL East</div>
+    </div>
+    <div style="margin-left:auto;display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF">World Series</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:32px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">4%</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:#22C55E;font-variant-numeric:tabular-nums">↑ 0.4% today</div>
+    </div>
+  </section>
+
+  <div data-screen-label="Today and next" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF;margin-top:12px"><span style="width:3px;height:12px;background:#BD3039;border-radius:2px"></span>Today &amp; next</div>
+
+    <sc-if value="{{ isLive }}" hint-placeholder-val="{{ true }}">
+      <div style="position:sticky;top:64px;z-index:30;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(34,197,94,0.2);padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:rgba(34,197,94,0.12);color:#16A34A;font-size:10px;font-weight:700;letter-spacing:0.04em"><span style="width:6px;height:6px;border-radius:50%;background:#22C55E;animation:pulse-live 2s infinite"></span>LIVE</span>
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <span style="font-size:14px;font-weight:600">NYY 2 — BOS 3</span>
+          <span style="font-size:12px;color:#6B7280">Top 6th</span>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+            <span style="font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF">BOS win</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:24px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums;color:#BD3039">58%</span>
+          </div>
+          <div style="width:90px;height:8px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:58%;background:#BD3039;box-shadow:inset 0 1px 2px rgba(0,0,0,0.1);transition:width 400ms cubic-bezier(0.25,0.1,0.25,1)"></span></div>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:22px;height:22px;border-radius:6px;background:#132448;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700">NY</span>
+          <span style="font-size:14px;font-weight:600">vs Yankees</span>
+          <span style="margin-left:auto;font-size:12px;color:#9CA3AF">Tomorrow 7:10 PM</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:28px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">46%</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:#9CA3AF;font-variant-numeric:tabular-nums">/ 54%</span>
+        </div>
+        <div style="height:6px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:46%;background:#BD3039;box-shadow:inset 0 1px 2px rgba(0,0,0,0.1)"></span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:22px;height:22px;border-radius:6px;background:#092C5C;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700">TB</span>
+          <span style="font-size:14px;font-weight:600">vs Rays</span>
+          <span style="display:inline-flex;padding:2px 7px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:10px;font-weight:700;letter-spacing:0.04em">G1</span>
+          <span style="margin-left:auto;font-size:12px;color:#9CA3AF">Sat 1:05 PM</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:28px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">57%</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:#9CA3AF;font-variant-numeric:tabular-nums">/ 43%</span>
+        </div>
+        <div style="height:6px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:57%;background:#BD3039;box-shadow:inset 0 1px 2px rgba(0,0,0,0.1)"></span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:22px;height:22px;border-radius:6px;background:#092C5C;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700">TB</span>
+          <span style="font-size:14px;font-weight:600">vs Rays</span>
+          <span style="display:inline-flex;padding:2px 7px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:10px;font-weight:700;letter-spacing:0.04em">G2</span>
+          <span style="margin-left:auto;font-size:12px;color:#9CA3AF">Sat 6:35 PM</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:28px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">52%</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:#9CA3AF;font-variant-numeric:tabular-nums">/ 48%</span>
+        </div>
+        <div style="height:6px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:52%;background:#BD3039;box-shadow:inset 0 1px 2px rgba(0,0,0,0.1)"></span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:22px;height:22px;border-radius:6px;background:#092C5C;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700">TB</span>
+          <span style="font-size:14px;font-weight:600">vs Rays</span>
+          <span style="margin-left:auto;font-size:12px;color:#9CA3AF">Sun 1:35 PM</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:28px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">55%</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:#9CA3AF;font-variant-numeric:tabular-nums">/ 45%</span>
+        </div>
+        <div style="height:6px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:55%;background:#BD3039;box-shadow:inset 0 1px 2px rgba(0,0,0,0.1)"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div data-screen-label="Recent results" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF;margin-top:12px"><span style="width:3px;height:12px;background:#BD3039;border-radius:2px"></span>Recent results</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:rgba(34,197,94,0.12);color:#16A34A;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">W 3-2</span>
+          <span style="font-size:13px;font-weight:600">vs Yankees</span>
+          <span style="margin-left:auto;font-size:11px;color:#9CA3AF">Yesterday</span>
+        </div>
+        <div style="font-size:13px;color:#6B7280">We had them at <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:#111827">22%</span></div>
+        <div><span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:rgba(245,158,11,0.12);color:#B45309;font-size:11px;font-weight:600">Beat 78% odds</span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:rgba(107,114,128,0.12);color:#6B7280;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">L 2-4</span>
+          <span style="font-size:13px;font-weight:600">vs Yankees</span>
+          <span style="margin-left:auto;font-size:11px;color:#9CA3AF">Mon</span>
+        </div>
+        <div style="font-size:13px;color:#6B7280">We had them at <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:#111827">61%</span></div>
+        <div><span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:11px;font-weight:600">Fell as favorites</span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:rgba(34,197,94,0.12);color:#16A34A;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">W 6-1</span>
+          <span style="font-size:13px;font-weight:600">@ Mariners</span>
+          <span style="margin-left:auto;font-size:11px;color:#9CA3AF">Sun</span>
+        </div>
+        <div style="font-size:13px;color:#6B7280">We had them at <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:#111827">72%</span></div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-flex;padding:2px 8px;border-radius:6px;background:rgba(107,114,128,0.12);color:#6B7280;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums">L 1-5</span>
+          <span style="font-size:13px;font-weight:600">@ Blue Jays</span>
+          <span style="margin-left:auto;font-size:11px;color:#9CA3AF">Fri</span>
+        </div>
+        <div style="font-size:13px;color:#6B7280">We had them at <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:#111827">48%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div data-screen-label="Season journey" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF;margin-top:12px"><span style="width:3px;height:12px;background:#BD3039;border-radius:2px"></span>Season journey</div>
+    <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:16px 18px">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:14px">
+        <span style="font-size:15px;font-weight:600">Playoff probability</span>
+        <span style="font-size:12px;color:#9CA3AF">Opening day → today · fixed 0–100% scale</span>
+        <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:#BD3039;font-variant-numeric:tabular-nums">31%</span>
+      </div>
+      <div style="position:relative;height:220px">
+        <div style="position:absolute;left:32px;right:0;top:0;bottom:0">
+          <div style="position:absolute;left:0;right:0;top:0;border-top:1px solid #F0F0F2"></div>
+          <div style="position:absolute;left:0;right:0;top:25%;border-top:1px solid #F0F0F2"></div>
+          <div style="position:absolute;left:0;right:0;top:50%;border-top:1px solid #F0F0F2"></div>
+          <div style="position:absolute;left:0;right:0;top:75%;border-top:1px solid #F0F0F2"></div>
+          <div style="position:absolute;left:0;right:0;bottom:0;border-top:1px solid #E5E7EB"></div>
+          <svg viewBox="0 0 1000 300" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;display:block">
+            <polyline points="0,201 125,186 250,228 375,222 500,177 625,192 750,213 875,204 1000,207" fill="none" stroke="#BD3039" stroke-width="2.5" vector-effect="non-scaling-stroke"></polyline>
+          </svg>
+          <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;left:50%;bottom:41%;transform:translate(-50%,0);display:flex;flex-direction:column;align-items:center;gap:4px">
+              <span style="font-size:10px;font-weight:600;color:#6B7280;background:rgba(255,255,255,0.9);padding:2px 6px;border-radius:4px;border:1px solid #E5E7EB;white-space:nowrap">7-game win streak</span>
+              <span style="width:8px;height:8px;border-radius:50%;background:#BD3039;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,0.1);transform:translateY(4px)"></span>
+            </div>
+            <div style="position:absolute;left:75%;bottom:29%;transform:translate(-50%,0);display:flex;flex-direction:column;align-items:center;gap:4px">
+              <span style="font-size:10px;font-weight:600;color:#6B7280;background:rgba(255,255,255,0.9);padding:2px 6px;border-radius:4px;border:1px solid #E5E7EB;white-space:nowrap">Casas to IL</span>
+              <span style="width:8px;height:8px;border-radius:50%;background:#BD3039;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,0.1);transform:translateY(4px)"></span>
+            </div>
+          </sc-if>
+          <span style="position:absolute;right:0;bottom:31%;width:10px;height:10px;border-radius:50%;background:#BD3039;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,0.1);transform:translate(2px,5px)"></span>
+        </div>
+        <div style="position:absolute;left:0;top:-6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">100</div>
+        <div style="position:absolute;left:0;top:25%;margin-top:-6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">75</div>
+        <div style="position:absolute;left:0;top:50%;margin-top:-6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">50</div>
+        <div style="position:absolute;left:0;top:75%;margin-top:-6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">25</div>
+        <div style="position:absolute;left:0;bottom:-4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">0</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;padding-left:32px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9CA3AF">
+        <span>APR</span><span>MAY</span><span>JUN</span><span>JUL</span>
+      </div>
+    </div>
+  </div>
+
+  <div data-screen-label="Division race" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF;margin-top:12px"><span style="width:3px;height:12px;background:#BD3039;border-radius:2px"></span>Division race · AL East</div>
+    <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);overflow-x:auto">
+      <div style="min-width:480px">
+        <div style="display:grid;grid-template-columns:minmax(150px,1fr) 90px 90px 110px;padding:10px 16px 8px;border-bottom:1px solid #E5E7EB;align-items:center">
+          <span style="font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF">Team</span>
+          <button onClick="{{ sortDiv }}" style="background:none;border:none;padding:0;cursor:pointer;text-align:right;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:{{ cDiv }}">Division ↓</button>
+          <button onClick="{{ sortPo }}" style="background:none;border:none;padding:0;cursor:pointer;text-align:right;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:{{ cPo }}">Playoffs ↓</button>
+          <button onClick="{{ sortWs }}" style="background:none;border:none;padding:0;cursor:pointer;text-align:right;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:{{ cWs }}">World Series ↓</button>
+        </div>
+        <sc-for list="{{ rows }}" as="row" hint-placeholder-count="5">
+          <div style="display:grid;grid-template-columns:minmax(150px,1fr) 90px 90px 110px;padding:10px 16px;border-bottom:1px solid #F0F0F2;align-items:center;background:{{ row.bg }};border-left:3px solid {{ row.rail }}">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:20px;height:20px;border-radius:5px;background:{{ row.color }};color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">{{ row.abbr }}</span>
+              <span style="font-size:13px;font-weight:{{ row.weight }}">{{ row.name }}</span>
+            </div>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;text-align:right;font-variant-numeric:tabular-nums">{{ row.divTxt }}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;text-align:right;font-variant-numeric:tabular-nums">{{ row.poTxt }}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;text-align:right;font-variant-numeric:tabular-nums">{{ row.wsTxt }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <div data-screen-label="Season futures" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#9CA3AF;margin-top:12px"><span style="width:3px;height:12px;background:#BD3039;border-radius:2px"></span>Season futures</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+        <span style="font-size:15px;font-weight:600">Championship path</span>
+        <div style="display:flex;align-items:stretch;gap:8px;flex-wrap:wrap">
+          <div style="flex:1;min-width:110px;display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:11px;font-weight:600;color:#6B7280">Win AL East</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">14%</span>
+            <div style="height:4px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:14%;background:#BD3039"></span></div>
+          </div>
+          <span style="align-self:center;color:#9CA3AF;font-size:14px">→</span>
+          <div style="flex:1;min-width:110px;display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:11px;font-weight:600;color:#6B7280">Win AL pennant</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">8%</span>
+            <div style="height:4px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:8%;background:#BD3039"></span></div>
+          </div>
+          <span style="align-self:center;color:#9CA3AF;font-size:14px">→</span>
+          <div style="flex:1;min-width:110px;display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:11px;font-weight:600;color:#6B7280">Win World Series</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">4%</span>
+            <div style="height:4px;border-radius:999px;background:#E5E7EB;overflow:hidden;display:flex"><span style="width:4%;background:#BD3039"></span></div>
+          </div>
+        </div>
+        <span style="font-size:12px;color:#9CA3AF">Each step conditions on the one before it.</span>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);padding:16px 18px;display:flex;flex-direction:column;gap:4px">
+        <span style="font-size:15px;font-weight:600;margin-bottom:8px">Player props</span>
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F0F0F2">
+          <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+            <span style="font-size:13px;font-weight:600">Rafael Devers</span>
+            <span style="font-size:11px;color:#9CA3AF">40+ home runs</span>
+          </div>
+          <span style="margin-left:auto;display:inline-flex;padding:2px 7px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:10px;font-weight:600;white-space:nowrap">#6 in MLB</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;font-variant-numeric:tabular-nums;width:52px;text-align:right">22%</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F0F0F2">
+          <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+            <span style="font-size:13px;font-weight:600">Jarren Duran</span>
+            <span style="font-size:11px;color:#9CA3AF">30+ stolen bases</span>
+          </div>
+          <span style="margin-left:auto;display:inline-flex;padding:2px 7px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:10px;font-weight:600;white-space:nowrap">#4 in MLB</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;font-variant-numeric:tabular-nums;width:52px;text-align:right">45%</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0">
+          <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+            <span style="font-size:13px;font-weight:600">Garrett Crochet</span>
+            <span style="font-size:11px;color:#9CA3AF">AL Cy Young</span>
+          </div>
+          <span style="margin-left:auto;display:inline-flex;padding:2px 7px;border-radius:6px;background:#F0F0F2;color:#6B7280;font-size:10px;font-weight:600;white-space:nowrap">#5 in MLB</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;font-variant-numeric:tabular-nums;width:52px;text-align:right">14%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;font-size:11px;color:#9CA3AF;margin-top:24px">Boston Red Sox · 12 markets tracked · Updated 2 min ago</div>
+</main>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;gameState&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;live&quot;, &quot;pregame&quot;], &quot;default&quot;: &quot;live&quot;, &quot;tsType&quot;: &quot;'live' | 'pregame'&quot;, &quot;section&quot;: &quot;Today's game&quot; },
+  &quot;chartAnnotations&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Season journey&quot; }
+}">
+class Component extends DCLogic {
+  state = { sortKey: 'div' };
+  renderVals() {
+    const teams = [
+      { abbr: 'NYY', name: 'Yankees', color: '#132448', div: 48, po: 86, ws: 12 },
+      { abbr: 'TB', name: 'Rays', color: '#092C5C', div: 22, po: 61, ws: 5 },
+      { abbr: 'BOS', name: 'Red Sox', color: '#BD3039', div: 14, po: 31, ws: 4, me: true },
+      { abbr: 'TOR', name: 'Blue Jays', color: '#134A8E', div: 11, po: 27, ws: 3 },
+      { abbr: 'BAL', name: 'Orioles', color: '#DF4601', div: 5, po: 12, ws: 1 },
+    ];
+    const k = this.state.sortKey;
+    const rows = [...teams].sort((a, b) => b[k] - a[k]).map(t => ({
+      ...t,
+      bg: t.me ? 'rgba(189,48,57,0.05)' : 'transparent',
+      rail: t.me ? '#BD3039' : 'transparent',
+      weight: t.me ? 700 : 500,
+      divTxt: t.div + '%', poTxt: t.po + '%', wsTxt: t.ws + '%',
+    }));
+    const hc = key => (k === key ? '#111827' : '#9CA3AF');
+    return {
+      rows,
+      sortDiv: () => this.setState({ sortKey: 'div' }),
+      sortPo: () => this.setState({ sortKey: 'po' }),
+      sortWs: () => this.setState({ sortKey: 'ws' }),
+      cDiv: hc('div'), cPo: hc('po'), cWs: hc('ws'),
+      isLive: (this.props.gameState ?? 'live') === 'live',
+      showNotes: this.props.chartAnnotations ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -3,13 +3,19 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchTeamPage } from "@/lib/api";
-import type { TeamPageResponse, ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
+import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
+import type { TeamPageResponse, TeamFutureItem } from "@/lib/api";
+import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
+import { sportKeyToGridSlug } from "@/lib/gridSlug";
+import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
+import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
+import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
+import { TeamDivisionRace } from "@/components/TeamDivisionRace";
 
 export default function TeamPage() {
   const params = useParams();
@@ -22,6 +28,7 @@ export default function TeamPage() {
   useEngagementTime({ pageType: "team" });
 
   const [data, setData] = useState<TeamPageResponse | null>(null);
+  const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +36,7 @@ export default function TeamPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setGrid(null);
     fetchTeamPage(teamSlug)
       .then((result) => {
         if (!cancelled) setData(result);
@@ -43,6 +51,26 @@ export default function TeamPage() {
       cancelled = true;
     };
   }, [teamSlug]);
+
+  // Division-race data source: the league championship grid already carries every
+  // rival's per-stage probability + division metadata. Supplementary + best-effort
+  // — a failed/absent grid simply hides the Division Race section.
+  useEffect(() => {
+    const sportKey = data?.team?.sport_key;
+    const gridSlug = sportKeyToGridSlug(sportKey);
+    if (!gridSlug) return;
+    let cancelled = false;
+    fetchChampionshipGrid(gridSlug)
+      .then((result) => {
+        if (!cancelled) setGrid(result);
+      })
+      .catch(() => {
+        if (!cancelled) setGrid(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.team?.sport_key]);
 
   // Document title
   useEffect(() => {
@@ -101,6 +129,22 @@ export default function TeamPage() {
   const upcomingGameNos = assignGameNumbers(upcoming_events);
   const recentGameNos = assignGameNumbers(recent_events);
 
+  // Hero headline number — the team's "price" is its championship probability
+  // (the blend-is-the-product ruling: one number per question). Prefer the
+  // tier-1 Championship entry; fall back to the strongest available path step.
+  const headline =
+    championship_path.find((e) => e.tier === 1) ?? championship_path[0] ?? null;
+
+  // Division race (supplementary; null when it can't be shown honestly).
+  const race = buildDivisionRace(grid, team.id, team.name);
+
+  // Season futures: the championship path is surfaced as its own progression, so
+  // the remaining list is props + awards + other markets (tiers outside 1/2/4).
+  const propsAndAwards =
+    championship_path.length > 0
+      ? futures.filter((f) => ![1, 2, 4].includes(f.market_tier ?? -1))
+      : futures;
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "SportsTeam",
@@ -136,7 +180,7 @@ export default function TeamPage() {
 
       {/* Hero */}
       <div
-        className="bg-surface-card border border-surface-border rounded-card p-6 mb-8 flex items-center gap-6"
+        className="bg-surface-card border border-surface-border rounded-card p-6 mb-8 flex items-center gap-6 flex-wrap"
         style={
           team.primary_color
             ? { borderLeftWidth: 4, borderLeftColor: team.primary_color }
@@ -157,7 +201,7 @@ export default function TeamPage() {
             {team.abbreviation || team.name.charAt(0)}
           </div>
         )}
-        <div>
+        <div className="min-w-[180px]">
           <h1 className="text-title-1 text-text-primary">{team.name}</h1>
           <div className="flex items-center gap-3 mt-1 text-sm text-text-secondary">
             {team.record && <span className="font-medium">{team.record}</span>}
@@ -177,21 +221,30 @@ export default function TeamPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Championship Path */}
-      {championship_path.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
-            Championship Path
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {championship_path.map((entry) => (
-              <ChampionshipCard key={entry.tier} entry={entry} color={team.primary_color} />
-            ))}
+        {/* Headline number — the team's championship "price" + 24h delta. */}
+        {headline && headline.probability !== null && (
+          <div className="ml-auto flex flex-col items-end gap-0.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+              {headline.label}
+            </span>
+            <span
+              className="font-mono font-bold text-3xl leading-none tabular-nums"
+              style={{ color: team.primary_color || undefined }}
+            >
+              {Math.round(headline.probability * 100)}%
+            </span>
+            {headline.movement !== null && headline.movement !== 0 && (
+              <span
+                className={`font-mono text-xs font-semibold tabular-nums ${
+                  headline.movement > 0 ? "text-accent-live" : "text-accent-danger"
+                }`}
+              >
+                {headline.movement > 0 ? "↑" : "↓"} {Math.abs(headline.movement * 100).toFixed(1)}% today
+              </span>
+            )}
           </div>
-        </section>
-      )}
+        )}
+      </div>
 
       {/* Live & Upcoming Games */}
       {upcoming_events.length > 0 && (
@@ -233,61 +286,40 @@ export default function TeamPage() {
         </section>
       )}
 
-      {/* Season Futures */}
-      {futures.length > 0 && (
+      {/* Season Journey — the team's championship prob over the season (one line). */}
+      <TeamSeasonJourney futures={futures} teamColor={team.primary_color} />
+
+      {/* Division Race — rivals × (Division / Playoffs / Champion), team highlighted. */}
+      {race && <TeamDivisionRace race={race} teamColor={team.primary_color} />}
+
+      {/* Season Futures — championship-path progression + props/awards. */}
+      {(championship_path.length > 0 || futures.length > 0) && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
             Season Futures
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {futures.map((item) => (
-              <FutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
-            ))}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {championship_path.length > 0 && (
+              <TeamChampionshipPath
+                entries={championship_path}
+                color={team.primary_color}
+              />
+            )}
+            {propsAndAwards.length > 0 && (
+              <div className="flex flex-col gap-3">
+                {propsAndAwards.map((item) => (
+                  <FutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+                ))}
+              </div>
+            )}
           </div>
         </section>
       )}
-    </div>
-  );
-}
 
-function ChampionshipCard({
-  entry,
-  color,
-}: {
-  entry: ChampionshipPathEntry;
-  color: string | null;
-}) {
-  const prob = entry.probability;
-  return (
-    <Link
-      href={`/futures/${entry.market_id}`}
-      className="bg-surface-card border border-surface-border rounded-card p-4 hover:shadow-md transition-shadow"
-    >
-      <div className="text-xs text-text-secondary mb-1">{entry.label}</div>
-      <div className="flex items-baseline gap-2">
-        <span
-          className="text-2xl font-mono font-bold"
-          style={{ color: color || undefined }}
-        >
-          {prob !== null ? `${Math.round(prob * 100)}%` : "—"}
-        </span>
-        {entry.rank && (
-          <span className="text-xs text-text-muted">
-            #{entry.rank}
-          </span>
-        )}
+      <div className="text-center text-[11px] text-text-muted mt-6">
+        {team.name} · {futures.length} market{futures.length === 1 ? "" : "s"} tracked
       </div>
-      {entry.movement !== null && entry.movement !== 0 && (
-        <div
-          className={`text-xs mt-1 ${
-            entry.movement > 0 ? "text-accent-live" : "text-accent-danger"
-          }`}
-        >
-          {entry.movement > 0 ? "+" : ""}
-          {(entry.movement * 100).toFixed(1)}%
-        </div>
-      )}
-    </Link>
+    </div>
   );
 }
 
