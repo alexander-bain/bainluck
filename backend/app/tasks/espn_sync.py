@@ -1207,6 +1207,31 @@ def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> d
     return wp_sources
 
 
+def _is_bogus_future_settled(status, commence_time, home_score, away_score, now) -> bool:
+    """Invariant guard (gotcha #32/#46): a SETTLED event cannot start in the
+    future. ``completed_at >= commence_time`` must hold; a completed/closed event
+    whose ``commence_time`` is meaningfully in the future is the cross-merge
+    recurrence (#190) — a stale settlement stuck on a row whose ``commence_time``
+    was later overwritten to a FUTURE series game (Phillies play the same
+    opponent again two nights later; the row is re-used, gotcha #32).
+
+    Only matches rows carrying NO real result (0-0 or null scores) — an MLB/
+    NBA/NHL/NFL game can never legitimately finish 0-0, so 0-0 means "never
+    played". A settled row with a REAL non-zero score is a DIFFERENT class
+    (commence overwrite of a genuinely-played game); we deliberately do NOT
+    match it here so un-settling never destroys a real result — that class needs
+    a registry-side commence fix, not a status reset.
+
+    A 1h future tolerance avoids a settlement/refinement race on a just-final
+    game whose commence is momentarily nudged forward a few minutes.
+    """
+    if status not in ("completed", "closed"):
+        return False
+    if commence_time is None or commence_time <= now + timedelta(hours=1):
+        return False
+    return (home_score in (None, 0)) and (away_score in (None, 0))
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -1328,11 +1353,44 @@ async def _transition_event_statuses_impl() -> dict:
             event.away_score = None
             stats["repaired_bogus_completed"] += 1
 
-        if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0 or stats["repaired_bogus_completed"] > 0:
+        # --- Repair: SETTLED with a FUTURE commence_time → un-settle ---
+        # A settled game cannot start in the future (invariant completed_at >=
+        # commence_time, gotcha #32/#46). This is the cross-merge recurrence
+        # (#190/Queue #234): a stale settlement (status + completed_at, from an
+        # earlier game that never captured a score) stuck on a row whose
+        # commence_time was later overwritten to a future series game. The
+        # bogus-completed repair above misses these because they DO carry a
+        # (phantom) completed_at. Gate on _is_bogus_future_settled so a settled
+        # row with a REAL score is never clobbered. Resets to scheduled + clears
+        # the phantom completed_at/0-0 scores so live polling re-drives it; the
+        # flow-sentinel resolved_state check then reads GREEN.
+        stats["unsettled_future_commence"] = 0
+        future_settled_result = await session.execute(
+            select(Event).where(
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time > now + timedelta(hours=1),
+            )
+        )
+        for event in future_settled_result.scalars().all():
+            if _is_bogus_future_settled(
+                event.status, event.commence_time,
+                event.home_score, event.away_score, now,
+            ):
+                event.status = "scheduled"
+                event.completed_at = None
+                event.home_score = None
+                event.away_score = None
+                stats["unsettled_future_commence"] += 1
+
+        if (stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0
+                or stats["repaired_bogus_completed"] > 0
+                or stats["unsettled_future_commence"] > 0):
             logger.info(
-                "Status transitions: %d scheduled→live, %d live→closed, %d repaired (pm_resolved=%d)",
+                "Status transitions: %d scheduled→live, %d live→closed, "
+                "%d repaired, %d un-settled-future-commence (pm_resolved=%d)",
                 stats["scheduled_to_live"], stats["live_to_closed"],
                 stats["repaired_bogus_completed"],
+                stats["unsettled_future_commence"],
                 stats.get("pm_resolved", 0),
             )
 

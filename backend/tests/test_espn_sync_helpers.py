@@ -4,6 +4,7 @@ These functions were previously nested inside the 897-line
 _sync_espn_live_events function and untestable.
 """
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.tasks.espn_sync import (
@@ -12,7 +13,48 @@ from app.tasks.espn_sync import (
     get_espn_name_variants,
     espn_team_matches,
     _apply_final_pm_win_prob,
+    _is_bogus_future_settled,
 )
+
+
+class TestIsBogusFutureSettled:
+    """Queue #234 Item 2 / gotcha #32/#46: a SETTLED event cannot start in the
+    future (invariant completed_at >= commence_time). The cross-merge recurrence
+    (#190) leaves a stale settlement stuck on a row whose commence_time was
+    overwritten to a future series game. Only rows with NO real result get
+    un-settled — a real score is a distinct class and must be preserved."""
+
+    NOW = datetime(2026, 7, 22, 19, 0, tzinfo=timezone.utc)
+
+    def test_settled_future_commence_zero_zero_is_bogus(self):
+        # The exact production case: Phillies@Dodgers completed, 0-0, commence tonight.
+        commence = datetime(2026, 7, 22, 22, 40, tzinfo=timezone.utc)
+        assert _is_bogus_future_settled("completed", commence, 0, 0, self.NOW) is True
+
+    def test_settled_future_commence_null_scores_is_bogus(self):
+        commence = self.NOW + timedelta(hours=48)
+        assert _is_bogus_future_settled("closed", commence, None, None, self.NOW) is True
+
+    def test_settled_future_commence_real_score_is_preserved(self):
+        # A genuinely-played game whose commence got overwritten (Direction B) —
+        # must NOT be matched, or un-settling would destroy the 5-0 result.
+        commence = self.NOW + timedelta(hours=48)
+        assert _is_bogus_future_settled("completed", commence, 5, 0, self.NOW) is False
+        assert _is_bogus_future_settled("completed", commence, 0, 3, self.NOW) is False
+
+    def test_legit_completed_past_commence_untouched(self):
+        # The normal case: a settled game started in the past — invariant holds.
+        commence = self.NOW - timedelta(hours=4)
+        assert _is_bogus_future_settled("completed", commence, 0, 0, self.NOW) is False
+
+    def test_scheduled_future_commence_not_matched(self):
+        commence = self.NOW + timedelta(hours=5)
+        assert _is_bogus_future_settled("scheduled", commence, None, None, self.NOW) is False
+
+    def test_near_now_future_within_tolerance_not_matched(self):
+        # 30-min future: settlement/refinement race tolerance — leave it.
+        commence = self.NOW + timedelta(minutes=30)
+        assert _is_bogus_future_settled("completed", commence, 0, 0, self.NOW) is False
 
 
 class TestApplyFinalPmWinProb:

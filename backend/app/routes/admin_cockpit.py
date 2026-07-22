@@ -290,6 +290,7 @@ def _flow_sentinel_group() -> dict:
                 "No Flow Sentinel run cached yet — it runs daily (07:10 UTC) or "
                 "on POST /api/admin/flow-sentinel/run."
             ),
+            "generated_at": None,
             "per_flow": [],
         }
 
@@ -344,6 +345,11 @@ def _flow_sentinel_group() -> dict:
         "flows_passed": scorecard.get("flows_passed"),
         "flows_failed": failed,
         "duration_seconds": raw.get("duration_seconds"),
+        # #232/Queue #234 Item 3: pass through the sentinel's own run stamp so the
+        # cockpit renders per-sentinel age ("ran 6h ago") instead of age=None. The
+        # sentinel persists generated_at in its cached payload (#232); None only
+        # during the deploy-transition window before the first post-#232 run.
+        "generated_at": raw.get("generated_at"),
         "per_flow": rows,
     }
 
@@ -407,6 +413,8 @@ def _grid_sentinel_group() -> dict | None:
         "leagues_total": (raw.get("scorecard") or {}).get("leagues_total"),
         "leagues_red": (raw.get("scorecard") or {}).get("leagues_red"),
         "duration_seconds": raw.get("duration_seconds"),
+        # #232/Queue #234 Item 3: per-sentinel run stamp (see _flow_sentinel_group).
+        "generated_at": raw.get("generated_at"),
         "per_league": rows,
     }
 

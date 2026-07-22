@@ -363,6 +363,29 @@ class TestFlowSentinelGroup:
             group = _flow_sentinel_group()
         assert group["status"] == "amber"
 
+    def test_generated_at_passed_through_for_age(self):
+        # Queue #234 Item 3: the cockpit must surface each sentinel's own run
+        # stamp so per-sentinel rows render real ages, not age=None.
+        stats = {
+            "generated_at": "2026-07-23T07:10:05+00:00",
+            "scorecard": {
+                "flows_total": 1, "flows_passed": 1, "flows_failed": 0,
+                "per_flow": [
+                    {"flow": "resolved_state", "passed": True, "checked": 64, "failing": 0, "skipped": False},
+                ],
+            },
+        }
+        with self._patch_redis(stats):
+            group = _flow_sentinel_group()
+        assert group["generated_at"] == "2026-07-23T07:10:05+00:00"
+
+    def test_generated_at_none_when_no_run_cached(self):
+        # Shape stays stable pre-first-run: key present, value None (not missing).
+        with self._patch_redis(None):
+            group = _flow_sentinel_group()
+        assert group["status"] == "unknown"
+        assert group["generated_at"] is None
+
     def test_all_pass_is_green(self):
         stats = {
             "scorecard": {
