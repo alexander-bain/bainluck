@@ -507,7 +507,7 @@ function QuotaChart({ data, budget }: { data: DailyUsage[]; budget: QuotaBudget 
               formatter={(val: number, name: string) => [formatNum(val), name === "budget" ? "Budget" : name === "used" ? "Actual" : "Projected"]}
             />
             <Line type="linear" dataKey="budget" stroke="#555" strokeDasharray="6 3" dot={false} name="budget" connectNulls />
-            <Line type="monotone" dataKey="used" stroke="#22c55e" strokeWidth={2} dot={false} name="used" connectNulls={false} />
+            <Line type="linear" dataKey="used" stroke="#22c55e" strokeWidth={2} dot={false} name="used" connectNulls={false} />
             <Line type="linear" dataKey="projected" stroke="#ef4444" strokeDasharray="4 2" strokeWidth={2} dot={false} name="projected" connectNulls />
             <ReferenceLine y={budget.total} stroke="#ef4444" strokeDasharray="2 2" label="" />
           </LineChart>
@@ -734,8 +734,8 @@ function MatchingCoverageChart({ data }: { data: MatchingMetricsEntry[] }) {
               wrapperStyle={{ fontSize: 11 }}
             />
             <ReferenceLine y={100} stroke="#22c55e" strokeDasharray="4 2" label="" />
-            <Line type="monotone" dataKey="major_coverage_pct" stroke="#f59e0b" strokeWidth={2} dot={false} name="major_coverage_pct" />
-            <Line type="monotone" dataKey="coverage_pct" stroke="#3b82f6" strokeWidth={1.5} dot={false} name="coverage_pct" />
+            <Line type="linear" dataKey="major_coverage_pct" stroke="#f59e0b" strokeWidth={2} dot={false} name="major_coverage_pct" />
+            <Line type="linear" dataKey="coverage_pct" stroke="#3b82f6" strokeWidth={1.5} dot={false} name="coverage_pct" />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -1019,7 +1019,7 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
                   formatter={(val: number) => [val.toFixed(2) + " GB", "Used"]}
                 />
                 <ReferenceLine y={db.plan.storage_limit_gb} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Limit", fill: "#ef4444", fontSize: 9, position: "right" }} />
-                <Line type="monotone" dataKey="size_gb" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                <Line type="linear" dataKey="size_gb" stroke="#8b5cf6" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -1130,7 +1130,7 @@ function CoverageTrendChart({ data }: { data: CoverageTrendEntry[] }) {
             {Object.entries(sourceColors).map(([name, color]) => (
               <Line
                 key={name}
-                type="monotone"
+                type="linear"
                 dataKey={name}
                 stroke={color}
                 strokeWidth={1.5}

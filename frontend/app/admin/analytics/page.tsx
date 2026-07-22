@@ -323,7 +323,7 @@ function OverviewTab({
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="users"
                 stroke="#3b82f6"
                 strokeWidth={2}
@@ -331,7 +331,7 @@ function OverviewTab({
                 name="Users"
               />
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="sessions"
                 stroke="#22c55e"
                 strokeWidth={1.5}
@@ -521,7 +521,7 @@ function DiscoverTab({ data }: { data: DiscoverData }) {
                 }}
               />
               <Area
-                type="monotone"
+                type="linear"
                 dataKey="users"
                 stroke="#3b82f6"
                 fill="#3b82f6"
@@ -530,7 +530,7 @@ function DiscoverTab({ data }: { data: DiscoverData }) {
                 name="Users"
               />
               <Area
-                type="monotone"
+                type="linear"
                 dataKey="views"
                 stroke="#22c55e"
                 fill="#22c55e"
@@ -788,7 +788,7 @@ function FunnelTab({ data }: { data: FunnelData }) {
               {Object.entries(STAGE_COLORS).map(([stage, color]) => (
                 <Line
                   key={stage}
-                  type="monotone"
+                  type="linear"
                   dataKey={stage}
                   stroke={color}
                   strokeWidth={stage === "visit" ? 2 : 1.5}
@@ -927,7 +927,7 @@ function RetentionTab({ data }: { data: RetentionData }) {
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Area
-                type="monotone"
+                type="linear"
                 dataKey="returning"
                 stackId="1"
                 stroke="#22c55e"
@@ -936,7 +936,7 @@ function RetentionTab({ data }: { data: RetentionData }) {
                 name="Returning"
               />
               <Area
-                type="monotone"
+                type="linear"
                 dataKey="new"
                 stackId="1"
                 stroke="#3b82f6"
@@ -992,7 +992,7 @@ function RetentionTab({ data }: { data: RetentionData }) {
                 formatter={(val: number) => [val + "%", "Return Rate"]}
               />
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="returnRate"
                 stroke="#8b5cf6"
                 strokeWidth={2}
@@ -1128,7 +1128,7 @@ function PageEngagementTab({ data }: { data: PagesData }) {
               {topSections.map((section) => (
                 <Area
                   key={section}
-                  type="monotone"
+                  type="linear"
                   dataKey={section}
                   stackId="1"
                   stroke={SECTION_COLORS[section] || "#888"}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { plotDims, scaleX, scaleY } from "@/lib/chartScale";
 
 const SOURCE_COLORS: Record<string, string> = {
   betting: "#374151",
@@ -38,8 +39,7 @@ export default function DisagreementChart({
   height = 280,
 }: DisagreementChartProps) {
   const padL = 50, padR = 20, padT = 20, padB = 50;
-  const plotW = width - padL - padR;
-  const plotH = height - padT - padB;
+  const { plotW, plotH } = plotDims(width, height, { padL, padR, padT, padB });
 
   const { sources, tMin, tMax } = useMemo(() => {
     const entries = Object.entries(timeSeries).filter(([, pts]) => pts.length > 0);
@@ -56,8 +56,9 @@ export default function DisagreementChart({
 
   if (sources.length === 0 || tMin === tMax) return null;
 
-  const px = (t: number) => padL + ((t - tMin) / (tMax - tMin)) * plotW;
-  const py = (p: number) => padT + ((1 - p) * plotH);
+  // X is time (tMin→tMax), Y is fixed 0–1 probability. Shared px/py skeleton — see lib/chartScale.ts.
+  const px = scaleX(tMin, tMax, padL, plotW);
+  const py = scaleY(0, 1, padT, plotH);
 
   const durationHrs = (tMax - tMin) / 3600000;
   const tickCount = Math.min(6, Math.max(3, Math.floor(durationHrs)));

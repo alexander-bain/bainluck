@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { plotDims, scaleX, scaleY } from "@/lib/chartScale";
 
 interface CalPoint {
   midpoint: number;
@@ -44,11 +45,11 @@ export default function CalibrationChart({
   onPointClick,
 }: CalibrationChartProps) {
   const padL = 55, padR = 20, padT = 25, padB = 50;
-  const plotW = width - padL - padR;
-  const plotH = height - padT - padB;
+  const { plotW, plotH } = plotDims(width, height, { padL, padR, padT, padB });
 
-  const px = (pct: number) => padL + (pct / 100) * plotW;
-  const py = (pct: number) => padT + ((100 - pct) / 100) * plotH;
+  // Both axes are fixed 0–100% (predicted × actual). Shared px/py skeleton — see lib/chartScale.ts.
+  const px = scaleX(0, 100, padL, plotW);
+  const py = scaleY(0, 100, padT, plotH);
 
   const bandPointsUpper = useMemo(() =>
     Array.from({ length: 21 }, (_, i) => i * 5)
