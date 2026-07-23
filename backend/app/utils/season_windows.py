@@ -108,6 +108,69 @@ def is_quiet(league: str, now: datetime | None = None) -> bool:
     return league_phase(league, now) in ("offseason", "break")
 
 
+# Human phase labels for a season descriptor (team-page truth: every number
+# declares its season). Keyed by the phase() return value above.
+_PHASE_LABELS: dict[str, str] = {
+    "in_season": "Regular season",
+    "postseason": "Playoffs",
+    "break": "Regular season",   # a break is still within the regular season
+    "offseason": "Offseason",
+}
+
+# Leagues whose season spans two calendar years and is labeled "YYYY-YY".
+_WRAP_LEAGUES = {"nba", "nhl"}
+
+
+def season_string(league: str, now: datetime | None = None) -> str | None:
+    """Return the CURRENT (or, in the offseason, the upcoming) season's display
+    string for ``league``. Wrap leagues (NBA/NHL) → "YYYY-YY"; calendar-year
+    leagues (MLB/NFL) → "YYYY". None for unknown/continuous leagues.
+
+    The season a team-page number belongs to is the season being *played now*, or
+    — when the league is between seasons — the one about to start, because that is
+    what the futures markets on the page are pricing.
+    """
+    slug = (league or "").strip().lower()
+    dt = _now(now)
+    month = dt.month
+    if slug in _WRAP_LEAGUES:
+        # Oct→June season. Sep+ starts this calendar year; Jan–Aug belongs to the
+        # season that started last year, EXCEPT the Jul–Aug offseason which points
+        # at the upcoming season (starts this year).
+        base = dt.year if month >= 7 else dt.year - 1
+        return f"{base}-{(base + 1) % 100:02d}"
+    if slug == "mlb":
+        # Calendar-year season (Mar–Oct). Nov–Dec offseason points at next year.
+        return str(dt.year + 1) if month >= 11 else str(dt.year)
+    if slug == "nfl":
+        # Season labeled by its starting year (Sep–Jan). Jan–Feb is the prior
+        # season's playoffs; Mar–Aug offseason points at the upcoming season.
+        return str(dt.year) if month >= 3 else str(dt.year - 1)
+    return None
+
+
+def season_descriptor(league: str, now: datetime | None = None) -> dict:
+    """The Season entity's first read shape: league × year × phase, plus a short
+    human ``label`` ("2025-26 · Playoffs"). Every team-page number can attach this
+    so the reader always knows WHICH season a probability describes. Unknown or
+    continuous leagues return a descriptor with ``season=None`` and the phase from
+    :func:`league_phase` (which is "in_season" for those, never suppressive)."""
+    slug = (league or "").strip().lower()
+    phase = league_phase(slug, now)
+    season = season_string(slug, now)
+    phase_label = _PHASE_LABELS.get(phase, "Regular season")
+    if season:
+        label = f"{season} · {phase_label}"
+    else:
+        label = phase_label
+    return {
+        "league": slug or None,
+        "season": season,
+        "phase": phase,
+        "label": label,
+    }
+
+
 def seasonal_note(league: str, now: datetime | None = None) -> str | None:
     """A short human note explaining a quiet window, or None when the league is
     active (no seasonal excuse — an alarm here is REAL). Filers append this to a

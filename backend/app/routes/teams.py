@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome
 from app.services import get_db
+from app.utils import season_windows
 
 logger = logging.getLogger(__name__)
 
@@ -80,16 +81,40 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
     from app.routes.user import _query_team_futures
     futures_data = await _query_team_futures([team.id], db, limit=30)
 
+    # --- Season context (every team-page number declares its season) ---
+    sport_key = team.sport.key if team.sport else None
+    league_slug = _league_slug_for_sport_key(sport_key)
+    season_ctx = (
+        season_windows.season_descriptor(league_slug, now) if league_slug else None
+    )
+
     # --- Championship path (tier 1/2/4 probabilities) ---
-    champ_path = await _get_championship_path(team.id, db)
+    champ_path = await _get_championship_path(team.id, db, league_slug=league_slug, now=now)
 
     return {
         "team": _format_team(team),
+        "season": season_ctx,
         "upcoming_events": upcoming_events,
         "recent_events": recent_events,
         "futures": futures_data.get("items", []),
         "championship_path": champ_path,
     }
+
+
+# Map an Odds-API sport_key ("basketball_nba") to the season_windows league slug
+# ("nba"). Only the four leagues season_windows models have a season string;
+# everything else returns None (no year-based season filtering, graded-winner
+# exclusion still applies).
+_SPORT_KEY_TO_LEAGUE = {
+    "basketball_nba": "nba",
+    "baseball_mlb": "mlb",
+    "americanfootball_nfl": "nfl",
+    "icehockey_nhl": "nhl",
+}
+
+
+def _league_slug_for_sport_key(sport_key: str | None) -> str | None:
+    return _SPORT_KEY_TO_LEAGUE.get((sport_key or "").strip().lower())
 
 
 def _format_team(team: Team) -> dict:
@@ -161,13 +186,63 @@ def _is_future_season(market_name: str, max_year: int) -> bool:
     return any(y > max_year for y in years)
 
 
-async def _get_championship_path(team_id: int, db: AsyncSession) -> list[dict]:
+def _extract_championship_season(market) -> str | None:
+    """Season string for a futures market: prefer canonical_market_key
+    ({sport}:{league}:{category}:{season}), fall back to a year in the name."""
+    key = getattr(market, "canonical_market_key", None)
+    if key:
+        parts = key.split(":")
+        if len(parts) >= 4 and parts[3]:
+            return parts[3]
+    name = market.name or ""
+    m = _CHAMP_SEASON_HYPHEN_RE.search(name)
+    if m:
+        return m.group(0)
+    m2 = _CHAMP_YEAR_RE.search(name)
+    if m2:
+        return m2.group(0)
+    return None
+
+
+def _season_base_year(season: str | None) -> int | None:
+    """First 4-digit year in a season string ("2025-26" → 2025, "2026" → 2026)."""
+    if not season:
+        return None
+    m = _CHAMP_YEAR_RE.search(season)
+    return int(m.group(0)) if m else None
+
+
+async def _get_championship_path(
+    team_id: int,
+    db: AsyncSession,
+    league_slug: str | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
     """Get championship/conference/division probabilities for a team.
 
-    Filters out future-season markets (e.g. "2027 Champion" when current
-    season is 2025-26) and averages probabilities when multiple sources
-    provide markets at the same tier.
+    The championship path is FORWARD-looking, so it must exclude:
+      1. Settled markets — a graded winner exists even while Kalshi keeps the
+         market ``status='open'`` (gotcha #33). A settled prior-season market
+         with a graded outcome near 100% was leaking into next season's path as
+         a bogus "99.5% Division" number (Queue #242 Item 1).
+      2. Prior-season markets — the market's season is numerically before the
+         league's current season.
+      3. Future-season markets (e.g. "2027 Champion" when it is 2025-26).
+
+    Averages probabilities when multiple sources provide markets at the same
+    tier, and stamps each entry with the season it describes.
     """
+    now = now or datetime.now(timezone.utc)
+
+    # Markets with a graded winner are settled (gotcha #33: status stays 'open').
+    graded = (
+        select(FuturesOutcome.id)
+        .where(
+            FuturesOutcome.market_id == FuturesMarket.id,
+            FuturesOutcome.is_winner.is_(True),
+        )
+    )
+
     result = await db.execute(
         select(FuturesOutcome, FuturesMarket)
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
@@ -176,6 +251,7 @@ async def _get_championship_path(team_id: int, db: AsyncSession) -> list[dict]:
             FuturesMarket.status == "open",
             FuturesMarket.event_id.is_(None),
             FuturesMarket.market_tier.in_([1, 2, 4]),
+            ~graded.exists(),
         )
         .order_by(FuturesMarket.market_tier.asc())
     )
@@ -183,8 +259,14 @@ async def _get_championship_path(team_id: int, db: AsyncSession) -> list[dict]:
     # Current-season cutoff: the maximum year that counts as "this season".
     # For a 2025-26 season the cutoff is 2026; a market referencing 2027 is
     # future-season and should be excluded.
-    now = datetime.now(timezone.utc)
-    max_year = now.year if now.month >= 7 else now.year
+    max_year = now.year
+
+    # Current-season base year for prior-season exclusion (e.g. a settled 2025-26
+    # market must not show up once the 2026-27 season's markets are the truth).
+    current_season = (
+        season_windows.season_string(league_slug, now) if league_slug else None
+    )
+    current_base = _season_base_year(current_season)
 
     tier_labels = {1: "Championship", 2: "Conference", 4: "Division"}
 
@@ -196,6 +278,14 @@ async def _get_championship_path(team_id: int, db: AsyncSession) -> list[dict]:
         # Skip future-season markets (same fix as #471 for championship grid)
         if _is_future_season(market.name or "", max_year):
             continue
+
+        # Skip prior-season markets: the market's own season predates the current
+        # league season. Markets with no year in their name pass through.
+        if current_base is not None:
+            mkt_season = _extract_championship_season(market)
+            mkt_base = _season_base_year(mkt_season)
+            if mkt_base is not None and mkt_base < current_base:
+                continue
 
         prob = float(outcome.current_probability) if outcome.current_probability else None
         if prob is None:
@@ -246,6 +336,9 @@ async def _get_championship_path(team_id: int, db: AsyncSession) -> list[dict]:
             "probability": round(avg_prob, 4),
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
+            # Season this number describes (Queue #242 Item 1) — prefer the
+            # market's own season, fall back to the league's current season.
+            "season": _extract_championship_season(best_market) or current_season,
         })
 
     return path

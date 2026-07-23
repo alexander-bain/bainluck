@@ -119,6 +119,28 @@ class TestTeamSeeded:
         assert "recent_events" in body
         assert "futures" in body
         assert "championship_path" in body
+        # Queue #242 Item 1: every team-page number declares its season.
+        assert "season" in body
+
+    async def test_season_context_shape(self, client, mock_db):
+        team = _mock_team()  # basketball_nba → nba season descriptor
+        mock_db.execute.side_effect = [
+            _scalars_result([team]),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalars_result([]),
+        ]
+
+        resp = await client.get("/api/teams/lakers")
+        body = resp.json()
+        season = body["season"]
+        assert season is not None
+        assert season["league"] == "nba"
+        # season string + phase always present for a known league
+        assert season["season"] and "-" in season["season"]
+        assert season["phase"] in {"in_season", "postseason", "break", "offseason"}
+        assert season["label"]
 
     async def test_team_object_shape(self, client, mock_db):
         team = _mock_team()

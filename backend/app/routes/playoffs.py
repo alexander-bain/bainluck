@@ -21,6 +21,7 @@ from app.config.league_configs import LeagueConfig, get_league_config, get_all_l
 from app.models import FuturesMarket, FuturesOddsSnapshot, MatchingOverride, Team
 from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
+from app.utils.static_divisions import lookup_division as _static_lookup_division
 
 logger = logging.getLogger(__name__)
 
@@ -1006,6 +1007,17 @@ async def _get_team_metadata(
             meta["conference"] = _extract_standings_label(standings, conference_field)
             meta["division"] = _extract_standings_label(standings, "division")
             meta["seed"] = standings.get("position") or standings.get("seed")
+
+        # Queue #242 Item 1c: MLB/NFL have NULL standings_data (StatPal only
+        # populates NBA/NHL divisions), so the division race never rendered for
+        # those two leagues (L2-162). Conference/division membership is stable in
+        # MLB and NFL — fall back to the static map when the label is missing.
+        if team.name and (not meta["division"] or not meta["conference"]):
+            static_conf, static_div = _static_lookup_division(league_slug, team.name)
+            if not meta["conference"] and static_conf:
+                meta["conference"] = static_conf
+            if not meta["division"] and static_div:
+                meta["division"] = static_div
 
         # NCAA Tournament: look up region and seed from bracket data
         if league_slug == "ncaa-basketball" and team.name:
