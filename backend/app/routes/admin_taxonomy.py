@@ -548,15 +548,11 @@ async def taxonomy_debug_redis(
     """Check Redis markers set by taxonomy piggybacking code."""
     _check_admin_secret(secret, request=request)
 
-    import redis
-    import os
-    import ssl
+    # #1197: route through the bounded, retry-wrapped helper instead of a raw
+    # from_url (no timeout, no keepalive, no TLS-EOF retry).
+    from app.tasks.redis_state import get_redis_client
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    if redis_url.startswith("rediss://"):
-        r = redis.from_url(redis_url, ssl_cert_reqs=ssl.CERT_NONE)
-    else:
-        r = redis.from_url(redis_url)
+    r = get_redis_client()
     return {
         "taxonomy_debug": r.get("bainluck:taxonomy_debug"),
         "llm_enrich_gate": r.get("bainluck:llm_enrich_gate"),

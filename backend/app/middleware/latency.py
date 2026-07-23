@@ -42,6 +42,12 @@ _ID_PATTERNS = [
 
 _request_counter = 0
 
+# #1197: cache the sync client. A fresh get_redis_client() per sampled request
+# spins up a NEW connection pool that is never closed — abandoned pools cycle
+# connections through Heroku Redis's idle-reap window and feed the TLS-handshake
+# churn. One shared, bounded, retry-wrapped client for the whole process instead.
+_latency_redis = None
+
 
 def _normalize_path(path: str) -> str:
     """Collapse IDs/UUIDs in a URL path so per-endpoint aggregation works.
@@ -57,10 +63,14 @@ def _normalize_path(path: str) -> str:
 
 
 def _get_redis():
-    """Lazy import to avoid import-time Redis connection."""
+    """Lazy import + cached client to avoid import-time + per-request pools."""
+    global _latency_redis
+    if _latency_redis is not None:
+        return _latency_redis
     try:
         from app.tasks.redis_state import get_redis_client
-        return get_redis_client()
+        _latency_redis = get_redis_client()
+        return _latency_redis
     except Exception:
         return None
 

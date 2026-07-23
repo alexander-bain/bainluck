@@ -309,6 +309,36 @@ class TestNoUnboundedRawRedisInTasks:
             "by default):\n" + "\n".join(offenders)
         )
 
+    def test_no_raw_redis_construction_in_routes_and_services(self):
+        """#1197 CI guard: routes/ and services/ must NOT construct a raw Redis
+        client (redis.from_url / redis.Redis / aioredis.from_url) directly — every
+        client must come from the bounded, retry-wrapped helpers so a Heroku Redis
+        TLS-handshake blip degrades (retry) instead of 500ing a user-facing route.
+
+        The rate limiter (utils/rate_limit.py) is the one sanctioned exception: it
+        must pass the stability kwargs to the `limits` library's own storage
+        constructor (it can't use our helpers), and it already imports the shared
+        retry policy from redis_state.
+        """
+        import pathlib
+        import re
+
+        app_dir = pathlib.Path(redis_state.__file__).parent.parent  # app/
+        pat = re.compile(r"\b(redis|aioredis|redis_lib)\.(from_url|Redis)\s*\(")
+        offenders = []
+        for sub in ("routes", "services"):
+            for py in (app_dir / sub).glob("*.py"):
+                for i, line in enumerate(py.read_text().splitlines(), 1):
+                    if line.lstrip().startswith("#"):
+                        continue
+                    if pat.search(line):
+                        offenders.append(f"{sub}/{py.name}:{i}: {line.strip()}")
+        assert not offenders, (
+            "raw Redis client(s) in routes/ or services/ (use get_redis_client() / "
+            "get_async_redis_client(), bounded + retry-wrapped):\n"
+            + "\n".join(offenders)
+        )
+
 
 class _FakeQuotaRedis:
     def __init__(self, data):

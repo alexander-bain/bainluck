@@ -15,7 +15,7 @@ Odds" surface.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Team, FuturesMarket, FuturesOutcome
@@ -111,7 +111,27 @@ async def get_team_prop_families(
         .order_by(FuturesOutcome.current_probability.desc().nulls_last())
         .limit(max(1, min(limit, 2000)))
     )
-    rows = (await db.execute(query)).all()
+    # #1197 / #1239: the multi-ILIKE roster scan can occasionally run long enough
+    # to hit Heroku's 30s H12 request timeout (a hung 503). Bound it with a
+    # per-statement timeout so a slow scan fails fast and the endpoint degrades to
+    # an empty families list (200) instead of hanging the dyno to a 503.
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '12000'"))
+        rows = (await db.execute(query)).all()
+    except Exception:
+        logger.exception(
+            "prop-families: query failed/timed out for team %s — empty degrade",
+            team.id,
+        )
+        return {
+            "team": {
+                "id": team.id,
+                "name": team.name,
+                "slug": getattr(team, "slug", None),
+            },
+            "families": [],
+            "total_families": 0,
+        }
 
     # Reassemble outcomes onto their market dicts.
     by_market: dict[int, dict] = {}

@@ -348,6 +348,51 @@ class TestTennisPatterns:
 
 
 # =============================================================================
+# Racquet "games" stats — table tennis vs tennis (#1230)
+# =============================================================================
+class TestRacquetGameStats:
+    """#1230: Polymarket's obscure table-tennis (Setka/TT-Cup) player-vs-player
+    "Total Games O/U 3.5" markets used to fall through to seasonal inference and
+    be mis-tagged 'baseball' (manufacturing the "baseball 7.4% link rate").
+    Baseball totals are RUNS, never GAMES."""
+
+    def test_setka_small_total_games_is_table_tennis(self):
+        assert (
+            detect_game_prop_sport(
+                "Imparatel Alexandru vs. Mocan David: Total Games O/U 3.5"
+            )
+            == "table_tennis"
+        )
+
+    def test_setka_bare_names_small_games_is_table_tennis(self):
+        assert (
+            detect_game_prop_sport("Melisek Marian vs. Moulis Pavel: Total Games O/U 4.5")
+            == "table_tennis"
+        )
+
+    def test_real_tennis_large_game_total_stays_tennis(self):
+        assert (
+            detect_game_prop_sport(
+                "Carlos Alcaraz vs. Jannik Sinner: Total Games O/U 21.5"
+            )
+            == "tennis"
+        )
+
+    def test_games_stat_never_maps_to_baseball(self):
+        # The regression: "total games" is NOT a baseball stat (baseball = runs).
+        assert (
+            detect_game_prop_sport("Player A vs. Player B: Total Games O/U 5.5")
+            != "baseball"
+        )
+
+    def test_real_baseball_total_runs_unaffected(self):
+        assert (
+            detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
+            == "baseball"
+        )
+
+
+# =============================================================================
 # Soccer Patterns
 # =============================================================================
 class TestSoccerPatterns:

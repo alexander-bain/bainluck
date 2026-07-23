@@ -36,6 +36,39 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # op — none exist in this codebase today: no blpop/brpop, pubsub is WS not Redis).
 _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
 
+# #1197: bound the connection pool. The E-class TLS-handshake churn
+# (`[SSL: UNEXPECTED_EOF]`) can be aggravated by an unbounded pool cycling a large
+# number of connections through Heroku Redis's idle-reap window. A finite cap keeps
+# reuse tight (fewer idle connections to be reaped) and matches the plan's 40-conn
+# budget. Override via REDIS_MAX_CONNECTIONS.
+_REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "40"))
+
+
+def _redis_retry():
+    """A fresh retry policy: 3 attempts with equal-jitter backoff (cap 1s).
+
+    #1197 THE STRUCTURAL LEVER. The sustained churn is a TLS
+    ``ConnectionError: [SSL: UNEXPECTED_EOF_WHILE_READING]`` on a reused,
+    idle-reaped connection. The prior ``retry_on_timeout=True`` fix ONLY retries
+    ``TimeoutError`` — a handshake EOF is a ``ConnectionError``, so it was never
+    retried and surfaced raw (which is why #233/#239 left the churn flat at
+    ~378/24h). Pairing ``retry=Retry(...)`` with ``retry_on_error=[ConnectionError]``
+    below makes redis-py transparently reconnect+retry the op instead of raising,
+    so a handshake blip degrades into a sub-second reconnect rather than a 500 or a
+    Sentry event. A fresh Retry per client avoids sharing mutable backoff state.
+    """
+    from redis.retry import Retry
+    from redis.backoff import EqualJitterBackoff
+
+    return Retry(EqualJitterBackoff(cap=1.0, base=0.05), 3)
+
+
+def _redis_retry_on_errors():
+    """Exception classes that trigger a transparent reconnect+retry (#1197)."""
+    from redis.exceptions import ConnectionError as _ConnErr, TimeoutError as _TmoErr
+
+    return [_ConnErr, _TmoErr]
+
 
 def get_redis_client(
     socket_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
@@ -68,6 +101,11 @@ def get_redis_client(
         kwargs["socket_keepalive_options"] = _ka
     kwargs["health_check_interval"] = 25
     kwargs["retry_on_timeout"] = True
+    # #1197: retry the TLS-handshake ConnectionError (not just timeouts) + bound
+    # the pool. This is the lever the #233/#239 keepalive-only fixes lacked.
+    kwargs["retry"] = _redis_retry()
+    kwargs["retry_on_error"] = _redis_retry_on_errors()
+    kwargs["max_connections"] = _REDIS_MAX_CONNECTIONS
 
     if REDIS_URL.startswith("rediss://"):
         return redis.from_url(
@@ -94,6 +132,10 @@ def get_async_redis_client():
         "socket_keepalive": True,
         "health_check_interval": 25,
         "retry_on_timeout": True,
+        # #1197: transparently retry the TLS-handshake ConnectionError + bound pool.
+        "retry": _redis_retry(),
+        "retry_on_error": _redis_retry_on_errors(),
+        "max_connections": _REDIS_MAX_CONNECTIONS,
     }
     _ka = socket_keepalive_options()
     if _ka:

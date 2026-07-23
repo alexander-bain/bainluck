@@ -221,7 +221,6 @@ async def celery_debug(request: Request, secret: str = Query(None)):
     """Inspect Celery worker status and queue lengths."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    import redis as redis_lib
 
     result = {}
 
@@ -242,12 +241,11 @@ async def celery_debug(request: Request, secret: str = Query(None)):
 
     # Queue lengths and task name distribution from Redis
     try:
-        redis_url = celery_app.conf.broker_url
-        import ssl as _ssl
-        r = redis_lib.from_url(
-            redis_url,
-            ssl_cert_reqs=_ssl.CERT_NONE if redis_url.startswith("rediss") else None,
-        )
+        # #1197: bounded, retry-wrapped helper (broker_url == REDIS_URL on Heroku)
+        # instead of a raw from_url with no timeout/keepalive/TLS-EOF retry.
+        from app.tasks.redis_state import get_redis_client
+
+        r = get_redis_client()
         bg_len = r.llen("background")
         result["queue_lengths"] = {
             "background": bg_len,

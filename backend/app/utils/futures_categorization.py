@@ -403,6 +403,21 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
     team_b = match.group(2).strip()
     stat = match.group(3).strip().lower()
 
+    # #1230: racquet "games" stats are NOT baseball. Polymarket floods obscure
+    # table-tennis (Setka / TT-Cup) player-vs-player markets like
+    # "A vs. B: Total Games O/U 3.5", whose "total" fragment used to fall through
+    # to the ambiguous-stat seasonal inference below → July → "baseball",
+    # manufacturing the alarming "baseball 7.4% link rate" and polluting the
+    # baseball cohort. Baseball totals are RUNS, never GAMES. Route "games" stats
+    # to the racquet family, discriminating table-tennis (a match is best-of a few
+    # games, so a small total/handicap) from tennis (a full match totals ~12-40
+    # games) by the numeric threshold. table_tennis is intentionally NOT a
+    # link-rate sport category, so these correctly drop out of the denominator
+    # (we schedule no table-tennis events to link them to).
+    racquet = _detect_racquet_game_stat(stat)
+    if racquet:
+        return racquet
+
     # Check stat against sport mapping (deterministic, sport-specific)
     for stat_keyword, sport in _STAT_TO_SPORT.items():
         if stat_keyword in stat:
@@ -416,6 +431,33 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
             return _seasonal_sport_for_college_matchup()
 
     return None
+
+
+# #1230: "games"/"game handicap" stats are racquet sports (tennis / table tennis),
+# never baseball. A best-of-N table-tennis match totals a handful of games; a
+# tennis match totals many more — so the threshold on the stat's number splits them.
+_RACQUET_GAME_STAT_RE = re.compile(r"\b(total\s+games|games\s+o/?u|game\s+handicap|games\s+handicap)\b")
+_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+# A table-tennis match rarely exceeds ~7 games (best-of-7 → total ≤ 7, handicap
+# ≤ ~4); tennis totals/handicaps run well above this. 10 is a safe split.
+_TABLE_TENNIS_MAX_GAMES = 10.0
+
+
+def _detect_racquet_game_stat(stat: str) -> Optional[str]:
+    """Classify a "games"/"game handicap" stat as table_tennis or tennis (#1230).
+
+    Returns ``None`` when the stat is not a games-based racquet stat, so callers
+    fall through to their normal logic.
+    """
+    if not _RACQUET_GAME_STAT_RE.search(stat):
+        return None
+    nums = [abs(float(n)) for n in _NUMBER_RE.findall(stat)]
+    # Small game count → table tennis; larger → tennis. No number → default to
+    # table tennis, since bare "Total Games O/U" with no threshold is the Setka
+    # /TT-Cup signature (real ATP/WTA game-total markets always carry a line).
+    if nums and max(nums) >= _TABLE_TENNIS_MAX_GAMES:
+        return "tennis"
+    return "table_tennis"
 
 
 _GAME_MATCHUP_WINNER_RE = re.compile(

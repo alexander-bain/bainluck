@@ -61,6 +61,7 @@ class TestPropFamiliesSeeded:
         ]
         mock_db.execute.side_effect = [
             _scalars_result([team]),   # team lookup
+            MagicMock(),               # SET LOCAL statement_timeout (#1197)
             _scalars_result(rows),     # outcomes + markets query
         ]
 
@@ -80,6 +81,7 @@ class TestPropFamiliesSeeded:
         team = _mock_team()
         mock_db.execute.side_effect = [
             _scalars_result([team]),
+            MagicMock(),               # SET LOCAL statement_timeout (#1197)
             _scalars_result([]),
         ]
         resp = await client.get("/api/teams/42/prop-families")

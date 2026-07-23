@@ -77,26 +77,48 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
     upcoming_events = [_format_event_brief(e, team) for e in upcoming_r.scalars().all()]
     recent_events = [_format_event_brief(e, team) for e in recent_r.scalars().all()]
 
-    # --- Team futures (championship, conference, division, awards) ---
-    from app.routes.user import _query_team_futures
-    futures_data = await _query_team_futures([team.id], db, limit=30)
-
-    # --- Season context (every team-page number declares its season) ---
+    # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
+    # failure in an optional enrichment section (a slow/failing futures query, a
+    # season-descriptor edge case, a championship-path exception). Each optional
+    # section degrades to its empty value and the core page (identity + games)
+    # always renders. A cache/DB blip on a sub-section is not allowed to take the
+    # whole page down.
     sport_key = team.sport.key if team.sport else None
     league_slug = _league_slug_for_sport_key(sport_key)
-    season_ctx = (
-        season_windows.season_descriptor(league_slug, now) if league_slug else None
-    )
+
+    # --- Team futures (championship, conference, division, awards) ---
+    futures_items: list = []
+    try:
+        from app.routes.user import _query_team_futures
+        futures_data = await _query_team_futures([team.id], db, limit=30)
+        futures_items = futures_data.get("items", [])
+    except Exception:
+        logger.exception("team page: futures section failed for team %s", team.id)
+
+    # --- Season context (every team-page number declares its season) ---
+    season_ctx = None
+    try:
+        season_ctx = (
+            season_windows.season_descriptor(league_slug, now) if league_slug else None
+        )
+    except Exception:
+        logger.exception("team page: season descriptor failed for team %s", team.id)
 
     # --- Championship path (tier 1/2/4 probabilities) ---
-    champ_path = await _get_championship_path(team.id, db, league_slug=league_slug, now=now)
+    champ_path: list = []
+    try:
+        champ_path = await _get_championship_path(
+            team.id, db, league_slug=league_slug, now=now
+        )
+    except Exception:
+        logger.exception("team page: championship path failed for team %s", team.id)
 
     return {
         "team": _format_team(team),
         "season": season_ctx,
         "upcoming_events": upcoming_events,
         "recent_events": recent_events,
-        "futures": futures_data.get("items", []),
+        "futures": futures_items,
         "championship_path": champ_path,
     }
 

@@ -71,12 +71,23 @@ def _get_rate_limiter():
             # (the `limits` lib passes these kwargs through to the redis client), so
             # its idle connections were prime candidates for the TLS handshake churn.
             from app.tasks.config import socket_keepalive_options
+            from app.tasks.redis_state import (
+                _redis_retry,
+                _redis_retry_on_errors,
+                _REDIS_MAX_CONNECTIONS,
+            )
 
             _stability = {
                 "socket_keepalive": True,
                 "health_check_interval": 25,
                 "socket_connect_timeout": 5,
                 "retry_on_timeout": True,
+                # #1197: retry the TLS-handshake ConnectionError (the lever the
+                # keepalive-only hardening lacked) + bound the pool. The `limits`
+                # lib passes these kwargs straight through to the redis client.
+                "retry": _redis_retry(),
+                "retry_on_error": _redis_retry_on_errors(),
+                "max_connections": _REDIS_MAX_CONNECTIONS,
             }
             _ka = socket_keepalive_options()
             if _ka:
