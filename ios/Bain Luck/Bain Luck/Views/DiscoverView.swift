@@ -160,7 +160,19 @@ enum NativeDiscoverDebugState {
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var visibleCount = 20
-    @State private var dismissed: Set<String> = Self.loadDismissed()
+    // Soft, decaying dismiss store (#1221): id -> dismissedAt (epoch seconds).
+    // Left/right swipe is a downrank input, not a permanent client-side
+    // blackhole — entries expire after `dismissTTL` (matching web's 14-day
+    // story-key suppression), the store is capped, and the feed floor below
+    // backfills the least-recently-dismissed rather than let the visible feed
+    // collapse to ~2 cards.
+    @State private var dismissedAt: [String: TimeInterval] = Self.loadDismissed()
+
+    // Never let client-side filtering (dismiss + group-collapse) shrink the
+    // rendered feed below this many cards when the API returned more (#1221).
+    private static let feedFloor = 8
+    private static let dismissTTL: TimeInterval = 14 * 24 * 3600
+    private static let dismissCap = 500
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
@@ -387,16 +399,37 @@ struct DiscoverView: View {
     }
 
     private var filteredItems: [FeedItem] {
-        let localFresh = vm.items.filter { !dismissed.contains(itemId($0)) }
-        // Drop settled/FINAL rot (resolved futures, completed games, past
+        // Compose in the #1221-ruled order: stale first, dismiss-decay second,
+        // floor last. Each step has a graceful fallback so the feed never empties.
+
+        // 1. Drop settled/FINAL rot (resolved futures, completed games, past
         // resolution dates) so a near-coin-flip season-series or a finished game
         // never leads the feed (Queue #238). isStale was defined but never wired.
-        // Graceful fallback: if everything is stale, keep the fresh set rather
+        // Graceful fallback: if everything is stale, keep the full set rather
         // than empty the feed (the #1091/#1043 empty-tab lesson).
-        let notStale = localFresh.filter { !isStale($0) }
-        let base = notStale.isEmpty ? localFresh : notStale
-        let cooldownFiltered = base.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
-        return cooldownFiltered.isEmpty ? base : cooldownFiltered
+        let notStale = vm.items.filter { !isStale($0) }
+        let staleBase = notStale.isEmpty ? vm.items : notStale
+
+        // 2. Soft, decaying dismiss (#1221): filter dismissed ids, but if that
+        // would shrink the feed below `feedFloor` while more cards exist,
+        // backfill the least-recently-dismissed so a heavy dismiss history can't
+        // collapse the feed to ~2 cards. Never backfills stale rot — staleBase
+        // already excludes it.
+        let kept = staleBase.filter { dismissedAt[itemId($0)] == nil }
+        let dismissBase: [FeedItem]
+        if kept.count >= Self.feedFloor || kept.count == staleBase.count {
+            dismissBase = kept
+        } else {
+            let backfill = staleBase
+                .filter { dismissedAt[itemId($0)] != nil }
+                .sorted { (dismissedAt[itemId($0)] ?? 0) < (dismissedAt[itemId($1)] ?? 0) }
+                .prefix(Self.feedFloor - kept.count)
+            dismissBase = kept + backfill
+        }
+
+        // 3. Category cooldown (soft). Fallback: keep base if it empties.
+        let cooldownFiltered = dismissBase.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
+        return cooldownFiltered.isEmpty ? dismissBase : cooldownFiltered
     }
 
     private var groupedItems: [DiscoverGroupedItem] {
@@ -443,7 +476,38 @@ struct DiscoverView: View {
                 result.append(.single(group[0]))
             }
         }
-        return interleaveGrouped(applyLocalPersonalization(result))
+        return interleaveGrouped(applyLocalPersonalization(enforceGroupFloor(result)))
+    }
+
+    private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
+        if case .group(_, let items, _, _) = item { return items.count }
+        return 1
+    }
+
+    /// Futures group-collapse must not shrink the visible feed below `feedFloor`
+    /// (#1221). When a page of many small futures groups collapses too far, expand
+    /// the largest prefix/group-id groups (kind == nil — never the API's intentional
+    /// comparison bundles) back into singles until the floor is met or nothing is
+    /// left to expand.
+    private func enforceGroupFloor(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        var result = items
+        while result.count < Self.feedFloor {
+            let expandable = result.enumerated().filter { entry in
+                if case .group(_, let its, let kind, _) = entry.element {
+                    return kind == nil && its.count >= 2
+                }
+                return false
+            }
+            guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
+                break
+            }
+            if case .group(_, let its, _, _) = result[target.offset] {
+                result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
+            } else {
+                break
+            }
+        }
+        return result
     }
 
     private func futuresGrouping(for item: FeedItem) -> (key: String, title: String)? {
@@ -868,7 +932,9 @@ struct DiscoverView: View {
         }
         .refreshable {
             visibleCount = 20
-            dismissed.removeAll()
+            // Pull-to-refresh shows a full feed this session (in-memory clear);
+            // the persisted, decaying store on disk is intact for the next launch.
+            dismissedAt.removeAll()
             seenImpressions.removeAll()
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
@@ -917,8 +983,8 @@ struct DiscoverView: View {
     }
 
     private func hideForSession(_ id: String) {
-        dismissed.insert(id)
-        Self.saveDismissed(dismissed)
+        dismissedAt[id] = Date().timeIntervalSince1970
+        Self.saveDismissed(dismissedAt)
         if visibleCount >= max(groupedItems.count - 8, 0) {
             visibleCount += 20
             Task { await vm.loadMoreIfNeeded() }
@@ -929,13 +995,31 @@ struct DiscoverView: View {
         }
     }
 
-    private static func loadDismissed() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: "discover_dismissed") ?? [])
+    private static func loadDismissed() -> [String: TimeInterval] {
+        let cutoff = Date().timeIntervalSince1970 - dismissTTL
+        // Live entries: drop anything past the 14-day TTL on load (#1221).
+        let raw = UserDefaults.standard.dictionary(forKey: "discover_dismissed_v2") as? [String: Double] ?? [:]
+        var live = raw.filter { $0.value >= cutoff }
+        // One-time migration of the legacy timestamp-less Set: stamp survivors
+        // "now" so they still decay out over the next 14 days instead of
+        // persisting forever, then retire the old key.
+        if live.isEmpty, let legacy = UserDefaults.standard.stringArray(forKey: "discover_dismissed"), !legacy.isEmpty {
+            let now = Date().timeIntervalSince1970
+            for id in legacy.suffix(dismissCap) { live[id] = now }
+            UserDefaults.standard.removeObject(forKey: "discover_dismissed")
+            UserDefaults.standard.set(live, forKey: "discover_dismissed_v2")
+        }
+        return live
     }
 
-    private static func saveDismissed(_ ids: Set<String>) {
-        let recent = Array(ids.suffix(500))
-        UserDefaults.standard.set(recent, forKey: "discover_dismissed")
+    private static func saveDismissed(_ store: [String: TimeInterval]) {
+        let cutoff = Date().timeIntervalSince1970 - dismissTTL
+        var live = store.filter { $0.value >= cutoff }
+        if live.count > dismissCap {
+            let keep = live.sorted { $0.value > $1.value }.prefix(dismissCap)
+            live = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+        UserDefaults.standard.set(live, forKey: "discover_dismissed_v2")
     }
 
     private static func loadDailyGuesses() -> Int {
