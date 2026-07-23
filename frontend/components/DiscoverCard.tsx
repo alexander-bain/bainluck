@@ -6,7 +6,7 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
-import { isTrending } from "./discover/utils";
+import { isTrending, suppressBareZeroFuturesCard } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
 import { EventCard } from "./discover/EventCard";
 import { FuturesCard } from "./discover/FuturesCard";
@@ -86,6 +86,12 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
     transform: `translateX(${swipe.offset}px) rotate(${swipe.offset * 0.02}deg)`,
     transition: swipe.offset === 0 ? "transform 0.3s ease" : "none",
   };
+
+  // L2-164 Item 3: belt-and-suspenders 0% guard — never render a bare live-looking
+  // sub-1% futures hero (the stale post-Open golf-card class). Suppress the whole
+  // card here (not just the number) so no empty swipe wrapper is left behind; the
+  // authoritative ranking-side suppression is #240's backend job.
+  if (suppressBareZeroFuturesCard(item)) return null;
 
   return (
     <div ref={swipe.ref} className="relative touch-pan-y select-none" {...swipe.handlers}>

@@ -82,7 +82,7 @@ export function TeamSeasonJourney({
             {pick.marketName}
           </span>
           <span className="text-xs text-text-muted">
-            Opening day → today · fixed 0–100% scale
+            Opening day → today · fixed 0–100% scale (tap Zoom for detail)
           </span>
           {currentPct !== null && (
             <span
@@ -98,6 +98,7 @@ export function TeamSeasonJourney({
           selectedOutcomes={new Set([outcome.outcome_id])}
           outcomeColors={colorMap}
           fixedYAxis
+          allowZoom
           showLegend={false}
           height={220}
         />

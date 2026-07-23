@@ -13,6 +13,50 @@ export function resolvesLabel(d: string | null | undefined): string {
   return "";
 }
 
+/**
+ * L2-164 Item 3 — 0% card display guard (web parity with #240's native
+ * suppression). A default futures card's hero is its LEADING outcome's
+ * probability; a leader sitting below 1% renders as a bare, live-looking "0%" —
+ * the stale post-Open golf-card class Alex flagged. This is the belt-and-
+ * suspenders DISPLAY check (the real ranking-side suppression is #240's backend):
+ * a futures card is suppressed when its leader is sub-1% AND it carries no
+ * settled/resolved context to label the number honestly.
+ *
+ * Never suppresses:
+ *  - distribution / heatmap formats — they render a ladder (with "—" for zeros),
+ *    not a bare live hero, so a low leader reads fine there.
+ *  - settled markets — a resolved flag, a named winner, a settled status, or a
+ *    past resolution_date already give the card a "Resolved" label, so the low
+ *    number is contextual, not bare-live.
+ * Non-futures items are never affected.
+ */
+export function suppressBareZeroFuturesCard(
+  item: FeedItem,
+  now: number = Date.now(),
+): boolean {
+  if (item.type !== "futures") return false;
+  const data = item.data as FeedFuturesData;
+  // `discover_card` isn't in the shared FeedFuturesData type yet (same loose access
+  // as DiscoverCard/FuturesCard); read it via a narrow local cast to stay
+  // self-contained and avoid editing lib/types.ts.
+  const format = (data as { discover_card?: { suggested_format?: string } }).discover_card
+    ?.suggested_format;
+  // Ladder-style formats don't show a bare hero number — leave them alone.
+  if (format === "outcome_distribution" || format === "threshold_heatmap") return false;
+  const leaderProb = data.top_outcomes?.[0]?.probability ?? null;
+  // Only the sub-1% ("0%" when rounded) leader is the problem; a null leader
+  // already renders name-only (no bare hero), so it's fine.
+  if (leaderProb == null || leaderProb >= 0.01) return false;
+  const status = (data.status || "").toLowerCase();
+  const settledByState =
+    data.resolved === true ||
+    !!data.winner ||
+    ["resolved", "closed", "settled", "finalized", "final"].includes(status);
+  const settledByDate =
+    !!data.resolution_date && new Date(data.resolution_date).getTime() < now;
+  return !(settledByState || settledByDate);
+}
+
 export function isTrending(item: FeedItem): boolean {
   if (item.type === "futures") {
     const m = (item.data as FeedFuturesData).top_outcomes?.[0]?.movement;

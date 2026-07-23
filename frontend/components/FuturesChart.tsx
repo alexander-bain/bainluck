@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -60,6 +61,15 @@ interface FuturesChartProps {
    *  dashed line (the "Combined" toggle migrated from EvolutionChart). Only shown
    *  when more than one outcome is displayed. */
   showCombinedProbability?: boolean;
+  /** L2-164: opt-in tap-to-zoom chip for long-horizon low-probability series
+   *  (season journeys). The fixed 0–100% axis stays the DEFAULT so movement is
+   *  never silently exaggerated; the chip lets the user deliberately zoom to a
+   *  rounded bound computed from the series max ("Zoom 0–20%"), clearly labeled,
+   *  and tap again to snap back to full scale. Only offered when the series max is
+   *  low enough that the fixed axis leaves real dead space; non-mini only, so
+   *  sparklines never get the affordance. Every other caller is unaffected
+   *  (default off). */
+  allowZoom?: boolean;
 }
 
 export function FuturesChart({
@@ -80,6 +90,7 @@ export function FuturesChart({
   highlightedOutcomeId,
   onHoverOutcome,
   showCombinedProbability = false,
+  allowZoom = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -108,6 +119,10 @@ export function FuturesChart({
     time: number;
     values: { outcomeId: number; name: string; prob: number; color: string }[];
   } | null>(null);
+
+  // L2-164: zoom state for the opt-in low-prob zoom chip — also before any
+  // early returns so the hooks order is stable.
+  const [zoomed, setZoomed] = useState(false);
 
   if (displayedOutcomes.length === 0) {
     if (mini) return null;
@@ -155,7 +170,12 @@ export function FuturesChart({
     );
   }
 
-  maxProb = fixedYAxis ? 1 : Math.min(1, maxProb * 1.1);
+  // L2-164: the raw series max (before any axis pinning) drives the zoom chip.
+  const dataMax = maxProb;
+  const zoomBound = computeZoomBound(dataMax);
+  const canZoom = canZoomSeries(dataMax, allowZoom, mini);
+  const isZoomed = canZoom && zoomed;
+  maxProb = resolveYAxisMax({ dataMax, fixedYAxis, zoomed, allowZoom, mini });
 
   const chartWidth = mini ? 400 : 800;
   const effectiveHeight = height ?? (mini ? 80 : 200);
@@ -278,6 +298,19 @@ export function FuturesChart({
   return (
     <div className={`${mini ? "" : "space-y-4"} ${className ?? ""}`}>
       <div className={mini ? "" : "overflow-x-auto relative"}>
+        {/* L2-164: tap-to-zoom chip. Fixed 0–100% is the default; the chip lets
+            the user opt into a rounded low-prob zoom and snap back. Absolutely
+            positioned so it never shifts the chart layout. */}
+        {canZoom && (
+          <button
+            type="button"
+            onClick={() => setZoomed((z) => !z)}
+            aria-pressed={isZoomed}
+            className="absolute top-0 right-0 z-20 rounded-full border border-surface-border bg-surface-card/90 px-2 py-0.5 text-[10px] font-semibold text-text-secondary backdrop-blur-sm transition-colors hover:text-text-primary"
+          >
+            {isZoomed ? "Full 0–100%" : `Zoom 0–${Math.round(zoomBound * 100)}%`}
+          </button>
+        )}
         <svg
           viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
           className={mini ? "w-full" : "w-full min-w-[600px]"}

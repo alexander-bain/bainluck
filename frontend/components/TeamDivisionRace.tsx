@@ -53,12 +53,22 @@ export function TeamDivisionRace({
     { key: "championship", label: "Champion", show: race.hasChampionship },
   ];
   const shown = cols.filter((c) => c.show);
-  const gridCols = `minmax(120px,1fr) ${shown.map(() => "72px").join(" ")}`;
+  // L2-164: the name column used to be `minmax(120px,1fr)`, so on a wide card it
+  // flex-grew to absorb ALL leftover width — shoving the number columns to the far
+  // right and opening the dead space Alex flagged. Now the name column hugs its
+  // content and a trailing `1fr` spacer soaks up the extra width AFTER the numbers,
+  // so team names and their numbers sit together on the left.
+  const gridCols = `minmax(110px,max-content) ${shown.map(() => "3.5rem").join(" ")} minmax(0,1fr)`;
 
   return (
     <section className="mb-8">
-      <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
-        Division Race · {race.divisionLabel}
+      <h2 className="flex items-center gap-2 text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+        <span>Division Race · {race.divisionLabel}</span>
+        {race.season && (
+          <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold tracking-wide text-text-muted normal-case">
+            {race.season}
+          </span>
+        )}
       </h2>
       <div className="bg-surface-card border border-surface-border rounded-card overflow-x-auto">
         <div className="min-w-[360px]">

@@ -83,6 +83,20 @@ describe("buildDivisionRace", () => {
     ]);
   });
 
+  test("threads the season label through for the header chip when present", () => {
+    const race = buildDivisionRace(grid(AL_EAST), 111, "Boston Red Sox");
+    expect(race!.season).toBe("2026");
+  });
+
+  test("season is null when the grid provides none (chip stays hidden, never guessed)", () => {
+    const g = grid(AL_EAST);
+    (g as { season: string | null }).season = null;
+    expect(buildDivisionRace(g, 111, "Boston Red Sox")!.season).toBeNull();
+    const blank = grid(AL_EAST);
+    (blank as { season: string | null }).season = "   ";
+    expect(buildDivisionRace(blank, 111, "Boston Red Sox")!.season).toBeNull();
+  });
+
   test("matches by normalized name when the grid has no team_id", () => {
     const teams = AL_EAST.map((t) => team({ ...t, team_id: null }));
     const race = buildDivisionRace(grid(teams), 999, "boston red sox");

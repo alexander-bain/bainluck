@@ -30,6 +30,10 @@ export interface DivisionRaceRow {
 
 export interface DivisionRace {
   divisionLabel: string;
+  /** Season label (e.g. "2026-27") for the header SEASON CHIP. Null/absent when
+   *  the grid payload doesn't carry one — the chip is then gracefully hidden, never
+   *  guessed (#241 backend provides it). */
+  season: string | null;
   rows: DivisionRaceRow[];
   /** Which of the projected columns actually have data (drives header render). */
   hasDivision: boolean;
@@ -103,6 +107,9 @@ export function buildDivisionRace(
 
   return {
     divisionLabel: me.division,
+    // Only surface a real season string; empty/whitespace collapses to null so the
+    // chip stays hidden rather than rendering a blank pill.
+    season: typeof grid.season === "string" && grid.season.trim() ? grid.season.trim() : null,
     rows: sorted,
     hasDivision: rows.some((r) => r.division !== null),
     hasPlayoffs: rows.some((r) => r.playoffs !== null),
