@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, func, case, cast, Integer, String, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1201,8 +1201,36 @@ async def faceted_search(
     }
 
 
+async def _log_search_query(
+    query: str,
+    result_count: Optional[int],
+    top_result_id: Optional[int],
+    user_id: Optional[int],
+    session_id: Optional[str],
+) -> None:
+    """#239 Item 4: persist a search query, best-effort. Opens its own short-lived
+    rw session so it can never affect the read-only search response or its session,
+    and swallows every error — instrumentation must never break search."""
+    try:
+        from app.models.models import SearchQueryLog
+        from app.services.database import async_session_maker
+
+        async with async_session_maker() as s:
+            s.add(SearchQueryLog(
+                query=query[:300],
+                result_count=result_count,
+                top_result_id=top_result_id,
+                user_id=user_id,
+                session_id=(session_id or None) and session_id[:100],
+            ))
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001 — never break search on a logging failure
+        logger.warning("search-log write failed: %s", exc)
+
+
 @router.get("/search")
 async def search_events(
+    request: Request,
     q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),
     sport: Optional[str] = Query(None, description="Filter by sport key (e.g., basketball_nba)"),
     tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\", \"importance:playoff\"])"),
@@ -1843,6 +1871,17 @@ async def search_events(
             _seen_concept_keys.add(_wc_team_concept["key"])
             event_concepts.insert(0, _wc_team_concept)
             event_concepts = event_concepts[:5]
+
+    # #239 Item 4: persist the query (best-effort, never blocks the response on
+    # failure). top_result_id = the leading game result; identity is best-effort
+    # (user_id from auth middleware state, session_id from the x-session-id header).
+    try:
+        _top_id = formatted_results[0].get("id") if formatted_results else None
+        _uid = getattr(request.state, "user_id", None)
+        _sid = request.headers.get("x-session-id") or request.cookies.get("session_id")
+        await _log_search_query(q, total_count, _top_id, _uid, _sid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("search-log dispatch failed: %s", exc)
 
     return {
         "query": q,

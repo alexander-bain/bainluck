@@ -1274,6 +1274,28 @@ class DiscoverInteraction(Base):
     )
 
 
+class SearchQueryLog(Base):
+    """Append-only log of /api/events/search queries (#239 Item 4).
+
+    Lightweight instrumentation to see what people actually search for, whether it
+    returns results, and which result leads — feeding the Instant Answers program
+    (search miss = the #1 reliability failure class) and the search-sentinel gold
+    set. Written fire-and-forget so it never adds latency to the search path;
+    identity is best-effort (user_id when signed in, session_id from x-session-id)."""
+
+    __tablename__ = "search_query_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    query: Mapped[str] = mapped_column(String(300), nullable=False)
+    result_count: Mapped[Optional[int]] = mapped_column(Integer)
+    top_result_id: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class DiscoverReviewDecision(Base):
     """Admin decisions on aggregate Discover engagement signals."""
 

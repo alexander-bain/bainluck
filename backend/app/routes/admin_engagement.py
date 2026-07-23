@@ -23,6 +23,7 @@ from app.models.models import (
     DiscoverLabelEvalRun,
     DiscoverReviewDecision,
     ExternalCuratorGroundTruthItem,
+    SearchQueryLog,
 )
 
 from app.services import get_db, get_db_rw
@@ -56,6 +57,53 @@ router = APIRouter()
 _BUG_FIXED_EMAIL_STATUSES = {"fixed", "actioned"}
 _BUG_FIXED_EMAIL_TASK_NAME = "app.tasks.send_bug_fixed_email"
 _VALID_BUG_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
+
+
+@router.get("/search-log/recent")
+async def list_recent_search_queries(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    zero_only: bool = Query(False, description="Only queries that returned 0 results (search misses)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """#239 Item 4: recent /api/events/search queries — what people search for,
+    whether it returned results, and the leading result. ``zero_only=true`` surfaces
+    the search-miss tail (the Instant Answers program's #1 target)."""
+    _check_admin_secret(secret, request=request)
+
+    stmt = select(SearchQueryLog).order_by(SearchQueryLog.created_at.desc())
+    if zero_only:
+        stmt = stmt.where(SearchQueryLog.result_count == 0)
+    rows = (await db.execute(stmt.limit(limit))).scalars().all()
+
+    # Lightweight 24h aggregate so the ops read shows miss-rate at a glance.
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    total_24h = (await db.execute(
+        select(func.count()).select_from(SearchQueryLog)
+        .where(SearchQueryLog.created_at >= since)
+    )).scalar() or 0
+    zero_24h = (await db.execute(
+        select(func.count()).select_from(SearchQueryLog)
+        .where(SearchQueryLog.created_at >= since, SearchQueryLog.result_count == 0)
+    )).scalar() or 0
+
+    return {
+        "count": len(rows),
+        "total_24h": total_24h,
+        "zero_result_24h": zero_24h,
+        "queries": [
+            {
+                "id": r.id,
+                "query": r.query,
+                "result_count": r.result_count,
+                "top_result_id": r.top_result_id,
+                "user_id": r.user_id,
+                "session_id": r.session_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/discover-label-eval/runs")

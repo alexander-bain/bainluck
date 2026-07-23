@@ -267,7 +267,12 @@ export async function searchEvents(params: {
   if (params.page) searchParams.set("page", params.page.toString());
   if (params.per_page) searchParams.set("per_page", params.per_page.toString());
 
-  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
+  // #239 Item 4: send the Discover session id so the backend search-query log can
+  // attribute anonymous searches (mirrors fetchFeed). Signed-in users are already
+  // attributed via the Bearer token apiFetch attaches.
+  const sessionId = getDiscoverSessionId();
+  const headers = sessionId ? { "x-session-id": sessionId } : undefined;
+  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`, { headers });
 }
 
 /**
