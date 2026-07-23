@@ -240,7 +240,9 @@ private func comparisonPreviewData(
             qaSignals: nil,
             publicSourceDisagreement: nil,
             reasons: nil
-        )
+        ),
+        confidenceTier: nil,
+        confidenceScore: nil
     )
 }
 #endif

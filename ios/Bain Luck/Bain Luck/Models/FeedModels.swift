@@ -183,6 +183,10 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let ei: EIData?
     let pulse: EIData?
     let winProbabilitySources: [String: WinProbSource]?
+    // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from
+    // `confidence_tier`/`confidence_score` via the decoder's .convertFromSnakeCase.
+    let confidenceTier: String?
+    let confidenceScore: Double?
 }
 
 // MARK: - Feed Futures Data
@@ -209,6 +213,10 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
+    // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from
+    // `confidence_tier`/`confidence_score` via the decoder's .convertFromSnakeCase.
+    let confidenceTier: String?
+    let confidenceScore: Double?
 }
 
 // MARK: - Discover Card Archetype

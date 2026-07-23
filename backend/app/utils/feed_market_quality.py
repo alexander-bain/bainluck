@@ -2138,6 +2138,33 @@ _CONF_W_AGREE = 0.15
 # Source count saturates at 3: one source is thin, three-plus is a full bar.
 _CONF_SOURCE_SATURATION = 3
 
+# Cross-source agreement: independent sources "agree" when their home-prob spread
+# is within this band (10 points). Used to populate the calibration-ready
+# ``sources_agree`` signal (L2-172) — see ``cross_source_agreement``.
+_CONF_AGREE_SPREAD = 0.10
+
+
+def cross_source_agreement(
+    probabilities: "list[float] | None",
+    *,
+    spread_threshold: float = _CONF_AGREE_SPREAD,
+) -> "bool | None":
+    """Do independent sources agree on the probability?
+
+    ``True``/``False`` when there are >=2 numeric readings (agree = spread within
+    ``spread_threshold``); ``None`` when agreement isn't measurable (0-1 readings)
+    so the confidence signal drops it rather than guessing. Pure, like the rest of
+    this module — the frontend mirrors it in ``lib/confidence.ts``.
+    """
+    vals = [
+        float(p)
+        for p in (probabilities or [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if len(vals) < 2:
+        return None
+    return (max(vals) - min(vals)) <= spread_threshold
+
 
 def compute_confidence_score(
     *,
@@ -2197,12 +2224,22 @@ def confidence_signal(
     has_recent_movement: bool = False,
     has_volume: bool = False,
     sources_agree: "bool | None" = None,
+    has_closing_line: "bool | None" = None,
 ) -> "dict | None":
     """Build the feed-card confidence payload, or ``None`` when there's no signal.
 
-    Returns ``{"score", "tier", "bars"}``. ``None`` (glyph absent) when we can't
-    even count a single source — the frontend renders nothing rather than a
-    misleading empty bar (#490 "render only where present").
+    Returns ``{"score", "tier", "bars"}`` (plus an optional ``"signals"`` sub-dict).
+    ``None`` (glyph absent) when we can't even count a single source — the frontend
+    renders nothing rather than a misleading empty bar (#490 "render only where
+    present").
+
+    ``sources_agree`` (cross-source spread) and ``has_closing_line`` are recorded
+    raw under ``"signals"`` for later calibration against labeled outcomes (the
+    interestingness posture, L2-172). They are intentionally NOT fed into the live
+    weighted score yet: today's tier stays driven by the three signals #490
+    shipped (source count, recent movement, real volume), so the shipped
+    distribution is frozen — weights untouched, signals populated. A future
+    calibration decides their weight.
     """
     if not source_count:
         return None
@@ -2210,7 +2247,14 @@ def confidence_signal(
         source_count=source_count,
         has_recent_movement=has_recent_movement,
         has_volume=has_volume,
-        sources_agree=sources_agree,
     )
     tier = confidence_tier(score)
-    return {"score": score, "tier": tier, "bars": CONFIDENCE_TIER_BARS[tier]}
+    payload: dict = {"score": score, "tier": tier, "bars": CONFIDENCE_TIER_BARS[tier]}
+    signals: dict = {}
+    if sources_agree is not None:
+        signals["sources_agree"] = bool(sources_agree)
+    if has_closing_line is not None:
+        signals["has_closing_line"] = bool(has_closing_line)
+    if signals:
+        payload["signals"] = signals
+    return payload

@@ -15,6 +15,8 @@ struct FuturesCardView: View {
                 Text(futures.llmSportCategory?.capitalized ?? "Futures")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                // #490: confidence signal (1-3 bars) — renders nothing when absent.
+                SignalBarsView(tier: futures.confidenceTier)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
                 if let count = futures.sourceCount, count > 1 {

@@ -2,6 +2,8 @@
  * TypeScript types for Bain Luck frontend
  */
 
+import type { ConfidenceSignals } from "@/lib/confidence";
+
 export interface Sport {
   id: number;
   key: string;
@@ -865,6 +867,8 @@ export interface FeedEventData {
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
   confidence_tier?: "high" | "moderate" | "low" | null;
   confidence_score?: number | null;
+  /** L2-172 — raw calibration-ready signals (not shown; for later calibration). */
+  confidence_signals?: ConfidenceSignals | null;
   /** ESPN live game data */
   espn?: {
     game_clock?: string;
@@ -901,6 +905,8 @@ export interface FeedFuturesData {
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
   confidence_tier?: "high" | "moderate" | "low" | null;
   confidence_score?: number | null;
+  /** L2-172 — raw calibration-ready signals (not shown; for later calibration). */
+  confidence_signals?: ConfidenceSignals | null;
   // Resolved market metadata (leader ≥97% with interesting journey)
   resolved?: boolean;
   winner?: string;

@@ -1,6 +1,7 @@
 import {
   CONFIDENCE_TIER_BARS,
   confidenceFromSources,
+  crossSourceAgreement,
   normalizeTier,
   scoreToTier,
   tierBars,
@@ -75,6 +76,25 @@ describe("confidence lib", () => {
         sourcesAgree: true,
       })!.score
     ).toBeCloseTo(0.85, 4);
+  });
+
+  // L2-172 — cross-source agreement mirrors the backend
+  // (feed_market_quality.cross_source_agreement). These pins must match
+  // test_feed_market_quality.py::TestCrossSourceAgreement.
+  it("returns null below two readings", () => {
+    expect(crossSourceAgreement(null)).toBeNull();
+    expect(crossSourceAgreement([])).toBeNull();
+    expect(crossSourceAgreement([0.5])).toBeNull();
+  });
+
+  it("agrees within the 10-point band, disagrees outside", () => {
+    expect(crossSourceAgreement([0.55, 0.6, 0.58])).toBe(true);
+    expect(crossSourceAgreement([0.5, 0.6])).toBe(true); // band edge
+    expect(crossSourceAgreement([0.4, 0.62])).toBe(false);
+  });
+
+  it("ignores non-numeric readings", () => {
+    expect(crossSourceAgreement([0.55, 0.58, null, undefined])).toBe(true);
   });
 
   it("normalizes only known tiers", () => {

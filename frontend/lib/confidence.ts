@@ -96,3 +96,36 @@ export function normalizeTier(
   if (tier === "high" || tier === "moderate" || tier === "low") return tier;
   return null;
 }
+
+// ── L2-172: calibration-ready signals ──────────────────────────────────────
+// The backend now records two extra signals on the confidence payload
+// (`confidence_signals`): whether independent sources agree, and whether a
+// closing line has landed. These are recorded raw for later calibration and do
+// NOT move today's tier (weights untouched, tiers frozen — see
+// feed_market_quality.confidence_signal). Mirrored here so the two math libs
+// stay in lockstep, and typed so any future frontend consumer decodes them.
+
+/** Sources "agree" when their probability spread is within this band (10 pts). */
+export const CROSS_SOURCE_AGREE_SPREAD = 0.1;
+
+export interface ConfidenceSignals {
+  sources_agree?: boolean;
+  has_closing_line?: boolean;
+}
+
+/**
+ * Do independent sources agree on the probability? Mirrors
+ * feed_market_quality.cross_source_agreement: true/false when there are >=2
+ * numeric readings (agree = spread within `spreadThreshold`), null when
+ * agreement isn't measurable (0-1 readings) so callers drop it rather than guess.
+ */
+export function crossSourceAgreement(
+  probabilities: Array<number | null | undefined> | null | undefined,
+  spreadThreshold: number = CROSS_SOURCE_AGREE_SPREAD
+): boolean | null {
+  const vals = (probabilities ?? []).filter(
+    (p): p is number => typeof p === "number" && Number.isFinite(p)
+  );
+  if (vals.length < 2) return null;
+  return Math.max(...vals) - Math.min(...vals) <= spreadThreshold;
+}

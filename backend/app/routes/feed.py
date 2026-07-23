@@ -77,6 +77,7 @@ from app.utils.feed_market_quality import (
     cap_low_quality_families,
     classify_market_quality,
     confidence_signal,
+    cross_source_agreement,
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
@@ -2039,6 +2040,39 @@ _SPORT_LABEL_MAP: dict[str, str] = {
     "tennis_wta": "WTA",
     "mma_mixed_martial_arts": "MMA",
 }
+
+
+def _numeric_source_probs(win_probability_sources) -> list[float]:
+    """Extract the numeric home-probability reading from each win-prob source.
+
+    ``win_probability_sources`` is a JSONB dict whose values are either a bare
+    number or a ``{"value": number, ...}`` wrapper. Used to derive the L2-172
+    cross-source-agreement signal without any DB work (the dict is already loaded
+    on the event) — keep this cheap; it runs per card inside GET /api/feed.
+    """
+    out: list[float] = []
+    if not win_probability_sources:
+        return out
+    for v in win_probability_sources.values():
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            out.append(float(v))
+        elif isinstance(v, dict):
+            val = v.get("value")
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out.append(float(val))
+    return out
+
+
+def _outcomes_have_closing_line(outcomes) -> bool:
+    """True when any already-loaded outcome carries a captured closing/settled
+    price (``calibration_probability``). Attribute-only read on loaded rows — no
+    lazy load, no query (safe inside GET /api/feed). L2-172 calibration signal."""
+    for o in outcomes or ():
+        if getattr(o, "calibration_probability", None) is not None:
+            return True
+    return False
 
 
 def _get_sport_label(sport_key: str | None) -> str | None:
@@ -4259,6 +4293,9 @@ async def _score_events(
             # #490: confidence signal (1-3 bars) for game cards — driven by how
             # many win-prob sources priced the game and whether the line moved
             # off open. Volume isn't a game-card signal, so it's omitted.
+            # L2-172: also record the two calibration-ready signals (not scored
+            # yet) — cross-source agreement from the win-prob source spread, and
+            # whether a closing line has landed on the event.
             _event_conf = confidence_signal(
                 source_count=_source_count,
                 has_recent_movement=(
@@ -4266,10 +4303,18 @@ async def _score_events(
                     and opening_home_prob is not None
                     and abs(current_home_prob - opening_home_prob) > 0.001
                 ),
+                sources_agree=cross_source_agreement(
+                    _numeric_source_probs(event.win_probability_sources)
+                ),
+                has_closing_line=(
+                    getattr(event, "closing_home_probability", None) is not None
+                ),
             )
             if _event_conf:
                 event_data["confidence_tier"] = _event_conf["tier"]
                 event_data["confidence_score"] = _event_conf["score"]
+                if _event_conf.get("signals"):
+                    event_data["confidence_signals"] = _event_conf["signals"]
 
             sort_time = event.commence_time.timestamp()
             if event.status == "live":
@@ -4416,6 +4461,9 @@ async def _score_sports_mode_futures(
             FuturesOutcome.rank,
             FuturesOutcome.rank_change_24h,
             FuturesOutcome.opening_probability,
+            # L2-172: needed for the has_closing_line calibration signal; deferred
+            # here would lazy-load per outcome and crash this async route.
+            FuturesOutcome.calibration_probability,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -4853,16 +4901,21 @@ async def _score_sports_mode_futures(
             ),
         }
         # #490: confidence signal (1-3 bars) — mirror of the Discover path.
+        # L2-172: record has_closing_line (calibration-ready, not scored) when any
+        # outcome carries a captured closing/settled price.
         _conf_signal = confidence_signal(
             source_count=source_count,
             has_recent_movement=any(
                 o.get("movement") for o in top_outcomes_data
             ),
             has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
+            has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
         )
         if _conf_signal:
             futures_data["confidence_tier"] = _conf_signal["tier"]
             futures_data["confidence_score"] = _conf_signal["score"]
+            if _conf_signal.get("signals"):
+                futures_data["confidence_signals"] = _conf_signal["signals"]
 
         inline_market_tags = compute_market_tags(
             llm_sport_category=market.llm_sport_category,
@@ -5017,6 +5070,9 @@ async def _score_futures(
             FuturesOutcome.rank,
             FuturesOutcome.rank_change_24h,
             FuturesOutcome.opening_probability,
+            # L2-172: needed for the has_closing_line calibration signal; deferred
+            # here would lazy-load per outcome and crash this async route.
+            FuturesOutcome.calibration_probability,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -5909,16 +5965,21 @@ async def _score_futures(
         }
         # #490: data-driven confidence signal (1-3 bars) from signals already on
         # the card — source count, recent movement, real volume. None -> no glyph.
+        # L2-172: record has_closing_line (calibration-ready, not scored) when any
+        # outcome carries a captured closing/settled price.
         _conf_signal = confidence_signal(
             source_count=source_count,
             has_recent_movement=any(
                 o.get("movement") for o in top_outcomes_data
             ),
             has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
+            has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
         )
         if _conf_signal:
             futures_data["confidence_tier"] = _conf_signal["tier"]
             futures_data["confidence_score"] = _conf_signal["score"]
+            if _conf_signal.get("signals"):
+                futures_data["confidence_signals"] = _conf_signal["signals"]
         if discover_llm_metadata:
             futures_data["discover_llm"] = {
                 "topic": discover_llm_metadata.get("topic"),

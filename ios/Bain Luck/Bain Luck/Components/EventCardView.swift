@@ -102,6 +102,8 @@ struct EventCardView: View {
             if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
+            // #490: confidence signal (1-3 bars) — renders nothing when absent.
+            SignalBarsView(tier: event.confidenceTier)
             if let badge = personalizationBadge {
                 badge
             }

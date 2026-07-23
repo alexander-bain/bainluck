@@ -523,9 +523,19 @@ struct EventDetailView: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(delta > 0 ? .green : .red)
                         }
-                        Text("Win Probability")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        // #490: hero confidence signal (1-3 bars), computed
+                        // client-side from the win-prob source count + whether the
+                        // line moved off open. Mirrors the web hero (lib/confidence.ts).
+                        HStack(spacing: 6) {
+                            Text("Win Probability")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            SignalBarsView(tier: Confidence.fromSources(
+                                sourceCount: event.winProbabilitySources?.count,
+                                hasMovement: event.openingOdds?.homeProbability
+                                    .map { abs(home - $0) > 0.001 } ?? false
+                            )?.rawValue)
+                        }
                     } else {
                         Text("vs")
                             .font(.title2)

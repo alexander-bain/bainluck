@@ -31,6 +31,7 @@ from app.utils.feed_market_quality import (
     compute_confidence_score,
     confidence_signal,
     confidence_tier,
+    cross_source_agreement,
     CONFIDENCE_TIER_BARS,
 )
 from app.utils.feed_quality_debug import apply_db_trace_missing_ground_truth_triage
@@ -2949,7 +2950,61 @@ class TestConfidenceSignal:
             source_count=2, has_recent_movement=True
         )
         assert sig is not None
+        # No calibration signals passed -> no "signals" key (base payload only).
         assert set(sig.keys()) == {"score", "tier", "bars"}
         assert sig["tier"] == "moderate"
         assert sig["bars"] == 2
         assert 0.0 <= sig["score"] <= 1.0
+
+    # --- L2-172: calibration-ready signals recorded without moving the tier ---
+
+    def test_calibration_signals_recorded_without_moving_tier(self):
+        base = confidence_signal(source_count=2, has_recent_movement=True)
+        with_signals = confidence_signal(
+            source_count=2,
+            has_recent_movement=True,
+            sources_agree=True,
+            has_closing_line=False,
+        )
+        assert with_signals is not None
+        # The live tier/score is frozen — sources_agree/has_closing_line are
+        # recorded for later calibration, NOT fed into the weighted score today.
+        assert with_signals["tier"] == base["tier"]
+        assert with_signals["score"] == base["score"]
+        assert with_signals["signals"] == {
+            "sources_agree": True,
+            "has_closing_line": False,
+        }
+
+    def test_calibration_signals_are_omitted_when_absent(self):
+        # None -> not measurable -> the key is dropped, not recorded as False.
+        sig = confidence_signal(
+            source_count=3, has_recent_movement=True, sources_agree=None
+        )
+        assert "signals" not in sig
+
+    def test_partial_calibration_signal_recorded(self):
+        sig = confidence_signal(source_count=1, has_closing_line=True)
+        assert sig["signals"] == {"has_closing_line": True}
+
+
+class TestCrossSourceAgreement:
+    """L2-172 — cross-source agreement from the win-prob spread (calibration signal)."""
+
+    def test_none_below_two_readings(self):
+        assert cross_source_agreement(None) is None
+        assert cross_source_agreement([]) is None
+        assert cross_source_agreement([0.5]) is None
+
+    def test_agree_within_band(self):
+        assert cross_source_agreement([0.55, 0.60, 0.58]) is True
+        # exactly at the 10-point band edge still agrees
+        assert cross_source_agreement([0.50, 0.60]) is True
+
+    def test_disagree_outside_band(self):
+        assert cross_source_agreement([0.40, 0.62]) is False
+
+    def test_ignores_non_numeric_and_bools(self):
+        # bools must not be counted as numeric probabilities
+        assert cross_source_agreement([True, False]) is None
+        assert cross_source_agreement([0.55, 0.58, None]) is True
