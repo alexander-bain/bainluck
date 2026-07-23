@@ -421,6 +421,49 @@ export async function fetchTeamPage(identifier: string): Promise<TeamPageRespons
   return apiFetch<TeamPageResponse>(`/api/teams/${encodeURIComponent(identifier)}`);
 }
 
+// Prop families (#242 backend / L2-167 card): a team's futures/prop markets grouped
+// into cohort-compare "families" (Next Team races, award races, threshold ladders).
+// Each family carries one row per distinct entity, pre-sorted (settled rows sink
+// below live rows; live by probability desc). Only families with >=2 entities are
+// returned by the backend.
+export interface PropFamilyRow {
+  entity: string;
+  market_id: number | null;
+  outcome_id: number | null;
+  probability: number | null; // 0-1
+  source: string;
+  sources: string[];
+  cross_source: Record<string, number | null>;
+  group_id: string | null;
+  status: string;
+  settled: boolean;
+  result: "won" | "lost" | null;
+  top_outcome: string | null;
+  merged_market_ids?: number[];
+}
+
+export interface PropFamily {
+  family_key: string;
+  label: string;
+  entity_count: number;
+  sources: string[];
+  rows: PropFamilyRow[];
+}
+
+export interface TeamPropFamiliesResponse {
+  team: { id: number; name: string; slug: string | null };
+  families: PropFamily[];
+  total_families: number;
+}
+
+export async function fetchTeamPropFamilies(
+  identifier: string,
+): Promise<TeamPropFamiliesResponse> {
+  return apiFetch<TeamPropFamiliesResponse>(
+    `/api/teams/${encodeURIComponent(identifier)}/prop-families`,
+  );
+}
+
 /**
  * Fetch all-time highest and lowest Excitement Index events
  */

@@ -14,9 +14,18 @@ import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
+import LeagueChips from "@/components/LeagueChips";
+import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
+import { trackEvent } from "@/lib/analytics";
 import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
+
+// Representative example queries spanning the search gold-set's classes (a team,
+// a season future, a politics question) — a self-contained zero-state that works
+// regardless of the backend ranking repair (#244) and softens the gap while it
+// lands (companion to #1228's 89%-miss finding).
+const EXAMPLE_QUERIES = ["Lakers", "Super Bowl", "2028 election"];
 
 function SearchLoading() {
   return <LoadingState message="Loading search..." />;
@@ -49,6 +58,105 @@ function SuggestionChips({ suggestions }: { suggestions: SearchSuggestion[] }) {
             <span className="text-text-secondary ml-1.5">{s.label}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// Honest zero-result state (L2-167 Item 2): "No results for X" + tappable
+// suggestions — example queries, top leagues, and category browse — so a dead-end
+// search always offers a next step. Purely presentational + navigational; the GA4
+// page hooks live on the parent SearchContent.
+function SearchZeroState({
+  query,
+  sportFilter,
+  didYouMean,
+  onClearFilter,
+}: {
+  query: string;
+  sportFilter?: string;
+  didYouMean?: string | null;
+  onClearFilter: () => void;
+}) {
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="text-center py-10">
+        <div className="text-4xl mb-4">🔍</div>
+        <h1 className="text-title-2 text-text-primary mb-2">
+          No results for &quot;{query}&quot;
+        </h1>
+        <p className="text-text-secondary">
+          We couldn&apos;t find any teams, games, or markets
+          {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`} matching that.
+        </p>
+        {didYouMean && (
+          <Link
+            href={`/search?q=${encodeURIComponent(didYouMean)}`}
+            className="mt-3 inline-block text-sm text-text-secondary hover:text-text-primary transition-colors"
+          >
+            Did you mean{" "}
+            <span className="font-medium text-accent-brand">{didYouMean}</span>?
+          </Link>
+        )}
+        {sportFilter && (
+          <button
+            onClick={onClearFilter}
+            className="mt-4 block mx-auto text-sm text-text-primary underline hover:no-underline"
+          >
+            Clear sport filter
+          </button>
+        )}
+      </div>
+
+      {/* Example queries — representative of the gold-set classes */}
+      <div className="mb-8">
+        <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-3 text-center">
+          Try searching for
+        </p>
+        <div className="flex flex-wrap justify-center gap-2">
+          {EXAMPLE_QUERIES.map((q) => (
+            <Link
+              key={q}
+              href={`/search?q=${encodeURIComponent(q)}`}
+              className="px-3 py-2 rounded-full bg-surface-card border border-surface-border text-sm font-medium text-text-primary hover:border-text-primary hover:bg-surface-elevated transition-colors"
+            >
+              {q}
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Top leagues */}
+      <div className="mb-8">
+        <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-3">
+          Jump to a league
+        </p>
+        <LeagueChips />
+      </div>
+
+      {/* Browse by category */}
+      <div>
+        <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-3">
+          Browse by category
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {END_OF_FEED_CATEGORIES.map((c) => (
+            <Link
+              key={c.href}
+              href={c.href}
+              onClick={() =>
+                trackEvent("navigation_click", {
+                  click_type: "nav_tab",
+                  from_page: "search_no_results",
+                  to_page: c.href,
+                })
+              }
+              className="rounded-full bg-surface-elevated text-text-secondary text-sm px-3 py-1.5 hover:text-text-primary hover:bg-surface-border transition-colors"
+            >
+              {c.label}
+            </Link>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -244,24 +352,12 @@ function SearchContent() {
 
   if (!results || (!hasEvents && !hasFutures && !hasTeams && !hasEventConcepts)) {
     return (
-      <div>
-        <div className="text-center py-12">
-          <div className="text-4xl mb-4">🤷</div>
-          <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
-          <p className="text-text-secondary">
-            No teams, games, or markets found for &quot;{query}&quot;
-            {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
-          </p>
-          {sportFilter && (
-            <button
-              onClick={() => setFilter(undefined)}
-              className="mt-4 text-sm text-text-primary underline hover:no-underline"
-            >
-              Clear sport filter
-            </button>
-          )}
-        </div>
-      </div>
+      <SearchZeroState
+        query={query}
+        sportFilter={sportFilter}
+        didYouMean={results?.did_you_mean}
+        onClearFilter={() => setFilter(undefined)}
+      />
     );
   }
 

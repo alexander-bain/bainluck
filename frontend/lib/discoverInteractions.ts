@@ -1,4 +1,25 @@
-import type { FeedEventData, FeedFuturesData, FeedItem, FeedTournamentData } from "@/lib/types";
+import type {
+  FeedEventData,
+  FeedFuturesData,
+  FeedItem,
+  FeedTournamentData,
+  FeedConceptData,
+} from "@/lib/types";
+
+// Concept feed items (UFC/F1/cycling event concepts) carry a `domain`, not an
+// `llm_sport_category`. Map the domain to the canonical sport category so concept
+// engagement attributes to the right sport (not the shared "golf" fallthrough)
+// and stays in the sports lane. (L2-167 Item 3.)
+const CONCEPT_DOMAIN_TO_CATEGORY: Record<string, string> = {
+  ufc: "mma",
+  f1: "motorsports",
+  cycling: "cycling",
+};
+
+export function conceptDomainToCategory(domain: string | null | undefined): string {
+  const d = (domain || "").toLowerCase();
+  return CONCEPT_DOMAIN_TO_CATEGORY[d] || d || "sports";
+}
 
 export type DiscoverAction =
   | "impression"
@@ -87,6 +108,19 @@ export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics 
       item_name: data.name,
       score: item.score,
       headline: item.headline || data.hook_description || item.reason || undefined,
+      personalized: item.personalized,
+    };
+  }
+
+  if (item.type === "concept") {
+    const data = item.data as FeedConceptData;
+    return {
+      content_type: "grid",
+      item_id: data.key,
+      category: conceptDomainToCategory(data.domain),
+      item_name: data.name,
+      score: item.score,
+      headline: item.headline || item.reason || undefined,
       personalized: item.personalized,
     };
   }

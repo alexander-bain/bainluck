@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
-import type { TeamPageResponse, TeamFutureItem } from "@/lib/api";
+import { fetchTeamPage, fetchChampionshipGrid, fetchTeamPropFamilies } from "@/lib/api";
+import type { TeamPageResponse, TeamFutureItem, PropFamily } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
@@ -17,6 +17,7 @@ import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
 import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
 import { TeamDivisionRace } from "@/components/TeamDivisionRace";
+import { TeamPropFamilies } from "@/components/TeamPropFamilies";
 
 export default function TeamPage() {
   const params = useParams();
@@ -30,6 +31,7 @@ export default function TeamPage() {
 
   const [data, setData] = useState<TeamPageResponse | null>(null);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
+  const [propFamilies, setPropFamilies] = useState<PropFamily[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +40,7 @@ export default function TeamPage() {
     setLoading(true);
     setError(null);
     setGrid(null);
+    setPropFamilies([]);
     fetchTeamPage(teamSlug)
       .then((result) => {
         if (!cancelled) setData(result);
@@ -72,6 +75,24 @@ export default function TeamPage() {
       cancelled = true;
     };
   }, [data?.team?.sport_key]);
+
+  // Prop families (L2-167): a team's futures/prop markets grouped into cohort
+  // races (Next Team, awards, ladders). Supplementary + best-effort — an
+  // empty/failed payload simply hides the Prop Races section. Sparse teams yield
+  // zero families and the card never renders.
+  useEffect(() => {
+    let cancelled = false;
+    fetchTeamPropFamilies(teamSlug)
+      .then((result) => {
+        if (!cancelled) setPropFamilies(result.families || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPropFamilies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamSlug]);
 
   // Document title
   useEffect(() => {
@@ -316,6 +337,10 @@ export default function TeamPage() {
 
       {/* Division Race — rivals × (Division / Playoffs / Champion), team highlighted. */}
       {race && <TeamDivisionRace race={race} teamColor={team.primary_color} />}
+
+      {/* Prop Races — cohort-compare cards (Next Team, awards, ladders). Renders
+          nothing on sparse teams (component hides when no >=2-entity family). */}
+      <TeamPropFamilies families={propFamilies} teamColor={team.primary_color} />
 
       {/* Season Futures — championship-path progression + props/awards. */}
       {(championship_path.length > 0 || futures.length > 0) && (

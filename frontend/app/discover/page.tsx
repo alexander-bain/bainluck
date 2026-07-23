@@ -5,7 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { trackEvent } from "@/lib/analytics";
 import {
   getDiscoverCategoryAdjustment,
   getDiscoverItemAnalytics,
+  conceptDomainToCategory,
   getDiscoverPersonalizationTrace,
   readDiscoverInteractionProfile,
   recordDiscoverInteraction,
@@ -87,6 +88,10 @@ function getItemId(item: FeedItem): string {
   // member ids). Without this case bundles fell through to `tournament-undefined`,
   // collided, and got dropped by the dedup pass (Queue #62 / OPS-88).
   if (item.type === "bundle") return `bundle-${(item.data as FeedBundleData).id}`;
+  // Concept cards (UFC/F1/cycling) carry their own `event:<domain>:<slug>` key —
+  // give them a concept-specific id so they no longer share the `tournament-`
+  // namespace (avoids a prefix collision in the dedup pass). (L2-167 Item 3.)
+  if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
   return `tournament-${(item.data as any).key}`;
 }
 
@@ -103,6 +108,12 @@ function getItemCategory(item: FeedItem): string {
   if (item.type === "bundle") {
     const first = (item.data as FeedBundleData).items?.[0];
     return first ? getItemCategory(first) : "other";
+  }
+  // Concept cards derive category from `domain` (ufc→mma, f1→motorsports,
+  // cycling→cycling) instead of the "golf" fallthrough, so they attribute to the
+  // right sport and are no longer mis-suppressed by a golf category-cooldown.
+  if (item.type === "concept") {
+    return conceptDomainToCategory((item.data as FeedConceptData).domain);
   }
   return "golf";
 }
@@ -191,7 +202,7 @@ function interleave(items: FeedItem[]): FeedItem[] {
   if (items.length <= 2) return items;
 
   // Separate sports from non-sports
-  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey"]);
+  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "cycling"]);
   const sports = items.filter(i => SPORTS.has(getItemCategory(i)));
   const nonSports = items.filter(i => !SPORTS.has(getItemCategory(i)));
 
@@ -248,7 +259,7 @@ function getGroupedCategory(groupedItem: DiscoverGroupedItem): string {
 function interleaveGrouped(items: DiscoverGroupedItem[]): DiscoverGroupedItem[] {
   if (items.length <= 2) return items;
 
-  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey"]);
+  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "cycling"]);
   const sports = items.filter(i => SPORTS.has(getGroupedCategory(i)));
   const nonSports = items.filter(i => !SPORTS.has(getGroupedCategory(i)));
   const result: DiscoverGroupedItem[] = [];
@@ -347,7 +358,7 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
   return result;
 }
 
-const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "olympics"]);
+const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "cycling", "olympics"]);
 
 function FeedItemShell({
   groupedItem,
