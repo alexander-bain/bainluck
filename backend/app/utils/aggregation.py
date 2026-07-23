@@ -303,14 +303,22 @@ def compute_aggregate_probability(event, event_status: Optional[str] = None) -> 
                 prob_readings[k] = float(val)
 
     if prob_readings:
-        total_weight = 0.0
-        weighted_sum = 0.0
-        for source, prob in prob_readings.items():
-            w = SOURCE_WEIGHTS.get(source, 0.5)
-            weighted_sum += prob * w
-            total_weight += w
-        if total_weight > 0:
-            return round(weighted_sum / total_weight, 6)
+        # Weighted MEDIAN (not mean) — the same outlier-resistant method the
+        # time-series blend (compute_aggregated_probability → the chart's
+        # aggregate_line) uses. This is the module's stated design (see the
+        # docstring): a single stale/lagged source cannot drag the aggregate.
+        #
+        # A weighted MEAN here let a stale sportsbook "betting" reading (weight
+        # 3.0) that had not caught up to the live game state pull the hero toward
+        # the pre-game number (~57%) while the chart's median-based blend line
+        # read the live value (~20%) on the same screen — the 57%-hero vs
+        # 20%-chart contradiction (#240 Item 1). Using the median here makes the
+        # point-in-time hero match the chart's blend line: one number per
+        # question.
+        values = list(prob_readings.values())
+        weights = [SOURCE_WEIGHTS.get(src, 0.5) for src in prob_readings]
+        if any(w > 0 for w in weights):
+            return round(_weighted_median(values, weights), 6)
 
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)

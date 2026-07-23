@@ -3426,6 +3426,25 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "favorite": event.opening_favorite,
         }
 
+    # #240 Item 1: emit a single, unambiguous hero probability (the blend) at the
+    # top level so native/web clients bind to ONE number per question instead of
+    # picking a divergent field (sportsbook consensus, opening line, or a raw
+    # per-bookmaker row). This is the same weighted-median blend the chart's blend
+    # line (aggregate_line) converges to — killing the 57%-hero vs 20%-chart
+    # contradiction on the native event page.
+    if agg_prob is not None:
+        response["hero_probability"] = agg_prob
+        response["hero_probability_away"] = round(1.0 - agg_prob, 6)
+        response["hero_probability_source"] = "blend"
+    elif event.opening_home_probability is not None:
+        response["hero_probability"] = float(event.opening_home_probability)
+        response["hero_probability_away"] = (
+            float(event.opening_away_probability)
+            if event.opening_away_probability is not None
+            else round(1.0 - float(event.opening_home_probability), 6)
+        )
+        response["hero_probability_source"] = "opening"
+
     # Box score data for player props display
     if event.box_score_data and not event.box_score_data.get("error"):
         response["box_score_data"] = {
@@ -6711,6 +6730,34 @@ async def get_event_odds_history(
                         "home_probability": resolved_home_prob,
                     })
 
+    # #240 Item 2a: emit an explicit server-side time domain so clients don't
+    # derive a sliver x-axis from the data extent on a *young* live game. Anchor
+    # the window at game start (commence_time) and floor its width to a minimum so
+    # a just-started game still renders a readable span instead of a few-minute
+    # sliver. Finished games have full data and need no floor.
+    MIN_LIVE_DOMAIN_SECONDS = 30 * 60
+    _domain_start = event.commence_time
+    if not _domain_start and history:
+        _domain_start = datetime.fromisoformat(history[0]["timestamp"])
+    if is_finished:
+        _domain_end = end_cap or event.completed_at
+        if not _domain_end and history:
+            _domain_end = datetime.fromisoformat(history[-1]["timestamp"])
+    else:
+        _domain_end = now
+    time_domain = None
+    if _domain_start and _domain_end:
+        if not is_finished and (
+            _domain_end - _domain_start
+        ).total_seconds() < MIN_LIVE_DOMAIN_SECONDS:
+            _domain_end = _domain_start + timedelta(seconds=MIN_LIVE_DOMAIN_SECONDS)
+        time_domain = {
+            "start": _domain_start.isoformat(),
+            "end": _domain_end.isoformat(),
+            "is_live": not is_finished,
+            "min_window_seconds": MIN_LIVE_DOMAIN_SECONDS,
+        }
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -6718,6 +6765,7 @@ async def get_event_odds_history(
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
         "status": event.status,
+        "time_domain": time_domain,
         "history": history,
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
@@ -7600,20 +7648,37 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     current_spread = None
     current_ou = None
 
+    # #240 Item 1: the hero win probability is the multi-source BLEND (one number
+    # per question), NOT the raw sportsbook consensus. The list/search surfaces
+    # previously served aggregate_bookmaker_odds() here, which diverged from the
+    # feed/detail hero and the chart's blend line (the 57%-vs-20% contradiction).
+    # Bind the DISPLAYED win prob to the blend; keep spread/total/projected/range
+    # and the per-book table from the sportsbook aggregate (those ARE sportsbook
+    # data). compute_aggregate_probability now uses the same weighted median the
+    # chart's blend line uses.
+    from app.utils.aggregation import compute_aggregate_probability as _agg_prob
+    _blend = _agg_prob(event)
+
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
 
-        current_home_prob = aggregated["home_probability"]
-        current_away_prob = aggregated["away_probability"]
+        _hero_home = _blend if _blend is not None else aggregated["home_probability"]
+        _hero_away = (
+            round(1.0 - _hero_home, 6)
+            if _hero_home is not None
+            else aggregated["away_probability"]
+        )
+        current_home_prob = _hero_home
+        current_away_prob = _hero_away
         current_spread = aggregated["home_spread"]
         current_ou = aggregated["over_under"]
 
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
-            "home_probability": aggregated["home_probability"],
-            "away_probability": aggregated["away_probability"],
+            "home_probability": _hero_home,
+            "away_probability": _hero_away,
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -7667,6 +7732,21 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                             if s.projected_away_score else None,
                     })
             response["bookmaker_odds"] = bookmaker_odds_list
+
+    # #240 Item 1: emit a single, unambiguous hero probability (the blend) so
+    # clients bind to ONE number per question instead of a divergent field.
+    if _blend is not None:
+        response["hero_probability"] = _blend
+        response["hero_probability_away"] = round(1.0 - _blend, 6)
+        response["hero_probability_source"] = "blend"
+    elif event.opening_home_probability is not None:
+        response["hero_probability"] = float(event.opening_home_probability)
+        response["hero_probability_away"] = (
+            float(event.opening_away_probability)
+            if event.opening_away_probability is not None
+            else round(1.0 - float(event.opening_home_probability), 6)
+        )
+        response["hero_probability_source"] = "opening"
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
     highlight_result = compute_highlight(

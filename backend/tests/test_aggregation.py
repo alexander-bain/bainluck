@@ -244,10 +244,15 @@ class TestComputeAggregateProbability:
             "opening_home_probability": 0.10,
         })()
 
-        expected = ((0.60 * SOURCE_WEIGHTS["betting"]) + (0.54 * SOURCE_WEIGHTS["espn"])) / (
-            SOURCE_WEIGHTS["betting"] + SOURCE_WEIGHTS["espn"]
+        # Weighted MEDIAN (not mean), consistent with the time-series blend the
+        # chart draws (#240 Item 1). Sources in-weight: betting=0.60 (w=3.0),
+        # espn=0.54 (w=1.5); unknown_source is dropped (not in SOURCE_WEIGHTS).
+        # Cumulative weight crosses 50% (2.25 of 4.5) at betting → median = 0.60.
+        expected = _weighted_median(
+            [0.60, 0.54], [SOURCE_WEIGHTS["betting"], SOURCE_WEIGHTS["espn"]]
         )
         assert compute_aggregate_probability(event) == pytest.approx(expected)
+        assert compute_aggregate_probability(event) == pytest.approx(0.60)
 
     def test_completed_games_exclude_prediction_markets(self):
         event = type("Event", (), {
@@ -297,3 +302,56 @@ class TestComputeAggregateProbability:
         })()
 
         assert compute_aggregate_probability(event) is None
+
+    def test_resists_stale_betting_drag(self):
+        """#240 Item 1: a lagged sportsbook 'betting' reading (weight 3.0) must NOT
+        drag the hero blend when the live models agree elsewhere. The old weighted
+        MEAN gave ~0.38; the weighted median gives the live-model value ~0.20."""
+        event = type("Event", (), {
+            "status": "live",
+            "win_probability_sources": {
+                "betting": 0.57,   # lagged pre-game line
+                "espn": 0.20,
+                "mlb": 0.20,
+                "stat_model": 0.20,
+            },
+            "espn_win_prob_home": 0.20,
+            "opening_home_probability": 0.57,
+        })()
+        hero = compute_aggregate_probability(event)
+        assert hero == pytest.approx(0.20)
+        assert hero < 0.30  # would be ~0.38 under the old mean
+
+
+class TestHeroMatchesBlendSeriesLatestPoint:
+    """#240 Item 1 guard: the point-in-time hero blend
+    (compute_aggregate_probability) equals the latest point of the time-series
+    blend (compute_aggregated_probability → the chart's aggregate_line) for fresh,
+    stable sources — 'hero field == blend series' latest point', one number per
+    question on the same screen."""
+
+    def test_hero_equals_aggregate_line_latest_point(self):
+        now = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+        current = {"betting": 0.57, "espn": 0.20, "mlb": 0.20, "stat_model": 0.20}
+
+        event = type("Event", (), {
+            "status": "live",
+            "win_probability_sources": current,
+            "espn_win_prob_home": 0.20,
+            "opening_home_probability": 0.57,
+        })()
+        hero = compute_aggregate_probability(event)
+
+        # Fresh, flat series (values repeated at 2m/1m/now) → staleness = 0 and
+        # exponential smoothing converges to the raw weighted median, so the
+        # series' latest point is exactly the weighted median of the readings.
+        series = {
+            src: [
+                TimestampedProb(timestamp=now - timedelta(seconds=s), home_probability=val)
+                for s in (120, 60, 0)
+            ]
+            for src, val in current.items()
+        }
+        agg_line = compute_aggregated_probability(series, bucket_seconds=60)
+        assert agg_line, "series should produce points"
+        assert hero == pytest.approx(agg_line[-1].home_probability, abs=1e-6)

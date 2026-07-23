@@ -6,7 +6,7 @@ import Foundation
 /// regardless of how the source string was cased. Backend strings sometimes
 /// arrive `.capitalized` (e.g. "Rbc Canadian Open"), which garbles acronyms
 /// and brand names. `properTitleCase` restores them.
-nonisolated(unsafe) private let knownAcronyms: Set<String> = [
+nonisolated private let knownAcronyms: Set<String> = [
     // Leagues / governing bodies
     "PGA", "LPGA", "DP", "LIV", "NBA", "WNBA", "NHL", "MLB", "NFL",
     "NCAA", "NCAAB", "NCAAF", "MLS", "UCL", "MMA", "UFC", "NASCAR",
@@ -18,7 +18,7 @@ nonisolated(unsafe) private let knownAcronyms: Set<String> = [
 
 /// Mixed-case brand tokens that must be preserved exactly when matched
 /// case-insensitively. Title casing or upper casing would otherwise garble them.
-nonisolated(unsafe) private let brandCasing: [String: String] = [
+nonisolated private let brandCasing: [String: String] = [
     "att": "AT&T",
     "at&t": "AT&T",
     "fedex": "FedEx",
@@ -74,19 +74,19 @@ nonisolated(unsafe) private let _isoPlain: ISO8601DateFormatter = {
     return f
 }()
 
-nonisolated(unsafe) private let _simpleDate: DateFormatter = {
+nonisolated private let _simpleDate: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "yyyy-MM-dd"
     return f
 }()
 
-nonisolated(unsafe) private let _monthDay: DateFormatter = {
+nonisolated private let _monthDay: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "MMM d"
     return f
 }()
 
-nonisolated(unsafe) private let _dayOnly: DateFormatter = {
+nonisolated private let _dayOnly: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "d"
     return f

@@ -778,17 +778,63 @@ def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
         if status in {"completed", "closed"}:
             continue
 
+        has_team_media = bool(data.get("home_team_data") or data.get("away_team_data"))
+
+        # #240 Item 2b / #1091: a LIVE game with real team media (logos/colors) is
+        # never "noise" — it is exactly what the native Live Now tab shows and the
+        # live badge counts. Demotion still ranks it below interesting futures
+        # (score capped at 35), but it must survive so the live tab is honest and
+        # never empties. Obscure no-media live games (e.g. minor-league fixtures)
+        # still fall through to the score/media checks below and are removed.
+        if status == "live" and has_team_media:
+            filtered.append(item)
+            continue
+
         if item.get("score", 0) < 45 and not _is_discover_event_demotion_exception(
             item
         ):
             continue
 
-        has_team_media = bool(data.get("home_team_data") or data.get("away_team_data"))
         if not has_team_media and not _is_discover_event_demotion_exception(item):
             continue
 
         filtered.append(item)
     return filtered
+
+
+def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict], int]:
+    """Drop futures/comparison cards whose entire outcome set reads 0% — a
+    guaranteed-interesting violation (#240 Item 4). These are typically stale or
+    settled markets that leaked into the feed with status still 'open' (gotcha
+    #33): e.g. post-tournament golf FIELD markets where every non-winner outcome
+    settled to 0 but the market was never marked resolved. A card with no positive
+    probability tells the reader nothing (Alex's "3 consecutive golf cards at 0%").
+
+    Events are never suppressed here — a game at 0% home probability is a
+    near-certain away win, still a real story. Only futures/comparison cards whose
+    known outcomes are ALL zero/None are dropped; a card we can't evaluate (no
+    outcomes present) is kept.
+    """
+    kept: list[dict] = []
+    dropped = 0
+    for item in feed_items:
+        if item.get("type") in ("futures", "comparison"):
+            data = item.get("data") or {}
+            outcomes = data.get("outcomes") or []
+            leader = data.get("leader_probability")
+            probs = [
+                o.get("probability")
+                for o in outcomes
+                if isinstance(o, dict) and o.get("probability") is not None
+            ]
+            has_positive = any((p or 0) > 0 for p in probs) or (
+                leader is not None and leader > 0
+            )
+            if outcomes and not has_positive:
+                dropped += 1
+                continue
+        kept.append(item)
+    return kept, dropped
 
 
 def _should_skip_futures_for_recent_dismissal(
@@ -1060,6 +1106,33 @@ async def get_feed(
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    # #240 Item 4: server-side Discover default. The native default tab calls
+    # GET /api/feed?limit=50 with NO mode/event_pct and was served the RAW,
+    # unranked candidate pool (WNBA flood, obscure games, stale 0% cards) —
+    # while web/DiscoverView pass event_pct=0.15 and get the full editorial feed.
+    # A client must be UNABLE to request an unranked feed: an unparameterized
+    # main-feed request now defaults to the same Discover ranking web receives
+    # (quality caps, diversity, story caps, personalization, 0% suppression).
+    #
+    # Guarded so we only touch the MAIN feed request. Content-type-scoped
+    # requests are left raw: the sports-mode feed, single-sport/tag browses,
+    # my-teams, and the events-only backfill (include_futures=false) that feeds
+    # the native Live Now / Upcoming sections — demoting/removing its events
+    # would empty the live tab (#1091, CLAUDE.md: game events are never capped
+    # into an empty tab).
+    if (
+        event_pct is None
+        and (mode or "").lower() != "sports"
+        and sport is None
+        and tags is None
+        and not my_teams_only
+        and include_events
+        and include_futures
+    ):
+        event_pct = 0.15
+        if mode is None:
+            mode = "discover"
 
     session_id = _session_id_from_request(request)
     debug_global = debug and not debug_personalization and not my_teams_only
@@ -1399,6 +1472,14 @@ async def get_feed(
     _previous_at = _record_feed_timing(
         _timings, _started_at, _previous_at, "review_decisions"
     )
+
+    # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
+    # A card whose every outcome reads 0% is never interesting (stale/settled
+    # markets that leaked with status='open'). Applied in every mode, before
+    # ranking, so no client can be served a dead card.
+    feed_items, _zero_dropped = _suppress_zero_probability_cards(feed_items)
+    if _zero_dropped:
+        logger.info("Feed: suppressed %d all-0%% probability card(s)", _zero_dropped)
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker

@@ -447,12 +447,25 @@ class TestEventDetailCurrentOdds:
     async def test_aggregate_current_odds_fallback_contract(self, event_detail_client):
         resp = await event_detail_client.get("/api/events/1")
         body = resp.json()
+        # Weighted-MEDIAN blend (#240 Item 1), matching the chart's blend line.
+        # Sources: betting=0.65 (w=3.0), espn=0.62 (w=1.5); betting carries the
+        # majority weight so the median is 0.65 (was 0.64 under the old mean).
         assert body["current_odds"] == {
-            "home_probability": 0.64,
-            "away_probability": 0.36,
+            "home_probability": 0.65,
+            "away_probability": 0.35,
             "source": "aggregate",
             "bookmaker_count": 0,
         }
+
+    async def test_hero_probability_field_present_and_is_blend(self, event_detail_client):
+        """#240 Item 1: the event payload emits a single, unambiguous hero
+        probability (the blend), and it matches the displayed current_odds."""
+        resp = await event_detail_client.get("/api/events/1")
+        body = resp.json()
+        assert body["hero_probability"] == 0.65
+        assert body["hero_probability_away"] == 0.35
+        assert body["hero_probability_source"] == "blend"
+        assert body["hero_probability"] == body["current_odds"]["home_probability"]
 
 
 class TestEventDetailNotFound:
@@ -783,3 +796,24 @@ class TestEventHistoryShape:
         if resp.status_code == 200:
             body = resp.json()
             assert isinstance(body, dict)
+
+    async def test_time_domain_present_and_floored(self, event_detail_client):
+        """#240 Item 2a: the history payload carries an explicit server-side time
+        domain so clients don't derive a sliver x-axis. For live games the window
+        is floored to a minimum width."""
+        resp = await event_detail_client.get("/api/events/1/history")
+        if resp.status_code != 200:
+            return
+        body = resp.json()
+        assert "time_domain" in body
+        td = body["time_domain"]
+        if td is None:
+            return  # no commence_time / data extent to anchor a domain
+        from datetime import datetime
+
+        start = datetime.fromisoformat(td["start"])
+        end = datetime.fromisoformat(td["end"])
+        assert end >= start
+        assert isinstance(td["is_live"], bool)
+        if td["is_live"]:
+            assert (end - start).total_seconds() >= td["min_window_seconds"]
