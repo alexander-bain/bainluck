@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,8 +20,16 @@ router = APIRouter()
 
 
 @router.get("/{identifier}")
-async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
+async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
     """Get a team page with upcoming/recent games, futures, and championship path."""
+    _t = {}
+    _t0 = time.perf_counter()
+
+    def _mark(label):
+        nonlocal _t0
+        _t[label] = round((time.perf_counter() - _t0) * 1000)
+        _t0 = time.perf_counter()
+
     # Try integer ID first, then slug
     team_filter = Team.slug == identifier
     try:
@@ -91,9 +100,11 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         .limit(5)
     )
 
+    _mark("resolve_team")
     upcoming_r, recent_r = await db.execute(upcoming_q), await db.execute(recent_q)
     upcoming_events = [_format_event_brief(e, team) for e in upcoming_r.scalars().all()]
     recent_events = [_format_event_brief(e, team) for e in recent_r.scalars().all()]
+    _mark("events")
 
     # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
     # failure in an optional enrichment section (a slow/failing futures query, a
@@ -112,6 +123,7 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         futures_items = futures_data.get("items", [])
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
+    _mark("futures")
 
     # --- Season context (every team-page number declares its season) ---
     season_ctx = None
@@ -121,6 +133,7 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         )
     except Exception:
         logger.exception("team page: season descriptor failed for team %s", team.id)
+    _mark("season")
 
     # --- Championship path (tier 1/2/4 probabilities) ---
     champ_path: list = []
@@ -130,8 +143,9 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         )
     except Exception:
         logger.exception("team page: championship path failed for team %s", team.id)
+    _mark("championship")
 
-    return {
+    resp = {
         "team": _format_team(team),
         "season": season_ctx,
         "upcoming_events": upcoming_events,
@@ -139,6 +153,9 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         "futures": futures_items,
         "championship_path": champ_path,
     }
+    if debug_timing:
+        resp["_timings_ms"] = _t
+    return resp
 
 
 # Map an Odds-API sport_key ("basketball_nba") to the season_windows league slug
