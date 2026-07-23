@@ -5,6 +5,7 @@ import { fetchFuturesHistory } from "@/lib/api";
 import type { TeamFutureItem } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
+import { journeyRangeLabel } from "@/lib/teamSeason";
 import { FuturesChart } from "@/components/FuturesChart";
 
 // ---------------------------------------------------------------------------
@@ -22,9 +23,13 @@ const SEASON_HOURS = 24 * 180;
 export function TeamSeasonJourney({
   futures,
   teamColor,
+  season,
 }: {
   futures: TeamFutureItem[];
   teamColor: string | null;
+  // Season string (e.g. "2026-27") from the team payload (#242) — prefixes the
+  // header range label. Absent/null for leagues without a modeled season.
+  season?: string | null;
 }) {
   const pick = useMemo(() => pickJourneyFuture(futures), [futures]);
   const [outcome, setOutcome] = useState<FuturesOutcomeHistory | null>(null);
@@ -82,7 +87,7 @@ export function TeamSeasonJourney({
             {pick.marketName}
           </span>
           <span className="text-xs text-text-muted">
-            Opening day → today · fixed 0–100% scale (tap Zoom for detail)
+            {journeyRangeLabel(season)}
           </span>
           {currentPct !== null && (
             <span

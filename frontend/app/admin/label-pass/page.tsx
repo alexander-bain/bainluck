@@ -171,7 +171,9 @@ export default function LabelPassPage() {
       <div className="text-sm text-text-secondary font-mono mb-2" data-testid="progress-strip">
         {progressLabel(session, total)}
         {totals.applied > 0 && (
-          <span className="ml-2 text-emerald-600">● {totals.applied} live boost{totals.applied === 1 ? "" : "s"}</span>
+          // L2-169: "this session" disambiguates from the cockpit's persistent
+          // all-time applied-boosts count (they are different numbers by design).
+          <span className="ml-2 text-emerald-600">● {totals.applied} live boost{totals.applied === 1 ? "" : "s"} this session</span>
         )}
       </div>
 

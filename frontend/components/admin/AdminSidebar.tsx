@@ -66,6 +66,9 @@ const PILLARS: NavPillar[] = [
     label: "Human Eval",
     icon: <FlaskConical className="w-4 h-4" />,
     items: [
+      // L2-169: direct entry to the fast keyboard-verdict flow (L2-168); the
+      // legacy tabbed /admin/eval stays for the full-context review view.
+      { label: "Label Speed Pass", href: "/admin/label-pass" },
       { label: "Bain-in-the-Loop", href: "/admin/eval" },
       { label: "Labeling Coverage", href: "/admin/labeling-coverage" },
     ],

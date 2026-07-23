@@ -588,11 +588,14 @@ export default function AdminCockpit() {
                 title={
                   evalQ.eval_promote_enabled === false
                     ? "Kill switch ON — applied steers are NOT affecting Discover"
-                    : "Human-accepted steers live in Discover (within 14-day TTL)"
+                    : "All human-accepted steers currently live in Discover (within 14-day TTL) — a persistent total, not this label-pass session"
                 }
               >
+                {/* L2-169: "total" marks this as the persistent all-time count so it
+                    never reads as a contradiction of the label-pass session strip's
+                    "N live boosts this session". */}
                 {evalQ.applied_boosts_count} live boost
-                {evalQ.applied_boosts_count === 1 ? "" : "s"}
+                {evalQ.applied_boosts_count === 1 ? "" : "s"} total
                 {evalQ.eval_promote_enabled === false ? " (off)" : ""}
               </span>
             )}

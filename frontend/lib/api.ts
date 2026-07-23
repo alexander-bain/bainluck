@@ -378,6 +378,23 @@ export interface ChampionshipPathEntry {
   probability: number | null;
   rank: number | null;
   movement: number | null;
+  // Season this number describes, e.g. "2026-27" / "2026" (Queue #242 Item 1,
+  // backend teams.py::_get_championship_path). Absent/null when the market carries
+  // no season and the league has no current-season string.
+  season?: string | null;
+}
+
+/**
+ * Season context descriptor attached to the team-page payload (Queue #242 Item 1,
+ * backend `season_windows.season_descriptor`). Declares WHICH season every
+ * team-page number describes. `season` is null for continuous/unknown leagues
+ * (only NBA/MLB/NFL/NHL carry a season string), in which case chips stay hidden.
+ */
+export interface SeasonDescriptor {
+  league: string | null;
+  season: string | null; // e.g. "2026-27"
+  phase: string; // e.g. "playoffs" | "regular_season" | "in_season"
+  label: string; // e.g. "2026-27 · Playoffs"
 }
 
 /**
@@ -411,6 +428,9 @@ export interface TeamGameBrief {
 
 export interface TeamPageResponse {
   team: TeamPageTeam;
+  // Season context for the whole page (Queue #242 Item 1). Null for leagues
+  // without a modeled season string; consumers hide season chips when absent.
+  season?: SeasonDescriptor | null;
   upcoming_events: TeamGameBrief[];
   recent_events: TeamGameBrief[];
   futures: TeamFutureItem[];

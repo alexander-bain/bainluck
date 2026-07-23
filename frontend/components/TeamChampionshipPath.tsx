@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ChampionshipPathEntry } from "@/lib/api";
+import { pathSeason } from "@/lib/teamSeason";
 
 // ---------------------------------------------------------------------------
 // Championship-path progression (L2-162). The team's path to a title shown as a
@@ -78,9 +79,19 @@ export function TeamChampionshipPath({
   color: string | null;
 }) {
   const ordered = orderForProgression(entries);
+  // L2-169: season chip bound to #242's per-entry season — declares which season
+  // the path describes, rendered only when the entries agree on one (else hidden).
+  const season = pathSeason(entries);
   return (
     <div className="bg-surface-card border border-surface-border rounded-card p-5 flex flex-col gap-3.5">
-      <span className="text-[15px] font-semibold text-text-primary">Championship path</span>
+      <div className="flex items-center gap-2">
+        <span className="text-[15px] font-semibold text-text-primary">Championship path</span>
+        {season && (
+          <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold tracking-wide text-text-muted">
+            {season}
+          </span>
+        )}
+      </div>
       <div className="flex items-stretch gap-2 flex-wrap">
         {ordered.map((entry, i) => (
           <div key={entry.tier} className="flex items-center gap-2 flex-1 min-w-[110px]">

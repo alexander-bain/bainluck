@@ -139,7 +139,7 @@ export default function TeamPage() {
     );
   }
 
-  const { team, upcoming_events, recent_events, futures, championship_path } =
+  const { team, upcoming_events, recent_events, futures, championship_path, season } =
     data;
   const leaguePath = `/sport/${sport}/${league}`;
   // Clean league label — derived from sport_key, not the stale sport_name copy.
@@ -333,7 +333,11 @@ export default function TeamPage() {
       )}
 
       {/* Season Journey — the team's championship prob over the season (one line). */}
-      <TeamSeasonJourney futures={futures} teamColor={team.primary_color} />
+      <TeamSeasonJourney
+        futures={futures}
+        teamColor={team.primary_color}
+        season={season?.season ?? null}
+      />
 
       {/* Division Race — rivals × (Division / Playoffs / Champion), team highlighted. */}
       {race && <TeamDivisionRace race={race} teamColor={team.primary_color} />}
