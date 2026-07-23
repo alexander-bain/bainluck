@@ -87,7 +87,7 @@ _UNLINK_SQL = f"""
 # so the real MLB game can never match. Reversible (status flip, not a delete).
 _VOID_SQL = """
     UPDATE events e
-    SET status = 'voided', updated_at = NOW()
+    SET status = 'voided'
     WHERE e.id = ANY(:event_ids)
       AND e.home_team_id IS NULL
       AND e.away_team_id IS NULL

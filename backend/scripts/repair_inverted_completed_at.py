@@ -54,7 +54,7 @@ _LEDGER_SQL = """
 """
 
 _FIX_SQL = """
-    UPDATE events SET completed_at = :new_completed_at, updated_at = NOW()
+    UPDATE events SET completed_at = :new_completed_at
     WHERE id = :event_id
 """
 

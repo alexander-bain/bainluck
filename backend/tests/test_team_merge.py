@@ -5,9 +5,29 @@ distinct NCAA schools, so a blind (sport_id, espn_id) merge would fuse Kent Stat
 into Ohio State. Every test below asserts BOTH directions — the real bare-location
 stub folds, AND the name-incompatible / real-team cases are refused.
 """
+import pathlib
+import re
 from types import SimpleNamespace
 
 from app.utils import team_merge as tm
+
+
+def test_repair_scripts_never_set_events_updated_at():
+    """The `events` table has NO `updated_at` column — an `UPDATE events SET ...
+    updated_at` raises UndefinedColumnError and fails the whole repair (caught live
+    on the inverted-events apply). Guard every repair that touches events."""
+    root = pathlib.Path(tm.__file__).parent.parent.parent
+    offenders = []
+    for name in ("repair_inverted_completed_at.py", "repair_season_series_mislinks.py"):
+        src = (root / "scripts" / name).read_text()
+        # Any UPDATE ... events ... updated_at within a statement is the bug.
+        for m in re.finditer(r"UPDATE\s+events\b[\s\S]{0,200}?updated_at", src, re.I):
+            offenders.append(f"{name}: {m.group(0)[:60]!r}")
+    # team_merge's FK re-points also target events.
+    tm_src = pathlib.Path(tm.__file__).read_text()
+    for m in re.finditer(r"UPDATE\s+events\b[\s\S]{0,200}?updated_at", tm_src, re.I):
+        offenders.append(f"team_merge.py: {m.group(0)[:60]!r}")
+    assert not offenders, f"events has no updated_at column: {offenders}"
 
 
 def _member(id, name, slug="s", recent=0, total=0, mappings=0, espn="1", sport="x"):
