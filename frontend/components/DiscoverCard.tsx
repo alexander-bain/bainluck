@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
+import type { FeedItem, FeedBundleData, FeedConceptData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
 import { isTrending, suppressBareZeroFuturesCard } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
@@ -12,6 +12,7 @@ import { EventCard } from "./discover/EventCard";
 import { FuturesCard } from "./discover/FuturesCard";
 import { ComparisonCard } from "./discover/ComparisonCard";
 import { TournamentCard } from "./discover/TournamentCard";
+import { ConceptCard } from "./discover/ConceptCard";
 import { GroupCard } from "./discover/GroupCard";
 import { ThemeBundleCard } from "./discover/ThemeBundleCard";
 
@@ -120,6 +121,11 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
           <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : null}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {/* L2-166: a `concept` item (UFC card / F1 GP / cycling grand tour) reaches
+            the Discover feed too — without this branch it rendered an EMPTY card
+            (the settled Tour de France WHAT-HIT marquee vanished on the landing
+            page). Result-first settled grammar handled inside ConceptCard. */}
+        {item.type === "concept" && <ConceptCard data={item.data as FeedConceptData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
         {item.type === "bundle" && (item.data as FeedBundleData).kind === "theme" ? (
           <ThemeBundleCard
             items={(item.data as FeedBundleData).items}
