@@ -12,6 +12,7 @@ Redis keys:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -135,7 +136,11 @@ class LatencyMiddleware(BaseHTTPMiddleware):
             # Track this endpoint in the master set.
             pipe.sadd("latency:_endpoints", normalized)
             pipe.expire("latency:_endpoints", WINDOW_SECONDS + 60)
-            pipe.execute()
+            # #1197 (r259): pipe.execute() is a blocking Redis round-trip. Run it in
+            # a worker thread with a hard timeout so a churning Redis connection can
+            # never block the asyncio event loop (which would stall EVERY concurrent
+            # request) on the 1/10 sampled request.
+            await asyncio.wait_for(asyncio.to_thread(pipe.execute), timeout=0.6)
         except Exception:
             # Never fail a request because of latency tracking.
             logger.debug("Latency tracking write failed", exc_info=True)

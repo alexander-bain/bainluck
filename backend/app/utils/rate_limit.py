@@ -15,6 +15,7 @@ Redis is shared with Celery (same REDIS_URL env var on Heroku).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -35,6 +36,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ANON_RATE_LIMIT = "60/minute"
 AUTH_RATE_LIMIT = "120/minute"
+
+# #1197 (r259): hard wall-clock bound on the async rate-limit Redis check. Because
+# the check is awaited (not a sync blocking call), wait_for genuinely cancels the
+# redis op at this deadline, so a churning connection can add at most this much to
+# a request; on a breach we fail open. Well under the 2s team-route bar.
+_RL_CHECK_TIMEOUT = 0.6
+
+# Fixed-window parameters for the async-redis hot path (mirrors ANON/AUTH above).
+_RL_WINDOW_SECONDS = 60
+_ANON_MAX = 60
+_AUTH_MAX = 120
 
 # Paths exempt from rate limiting
 _EXEMPT_PREFIXES = (
@@ -122,6 +134,49 @@ def _get_rate_limiter():
 
     _rate_limiter = FixedWindowRateLimiter(storage)
     return _rate_limiter
+
+
+# ---------------------------------------------------------------------------
+# Async-redis hot path (#1197 r259)
+# ---------------------------------------------------------------------------
+# The prod rate-limit check runs on our proven async redis client (cancellable by
+# asyncio.wait_for, honors the bounded-client hardening) with an inline fixed-window
+# counter — NOT the sync `limits` limiter, whose blocking hit() on the event loop
+# turned one slow Redis op into site-wide 7-17.6s stalls. The sync `limits` limiter
+# above is kept ONLY as the in-memory dev/CI fallback (no REDIS_URL).
+_async_rl_redis = None
+_async_rl_unavailable = False
+
+
+def _get_async_rl_redis():
+    """Cached async redis client for the rate-limit hot path, or None when no
+    REDIS_URL (dev/CI → memory fallback)."""
+    global _async_rl_redis, _async_rl_unavailable
+    if _async_rl_redis is not None:
+        return _async_rl_redis
+    if _async_rl_unavailable:
+        return None
+    if not (os.getenv("REDIS_URL") or os.getenv("REDIS_TLS_URL")):
+        _async_rl_unavailable = True
+        return None
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+        _async_rl_redis = get_async_redis_client()
+        return _async_rl_redis
+    except Exception:
+        _async_rl_unavailable = True
+        return None
+
+
+async def _redis_fixed_window_hit(redis_cli, key: str, now: int) -> int:
+    """INCR the current window bucket and set its TTL on first hit. Returns the
+    running count. Cancellable — the caller wraps it in asyncio.wait_for."""
+    bucket = now // _RL_WINDOW_SECONDS
+    rkey = f"rl:{key}:{bucket}"
+    count = await redis_cli.incr(rkey)
+    if count == 1:
+        await redis_cli.expire(rkey, _RL_WINDOW_SECONDS + 5)
+    return int(count)
 
 
 # ---------------------------------------------------------------------------
@@ -222,20 +277,56 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if auth_header.lower().startswith("bearer "):
             uid = _extract_uid_from_token(auth_header[7:].strip())
 
-        anon_limit, auth_limit = _get_limits()
-
         if uid:
             key = f"user:{uid}"
-            limit = auth_limit
+            max_requests = _AUTH_MAX
         else:
             key = _get_client_ip(request)
-            limit = anon_limit
+            max_requests = _ANON_MAX
 
-        # Check rate limit
+        # Check rate limit.
+        #
+        # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
+        # a BLOCKING Redis round-trip. Called on the asyncio event loop, one slow
+        # hit() (Heroku Redis TLS churn) blocked the ENTIRE loop and stalled every
+        # concurrent request — why warm non-exempt routes measured 7-17.6s while
+        # exempt routes stayed sub-300ms. Fix: in prod run an inline fixed-window
+        # counter on our async redis client and hard-bound it with wait_for; because
+        # the op is AWAITED (not a blocked thread), wait_for genuinely cancels it at
+        # the deadline. On timeout / any error we FAIL OPEN — a rare un-counted
+        # request is the right trade for keeping the site fast under a Redis blip.
+        redis_cli = _get_async_rl_redis()
+        if redis_cli is not None:
+            try:
+                now = int(time.time())
+                count = await asyncio.wait_for(
+                    _redis_fixed_window_hit(redis_cli, key, now),
+                    timeout=_RL_CHECK_TIMEOUT,
+                )
+                if count > max_requests:
+                    retry_after = max(1, _RL_WINDOW_SECONDS - (now % _RL_WINDOW_SECONDS))
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "detail": f"Rate limit exceeded: {max_requests}/minute",
+                            "retry_after": retry_after,
+                        },
+                        headers={"Retry-After": str(retry_after)},
+                    )
+            except Exception:
+                # Redis down / slow / timed-out — allow the request through rather
+                # than blocking traffic (a ConnectionError here is dropped from
+                # Sentry by main.before_send; a timeout is the intended fail-open).
+                logger.warning("Rate limit check failed/timed out — allowing request")
+            return await call_next(request)
+
+        # Dev/CI fallback (no REDIS_URL): the in-memory sync limiter is fast and
+        # non-blocking (no network), so calling it directly is fine here.
+        anon_limit, auth_limit = _get_limits()
+        limit = auth_limit if uid else anon_limit
         try:
             rl = _get_rate_limiter()
             if not rl.hit(limit, "rate_limit", key):
-                # Limit exceeded — compute seconds until window resets
                 stats = rl.get_window_stats(limit, "rate_limit", key)
                 retry_after = max(1, int(stats.reset_time - time.time()))
                 return JSONResponse(
@@ -247,8 +338,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry_after)},
                 )
         except Exception:
-            # If Redis is down, allow the request through rather than
-            # blocking all traffic.  Log for observability.
-            logger.exception("Rate limit check failed — allowing request")
+            logger.warning("Rate limit check failed — allowing request")
 
         return await call_next(request)

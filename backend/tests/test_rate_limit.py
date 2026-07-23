@@ -179,6 +179,67 @@ def _make_jwt(payload: dict) -> str:
     return f"{header}.{body}.{sig}"
 
 
+class TestRateLimitFailFast:
+    """#1197 (r259): a slow/churning Redis op must never block the request — the
+    async check is hard-bounded by wait_for and fails OPEN within the budget."""
+
+    def test_slow_redis_fails_open_within_budget(self, monkeypatch):
+        import asyncio
+        import time as _time
+        from starlette.testclient import TestClient
+        import app.utils.rate_limit as rl_mod
+
+        rl_mod._RL_CHECK_TIMEOUT = 0.2
+
+        class _SlowAsyncRedis:
+            async def incr(self, *a, **k):
+                await asyncio.sleep(3)  # simulate a churning Redis round-trip
+                return 1
+
+            async def expire(self, *a, **k):
+                return True
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: _SlowAsyncRedis())
+        app = _make_test_app()
+        client = TestClient(app)
+
+        start = _time.perf_counter()
+        resp = client.get("/api/feed")
+        elapsed = _time.perf_counter() - start
+        # Fails OPEN (request allowed) and returns fast — NOT after the 3s sleep.
+        assert resp.status_code == 200
+        assert elapsed < 2.0, f"rate-limit check did not fail-fast: {elapsed:.2f}s"
+
+    def test_async_redis_path_enforces_limit(self, monkeypatch):
+        from starlette.testclient import TestClient
+        import app.utils.rate_limit as rl_mod
+
+        rl_mod._RL_CHECK_TIMEOUT = 0.6
+        rl_mod._ANON_MAX = 3
+
+        counter = {"n": 0}
+
+        class _CountingAsyncRedis:
+            async def incr(self, *a, **k):
+                counter["n"] += 1
+                return counter["n"]
+
+            async def expire(self, *a, **k):
+                return True
+
+        monkeypatch.setattr(rl_mod, "_get_async_rl_redis", lambda: _CountingAsyncRedis())
+        app = _make_test_app()
+        client = TestClient(app)
+
+        for i in range(3):
+            assert client.get("/api/feed").status_code == 200, f"req {i+1}"
+        # 4th exceeds the (patched) max of 3 → 429.
+        resp = client.get("/api/feed")
+        assert resp.status_code == 429
+        assert "Rate limit exceeded" in resp.json()["detail"]
+        rl_mod._ANON_MAX = 60  # restore
+
+
 class TestRateLimitMiddleware:
     """Integration tests for the rate limit middleware."""
 
