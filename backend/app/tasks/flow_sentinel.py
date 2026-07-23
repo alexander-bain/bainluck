@@ -357,6 +357,21 @@ def overnormalized_participation_family(
     return sum_lo <= total <= sum_hi
 
 
+def chart_density_tile_broken(tile) -> bool:
+    """#1147: True when the chart_density tile is a BROKEN MEASUREMENT rather than a
+    real reading — missing, or degraded to ``{"error": ...}`` / ``{"skipped": ...}``
+    because the census SQL hit its statement_timeout with no prior good value. A
+    broken measurement must be SKIPPED, never filed as a RED (cry-wolf); only a
+    valid numeric below-bar reading is a real defect."""
+    if tile is None:
+        return True
+    if not isinstance(tile, dict):
+        return True
+    if tile.get("error") or tile.get("skipped"):
+        return True
+    return tile.get("overall_below_bar_pct") is None
+
+
 def chart_density_verdict(tile: dict, threshold: float) -> tuple[bool, dict]:
     """(passed, evidence) for the chart_density tile. Fails when the overall
     below-bar fraction exceeds the (tunable) threshold. Missing/errored tile is a
@@ -628,11 +643,23 @@ async def _run_chart_density(client: httpx.AsyncClient) -> dict:
         tile = census.get("chart_density") if isinstance(census, dict) else None
     except Exception as exc:
         err = str(exc)[:150]
-    if tile is None:
+    # #1147: a MISSING tile, or a DEGRADED one (the census tile query hit its
+    # statement_timeout and _degrade returned {"error": ...} / {"skipped": ...} with
+    # no prior good value), is a BROKEN MEASUREMENT — not evidence of a real density
+    # collapse. Filing a RED on our own broken measurement is exactly the cry-wolf
+    # #1147 flagged. Treat it as skipped; only a valid numeric below-bar reading fires.
+    if chart_density_tile_broken(tile):
+        reason = err or (
+            (tile or {}).get("error")
+            or (tile or {}).get("skipped")
+            or "chart_density tile unavailable / degraded"
+            if isinstance(tile, dict)
+            else (err or "chart_density tile unavailable")
+        )
         return {
             "flow": "chart_density", "checked": 0, "passed": True,
             "failures": [],
-            "evidence": {"skipped": True, "reason": err or "chart_density tile unavailable"},
+            "evidence": {"skipped": True, "reason": reason},
             "skipped": True,
         }
     passed, ev = chart_density_verdict(tile, CHART_DENSITY_MAX_BELOW_BAR_PCT)

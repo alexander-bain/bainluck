@@ -12,6 +12,7 @@ from app.tasks.flow_sentinel import (
     build_flow_issue_body,
     build_flow_issue_title,
     chart_density_verdict,
+    chart_density_tile_broken,
     event_dup_key,
     feed_event_card_count,
     feed_quality_failures,
@@ -258,6 +259,23 @@ class TestChartDensityVerdict:
         passed, ev = chart_density_verdict({"error": "boom"}, 95.0)
         assert passed is False
         assert "reason" in ev
+
+
+class TestChartDensityTileBroken:
+    """#1147: a broken/degraded measurement must be SKIPPED by _run_chart_density,
+    never filed as a RED (cry-wolf on our own timed-out census query)."""
+
+    def test_valid_reading_not_broken(self):
+        assert chart_density_tile_broken({"overall_below_bar_pct": 91.0}) is False
+        # even a genuinely-above-bar reading is a valid measurement, not "broken"
+        assert chart_density_tile_broken({"overall_below_bar_pct": 99.9}) is False
+
+    def test_missing_or_degraded_is_broken(self):
+        assert chart_density_tile_broken(None) is True
+        assert chart_density_tile_broken({"error": "QueryCanceledError"}) is True
+        assert chart_density_tile_broken({"skipped": "deadline budget exhausted"}) is True
+        assert chart_density_tile_broken({"by_source": []}) is True  # no pct
+        assert chart_density_tile_broken("nonsense") is True
 
 
 class TestFeedQualityFailures:

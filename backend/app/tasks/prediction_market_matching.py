@@ -800,6 +800,13 @@ async def _relink_collapsed_game_markets(session) -> int:
     Bounded to the game-market cohort (no broad in-memory pull, gotcha #899).
     """
     try:
+        # #1147 family: this correlated self-join UPDATE (a LATERAL scan of events
+        # per mislinked market) can grow with the population and hang the realtime
+        # matching worker if it ever runs long. Bound it — a timeout aborts THIS
+        # statement, the except below logs it, and the next run retries; it never
+        # blocks live polling. SET LOCAL is scoped to this transaction (reset on the
+        # commit below).
+        await session.execute(text("SET LOCAL statement_timeout = '30s'"))
         r = await session.execute(text(r"""
             WITH mislinked AS (
                 SELECT fm.id AS mid, fm.event_id AS cur_eid,
@@ -837,6 +844,13 @@ async def _relink_collapsed_game_markets(session) -> int:
         return n
     except Exception as e:
         logger.error("Relink collapsed game markets error: %s", e)
+        # #1147: a statement_timeout (or any error) leaves the transaction aborted;
+        # roll back so the shared session isn't poisoned for the caller's next op
+        # ("current transaction is aborted" cascade).
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         return 0
 
 
