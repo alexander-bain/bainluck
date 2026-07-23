@@ -211,3 +211,78 @@ class TestListUfcCardConcepts:
         c = concepts[0]
         assert c["latest_commence"] == fight_time  # not the Kalshi close date
         assert c["main_event_id"] == 301
+
+
+class TestResolveConceptChampion:
+    """#1219 — the WHAT-HIT card names the graded champion of a settled concept.
+
+    ``_resolve_concept_champion`` mirrors the settled-concept sentinel's crown
+    (exactly one competitor with ``won=True``) so a settled marquee card can lead
+    with "Tadej Pogačar — Won" instead of a bare recap invite. Best-effort: an
+    ambiguous / absent crown, or any failure, returns None (the recap fallback);
+    it never fabricates a winner."""
+
+    class _FakeAdapter:
+        def __init__(self, envelope):
+            self._envelope = envelope
+
+        async def build_event(self, slug, db):
+            return self._envelope
+
+    @staticmethod
+    def _patch(monkeypatch, envelope):
+        import app.utils.event_concept as ec
+
+        monkeypatch.setattr(
+            ec, "get_adapter",
+            lambda domain: TestResolveConceptChampion._FakeAdapter(envelope),
+        )
+
+        # Force a cold envelope cache so the adapter path runs deterministically.
+        def _boom(*a, **k):
+            raise RuntimeError("no redis in test")
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", _boom)
+
+    @pytest.mark.asyncio
+    async def test_single_crown_returns_winner(self, monkeypatch):
+        from app.routes.feed import _resolve_concept_champion
+
+        self._patch(monkeypatch, {"primary": {"competitors": [
+            {"name": "Tadej Pogačar", "won": True, "probability": 0.99},
+            {"name": "Jonas Vingegaard", "won": False, "probability": 0.4},
+        ]}})
+        result = await _resolve_concept_champion(
+            None, "event:cycling:tour-de-france-2026"
+        )
+        assert result == {"winner": "Tadej Pogačar", "result_summary": None}
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_crown_returns_none(self, monkeypatch):
+        from app.routes.feed import _resolve_concept_champion
+
+        self._patch(monkeypatch, {"primary": {"competitors": [
+            {"name": "A", "won": True},
+            {"name": "B", "won": True},
+        ]}})
+        result = await _resolve_concept_champion(None, "event:f1:british-gp-2026")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_crown_returns_none(self, monkeypatch):
+        from app.routes.feed import _resolve_concept_champion
+
+        self._patch(monkeypatch, {"primary": {"competitors": [
+            {"name": "A", "won": False},
+            {"name": "B", "won": False},
+        ]}})
+        result = await _resolve_concept_champion(None, "event:cycling:tour-de-france-2026")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_envelope_returns_none(self, monkeypatch):
+        from app.routes.feed import _resolve_concept_champion
+
+        self._patch(monkeypatch, None)
+        result = await _resolve_concept_champion(None, "event:cycling:tour-de-france-2026")
+        assert result is None

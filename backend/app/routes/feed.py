@@ -6487,6 +6487,63 @@ def _concept_reason(c: dict) -> str:
     return f"{fc} fight{'' if fc == 1 else 's'} on the card"
 
 
+async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict]:
+    """Resolve the graded champion of a settled concept for its WHAT-HIT card (#1219).
+
+    The lightweight concept listers carry no outcome data, so a settled marquee
+    card can't name its winner — it can only say "Final result, see the recap".
+    Mirror the settled-concept sentinel's authoritative crown (exactly one
+    competitor with ``won=True`` — the sole-survivor signal that also covers the
+    odds_api winner-fields which never grade ``is_winner``) by reading the concept
+    detail envelope. Best-effort: any failure (or an ambiguous / absent crown)
+    returns ``None`` and the card falls back to the generic recap invite. It never
+    fabricates a winner (the L2-159 frontend contract).
+
+    Returns ``{"winner": name, "result_summary": None}`` or ``None``. Prefers the
+    warm envelope the detail route already caches so it adds no build cost on the
+    hot ``GET /api/feed`` path; a live build only runs on a cold cache (whathit
+    concepts are few — at most a handful in any 36h post-settlement window).
+    """
+    try:
+        from app.utils.event_concept import get_adapter, parse_event_key
+
+        envelope = None
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            _rc = get_redis_client()
+            cached = _rc.get(f"bainluck:event_concept:{key}")
+            if cached:
+                import json as _json
+
+                envelope = _json.loads(
+                    cached.decode() if isinstance(cached, bytes) else cached
+                )
+        except Exception:
+            envelope = None
+
+        if envelope is None:
+            domain, slug = parse_event_key(key)
+            adapter = get_adapter(domain)
+            if adapter is None:
+                return None
+            envelope = await adapter.build_event(slug, db)
+
+        if not envelope:
+            return None
+        primary = envelope.get("primary") or {}
+        crowned = [c for c in (primary.get("competitors") or []) if c.get("won")]
+        if len(crowned) != 1:
+            return None
+        name = (crowned[0].get("name") or "").strip()
+        if not name:
+            return None
+        return {"winner": name, "result_summary": None}
+    except Exception as e:  # never break the feed for a recap flourish
+        logger.warning("Feed: failed to resolve concept champion for %s: %s", key, e)
+        return None
+
+
 async def _score_event_concepts(
     db: AsyncSession,
     now: datetime,
@@ -6570,6 +6627,12 @@ async def _score_event_concepts(
         if score <= 0:
             continue
         latest = c.get("latest_commence")
+        _is_whathit = pin_state == "whathit"
+        # #1219: name the champion on the WHAT-HIT card. Only for the handful of
+        # settled marquee concepts in their T+36h window — resolved from the graded
+        # crown so TdF Sunday leads with "Tadej Pogačar — Won" instead of a bare
+        # "Final result, see the recap". Best-effort; None keeps the recap fallback.
+        _champion = await _resolve_concept_champion(db, c["key"]) if _is_whathit else None
         feed_items.append(
             {
                 "type": "concept",
@@ -6589,7 +6652,16 @@ async def _score_event_concepts(
                     "is_marquee": _is_marquee,
                     # #235 Item 4: true only in the post-settlement window — the card
                     # renders the "what happened" framing instead of the live one.
-                    "marquee_whathit": pin_state == "whathit",
+                    "marquee_whathit": _is_whathit,
+                    # #1219: graded champion for the WHAT-HIT card. Present only when a
+                    # settled concept has an unambiguous crown; the L2-159 renderer
+                    # reads winner/result_summary gracefully and never fabricates them.
+                    **({"winner": _champion["winner"]} if _champion else {}),
+                    **(
+                        {"result_summary": _champion["result_summary"]}
+                        if _champion and _champion.get("result_summary")
+                        else {}
+                    ),
                 },
                 # #235 Item 4: pin while live OR in the T+36h WHAT-HIT window.
                 "_marquee_pin": pin_state in ("live", "whathit"),
