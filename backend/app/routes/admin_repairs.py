@@ -78,7 +78,7 @@ async def list_repairs(request: Request, secret: str = Query(None)):
     return {"repairs": sorted(_REPAIRS)}
 
 
-@router.post("/repairs/ensure-indexes")
+@router.post("/ensure-perf-indexes")
 async def ensure_indexes(
     request: Request,
     secret: str = Query(None),
