@@ -183,6 +183,39 @@ def _team_marquee_rank(sport_key: str | None) -> int:
     return 0 if sport_key in _MARQUEE_TEAM_SPORT_KEYS else 1
 
 
+def _dedupe_prefix_duplicate_team_rows(rows: list) -> list:
+    """Drop the odds-provider city-only duplicate that shadows the real franchise.
+
+    #1220/#1204 family: the provider models an NHL/NBA/MLS team as the bare city
+    ("Boston", icehockey_nhl) alongside the full-name row ("Boston Bruins"). The
+    bare name is a single lexeme, so ``ts_rank_cd`` scores it strictly HIGHER than
+    the two-lexeme franchise → "Boston" out-ranks "Boston Bruins" in search. Drop a
+    row whose name is a whole-name PREFIX of a longer row IN THE SAME SPORT.
+
+    The same-sport + prefix-of-a-longer-name guard is deliberate: legit single-token
+    clubs (Arsenal, Chelsea, Barcelona) have NO "Arsenal <x>" sibling in their
+    league, so they are never suppressed. Pure (safe to unit-test)."""
+    names_by_sport: dict = {}
+    for r in rows:
+        names_by_sport.setdefault(getattr(r, "sport_key", None), []).append(
+            (getattr(r, "name", "") or "")
+        )
+
+    def _is_prefix_dup(name: str, sport) -> bool:
+        if not name:
+            return False
+        low = name.lower() + " "
+        return any(
+            other != name and other.lower().startswith(low)
+            for other in names_by_sport.get(sport, [])
+        )
+
+    return [
+        r for r in rows
+        if not _is_prefix_dup((getattr(r, "name", "") or ""), getattr(r, "sport_key", None))
+    ]
+
+
 def _sort_matched_team_rows(rows: list) -> list:
     """Order team-search rows by FTS rank desc, then marquee league, then name.
 
@@ -361,6 +394,61 @@ def _detect_query_world_cup_concept(q: str | None) -> dict | None:
     if not q or not _WORLD_CUP_QUERY_RE.search(q) or _WORLD_CUP_NEG_RE.search(q):
         return None
     return _wc_concept_dict()
+
+
+# Queue #246 Item 1b: awards ceremonies (Oscars / Emmys / Grammys / Tonys) are
+# first-class event concepts (`event:awards:<slug>`, resolved by the registered
+# AwardsEventAdapter → the latest edition, so never-dead). A family-phrased query
+# ("grammys", "the oscars", "academy awards") must land the ceremony concept
+# TOP-1, but today returns ZERO results: the market-name-derived concept path
+# (the loop in `search_events`) only fires when an in-result market name carries
+# the phrase, and a bare "grammys" query matches no market name. This is the exact
+# blind spot the golf-major (#1063) and World Cup (#205) query detectors already
+# close for their domains. Word-boundary anchored; the ambiguous ceremonies are
+# plural/qualified only ("oscar"/"tony" are common person names, so bare singular
+# is intentionally NOT matched — "oscars"/"academy award(s)" and "tonys"/"tony
+# awards" are). "grammy"/"emmy" singular are unambiguous.
+_AWARDS_QUERY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bgrammys?\b", re.I), "grammys"),
+    (re.compile(r"\bemmys?\b", re.I), "emmys"),
+    (re.compile(r"\boscars\b|\bacademy\s+awards?\b", re.I), "oscars"),
+    (re.compile(r"\btonys\b|\btony\s+awards?\b", re.I), "tonys"),
+]
+
+
+def _detect_query_awards_concept(q: str | None) -> dict | None:
+    """Resolve a raw search query to an awards-ceremony event concept, or None.
+
+    Returns `{key, name, domain, market_id}` (market_id None — the concept resolves
+    by key via the AwardsEventAdapter, which maps the bare ceremony slug to the
+    latest edition). Pure + word-boundary anchored, so it is safe to unit-test and
+    cannot false-fire on an unrelated query. Mirrors
+    `_detect_query_golf_major_concept` in structure, return shape, and never-dead
+    guarantee. The display name comes from the same `CEREMONIES` config the adapter
+    resolves against, so the concept can never name a ceremony the adapter can't
+    build."""
+    if not q:
+        return None
+    slug = None
+    for pat, s in _AWARDS_QUERY_PATTERNS:
+        if pat.search(q):
+            slug = s
+            break
+    if slug is None:
+        return None
+    try:
+        from app.utils.event_awards import CEREMONIES
+    except Exception:
+        return None
+    cfg = CEREMONIES.get(slug)
+    if cfg is None:
+        return None
+    return {
+        "key": f"event:awards:{cfg.slug}",
+        "name": cfg.display,
+        "domain": "awards",
+        "market_id": None,
+    }
 
 
 def _market_volume(m) -> float:
@@ -1863,6 +1951,17 @@ async def search_events(
         event_concepts.insert(0, _wc_concept)
         event_concepts = event_concepts[:5]
 
+    # Queue #246 Item 1b: prepend the awards-ceremony concept when the QUERY names a
+    # ceremony ("grammys" / "the oscars" / "academy awards"). The same never-dead
+    # `event:awards:<slug>` the market-name loop emits above, but reachable even when
+    # no in-result market carries the bare phrase (a bare "grammys" query returns 0
+    # markets today). Prepended so it leads top-1.
+    _awards_concept = _detect_query_awards_concept(q)
+    if _awards_concept and _awards_concept["key"] not in _seen_concept_keys:
+        _seen_concept_keys.add(_awards_concept["key"])
+        event_concepts.insert(0, _awards_concept)
+        event_concepts = event_concepts[:5]
+
     # Search teams — FTS-gated (see _build_team_search_filter): the dedicated Teams
     # surface must be a genuine token match, not a substring-ILIKE artifact. A
     # low-confidence trigram "did you mean" is deliberately NOT injected here (it
@@ -1886,10 +1985,10 @@ async def search_events(
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
     # rank-first / marquee tie-break ordering before capping at 5.
-    team_rows = _sort_matched_team_rows([
+    team_rows = _sort_matched_team_rows(_dedupe_prefix_duplicate_team_rows([
         row for row in team_search_result.all()
         if not _is_individual_sport(row.sport_key)
-    ])
+    ]))
     teams_seen: set[str] = set()
     matched_teams = []
     for row in team_rows:
@@ -2347,6 +2446,21 @@ async def typeahead_search(
             "text": _ta_wc["name"],
             "event_key": _ta_wc["key"],
             "sport_key": "soccer",
+        })
+        event_concept_pool = event_concept_pool[:3]
+
+    # Queue #246 Item 1b: awards ceremonies are query-derived in typeahead too —
+    # "grammys"/"the oscars"/"academy awards" surfaces the ceremony concept in the
+    # single event_concept slot the dropdown shows (sport_key "awards" matches the
+    # market-name-derived awards path above).
+    _ta_awards = _detect_query_awards_concept(q)
+    if _ta_awards and _ta_awards["key"] not in _ta_seen_concept_keys:
+        _ta_seen_concept_keys.add(_ta_awards["key"])
+        event_concept_pool.insert(0, {
+            "type": "event_concept",
+            "text": _ta_awards["name"],
+            "event_key": _ta_awards["key"],
+            "sport_key": "awards",
         })
         event_concept_pool = event_concept_pool[:3]
 

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from app.routes.events import (
     _build_team_search_filter,
+    _detect_query_awards_concept,
     _detect_query_golf_major_concept,
     _detect_query_world_cup_concept,
     _event_search_vector,
@@ -118,6 +119,62 @@ class TestWorldCupConceptDetection:
     def test_none_and_empty_are_safe(self):
         assert _detect_query_world_cup_concept(None) is None
         assert _detect_query_world_cup_concept("") is None
+
+
+# ============================================================================
+# Queue #246 Item 1b — Awards-ceremony event-concept detection (pure, query-level)
+# ============================================================================
+
+
+class TestAwardsConceptDetection:
+    """`_detect_query_awards_concept` must surface each ceremony's never-dead
+    `event:awards:<slug>` concept for family-phrased queries (a bare "grammys"
+    returns 0 markets today, so the market-name-derived path cannot), and never
+    false-fire on unrelated queries or on the ambiguous bare singular
+    "oscar"/"tony" person-name spellings. Regression for Queue #246 Item 1b."""
+
+    @pytest.mark.parametrize(
+        "query,expected_key,expected_name",
+        [
+            ("grammys", "event:awards:grammys", "The Grammys"),
+            ("the grammys", "event:awards:grammys", "The Grammys"),
+            ("grammy", "event:awards:grammys", "The Grammys"),
+            ("emmys", "event:awards:emmys", "The Emmys"),
+            ("emmy", "event:awards:emmys", "The Emmys"),
+            ("oscars", "event:awards:oscars", "The Oscars"),
+            ("the oscars", "event:awards:oscars", "The Oscars"),
+            ("academy awards", "event:awards:oscars", "The Oscars"),
+            ("academy award", "event:awards:oscars", "The Oscars"),
+            ("tonys", "event:awards:tonys", "The Tony Awards"),
+            ("tony awards", "event:awards:tonys", "The Tony Awards"),
+        ],
+    )
+    def test_surfaces_awards_ceremony(self, query, expected_key, expected_name):
+        result = _detect_query_awards_concept(query)
+        assert result is not None, f"{query!r} should surface an awards ceremony"
+        assert result["key"] == expected_key
+        assert result["name"] == expected_name
+        assert result["domain"] == "awards"
+        assert result["market_id"] is None
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "oscar",              # bare singular — a common person name, excluded
+            "oscar de la hoya",   # boxer — must NOT surface the Oscars
+            "tony",               # bare singular — a common person name, excluded
+            "tony romo",          # person — must NOT surface the Tonys
+            "grammar",            # substring-ish noise, not "grammy"
+            "lebron james",       # unrelated
+            "world cup",          # a different concept detector's domain
+        ],
+    )
+    def test_does_not_false_fire(self, query):
+        assert _detect_query_awards_concept(query) is None
+
+    def test_none_and_empty_are_safe(self):
+        assert _detect_query_awards_concept(None) is None
+        assert _detect_query_awards_concept("") is None
 
 
 # ============================================================================

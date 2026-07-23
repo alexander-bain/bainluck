@@ -114,9 +114,31 @@ GOLD_SET: tuple[tuple[str, bool], ...] = (
 # "regress", proving the detect → evidence-pack → file path end-to-end.
 CANARY_QUERY = "zzqx nonexistent sentinel canary entity 99"
 
+# ---------------------------------------------------------------------------
+# TOP-1 CORRECTNESS gold set (#1206 / Queue #246 Item 1) — the metric #244 proved
+# we now need: #244 killed zero-results (findability), so the bar moves from "did
+# ANYTHING surface" to "is the RIGHT surface top-1". Each entry asserts the LEADING
+# item of a given kind is the expected surface. Distinct from GOLD_SET (findability)
+# — this is additive and only holds family-phrased queries with an UNAMBIGUOUS
+# correct top-1 (concept hubs + the curated team aliases). The full ~50-query set is
+# needs-user (#1213 — Alex's 20 + Fable's 30); append rows as that lands.
+#   (query, expected_kind, marker) — kind ∈ {"concept", "team"}; marker is a
+#   case-insensitive substring the leading item of that kind must contain.
+GOLD_SET_TOP1: tuple[tuple[str, str, str], ...] = (
+    ("grammys", "concept", "event:awards:grammys"),
+    ("oscars", "concept", "event:awards:oscars"),
+    ("emmys", "concept", "event:awards:emmys"),
+    ("masters winner", "concept", "event:golf:"),
+    ("world cup", "concept", "event:soccer:world-cup"),
+    ("pats", "team", "patriots"),
+    ("revs", "team", "revolution"),
+    ("niners", "team", "49ers"),
+)
+
 # Flow → GitHub area label routing.
 _FLOW_AREA_LABELS = {
     "search_gold_set": "area:search",
+    "search_gold_top1": "area:search",
     "duplicate_events": "area:event-details",
     "event_completeness": "area:event-details",
     "resolved_state": "area:calibration",
@@ -125,9 +147,11 @@ _FLOW_AREA_LABELS = {
     "participation_family": "area:event-details",
     "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
+    "season_aggregate_linkage": "area:event-details",  # season market on a game event (#1220)
 }
 _FLOW_TITLES = {
     "search_gold_set": "search misses gold-set entities",
+    "search_gold_top1": "search returns wrong top-1 for gold-set family queries",
     "duplicate_events": "duplicate unmerged events in results",
     "event_completeness": "live Tier-1 events missing game markets",
     "resolved_state": "settled/live event state incorrect",
@@ -136,6 +160,7 @@ _FLOW_TITLES = {
     "participation_family": "non-ME prop family (make-cut/top-N) squashed to sum-100%",
     "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
+    "season_aggregate_linkage": "season-aggregate market mislinked to a single game event",
 }
 
 
@@ -182,6 +207,35 @@ def search_concept_first(payload: dict) -> bool:
     if not isinstance(payload, dict):
         return False
     return bool(payload.get("event_concepts") or payload.get("futures") or payload.get("results"))
+
+
+def search_top1_matches(payload: dict, kind: str, marker: str) -> bool:
+    """Does the LEADING item of ``kind`` in the search payload contain ``marker``?
+
+    kind="concept" → the first ``event_concepts`` entry's ``key`` (concept hubs are
+    prepended by the query-concept detectors, so index 0 is the detected surface).
+    kind="team"    → the first ``teams`` entry's ``name``.
+    Case-insensitive substring. Pure (unit-tested — no network)."""
+    if not isinstance(payload, dict):
+        return False
+    marker = (marker or "").lower()
+    if kind == "concept":
+        concepts = payload.get("event_concepts") or []
+        if not concepts:
+            return False
+        return marker in str((concepts[0] or {}).get("key", "")).lower()
+    if kind == "team":
+        teams = payload.get("teams") or []
+        if not teams:
+            return False
+        return marker in str((teams[0] or {}).get("name", "")).lower()
+    return False
+
+
+def gold_top1_misses(results: list[dict]) -> list[dict]:
+    """Top-1 entries whose expected leading surface is NOT top-1 — the fileable
+    failures for the top-1 correctness flow."""
+    return [r for r in results if not r["top1_ok"]]
 
 
 def gold_set_regressions(results: list[dict]) -> list[dict]:
@@ -477,6 +531,50 @@ async def _run_search_gold_set(client: httpx.AsyncClient, canary: bool) -> dict:
             "total": len(results),
             "regressions": [r["query"] for r in regressions],
             "recoveries": [r["query"] for r in recoveries],
+            "per_entity": results,
+        },
+    }
+
+
+async def _run_search_gold_top1(client: httpx.AsyncClient) -> dict:
+    """#1206 / Queue #246 Item 1 — TOP-1 CORRECTNESS: for each unambiguous family
+    query, the RIGHT surface (concept hub / curated-alias team) must LEAD, not just
+    appear somewhere. Files each miss (the metric #244 proved we need now that
+    findability is solved)."""
+    import asyncio
+
+    sem = asyncio.Semaphore(SEARCH_CONCURRENCY)
+
+    async def _one(query: str, kind: str, marker: str) -> dict:
+        async with sem:
+            try:
+                payload = await _get_json(client, "/api/events/search", {"q": query})
+                return {
+                    "query": query, "kind": kind, "marker": marker,
+                    "top1_ok": search_top1_matches(payload, kind, marker),
+                }
+            except Exception as exc:
+                return {"query": query, "kind": kind, "marker": marker,
+                        "top1_ok": False, "error": str(exc)[:150]}
+
+    results = await asyncio.gather(*[_one(q, k, m) for q, k, m in GOLD_SET_TOP1])
+    misses = gold_top1_misses(results)
+    ok_n = sum(1 for r in results if r["top1_ok"])
+    return {
+        "flow": "search_gold_top1",
+        "checked": len(results),
+        "passed": len(misses) == 0,
+        "failures": [
+            {"query": r["query"],
+             "detail": f"'{r['query']}' expected top-1 {r['kind']} matching "
+                       f"'{r['marker']}' — not the leading result"}
+            for r in misses
+        ],
+        "evidence": {
+            "top1_ok": ok_n,
+            "total": len(results),
+            "top1_rate": round(ok_n / len(results), 3) if results else 0,
+            "misses": [r["query"] for r in misses],
             "per_entity": results,
         },
     }
@@ -920,6 +1018,68 @@ async def _run_unlinked_held(client: httpx.AsyncClient) -> dict:
     }
 
 
+# The season-aggregate market families that must NEVER carry an event_id: a
+# season-long two-team comparison is a FUTURES market, not one game. Mirrors the
+# Queue #238 `_SEASON_AGGREGATE_KEYWORDS` guard (prevention) and the
+# `repair_season_series_mislinks.py` predicate (repair). This is the standing
+# REGRESSION guard #1220 asked for — if the guard ever regresses, a new mislink
+# gets caught here and auto-filed.
+_SEASON_AGG_LINKAGE_SQL = (
+    "SELECT COUNT(*) AS n FROM futures_markets fm WHERE fm.event_id IS NOT NULL AND ("
+    "fm.name ILIKE '%Head-to-Head Win Total%' "
+    "OR fm.name ILIKE '%Season Series Winner%' "
+    "OR fm.name ILIKE '%Season Win Total%' "
+    "OR fm.name ILIKE '%make the playoffs%')"
+)
+
+
+async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
+    """#1220 regression guard: a season-aggregate market (Head-to-Head Win Total,
+    Season Series Winner, Season Win Total, make-the-playoffs) linked to a single
+    game event is a matching bug — it surfaces the season market on the wrong event
+    page and can fabricate a bogus `*_other` FINAL card. Prevention shipped in Queue
+    #238 and the backlog was repaired; this asserts the census stays 0. Reads via
+    the admin db-query (read-only). A missing/broken admin path is SKIPPED, never
+    filed — filing on our own broken measurement is the cry-wolf #1147 flagged."""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        return {
+            "flow": "season_aggregate_linkage", "checked": 0, "passed": True,
+            "skipped": True, "failures": [],
+            "evidence": {"reason": "ADMIN_TOKEN unset — db-query unavailable"},
+        }
+    try:
+        resp = await client.post(
+            "/api/admin/db-query",
+            params={"secret": admin_token},
+            json={"sql": _SEASON_AGG_LINKAGE_SQL, "limit": 1},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rows = data.get("rows") if isinstance(data, dict) else None
+        linked = int(rows[0][0]) if rows and rows[0] else 0
+    except Exception as exc:
+        return {
+            "flow": "season_aggregate_linkage", "checked": 0, "passed": True,
+            "skipped": True, "failures": [],
+            "evidence": {"reason": f"db-query failed: {str(exc)[:120]}"},
+        }
+    failures = (
+        [{"detail": f"{linked} season-aggregate market(s) (Head-to-Head/Season "
+                    f"Series/Win Total/make-the-playoffs) carry an event_id — a "
+                    f"season-long comparison mislinked to one game (#1220; run "
+                    f"scripts/repair_season_series_mislinks.py --apply)"}]
+        if linked > 0 else []
+    )
+    return {
+        "flow": "season_aggregate_linkage",
+        "checked": 1,
+        "passed": linked == 0,
+        "failures": failures,
+        "evidence": {"season_aggregate_linked_markets": linked},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
@@ -1172,6 +1332,7 @@ async def _run_flow_sentinel(
 
     runners = (
         ("search_gold_set", lambda c: _run_search_gold_set(c, canary)),
+        ("search_gold_top1", _run_search_gold_top1),
         ("duplicate_events", _run_duplicate_events),
         ("event_completeness", _run_event_completeness),
         ("sports_feed_events", _run_sports_feed_events),
@@ -1181,6 +1342,7 @@ async def _run_flow_sentinel(
         ("participation_family", _run_participation_family),
         ("matured_linkage", _run_matured_linkage),
         ("unlinked_held", _run_unlinked_held),
+        ("season_aggregate_linkage", _run_season_aggregate_linkage),
     )
 
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,
