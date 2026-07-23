@@ -422,9 +422,15 @@ def _update_green_streak(concept_key: str, is_green: bool) -> int:
         if not is_green:
             rc.setex(key, _GREEN_STREAK_TTL, 0)
             return 0
-        new_val = rc.incr(key)
-        rc.expire(key, _GREEN_STREAK_TTL)
-        return int(new_val)
+        new_val = int(rc.incr(key))
+        # TTL hygiene is best-effort — a failure here must NEVER discard the good
+        # incr result (that bug reported a perpetual streak of 1 while the real key
+        # climbed). Set it in its own guard so the counter still advances.
+        try:
+            rc.expire(key, _GREEN_STREAK_TTL)
+        except Exception:  # noqa: BLE001
+            pass
+        return new_val
     except Exception as exc:  # noqa: BLE001 — instrumentation must never break a run
         logger.warning("Settled sentinel: green-streak update failed for %s: %s", concept_key, exc)
         return 1 if is_green else 0
