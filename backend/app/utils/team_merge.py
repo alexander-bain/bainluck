@@ -302,10 +302,21 @@ async def _apply_merge(session, canonical, stub, sport_key) -> dict:
     }
 
 
-async def run_team_identity_merge(session, apply: bool, recent_days: int = _RECENT_DAYS) -> dict:
+# Per-call cluster cap on apply. A single big transaction re-pointing every stub's
+# events + a full-table mapping dedup exceeds the 30s HTTP wall AND lock-waits
+# against the events-polling task (the r259 apply 503). We commit PER CLUSTER and
+# cap each call — idempotent + resumable: merged stubs are deleted, so the next
+# call re-plans only what remains. Call until pairs_remaining hits 0.
+_APPLY_CLUSTER_LIMIT = 25
+
+
+async def run_team_identity_merge(
+    session, apply: bool, recent_days: int = _RECENT_DAYS, limit: int = _APPLY_CLUSTER_LIMIT
+) -> dict:
     """Find safe bare-location dup clusters and fold stubs into their canonical.
-    Does all work on ``session``; commits only when ``apply``. Returns a
-    JSON-serializable per-pair evidence log + census."""
+    On apply, merges up to ``limit`` clusters, COMMITTING AFTER EACH so a timeout
+    leaves consistent, resumable progress. Returns a per-pair evidence log +
+    census (incl. ``pairs_remaining`` — call again until it is 0)."""
     s = session
     rows = await _load_candidate_rows(s, recent_days)
     clusters = _build_clusters(rows)
@@ -333,32 +344,45 @@ async def run_team_identity_merge(session, apply: bool, recent_days: int = _RECE
 
     merges = []
     pairs_merged = 0
+    clusters_merged = 0
     if apply and planned:
-        for plan, entry in planned:
+        for plan, entry in planned[: (limit or len(planned))]:
             canonical = plan["canonical"]
-            pair_evidence = []
-            for stub in plan["folds"]:
-                ev = await _apply_merge(s, canonical, stub, entry["sport_key"])
-                pair_evidence.append(ev)
-                pairs_merged += 1
-            entry["merged"] = pair_evidence
-            merges.append(entry)
-        # Dedup any team_identity_mapping rows the re-point may have duplicated.
-        await s.execute(text(
-            "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
-            "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
-            "AND a.source_id IS NOT DISTINCT FROM b.source_id"
-        ))
-        await s.commit()
+            try:
+                pair_evidence = []
+                for stub in plan["folds"]:
+                    pair_evidence.append(
+                        await _apply_merge(s, canonical, stub, entry["sport_key"])
+                    )
+                # Dedup mapping rows for THIS canonical only (scoped + cheap), then
+                # commit this cluster before moving on (per-cluster durability).
+                await s.execute(text(
+                    "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
+                    "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
+                    "AND a.source_id IS NOT DISTINCT FROM b.source_id "
+                    "AND a.team_id = :tid"
+                ), {"tid": canonical.id})
+                await s.commit()
+                pairs_merged += len(pair_evidence)
+                clusters_merged += 1
+                entry["merged"] = pair_evidence
+                merges.append(entry)
+            except Exception as e:
+                await s.rollback()
+                entry["error"] = f"cluster merge rolled back: {e}"
+                merges.append(entry)
 
+    pairs_planned = sum(len(p["folds"]) for p, _ in planned)
     return {
         "repair": "team-identity-merge",
         "applied": bool(apply),
         "recent_days": recent_days,
         "clusters_examined": sum(1 for c in clusters if len(c) >= 2),
         "clusters_planned": len(planned),
-        "pairs_planned": sum(len(p["folds"]) for p, _ in planned),
+        "pairs_planned": pairs_planned,
         "pairs_merged": pairs_merged,
+        "clusters_merged": clusters_merged,
+        "pairs_remaining": pairs_planned - pairs_merged,
         "clusters_skipped": len(skipped),
         "planned_detail": [e for _, e in planned] if not apply else merges,
         "skipped_detail": skipped,
