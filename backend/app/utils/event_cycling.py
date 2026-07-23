@@ -27,6 +27,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.winner_field_selection import prefer_graded_winner_field
+
 # --- Name gates -------------------------------------------------------------
 _WINNER_RE = re.compile(r"\b(winner|to win|champion)\b", re.IGNORECASE)
 _STAGE_RE = re.compile(r"\bstage\s*\d+", re.IGNORECASE)
@@ -186,12 +188,18 @@ def _select_gc_field(candidates: list):
     freshness. Falls back to the richest real field if none pass the coherence gate
     (Kalshi 184-way independent binaries can sum past the coherence band, gotcha #23 —
     the real GC must never be dropped to an empty page for that). A field with <2 real
-    outcomes never qualifies. Returns (market, real_outcomes)."""
+    outcomes never qualifies.
+
+    #1177 settled-concept invariant: a graded market (authoritative is_winner rows)
+    among the coherent candidates OVERRIDES the freshest/widest ungraded pick — a
+    settled Grand Tour's crown must come from the graded winner market, not whichever
+    field polled last. Returns (market, real_outcomes)."""
     best = None
     best_key = None  # (n_real, freshness)
     best_real: list = []
     fallback = None
     fallback_real: list = []
+    coherent: list = []
     for m in candidates:
         real = _real_outcomes(m)
         if len(real) < 2:
@@ -205,11 +213,12 @@ def _select_gc_field(candidates: list):
             (o.last_updated for o in real if getattr(o, "last_updated", None) is not None),
             default=datetime.min.replace(tzinfo=timezone.utc),
         )
+        coherent.append((m, real, freshness))
         key = (len(real), freshness)
         if best is None or key > best_key:
             best, best_key, best_real = m, key, real
     if best is not None:
-        return best, best_real
+        return prefer_graded_winner_field(best, best_real, coherent)
     return fallback, fallback_real
 
 
@@ -357,6 +366,32 @@ class CyclingEventAdapter:
             return None
 
         gc_candidates = [m for m in markets if is_gc_winner_field_market(m.name, cfg.name_re)]
+        # #1177: also consider RESOLVED/CLOSED GC winner markets. On settlement the
+        # poly/kalshi GC market flips off status='open' while carrying the graded
+        # is_winner rows, so an open-only scan sees only the ungraded field and the
+        # settled crown would depend on which field polled last. The edition guard
+        # (slug_year vs resolution_date, null-date allowed) keeps prior-edition GC
+        # markets out. Children (stages/props) stay open-only below.
+        graded_q = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                FuturesMarket.llm_sport_category == "cycling",
+                FuturesMarket.status.in_(["resolved", "closed", "settled"]),
+            )
+        )
+        seen_ids = {m.id for m in gc_candidates}
+        for m in (await db.execute(graded_q)).scalars().unique().all():
+            if m.id in seen_ids or not cfg.name_re.search(m.name or ""):
+                continue
+            if (
+                slug_year is not None
+                and m.resolution_date is not None
+                and m.resolution_date.year != slug_year
+            ):
+                continue
+            if is_gc_winner_field_market(m.name, cfg.name_re):
+                gc_candidates.append(m)
         winner, real_outcomes = _select_gc_field(gc_candidates)
         if winner is None:
             return None

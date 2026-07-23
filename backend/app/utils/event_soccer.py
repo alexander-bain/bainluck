@@ -41,6 +41,7 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.nation_flags import flag_url as nation_flag_url
 from app.utils.nation_flags import is_nation as nation_is_nation
+from app.utils.winner_field_selection import prefer_graded_winner_field
 
 # Raw price at/above which a SETTLED winner-field team is the crowned champion during
 # the is_winner grading-lag window (parity with awards/election/tennis — display only).
@@ -366,10 +367,16 @@ def _select_winner_field(markets: list):
     bug — mostly stale zeros) so a live-updated odds_api field wins over a stale
     Kalshi one and a broken Poly one never wins. If NO honest field exists, returns
     (None, []) — the concept renders duels-only rather than a fabricated favorite.
+
+    #1177 settled-concept invariant: once a graded market exists among the coherent
+    candidates, it OVERRIDES the freshest ungraded field — a settled World Cup must
+    never serve the odds_api field after it fizzles (Spain 0.587, sum 0.498) while
+    Spain sits graded ``is_winner`` in the Polymarket/Kalshi winner market.
     Returns (market, real_outcomes)."""
     best = None
     best_key = None
     best_real: list = []
+    coherent: list = []
     for m in markets:
         real = [
             o
@@ -390,9 +397,10 @@ def _select_winner_field(markets: list):
             ),
             default=datetime.min.replace(tzinfo=timezone.utc),
         )
+        coherent.append((m, real, freshness))
         if best is None or freshness > best_key:
             best, best_key, best_real = m, freshness, real
-    return best, best_real
+    return prefer_graded_winner_field(best, best_real, coherent)
 
 
 def _match_is_real(g) -> bool:
@@ -699,11 +707,17 @@ class SoccerEventAdapter:
         tournament_ongoing = bool(upcoming_nations)
 
         # --- Winner field (trophy) from futures ----------------------------------
+        # #1177: include RESOLVED/CLOSED markets, not just open ones. On settlement
+        # the Polymarket/Kalshi winner market flips to status='resolved' (dropping
+        # out of an open-only scan) while it carries the authoritative graded
+        # is_winner rows; the ungraded odds_api field stays 'open' and fizzles. The
+        # winner-field selector must SEE the graded market to prefer it. Props stay
+        # open-only (below) so settled award/group markets don't leak into the reel.
         win_q = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(
-                FuturesMarket.status == "open",
+                FuturesMarket.status.in_(["open", "resolved", "closed", "settled"]),
                 FuturesMarket.name.ilike("%world cup%"),
             )
         )
@@ -886,7 +900,12 @@ class SoccerEventAdapter:
         _apply_settled_crown(competitors, status)
 
         # --- Fun props (Item 1d): census the WC prop markets, publish what exists -
-        props = build_props_list(all_wc_markets)
+        # Open-only (the winner-field scan above widened to resolved for #1177; the
+        # props reel keeps its pre-#1177 open-only shape so settled award/group
+        # markets don't surface as "fun props").
+        props = build_props_list(
+            [m for m in all_wc_markets if (m.status or "").lower() == "open"]
+        )
 
         sections = []
         if competitors:

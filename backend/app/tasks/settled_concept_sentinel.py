@@ -26,6 +26,16 @@ per the Grid/Flow sentinel family):
                        winner; no 0.99-wall (> N outcomes at >= 0.98, the overround
                        artifact); the winner line is not fizzled below the resolve
                        floor (#225 Item 3, the odds_api-fizzle-vs-Kalshi-resolve bug).
+                       #1177: the ``evolution_market_id`` now PREFERS a graded market
+                       by rule (``winner_field_selection.prefer_graded_winner_field``),
+                       so this check should stay GREEN once a concept settles.
+
+CLOSE DISCIPLINE (#1177): an issue of this class may only be closed after
+``GREEN_STREAK_TO_CLOSE`` (=2) CONSECUTIVE GREEN runs on the concept — the WC
+re-broke once because a single green read (a lucky market-selection snapshot) was
+trusted. Each run tracks a per-concept green streak (Redis) and the scorecard
+exposes ``green_streak`` + ``closeable`` + a top-level ``closeable_concepts`` list;
+the closer (human/agent or a future auto-close) must gate on ``closeable``.
   D. ROUND RESOLUTION — no single-winner round-leader market is double-graded
                        (>= 2 outcomes at resolved-high — two leaders is impossible).
                        A round market with NO graded winner is EXPLAINED (field-shaped
@@ -68,6 +78,13 @@ SETTLE_WINDOW_DAYS = 3
 RESOLVE_MIN = 0.90   # the winner line must reach this or it "fizzled"
 WALL_PROB = 0.98     # "resolved-high" band
 WALL_MAX = 3         # > this many outcomes at >= WALL_PROB in the field = a 0.99-wall
+
+# #1177 close discipline: this class of issue (settled winner-field selection) may
+# only be CLOSED after this many CONSECUTIVE GREEN sentinel runs on the concept. A
+# single green read can be a lucky market-selection snapshot (the WC re-broke on
+# exactly that), so `closeable` in the scorecard requires a sustained streak.
+GREEN_STREAK_TO_CLOSE = 2
+_GREEN_STREAK_TTL = 30 * 86400
 
 # Winner-field kinds — a settled concept's hero must be one of these, never a
 # non-winner market class (a prop / placement / squash contaminant).
@@ -392,6 +409,27 @@ def settled_fingerprint(concept_key: str) -> str:
     return hashlib.sha1(f"settled-concept:{concept_key}".encode("utf-8")).hexdigest()[:12]
 
 
+def _update_green_streak(concept_key: str, is_green: bool) -> int:
+    """Increment (GREEN) or reset (RED) a concept's consecutive-green counter in
+    Redis and return the new value. Best-effort: a dead Redis returns 1 on green /
+    0 on red so the run never fails on instrumentation, and the closer simply won't
+    see a qualifying streak (fails safe toward NOT closing). #1177 close discipline."""
+    key = f"bainluck:settled_concept_sentinel:green_streak:{settled_fingerprint(concept_key)}"
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        if not is_green:
+            rc.setex(key, _GREEN_STREAK_TTL, 0)
+            return 0
+        new_val = rc.incr(key)
+        rc.expire(key, _GREEN_STREAK_TTL)
+        return int(new_val)
+    except Exception as exc:  # noqa: BLE001 — instrumentation must never break a run
+        logger.warning("Settled sentinel: green-streak update failed for %s: %s", concept_key, exc)
+        return 1 if is_green else 0
+
+
 def build_issue_title(concept_key: str, name: str, real: list[dict]) -> str:
     checks = ", ".join(sorted({_CHECK_LABELS.get(f["check"], f["check"]) for f in real}))
     title = f"[Settled Sentinel] {name} — settled contract broken: {checks}"
@@ -650,12 +688,21 @@ async def _run_settled_concept_sentinel(
             else:
                 n_green += 1
 
+            # #1177 close discipline: a concept's settled-contract issue may only be
+            # closed after ≥2 CONSECUTIVE GREEN runs — the WC re-broke once because a
+            # single green read (a lucky market-selection snapshot) was trusted. Track
+            # the per-concept green streak in Redis (increment on GREEN, reset on RED)
+            # and surface it so the closer can gate on green_streak >= GREEN_STREAK_TO_CLOSE.
+            green_streak = _update_green_streak(ck, is_green=not real)
+
             result = {
                 "concept_key": ck,
                 "name": name,
                 "status": "settled",
                 "verdict": verdict,
                 "n_real": len(real),
+                "green_streak": green_streak,
+                "closeable": (not real) and green_streak >= GREEN_STREAK_TO_CLOSE,
                 "real": real,
                 "explained": explained,
                 "checks": {
@@ -676,6 +723,10 @@ async def _run_settled_concept_sentinel(
         "checked_settled": n_green + n_red,
         "green": n_green,
         "red": n_red,
+        "green_streak_to_close": GREEN_STREAK_TO_CLOSE,
+        "closeable_concepts": [
+            r["concept_key"] for r in concept_results if r.get("closeable")
+        ],
         "concepts": concept_results,
         "filed": filed,
         "duration_s": round(_time.monotonic() - start_mono, 2),
