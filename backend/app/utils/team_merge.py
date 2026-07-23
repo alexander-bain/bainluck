@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from types import SimpleNamespace
 
 from sqlalchemy import text
 
@@ -67,7 +68,10 @@ def _is_token_prefix(short: str, long: str) -> bool:
     return lt[: len(st)] == st
 
 
-_CANDIDATES_SQL = f"""
+# Candidate dup teams — NO per-team event counts here (those are batched below; a
+# correlated OR count-subquery per candidate seq-scans the events table hundreds of
+# times and blows the 30s HTTP timeout — r259's dry-run 503).
+_CANDIDATE_TEAMS_SQL = """
     WITH dup_espn AS (
         SELECT sport_id, espn_id
         FROM teams
@@ -89,16 +93,30 @@ _CANDIDATES_SQL = f"""
     )
     SELECT t.id, t.sport_id, s.key AS sport_key, t.name, t.slug, t.espn_id,
            t.alternate_names,
-           (SELECT count(*) FROM events e
-              WHERE e.home_team_id = t.id OR e.away_team_id = t.id) AS total_events,
-           (SELECT count(*) FROM events e
-              WHERE (e.home_team_id = t.id OR e.away_team_id = t.id)
-                AND e.commence_time > now() - (:recent_days || ' days')::interval) AS recent_events,
            (SELECT count(*) FROM team_identity_mapping m WHERE m.team_id = t.id) AS mapping_count
     FROM teams t
     JOIN cand c ON c.id = t.id
     LEFT JOIN sports s ON s.id = t.sport_id
     ORDER BY t.sport_id, t.espn_id, t.name
+"""
+
+# Batched event counts for a specific set of candidate team ids — TWO index scans
+# total (home + away) aggregated once, instead of a scan-per-team. `recent` uses a
+# FILTER on the same pass.
+_EVENT_COUNTS_SQL = """
+    SELECT team_id,
+           count(*) AS total_events,
+           count(*) FILTER (
+               WHERE commence_time > now() - (:recent_days || ' days')::interval
+           ) AS recent_events
+    FROM (
+        SELECT home_team_id AS team_id, commence_time FROM events
+          WHERE home_team_id = ANY(:ids)
+        UNION ALL
+        SELECT away_team_id AS team_id, commence_time FROM events
+          WHERE away_team_id = ANY(:ids)
+    ) x
+    GROUP BY team_id
 """
 
 
@@ -107,6 +125,27 @@ def _cluster_key(row) -> tuple:
     normalized name). We key by (sport_id, espn_id) when espn_id is present, else by
     (sport_id, normalized-name) — union-find over both keys handles the mixed case."""
     return row
+
+
+async def _load_candidate_rows(session, recent_days: int) -> list:
+    """Load dup-cluster candidate teams with batched event counts attached."""
+    cand = (await session.execute(text(_CANDIDATE_TEAMS_SQL))).all()
+    ids = [r.id for r in cand]
+    counts: dict[int, tuple[int, int]] = {}
+    if ids:
+        for row in (await session.execute(
+            text(_EVENT_COUNTS_SQL), {"ids": ids, "recent_days": str(recent_days)}
+        )).all():
+            counts[row.team_id] = (row.total_events, row.recent_events)
+    rows = []
+    for r in cand:
+        total, recent = counts.get(r.id, (0, 0))
+        rows.append(SimpleNamespace(
+            id=r.id, sport_id=r.sport_id, sport_key=r.sport_key, name=r.name,
+            slug=r.slug, espn_id=r.espn_id, alternate_names=r.alternate_names,
+            mapping_count=r.mapping_count, total_events=total, recent_events=recent,
+        ))
+    return rows
 
 
 def _build_clusters(rows) -> list[list]:
@@ -268,7 +307,7 @@ async def run_team_identity_merge(session, apply: bool, recent_days: int = _RECE
     Does all work on ``session``; commits only when ``apply``. Returns a
     JSON-serializable per-pair evidence log + census."""
     s = session
-    rows = (await s.execute(text(_CANDIDATES_SQL), {"recent_days": str(recent_days)})).all()
+    rows = await _load_candidate_rows(s, recent_days)
     clusters = _build_clusters(rows)
 
     planned, skipped = [], []
@@ -330,9 +369,7 @@ async def count_unresolved_team_dupes(session, recent_days: int = _RECENT_DAYS) 
     """Audit hook (#1204 'the class files itself'): how many SAFE, still-mergeable
     bare-location stub clusters remain. Should be 0 after a clean apply. A guard
     test + the merge sentinel assert this stays 0."""
-    rows = (await session.execute(
-        text(_CANDIDATES_SQL), {"recent_days": str(recent_days)}
-    )).all()
+    rows = await _load_candidate_rows(session, recent_days)
     n = 0
     for members in _build_clusters(rows):
         if len(members) >= 2 and _plan_cluster(members)["status"] == "planned":
