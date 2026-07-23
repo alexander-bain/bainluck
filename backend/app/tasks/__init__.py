@@ -783,6 +783,15 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.ensure_perf_indexes")
+def ensure_perf_indexes(self):
+    """#1197: build the missing team-route event indexes CONCURRENTLY at runtime
+    (gotcha #31 — never in a migration). High time limit: CONCURRENTLY on the
+    events table can take a while; idempotent (IF NOT EXISTS)."""
+    from app.utils.ensure_indexes import ensure_perf_indexes as _run
+    return run_async(_run())
+
+
 @celery_app.task(bind=True, name="app.tasks.cleanup_bad_espn_matches")
 def cleanup_bad_espn_matches(self):
     """Validate existing ESPN ID assignments and clear bad matches."""

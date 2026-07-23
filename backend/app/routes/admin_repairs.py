@@ -76,3 +76,31 @@ async def list_repairs(request: Request, secret: str = Query(None)):
     """List the available repairs (discovery)."""
     _check_admin_secret(secret, request=request)
     return {"repairs": sorted(_REPAIRS)}
+
+
+@router.post("/repairs/ensure-indexes")
+async def ensure_indexes(
+    request: Request,
+    secret: str = Query(None),
+    wait: bool = Query(False, description="True runs inline (may hit the 30s HTTP wall); default queues a Celery task"),
+):
+    """#1197: build the missing team-route event indexes (home/away team_id + name)
+    CONCURRENTLY. Queues a Celery worker task by default (CONCURRENTLY on events can
+    exceed the 30s HTTP timeout); pass wait=true to run inline and get the per-index
+    result. Idempotent (IF NOT EXISTS)."""
+    _check_admin_secret(secret, request=request)
+
+    if wait:
+        from app.utils.ensure_indexes import ensure_perf_indexes
+        return {"indexes": await ensure_perf_indexes()}
+
+    from app.tasks import ensure_perf_indexes as task
+    from app.utils.ensure_indexes import PERF_INDEXES
+
+    r = task.delay()
+    return {
+        "status": "queued",
+        "task_id": r.id,
+        "building": [n for n, _ in PERF_INDEXES],
+        "note": "CONCURRENTLY in the worker; re-measure warm team-route latency in ~1-2 min",
+    }
