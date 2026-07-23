@@ -89,6 +89,24 @@ def test_green_payload_has_no_real_findings():
 
 
 # ---------------------------------------------------------------------------
+# #1177 close discipline: green-streak advances on GREEN, resets on RED, and a
+# concept is only closeable after GREEN_STREAK_TO_CLOSE consecutive GREEN runs.
+# ---------------------------------------------------------------------------
+def test_next_green_streak_advances_and_resets():
+    assert scs.next_green_streak(None, is_green=True) == 1
+    assert scs.next_green_streak(1, is_green=True) == 2
+    assert scs.next_green_streak(5, is_green=True) == 6
+    assert scs.next_green_streak(3, is_green=False) == 0
+    assert scs.next_green_streak(None, is_green=False) == 0
+
+
+def test_green_streak_close_gate():
+    # Not closeable until the streak reaches the threshold (2).
+    assert (scs.next_green_streak(None, True) >= scs.GREEN_STREAK_TO_CLOSE) is False
+    assert (scs.next_green_streak(1, True) >= scs.GREEN_STREAK_TO_CLOSE) is True
+
+
+# ---------------------------------------------------------------------------
 # A. Champion hero
 # ---------------------------------------------------------------------------
 def test_champion_hero_null_winner_is_real():

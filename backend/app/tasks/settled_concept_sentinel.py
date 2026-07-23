@@ -84,7 +84,6 @@ WALL_MAX = 3         # > this many outcomes at >= WALL_PROB in the field = a 0.9
 # single green read can be a lucky market-selection snapshot (the WC re-broke on
 # exactly that), so `closeable` in the scorecard requires a sustained streak.
 GREEN_STREAK_TO_CLOSE = 2
-_GREEN_STREAK_TTL = 30 * 86400
 
 # Winner-field kinds — a settled concept's hero must be one of these, never a
 # non-winner market class (a prop / placement / squash contaminant).
@@ -409,31 +408,40 @@ def settled_fingerprint(concept_key: str) -> str:
     return hashlib.sha1(f"settled-concept:{concept_key}".encode("utf-8")).hexdigest()[:12]
 
 
-def _update_green_streak(concept_key: str, is_green: bool) -> int:
-    """Increment (GREEN) or reset (RED) a concept's consecutive-green counter in
-    Redis and return the new value. Best-effort: a dead Redis returns 1 on green /
-    0 on red so the run never fails on instrumentation, and the closer simply won't
-    see a qualifying streak (fails safe toward NOT closing). #1177 close discipline."""
-    key = f"bainluck:settled_concept_sentinel:green_streak:{settled_fingerprint(concept_key)}"
+def _load_prior_green_streaks() -> dict[str, int]:
+    """Read each concept's green_streak from the LAST cached scorecard. The streak
+    is derived from the scorecard (the proven read/write path) rather than a
+    separate Redis counter — a dedicated incr key mysteriously never advanced in
+    prod (logs+db-query both blocked mid-incident), whereas the scorecard round-trips
+    reliably (it's what /last serves). Best-effort: a miss returns {} → streaks
+    restart at 1, which only DELAYS a close (fails safe). #1177 close discipline."""
     try:
+        import json as _json
+
         from app.tasks.redis_state import get_redis_client
 
-        rc = get_redis_client()
-        if not is_green:
-            rc.setex(key, _GREEN_STREAK_TTL, 0)
-            return 0
-        new_val = int(rc.incr(key))
-        # TTL hygiene is best-effort — a failure here must NEVER discard the good
-        # incr result (that bug reported a perpetual streak of 1 while the real key
-        # climbed). Set it in its own guard so the counter still advances.
-        try:
-            rc.expire(key, _GREEN_STREAK_TTL)
-        except Exception:  # noqa: BLE001
-            pass
-        return new_val
+        raw = get_redis_client().get("bainluck:settled_concept_sentinel:last")
+        if not raw:
+            return {}
+        prev = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        out: dict[str, int] = {}
+        for c in prev.get("concepts", []):
+            ck = c.get("concept_key")
+            gs = c.get("green_streak")
+            if ck and isinstance(gs, int):
+                out[ck] = gs
+        return out
     except Exception as exc:  # noqa: BLE001 — instrumentation must never break a run
-        logger.warning("Settled sentinel: green-streak update failed for %s: %s", concept_key, exc)
-        return 1 if is_green else 0
+        logger.warning("Settled sentinel: prior green-streak load failed: %s", exc)
+        return {}
+
+
+def next_green_streak(prior: int | None, is_green: bool) -> int:
+    """Pure: the new consecutive-green streak given the prior value. GREEN advances
+    (prior+1), RED resets to 0. #1177 close discipline (GREEN_STREAK_TO_CLOSE)."""
+    if not is_green:
+        return 0
+    return (prior or 0) + 1
 
 
 def build_issue_title(concept_key: str, name: str, real: list[dict]) -> str:
@@ -653,6 +661,8 @@ async def _run_settled_concept_sentinel(
     filed: list[dict] = []
     n_green = 0
     n_red = 0
+    # #1177 close discipline: prior per-concept green streaks from the last scorecard.
+    prior_streaks = _load_prior_green_streaks()
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
         for entry in targets:
@@ -696,10 +706,10 @@ async def _run_settled_concept_sentinel(
 
             # #1177 close discipline: a concept's settled-contract issue may only be
             # closed after ≥2 CONSECUTIVE GREEN runs — the WC re-broke once because a
-            # single green read (a lucky market-selection snapshot) was trusted. Track
-            # the per-concept green streak in Redis (increment on GREEN, reset on RED)
-            # and surface it so the closer can gate on green_streak >= GREEN_STREAK_TO_CLOSE.
-            green_streak = _update_green_streak(ck, is_green=not real)
+            # single green read (a lucky market-selection snapshot) was trusted. The
+            # streak advances from the prior scorecard (GREEN) or resets to 0 (RED);
+            # surface it so the closer can gate on green_streak >= GREEN_STREAK_TO_CLOSE.
+            green_streak = next_green_streak(prior_streaks.get(ck), is_green=not real)
 
             result = {
                 "concept_key": ck,
