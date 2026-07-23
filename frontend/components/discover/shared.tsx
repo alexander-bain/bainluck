@@ -5,6 +5,13 @@ import { Check, Heart, Share2 } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import type { ActionBarProps } from "./types";
+import {
+  CONFIDENCE_TIER_BARS,
+  CONFIDENCE_TIER_LABEL,
+  CONFIDENCE_TOOLTIP,
+  normalizeTier,
+  type ConfidenceTier,
+} from "@/lib/confidence";
 
 // ── Animated Counter ──
 
@@ -151,6 +158,52 @@ export function TemporalBadge({ badge }: { badge: string | null | undefined }) {
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-1 align-middle" />
       )}
       {badge}
+    </span>
+  );
+}
+
+// ── Confidence Signal Bars (#490) ──
+// A cell-signal-style 1-3 bar glyph showing how much we trust the probability
+// (sources + liquidity + freshness). Alex ruling 2026-07-23: signal bars. Ships
+// WITH its own tooltip/aria-label so it's never unexplained chrome. Renders
+// nothing when the tier is absent (render-only-where-present).
+
+const CONFIDENCE_TIER_FILL: Record<ConfidenceTier, string> = {
+  high: "bg-accent-brand",
+  moderate: "bg-accent-brand/70",
+  low: "bg-text-muted",
+};
+
+export function SignalBars({
+  tier,
+  className,
+}: {
+  tier: string | null | undefined;
+  className?: string;
+}) {
+  const t = normalizeTier(tier);
+  if (!t) return null;
+  const filled = CONFIDENCE_TIER_BARS[t];
+  const label = `${CONFIDENCE_TIER_LABEL[t]} — ${CONFIDENCE_TOOLTIP}`;
+  // Three ascending bars; filled ones take the tier color, the rest sit muted.
+  const heights = ["h-1.5", "h-2.5", "h-3.5"];
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={["inline-flex items-end gap-0.5", className].filter(Boolean).join(" ")}
+    >
+      {heights.map((h, i) => (
+        <span
+          key={i}
+          className={[
+            "w-1 rounded-sm",
+            h,
+            i < filled ? CONFIDENCE_TIER_FILL[t] : "bg-surface-border",
+          ].join(" ")}
+        />
+      ))}
     </span>
   );
 }

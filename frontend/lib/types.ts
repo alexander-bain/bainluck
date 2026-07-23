@@ -862,6 +862,9 @@ export interface FeedEventData {
   event_tags?: string[];
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   sport_label?: string | null;
+  /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
+  confidence_tier?: "high" | "moderate" | "low" | null;
+  confidence_score?: number | null;
   /** ESPN live game data */
   espn?: {
     game_clock?: string;
@@ -895,6 +898,9 @@ export interface FeedFuturesData {
   image_url?: string | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
+  /** #490 — confidence signal (1-3 bars): how much we trust the probability. */
+  confidence_tier?: "high" | "moderate" | "low" | null;
+  confidence_score?: number | null;
   // Resolved market metadata (leader ≥97% with interesting journey)
   resolved?: boolean;
   winner?: string;

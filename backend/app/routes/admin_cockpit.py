@@ -22,6 +22,7 @@ The whole payload is cached in Redis for 5 minutes.
 import json as _json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -1096,6 +1097,21 @@ async def _creation_freshness(db: AsyncSession) -> dict:
     return out
 
 
+_WAITING_PREFIX_RE = re.compile(r"^\s*\[\s*waiting on you\s*\]\s*[:\-–—]?\s*", re.I)
+
+
+def _clean_waiting_action(title: str) -> str:
+    """Turn a raw needs-user issue title into a clean panel row (L2-171).
+
+    Ops files these issues titled ``[Waiting on you] <literal step>``. The cockpit
+    panel is already headed "Waiting on you", so the bracket prefix is redundant
+    chrome — strip it so the row reads as the concrete step. Falls back to the raw
+    title if stripping would leave nothing.
+    """
+    cleaned = _WAITING_PREFIX_RE.sub("", title or "").strip()
+    return cleaned or (title or "").strip()
+
+
 def _waiting_on_you() -> dict:
     """GitHub issues labeled needs-user, or the static standing fallback."""
     token = os.getenv("GITHUB_TOKEN")
@@ -1117,7 +1133,7 @@ def _waiting_on_you() -> dict:
                     {
                         "ref": f"#{it['number']}",
                         "title": it.get("title", ""),
-                        "action": it.get("title", ""),
+                        "action": _clean_waiting_action(it.get("title", "")),
                         "url": it.get("html_url", ""),
                     }
                     for it in resp.json()

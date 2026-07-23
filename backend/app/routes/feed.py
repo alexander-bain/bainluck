@@ -76,6 +76,7 @@ from app.utils.feed_market_quality import (
     balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
+    confidence_signal,
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
@@ -4255,6 +4256,20 @@ async def _score_events(
                 now=now,
             )
             event_data["sport_label"] = _get_sport_label(sport_key)
+            # #490: confidence signal (1-3 bars) for game cards — driven by how
+            # many win-prob sources priced the game and whether the line moved
+            # off open. Volume isn't a game-card signal, so it's omitted.
+            _event_conf = confidence_signal(
+                source_count=_source_count,
+                has_recent_movement=(
+                    current_home_prob is not None
+                    and opening_home_prob is not None
+                    and abs(current_home_prob - opening_home_prob) > 0.001
+                ),
+            )
+            if _event_conf:
+                event_data["confidence_tier"] = _event_conf["tier"]
+                event_data["confidence_score"] = _event_conf["score"]
 
             sort_time = event.commence_time.timestamp()
             if event.status == "live":
@@ -4837,6 +4852,17 @@ async def _score_sports_mode_futures(
                 now=now,
             ),
         }
+        # #490: confidence signal (1-3 bars) — mirror of the Discover path.
+        _conf_signal = confidence_signal(
+            source_count=source_count,
+            has_recent_movement=any(
+                o.get("movement") for o in top_outcomes_data
+            ),
+            has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
+        )
+        if _conf_signal:
+            futures_data["confidence_tier"] = _conf_signal["tier"]
+            futures_data["confidence_score"] = _conf_signal["score"]
 
         inline_market_tags = compute_market_tags(
             llm_sport_category=market.llm_sport_category,
@@ -5881,6 +5907,18 @@ async def _score_futures(
                 now=now,
             ),
         }
+        # #490: data-driven confidence signal (1-3 bars) from signals already on
+        # the card — source count, recent movement, real volume. None -> no glyph.
+        _conf_signal = confidence_signal(
+            source_count=source_count,
+            has_recent_movement=any(
+                o.get("movement") for o in top_outcomes_data
+            ),
+            has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
+        )
+        if _conf_signal:
+            futures_data["confidence_tier"] = _conf_signal["tier"]
+            futures_data["confidence_score"] = _conf_signal["score"]
         if discover_llm_metadata:
             futures_data["discover_llm"] = {
                 "topic": discover_llm_metadata.get("topic"),

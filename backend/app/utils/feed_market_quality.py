@@ -2108,3 +2108,109 @@ def diversify_quality_families(
         kept.append(item)
 
     return kept
+
+
+# --- #490: confidence signal (1-3 bars) -------------------------------------
+# A data-driven "how much do we trust this probability" score, derived ONLY
+# from signals a feed candidate already carries: how many independent sources
+# priced it, whether it has recent movement (live interest), whether real money
+# traded, and — when measurable — whether the sources agree. Rendered as a 1-3
+# bar signal glyph (Alex ruling 2026-07-23; cell-signal metaphor). Pure, like
+# the rest of this module: no DB, no app imports. The frontend maps tier -> bars
+# and its tooltip names these inputs, so the glyph is never unexplained chrome.
+
+# Tier thresholds (see #490). Kept as constants — data-driven inputs, fixed
+# cut points — so a re-calibration is a one-line change with a guard test.
+CONFIDENCE_TIER_HIGH = 0.70
+CONFIDENCE_TIER_MODERATE = 0.40
+
+ConfidenceTier = Literal["high", "moderate", "low"]
+
+# Signal weights (#490). When a signal is unavailable (e.g. source-agreement is
+# not computable on a single-source market) its weight is dropped and the score
+# renormalizes over the signals we DO have — so a well-sourced, actively-traded
+# market can still reach "high" without every input present.
+_CONF_W_SOURCES = 0.45
+_CONF_W_MOVEMENT = 0.25
+_CONF_W_VOLUME = 0.15
+_CONF_W_AGREE = 0.15
+
+# Source count saturates at 3: one source is thin, three-plus is a full bar.
+_CONF_SOURCE_SATURATION = 3
+
+
+def compute_confidence_score(
+    *,
+    source_count: "int | None",
+    has_recent_movement: bool = False,
+    has_volume: bool = False,
+    sources_agree: "bool | None" = None,
+) -> float:
+    """Confidence (0.0-1.0) in a feed probability, from signals already present.
+
+    Inputs (all optional except source_count, which is the backbone):
+      - ``source_count``      how many independent sources priced this question
+      - ``has_recent_movement`` a non-trivial 24h price change (live interest)
+      - ``has_volume``        real money traded in the last 24h
+      - ``sources_agree``     ``True``/``False`` when a cross-source spread is
+                               measurable; ``None`` when it isn't (its weight is
+                               then dropped and the rest renormalize).
+
+    Returns 0.0 when there is no signal at all (no sources, nothing else).
+    """
+    sc = max(0, int(source_count or 0))
+    components: list[tuple[float, float]] = [
+        (
+            min(sc, _CONF_SOURCE_SATURATION) / float(_CONF_SOURCE_SATURATION),
+            _CONF_W_SOURCES,
+        ),
+        (1.0 if has_recent_movement else 0.0, _CONF_W_MOVEMENT),
+        (1.0 if has_volume else 0.0, _CONF_W_VOLUME),
+    ]
+    if sources_agree is not None:
+        components.append((1.0 if sources_agree else 0.0, _CONF_W_AGREE))
+
+    total_weight = sum(w for _, w in components)
+    if total_weight <= 0:
+        return 0.0
+    score = sum(value * weight for value, weight in components) / total_weight
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def confidence_tier(score: float) -> ConfidenceTier:
+    """Map a 0-1 confidence score to a tier (high/moderate/low)."""
+    if score >= CONFIDENCE_TIER_HIGH:
+        return "high"
+    if score >= CONFIDENCE_TIER_MODERATE:
+        return "moderate"
+    return "low"
+
+
+# tier -> number of filled signal bars (out of 3). Single source of truth on the
+# backend; the frontend keeps an identical map for the client-computed event hero.
+CONFIDENCE_TIER_BARS: dict[str, int] = {"high": 3, "moderate": 2, "low": 1}
+
+
+def confidence_signal(
+    *,
+    source_count: "int | None",
+    has_recent_movement: bool = False,
+    has_volume: bool = False,
+    sources_agree: "bool | None" = None,
+) -> "dict | None":
+    """Build the feed-card confidence payload, or ``None`` when there's no signal.
+
+    Returns ``{"score", "tier", "bars"}``. ``None`` (glyph absent) when we can't
+    even count a single source — the frontend renders nothing rather than a
+    misleading empty bar (#490 "render only where present").
+    """
+    if not source_count:
+        return None
+    score = compute_confidence_score(
+        source_count=source_count,
+        has_recent_movement=has_recent_movement,
+        has_volume=has_volume,
+        sources_agree=sources_agree,
+    )
+    tier = confidence_tier(score)
+    return {"score": score, "tier": tier, "bars": CONFIDENCE_TIER_BARS[tier]}

@@ -7,7 +7,7 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext } from "./utils";
-import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText } from "./shared";
+import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
 
 interface EventCardProps extends CardActionCallbacks {
@@ -90,7 +90,10 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm mb-1">
               <span className="font-bold" style={{ color: awayColor }}>{formatProbability(awayProb)}</span>
-              <span className="text-text-muted text-[10px]">Win Probability</span>
+              <span className="flex items-center gap-1.5 text-text-muted text-[10px]">
+                Win Probability
+                <SignalBars tier={data.confidence_tier} />
+              </span>
               <span className="font-bold" style={{ color: homeColor }}>{formatProbability(homeProb)}</span>
             </div>
             <div className="h-2.5 rounded-full overflow-hidden flex">

@@ -8,7 +8,7 @@ import { marketEventKey, eventPath } from "@/lib/eventKey";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText } from "./shared";
+import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
 import type { CardActionCallbacks } from "./types";
 
@@ -334,6 +334,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           {volumeStr && <span className="whitespace-nowrap">{volumeStr}</span>}
           {volumeStr && resolveText && <span>·</span>}
           {resolveText && <span className="whitespace-nowrap">{resolveText}</span>}
+          {data.confidence_tier && (volumeStr || resolveText) && <span>·</span>}
+          <SignalBars tier={data.confidence_tier} />
         </div>
 
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />

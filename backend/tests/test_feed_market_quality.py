@@ -28,6 +28,10 @@ from app.utils.feed_market_quality import (
     has_specific_explanation,
     has_strong_hook,
     quality_score_adjustment,
+    compute_confidence_score,
+    confidence_signal,
+    confidence_tier,
+    CONFIDENCE_TIER_BARS,
 )
 from app.utils.feed_quality_debug import apply_db_trace_missing_ground_truth_triage
 from app.utils.feed_quality_debug import build_feed_quality_debug
@@ -2888,3 +2892,64 @@ class TestLockedNearCertain:
 
     def test_low_volume_still_suppressed(self):
         assert is_locked_near_certain(0.995, 0.0, 100.0) is True
+
+
+class TestConfidenceSignal:
+    """#490 — data-driven confidence signal (1-3 bars). Guards the tier cut
+    points, the renormalization when a signal is absent, and the absent state."""
+
+    def test_score_monotonic_in_source_count(self):
+        one = compute_confidence_score(source_count=1)
+        two = compute_confidence_score(source_count=2)
+        three = compute_confidence_score(source_count=3)
+        assert one < two < three
+        # saturates at 3 — a 5th source adds nothing
+        assert compute_confidence_score(source_count=5) == three
+
+    def test_full_signals_reach_high(self):
+        score = compute_confidence_score(
+            source_count=3, has_recent_movement=True, has_volume=True
+        )
+        assert score == 1.0
+        assert confidence_tier(score) == "high"
+
+    def test_single_source_is_low(self):
+        score = compute_confidence_score(source_count=1)
+        assert confidence_tier(score) == "low"
+
+    def test_absent_signal_renormalizes(self):
+        # sources_agree unknown -> its weight drops, the rest fill the 0-1 range,
+        # so a fully-sourced active market still reaches high without it.
+        with_agree = compute_confidence_score(
+            source_count=3, has_recent_movement=True, sources_agree=True
+        )
+        without_agree = compute_confidence_score(
+            source_count=3, has_recent_movement=True
+        )
+        assert confidence_tier(with_agree) == "high"
+        assert confidence_tier(without_agree) == "high"
+
+    def test_tier_cut_points(self):
+        assert confidence_tier(0.70) == "high"
+        assert confidence_tier(0.69) == "moderate"
+        assert confidence_tier(0.40) == "moderate"
+        assert confidence_tier(0.39) == "low"
+        assert confidence_tier(0.0) == "low"
+
+    def test_bars_map_matches_tiers(self):
+        assert CONFIDENCE_TIER_BARS == {"high": 3, "moderate": 2, "low": 1}
+
+    def test_signal_absent_without_sources(self):
+        # No source count -> no glyph at all (render-only-where-present).
+        assert confidence_signal(source_count=0) is None
+        assert confidence_signal(source_count=None) is None
+
+    def test_signal_payload_shape(self):
+        sig = confidence_signal(
+            source_count=2, has_recent_movement=True
+        )
+        assert sig is not None
+        assert set(sig.keys()) == {"score", "tier", "bars"}
+        assert sig["tier"] == "moderate"
+        assert sig["bars"] == 2
+        assert 0.0 <= sig["score"] <= 1.0

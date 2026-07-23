@@ -39,6 +39,8 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
+import { SignalBars } from "@/components/discover/shared";
+import { confidenceFromSources } from "@/lib/confidence";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
@@ -323,6 +325,19 @@ export default function EventPage({ params }: EventPageProps) {
   // Resolve display probability based on game status (see eventKeyStats.ts)
   const { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb } =
     resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
+
+  // #490: hero confidence signal (1-3 bars), computed client-side from the win-
+  // prob sources already on the event + whether the line moved off open. Mirrors
+  // the feed-card backend formula (frontend/lib/confidence.ts).
+  const heroConfidence = confidenceFromSources({
+    sourceCount: event.win_probability_sources
+      ? Object.keys(event.win_probability_sources).length
+      : 0,
+    hasMovement:
+      homeProb !== null &&
+      openingHomeProb !== null &&
+      Math.abs(homeProb - openingHomeProb) > 0.001,
+  });
 
   // L2-112 Item 1: settled events get a winner treatment (final score + winner
   // chip), NOT a stale pregame percentage. Mirrors the futures settled-hero rule
@@ -694,10 +709,11 @@ export default function EventPage({ params }: EventPageProps) {
 
               {/* Source label — live/pregame only */}
               {!isFinished && probSourceLabel && (
-                <div className="mt-1">
+                <div className="mt-1 flex items-center gap-1.5">
                   <span className="text-[11px] text-text-muted">
                     {probSourceLabel}
                   </span>
+                  {heroConfidence && <SignalBars tier={heroConfidence.tier} />}
                 </div>
               )}
 
