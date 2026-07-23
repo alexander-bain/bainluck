@@ -105,6 +105,51 @@ _CENSUS_SQL = f"""
 """
 
 
+async def repair(session, apply: bool) -> dict:
+    """Session-taking core (used by both the CLI and POST /api/admin/repairs/
+    season-series, Queue #247 Item 5). Does all work on ``session``; commits only
+    when ``apply``. Returns a JSON-serializable before/after census."""
+    from sqlalchemy import text
+
+    s = session
+    rows = (await s.execute(text(_LEDGER_SQL))).all()
+    before = (await s.execute(text(_CENSUS_SQL))).one()
+
+    bogus_event_ids: set = set()
+    real_event_ids: set = set()
+    ledger: list[dict] = []
+    for r in rows:
+        is_bogus = bool(r.team_null) and (r.sport_key or "").endswith("_other")
+        (bogus_event_ids if is_bogus else real_event_ids).add(r.event_id)
+        ledger.append({
+            "market_id": r.market_id, "source": r.source, "market_status": r.mkt_status,
+            "event_id": r.event_id, "event_status": r.ev_status, "sport_key": r.sport_key,
+            "bogus": is_bogus, "market_name": (r.market_name or "")[:80],
+        })
+
+    unlinked = voided = 0
+    if apply and rows:
+        unlinked = (await s.execute(text(_UNLINK_SQL))).rowcount or 0
+        if bogus_event_ids:
+            voided = (await s.execute(
+                text(_VOID_SQL), {"event_ids": list(bogus_event_ids)}
+            )).rowcount or 0
+        await s.commit()
+
+    after = (await s.execute(text(_CENSUS_SQL))).one()
+    return {
+        "repair": "season-series",
+        "applied": bool(apply),
+        "before": {"linked_markets": before.linked_markets, "linked_events": before.linked_events},
+        "bogus_events": len(bogus_event_ids),
+        "real_events_preserved": sorted(real_event_ids),
+        "unlinked": unlinked,
+        "voided": voided,
+        "after": {"linked_markets": after.linked_markets, "linked_events": after.linked_events},
+        "ledger": ledger,
+    }
+
+
 async def run(apply: bool) -> None:
     from app.tasks.base import get_task_session
     from sqlalchemy import text

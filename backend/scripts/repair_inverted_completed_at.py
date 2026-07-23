@@ -67,6 +67,58 @@ _CENSUS_SQL = """
 """
 
 
+async def repair(session, apply: bool) -> dict:
+    """Session-taking core (used by both the CLI and POST /api/admin/repairs/
+    inverted-events, Queue #247 Item 5). Does all work on ``session``; commits
+    only when ``apply``. Returns a JSON-serializable before/after census."""
+    from sqlalchemy import text
+
+    s = session
+    rows = (await s.execute(text(_LEDGER_SQL))).all()
+    before = (await s.execute(text(_CENSUS_SQL))).one().inverted
+
+    fixable: list[tuple[int, object]] = []
+    unfixable: list[int] = []
+    ledger: list[dict] = []
+    for r in rows:
+        candidates = [t for t in (r.last_wp_snap, r.last_odds_snap) if t is not None]
+        new_completed = max(candidates) if candidates else None
+        if new_completed:
+            fixable.append((r.event_id, new_completed))
+        else:
+            unfixable.append(r.event_id)
+        ledger.append({
+            "event_id": r.event_id, "sport_key": r.sport_key, "status": r.ev_status,
+            "commence_time": r.commence_time.isoformat() if r.commence_time else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "inversion_hours": round(float(r.inversion_hours), 2) if r.inversion_hours is not None else None,
+            "new_completed_at": new_completed.isoformat() if new_completed else None,
+            "action": "fix" if new_completed else "skip_no_snapshot",
+        })
+
+    fixed = 0
+    if apply and fixable:
+        for event_id, new_completed in fixable:
+            fixed += (await s.execute(
+                text(_FIX_SQL),
+                {"event_id": event_id, "new_completed_at": new_completed},
+            )).rowcount or 0
+        await s.commit()
+
+    after = (await s.execute(text(_CENSUS_SQL))).one().inverted
+    return {
+        "repair": "inverted-events",
+        "applied": bool(apply),
+        "before": before,
+        "fixable": len(fixable),
+        "unfixable": len(unfixable),
+        "unfixable_event_ids": unfixable,
+        "fixed": fixed,
+        "after": after,
+        "ledger": ledger,
+    }
+
+
 async def run(apply: bool) -> None:
     from app.tasks.base import get_task_session
     from sqlalchemy import text

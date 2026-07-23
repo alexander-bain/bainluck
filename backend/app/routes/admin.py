@@ -1396,6 +1396,7 @@ from app.routes.admin_data_quality import router as data_quality_router  # noqa:
 from app.routes.admin_providers import router as providers_router  # noqa: E402
 from app.routes.admin_events import router as events_router  # noqa: E402
 from app.routes.admin_teams import router as teams_router  # noqa: E402
+from app.routes.admin_repairs import router as repairs_router  # noqa: E402
 
 router.include_router(celery_router)
 router.include_router(matching_router)
@@ -1405,3 +1406,4 @@ router.include_router(data_quality_router)
 router.include_router(providers_router)
 router.include_router(events_router)
 router.include_router(teams_router)
+router.include_router(repairs_router)

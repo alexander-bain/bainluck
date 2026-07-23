@@ -69,7 +69,11 @@ def _get_redis():
         return _latency_redis
     try:
         from app.tasks.redis_state import get_redis_client
-        _latency_redis = get_redis_client()
+        # #1197 (r259): this write is on the hot request path (sampled, but blocks
+        # the sampled response). Use a fast-fail, tightly-bounded client so a
+        # churning TLS connection can add at most a fraction of a second to a
+        # sampled request instead of the full 3×1s background retry budget.
+        _latency_redis = get_redis_client(socket_timeout=0.5, fast_fail=True)
         return _latency_redis
     except Exception:
         return None

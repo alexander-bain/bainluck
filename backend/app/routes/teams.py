@@ -9,7 +9,7 @@ from sqlalchemy import select, or_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome
+from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamIdentityMapping
 from app.services import get_db
 from app.utils import season_windows
 
@@ -33,6 +33,21 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         select(Team).options(selectinload(Team.sport)).where(team_filter)
     )
     team = result.scalars().first()
+    if not team:
+        # #1204: legacy-slug redirect. A slug retired by a team-identity merge is
+        # registered in team_identity_mapping (source='legacy_slug') pointing at the
+        # canonical franchise, so a bookmarked old slug (e.g. /teams/boston) resolves
+        # to the live row instead of 404-ing (redirect, not 404).
+        legacy_id = (await db.execute(
+            select(TeamIdentityMapping.team_id).where(
+                TeamIdentityMapping.source == "legacy_slug",
+                TeamIdentityMapping.source_id == identifier,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if legacy_id is not None:
+            team = (await db.execute(
+                select(Team).options(selectinload(Team.sport)).where(Team.id == legacy_id)
+            )).scalars().first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -66,7 +81,10 @@ async def get_team(identifier: str, db: AsyncSession = Depends(get_db)):
         .options(selectinload(Event.sport))
         .where(
             base_event_filter,
-            Event.status == "completed",
+            # #1204: include 'closed'-settled, not just 'completed' — a settled
+            # doubleheader game (and every source that closes rather than completes)
+            # was orphaned from recent games (only 1 of 2 surfaced).
+            Event.status.in_(["completed", "closed"]),
             Event.commence_time >= now - timedelta(days=30),
         )
         .order_by(Event.commence_time.desc())

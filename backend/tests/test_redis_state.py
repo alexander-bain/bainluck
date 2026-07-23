@@ -281,6 +281,44 @@ class TestGetRedisClientSocketTimeout:
         assert "socket_connect_timeout" in sig.parameters
 
 
+class TestFastFailRetry:
+    """#1197 (r259): LATENCY IS THE GATE. Hot-request-path Redis clients (the
+    rate-limiter, the latency sampler) must fail-open FAST on a churning TLS
+    connection instead of burning the robust 3-attempt background retry budget
+    — the cause of the 7-17.6s warm team-route latency. The fast-fail retry has
+    strictly fewer attempts than the background retry."""
+
+    def test_fast_fail_retry_has_fewer_attempts(self):
+        fast = redis_state._redis_fast_fail_retry()
+        robust = redis_state._redis_retry()
+        # redis.retry.Retry stores the retry count on `_retries`.
+        assert fast._retries < robust._retries
+        assert fast._retries <= 1
+
+    def test_get_redis_client_fast_fail_uses_bounded_retry(self):
+        fast_client = redis_state.get_redis_client(socket_timeout=0.5, fast_fail=True)
+        robust_client = redis_state.get_redis_client()
+        fast_retry = fast_client.connection_pool.connection_kwargs.get("retry")
+        robust_retry = robust_client.connection_pool.connection_kwargs.get("retry")
+        assert fast_retry is not None and robust_retry is not None
+        assert fast_retry._retries < robust_retry._retries
+        # socket bound still honored on the fast-fail client.
+        assert fast_client.connection_pool.connection_kwargs.get("socket_timeout") == 0.5
+
+    def test_signature_exposes_fast_fail(self):
+        sig = inspect.signature(redis_state.get_redis_client)
+        assert "fast_fail" in sig.parameters
+
+    def test_rate_limiter_imports_fast_fail_retry(self):
+        # The request-path rate limiter must use the fast-fail retry, not the
+        # robust background retry (r259).
+        import pathlib
+        src = pathlib.Path(redis_state.__file__).parent.parent / "utils" / "rate_limit.py"
+        text = src.read_text()
+        assert "_redis_fast_fail_retry" in text
+        assert "socket_timeout" in text
+
+
 class TestNoUnboundedRawRedisInTasks:
     """#969 NEVER-AGAIN CI guard: tasks/ must NOT construct a raw sync Redis
     client (redis.from_url / redis.Redis) directly — every sync client must come

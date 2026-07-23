@@ -63,6 +63,25 @@ def _redis_retry():
     return Retry(EqualJitterBackoff(cap=1.0, base=0.05), 3)
 
 
+def _redis_fast_fail_retry():
+    """A fresh, LATENCY-BOUNDED retry policy: 1 retry, ~0.1s cap.
+
+    #1197 (r259): the request-path middlewares (rate-limiter, latency sampler)
+    must never spend the full ``_redis_retry()`` budget (3 attempts × up to 1s
+    backoff, stacked across two ops on the 429 path) burning a churning TLS
+    connection — that is exactly what pushed warm team-route latency to 7-17.6s.
+    On the request path we want a connection blip to degrade to fail-open in a
+    fraction of a second, NOT to be robustly retried: paired with a small
+    ``socket_timeout`` the worst case is ~sub-second per op instead of ~seconds.
+    Background tasks keep the robust ``_redis_retry()`` — durability matters there,
+    latency does not. A fresh Retry per client avoids shared mutable backoff state.
+    """
+    from redis.retry import Retry
+    from redis.backoff import EqualJitterBackoff
+
+    return Retry(EqualJitterBackoff(cap=0.1, base=0.02), 1)
+
+
 def _redis_retry_on_errors():
     """Exception classes that trigger a transparent reconnect+retry (#1197)."""
     from redis.exceptions import ConnectionError as _ConnErr, TimeoutError as _TmoErr
@@ -73,6 +92,7 @@ def _redis_retry_on_errors():
 def get_redis_client(
     socket_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
     socket_connect_timeout=_DEFAULT_REDIS_SOCKET_TIMEOUT,
+    fast_fail=False,
 ):
     """Get sync Redis client with proper SSL handling for Heroku.
 
@@ -80,6 +100,11 @@ def get_redis_client(
     Redis op on the returned client. Both default to
     ``_DEFAULT_REDIS_SOCKET_TIMEOUT`` (5s) — bounded by default (#969). Pass
     ``None`` to opt out of a bound (rare; only for a deliberate long blocking op).
+
+    ``fast_fail=True`` (#1197 r259) swaps the robust 3-attempt background retry for
+    the latency-bounded ``_redis_fast_fail_retry()`` — use it for clients on the hot
+    request path (the latency sampler) so a churning TLS connection degrades to
+    fail-open in a fraction of a second instead of spending the full retry budget.
     """
     import ssl
 
@@ -103,7 +128,8 @@ def get_redis_client(
     kwargs["retry_on_timeout"] = True
     # #1197: retry the TLS-handshake ConnectionError (not just timeouts) + bound
     # the pool. This is the lever the #233/#239 keepalive-only fixes lacked.
-    kwargs["retry"] = _redis_retry()
+    # fast_fail (r259) uses the latency-bounded retry for hot-request-path clients.
+    kwargs["retry"] = _redis_fast_fail_retry() if fast_fail else _redis_retry()
     kwargs["retry_on_error"] = _redis_retry_on_errors()
     kwargs["max_connections"] = _REDIS_MAX_CONNECTIONS
 

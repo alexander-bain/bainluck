@@ -2350,6 +2350,74 @@ def _order_settled_scan_list(
     return list(priority) + boost + win, next_pos
 
 
+_FUTURES_OUTCOMES_EXTERNAL_ID_IDX_FLAG = "bainluck:idx:futures_outcomes_external_id"
+
+
+async def _ensure_futures_outcomes_external_id_index():
+    """Best-effort: build the missing btree index on ``futures_outcomes(external_id)``.
+
+    The settled-events backfill runs several UPDATEs per page filtering
+    ``futures_outcomes.external_id = ANY(:tickers)``. ``futures_outcomes`` has
+    ~1.23M rows and had NO index on ``external_id`` (only PK, ``market_id``, the
+    composite unique ``(market_id, external_id)`` — which cannot serve an
+    ``external_id``-only lookup — and a trigram on ``name``). Every such UPDATE
+    seq-scanned 1.23M rows and tripped the 90s ``statement_timeout``. This index
+    lets the existing ``external_id = ANY(...)`` predicate use an index scan.
+
+    gotcha #31: we do NOT create this index in an Alembic migration. Heroku's
+    release phase has a ~5min timeout and ``CREATE INDEX CONCURRENTLY`` on a
+    large table hangs it → full outage. A Celery worker has no release timeout,
+    so we build it here at task runtime. ``CONCURRENTLY`` also cannot run inside
+    a transaction block, so we use a SEPARATE autocommit connection (never the
+    task's transactional session).
+
+    #1197/#39: the guard flag goes through the bounded ``get_redis_client()`` so
+    a hung Redis can't freeze this async task. A failure anywhere here only means
+    the seq scan persists this run; we log and return — it must NEVER raise into
+    the backfill.
+    """
+    from app.tasks.base import _get_task_engine
+    from app.tasks.redis_state import get_redis_client
+
+    _rc = None
+    try:
+        _rc = get_redis_client()
+        if _rc is not None and _rc.get(_FUTURES_OUTCOMES_EXTERNAL_ID_IDX_FLAG):
+            # Already built on a prior run — skip instantly.
+            return
+    except Exception:
+        # Redis unavailable → fall through and attempt the build best-effort.
+        _rc = None
+
+    engine = _get_task_engine()
+    try:
+        # CONCURRENTLY must run outside a transaction → AUTOCOMMIT connection.
+        async with engine.connect() as conn:
+            conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                "ix_futures_outcomes_external_id ON futures_outcomes (external_id)"
+            ))
+        logger.info("futures_outcomes(external_id) index ensured (settled backfill)")
+        # Long TTL (30 days) so subsequent runs skip the DDL round-trip entirely.
+        if _rc is not None:
+            try:
+                _rc.setex(_FUTURES_OUTCOMES_EXTERNAL_ID_IDX_FLAG, 30 * 24 * 3600, "1")
+            except Exception:
+                pass
+    except Exception as exc:
+        # Never let index-build failure break the backfill (gotcha #31 rationale).
+        logger.warning(
+            "Could not ensure futures_outcomes(external_id) index; "
+            "settled backfill may seq-scan this run: %s", exc,
+        )
+    finally:
+        try:
+            await engine.dispose()
+        except Exception:
+            pass
+
+
 async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str] | None = None):
     """Recover historical prices and fix market status from Kalshi settled events.
 
@@ -2408,6 +2476,12 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
             )
         except Exception:
             pass
+
+    # Ensure the futures_outcomes(external_id) index exists BEFORE any of the
+    # per-page UPDATEs (which filter external_id = ANY(:tickers)) run. Done on a
+    # SEPARATE autocommit connection so it is not itself killed by the 90s
+    # statement_timeout set below, and never fails the backfill (gotcha #31).
+    await _ensure_futures_outcomes_external_id_index()
 
     _mark_ks("series_discovery")
     # Dynamically discover all Kalshi series with unresolved markets
