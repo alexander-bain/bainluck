@@ -9,12 +9,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
+from types import SimpleNamespace
+
 from app.routes.events import (
+    _build_team_search_filter,
     _detect_query_golf_major_concept,
     _detect_query_world_cup_concept,
     _event_search_vector,
     _futures_search_vector,
     _search_rank,
+    _sort_matched_team_rows,
+    _team_marquee_rank,
     _team_search_vector,
     _wc_concept_dict,
 )
@@ -414,6 +419,80 @@ class TestSearchEndpoint:
         assert "futures_markets.name" in sql
         assert "string_agg" in sql
         assert "futures_outcomes.market_id = futures_markets.id" in sql
+
+
+# ============================================================================
+# Queue #244 Item 1 — team surface quality: FTS-gate + marquee tie-break.
+# Kills the substring-ILIKE garbage top-1 team ("super bowl" -> Bowling Green
+# Falcons, "IPO" -> Asteras Tripolis) and the college-wins-the-nickname tie
+# ("patriots" -> California Baptist instead of New England Patriots).
+# ============================================================================
+
+
+class TestTeamSearchSurfaceQuality:
+    def test_team_search_filter_is_fts_not_substring_ilike(self):
+        """The Teams surface must gate on a token FTS match, not a raw ILIKE — a
+        substring hit like 'bowl' inside 'Bowling Green' is what surfaced garbage."""
+        sql = str(
+            select(_team_search_vector().label("v"))
+            .where(_build_team_search_filter("super bowl"))
+            .compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).lower()
+
+        assert "websearch_to_tsquery" in sql
+        assert "@@" in sql
+        assert "teams.name" in sql
+        assert "teams.abbreviation" in sql
+        assert "teams.alternate_names" in sql
+        # No substring-ILIKE recall in the team surface anymore.
+        assert "ilike" not in sql
+
+    def test_marquee_rank_prefers_pro_leagues(self):
+        assert _team_marquee_rank("americanfootball_nfl") == 0
+        assert _team_marquee_rank("basketball_nba") == 0
+        assert _team_marquee_rank("icehockey_nhl") == 0
+        # colleges / minor leagues / None sort after
+        assert _team_marquee_rank("basketball_ncaab") == 1
+        assert _team_marquee_rank("soccer_indonesia_liga_1") == 1
+        assert _team_marquee_rank(None) == 1
+
+    def test_marquee_breaks_equal_rank_ties(self):
+        """On identical FTS rank (shared single-token nickname), the marquee
+        franchise wins over the college — regression for 'patriots'/'bruins'."""
+        college = SimpleNamespace(
+            name="California Baptist", sport_key="basketball_ncaab", team_rank=0.1
+        )
+        pro = SimpleNamespace(
+            name="New England Patriots", sport_key="americanfootball_nfl", team_rank=0.1
+        )
+        ordered = _sort_matched_team_rows([college, pro])
+        assert ordered[0] is pro
+        assert ordered[1] is college
+
+    def test_stronger_rank_still_wins_over_marquee(self):
+        """The marquee tie-break must NOT demote a genuinely stronger textual
+        match — a college's exact-name hit outranks a marquee partial hit."""
+        college_exact = SimpleNamespace(
+            name="Duke Blue Devils", sport_key="basketball_ncaab", team_rank=0.9
+        )
+        pro_partial = SimpleNamespace(
+            name="Some NFL Team", sport_key="americanfootball_nfl", team_rank=0.2
+        )
+        ordered = _sort_matched_team_rows([pro_partial, college_exact])
+        assert ordered[0] is college_exact
+
+    def test_sort_is_stable_and_name_ordered_within_tier(self):
+        a = SimpleNamespace(name="Zebras", sport_key="basketball_ncaab", team_rank=0.5)
+        b = SimpleNamespace(name="Aardvarks", sport_key="basketball_ncaab", team_rank=0.5)
+        ordered = _sort_matched_team_rows([a, b])
+        assert [r.name for r in ordered] == ["Aardvarks", "Zebras"]
+
+    def test_sort_handles_missing_rank(self):
+        rows = [SimpleNamespace(name="X", sport_key=None, team_rank=None)]
+        assert _sort_matched_team_rows(rows)[0].name == "X"
 
 
 # ============================================================================

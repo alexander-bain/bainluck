@@ -164,6 +164,40 @@ _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "tennis": ["tennis_atp", "tennis_wta"],
 }
 
+# Marquee pro leagues — used only to break FTS-rank TIES in the team search
+# surface. A nickname shared by a college and a pro franchise ("patriots",
+# "bruins", "cardinals") produces identical single-token ranks, and the old
+# Team.name-ASC tiebreak handed top-1 to the college ("California Baptist" for
+# "patriots", "Belmont Bruins" for "bruins"). Prefer the marquee franchise on an
+# exact rank tie; genuine rank differences still dominate (a college's exact-name
+# match outranks a marquee team's partial match).
+_MARQUEE_TEAM_SPORT_KEYS: frozenset[str] = frozenset({
+    "basketball_nba", "americanfootball_nfl", "baseball_mlb", "icehockey_nhl",
+    "basketball_wnba", "soccer_epl", "soccer_usa_mls", "soccer_uefa_champs_league",
+    "mma_ufc",
+})
+
+
+def _team_marquee_rank(sport_key: str | None) -> int:
+    """Tie-break key: 0 for marquee pro leagues, 1 otherwise (lower sorts first)."""
+    return 0 if sport_key in _MARQUEE_TEAM_SPORT_KEYS else 1
+
+
+def _sort_matched_team_rows(rows: list) -> list:
+    """Order team-search rows by FTS rank desc, then marquee league, then name.
+
+    Pure (safe to unit-test). Each row must expose ``team_rank``, ``sport_key``
+    and ``name``. The marquee tie-break only reorders rows of EQUAL rank, so a
+    stronger textual match is never demoted by it."""
+    return sorted(
+        rows,
+        key=lambda r: (
+            -(getattr(r, "team_rank", 0.0) or 0.0),
+            _team_marquee_rank(getattr(r, "sport_key", None)),
+            (getattr(r, "name", "") or "").lower(),
+        ),
+    )
+
 # #993 Slice C: multi-word search AND-matches every term against the market NAME,
 # but descriptive/scaffolding words aren't in market names — "fed rate DECISION"
 # (name: "Fed emergency rate cut"), "bitcoin PRICE 2026", "WHERE WILL lebron GO".
@@ -622,6 +656,21 @@ def _build_expanded_fts(column, term: str, expansion: str | None):
     if expansion:
         return or_(base, _fts_filter(column, expansion))
     return base
+
+
+def _build_team_search_filter(q: str):
+    """Gate the dedicated Teams surface on a genuine full-text match — every query
+    token must appear as a whole lexeme in the team's name / abbreviation /
+    alternate_names. The old OR-of-substring-ILIKEs surfaced pure substring noise
+    as top-1 ("super bowl" -> Bowling Green Falcons, "IPO" -> Asteras Tripolis,
+    "messi" -> ACR Messina); an FTS match keeps the real hits (red sox, celtics,
+    yankees, duke) and drops the garbage. Alternate_names is cast to text so a
+    nickname stored in the JSONB array ("Lakers", "LA Lakers") still matches."""
+    return or_(
+        _fts_filter(Team.name, q),
+        _fts_filter(Team.abbreviation, q),
+        _fts_filter(cast(Team.alternate_names, String), q),
+    )
 
 
 def _build_league_ticker_match(expanded: list[tuple[str, str | None]]):
@@ -1814,50 +1863,50 @@ async def search_events(
         event_concepts.insert(0, _wc_concept)
         event_concepts = event_concepts[:5]
 
-    # Search teams (ILIKE with expansion — table is small, no FTS needed)
-    team_ilike_parts = []
-    for term, exp in expanded:
-        team_ilike_parts.append(_build_expanded_ilike(Team.name, term, exp))
-        team_ilike_parts.append(_build_expanded_ilike(Team.abbreviation, term, exp))
-        team_ilike_parts.append(_build_expanded_ilike(cast(Team.alternate_names, String), term, exp))
-    team_search_filter = or_(*team_ilike_parts)
-    if fuzzy_corrected:
-        fuzzy_team_pattern = f"%{fuzzy_corrected}%"
-        team_search_filter = or_(
-            team_search_filter,
-            Team.name.ilike(fuzzy_team_pattern),
-        )
+    # Search teams — FTS-gated (see _build_team_search_filter): the dedicated Teams
+    # surface must be a genuine token match, not a substring-ILIKE artifact. A
+    # low-confidence trigram "did you mean" is deliberately NOT injected here (it
+    # produced "Spain" for "spacex"); the correction still drives the events
+    # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
+    # so the marquee tie-break has the real contenders before the 5-row cap.
+    team_rank = _search_rank(_team_search_vector(), q).label("team_rank")
     team_search_q = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation,
-               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"))
+               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
+               team_rank)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
-        .where(team_search_filter)
-        .order_by(_search_rank(_team_search_vector(), q).desc(), Team.name)
-        .limit(5)
+        .where(_build_team_search_filter(q))
+        .order_by(team_rank.desc(), Team.name)
+        .limit(25)
     )
     if sport:
         team_search_q = team_search_q.where(Sport.key == sport)
     team_search_result = await db.execute(team_search_q)
+    # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
+    # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
+    # users still find these athletes via event and futures results. Then apply the
+    # rank-first / marquee tie-break ordering before capping at 5.
+    team_rows = _sort_matched_team_rows([
+        row for row in team_search_result.all()
+        if not _is_individual_sport(row.sport_key)
+    ])
     teams_seen: set[str] = set()
     matched_teams = []
-    for row in team_search_result.all():
-        # Suppress individual-sport "teams" (tennis players, MMA fighters,
-        # golfers, boxers) — they are artifacts of the Odds API modelling
-        # 1v1 sports as team-vs-team.  Users will still find these athletes
-        # via event and futures results.
-        if _is_individual_sport(row.sport_key):
+    for row in team_rows:
+        if row.name in teams_seen:
             continue
-        if row.name not in teams_seen:
-            teams_seen.add(row.name)
-            matched_teams.append({
-                "id": row.id,
-                "name": row.name,
-                "slug": row.slug,
-                "abbreviation": row.abbreviation,
-                "logo": row.logo_url_small,
-                "record": row.current_record,
-                "sport_key": _normalize_team_sport_key(row.sport_key),
-            })
+        teams_seen.add(row.name)
+        matched_teams.append({
+            "id": row.id,
+            "name": row.name,
+            "slug": row.slug,
+            "abbreviation": row.abbreviation,
+            "logo": row.logo_url_small,
+            "record": row.current_record,
+            "sport_key": _normalize_team_sport_key(row.sport_key),
+        })
+        if len(matched_teams) >= 5:
+            break
 
     # #206 Item 1b: positively surface the never-dead World Cup concept for a bare
     # WC-participant country query ("france") — the deriver guard above stops the
