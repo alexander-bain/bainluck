@@ -75,6 +75,29 @@ actor WatchAPIClient {
 
     var lastFetchTime: Date? { cachedAt }
 
+    /// Fetches the my-teams feed (events for the user's followed teams). Requires
+    /// a Bearer token — the backend hard-gates `my_teams_only` on the authenticated
+    /// user and returns empty for anonymous callers. Returns nil when signed out so
+    /// the caller can render the graceful signed-out state without a wasted request.
+    func fetchMyTeamsFeed(limit: Int = 6) async throws -> WatchFeedResponse? {
+        guard let token = WatchAuthStore.shared.token else { return nil }
+
+        guard let url = URL(string: "\(baseURL)/api/feed?limit=\(limit)&my_teams_only=true&include_futures=false") else {
+            throw WatchAPIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            logger.error("My-teams feed HTTP error: status \(code)")
+            throw WatchAPIError.httpError
+        }
+        return try decoder.decode(WatchFeedResponse.self, from: data)
+    }
+
     func submitPrediction(
         marketId: Int,
         guess: String,

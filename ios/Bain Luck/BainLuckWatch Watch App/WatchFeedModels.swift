@@ -38,6 +38,9 @@ private nonisolated struct WatchSkipOne: Decodable, Sendable {}
 
 nonisolated struct WatchFeedItem: Decodable, Identifiable, Sendable {
     let type: String
+    let score: Int
+    let headline: String?
+    let contextSummary: String?
     let event: WatchFeedEvent?
     let futures: WatchFeedFutures?
 
@@ -48,12 +51,15 @@ nonisolated struct WatchFeedItem: Decodable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, data
+        case type, score, headline, contextSummary, data
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         type = (try? c.decode(String.self, forKey: .type)) ?? "unknown"
+        score = (try? c.decode(Int.self, forKey: .score)) ?? 0
+        headline = try? c.decode(String.self, forKey: .headline)
+        contextSummary = try? c.decode(String.self, forKey: .contextSummary)
 
         if type == "event" {
             event = try? c.decode(WatchFeedEvent.self, forKey: .data)
@@ -76,10 +82,30 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
     let awayScore: Int?
     let sport: String?
     let sportName: String?
+    let commenceTime: String?
+    let temporalBadge: String?
     let currentOdds: WatchCurrentOdds?
     let homeTeamData: WatchTeamData?
     let awayTeamData: WatchTeamData?
     let espn: WatchESPNData?
+
+    var isLive: Bool { status == "live" }
+    var isSettled: Bool { status == "completed" || status == "closed" }
+
+    /// Short live-game clock string ("Q3 4:21" / "T7"), when available.
+    var clockText: String? {
+        let parts = [espn?.period, espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// Best-effort abbreviation for a side, falling back to the last name token.
+    func homeAbbrev() -> String {
+        homeTeamData?.abbreviation ?? String(homeTeam?.split(separator: " ").last ?? "")
+    }
+
+    func awayAbbrev() -> String {
+        awayTeamData?.abbreviation ?? String(awayTeam?.split(separator: " ").last ?? "")
+    }
 }
 
 nonisolated struct WatchCurrentOdds: Decodable, Sendable {
