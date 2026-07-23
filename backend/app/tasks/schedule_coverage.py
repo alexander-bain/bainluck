@@ -157,6 +157,31 @@ def _repair_teams_match(our_home, our_away, mlb_home, mlb_away) -> bool:
     return (hh and aa) or (hswap and aswap)
 
 
+def _repair_as_utc(dt):
+    """Coerce a datetime to tz-aware UTC (naive -> assume UTC)."""
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _classify_scored_inverted(completed_at, commence_time, new_start) -> str:
+    """Decide the repair action for a SCORED inverted row, given the confirmed MLB
+    Final start (all args tz-aware UTC or None):
+
+    * ``redate``  — commence was the wrong (future) field: the Final's start is
+      <= completed_at, so re-dating commence to it restores the invariant.
+    * ``fix_end`` — completed_at is the corrupt pre-first-pitch field: commence
+      already matches the Final start (within 6h), so completed_at must move to the
+      game end. The dominant standing class.
+    * ``review``  — neither holds; unsafe to auto-repair.
+
+    Pure and side-effect free so the boundary is unit-testable without a DB."""
+    if completed_at is None or new_start <= completed_at:
+        return "redate"
+    if commence_time is not None and abs(
+            (new_start - commence_time).total_seconds()) <= 6 * 3600:
+        return "fix_end"
+    return "review"
+
+
 async def _mlb_final_for(service, home, away, hs, aws, around_date):
     """Find the real MLB game (Final) matching our teams + score within ±1 day of
     ``around_date``. Returns (game_datetime_iso, mlb_home, mlb_away) or None.
@@ -189,17 +214,24 @@ async def _mlb_final_for(service, home, away, hs, aws, around_date):
 
 
 async def repair_inverted_mlb_events(apply: bool = True) -> dict:
-    """Heal (re-date / void) the standing inverted / future-settled MLB rows.
+    """Heal (re-date / fix-completed_at / void) the standing inverted / future-
+    settled MLB rows. Every write is gated on an MLB ground-truth Final matching
+    the row's teams AND final score — never a blind write.
 
-    * SCORED rows -> re-date. completed_at + score belong to a REAL finished game;
-      commence_time points at the wrong (future) sibling. Look the game up on MLB's
-      schedule (teams + final score near completed_at) and set commence_time to its
-      real start, so completed_at >= commence_time holds.
+    * SCORED, commence wrong -> re-date. completed_at + score belong to a REAL
+      finished game; commence_time points at the wrong (future) sibling. The MLB
+      Final's start is <= completed_at, so set commence_time to it and the invariant
+      (completed_at >= commence_time) holds.
+    * SCORED, completed_at wrong -> fix completed_at. commence_time + score already
+      match the confirmed MLB Final (start within 6h of commence), but completed_at
+      was set BEFORE first pitch (the dominant standing class — a stale/mis-merged
+      terminal timestamp). Move completed_at to the game end (start + nominal 9-inning
+      duration) so the invariant holds. Score / is_winner untouched (gotcha #21).
     * 0-0 / NULL-score rows -> void the settle (status->scheduled, completed_at/
       scores->NULL). The normal pipeline re-settles it once it actually plays.
     * Anything unverifiable vs MLB ground truth is LOGGED and SKIPPED.
 
-    Returns a ledger dict ``{candidates, redate, void, review, applied}``. Idempotent.
+    Returns ``{candidates, redate, fix_end, void, review, applied}``. Idempotent.
     """
     from sqlalchemy import text
 
@@ -210,6 +242,7 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
     service = MLBAPIService()
 
     redate: list = []   # (id, old_commence_iso, new_commence_iso, evidence)
+    fix_end: list = []  # (id, old_completed_iso, new_completed_iso, evidence)
     void: list = []     # (id, reason)
     review: list = []    # (id, reason)
     candidates = 0
@@ -229,36 +262,63 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
                     void.append((r.id, "empty/0-0 score, settled before a real result"))
                     continue
 
-                anchor = r.completed_at or now
+                # Find the real MLB Final for this matchup+score. Anchor on
+                # completed_at first; when completed_at is the CORRUPT field the
+                # Final sits at commence_time instead, so fall back to that anchor.
                 res = await _mlb_final_for(
                     service, r.home_team, r.away_team, r.hs, r.aws,
-                    anchor.astimezone(timezone.utc) if anchor.tzinfo
-                    else anchor.replace(tzinfo=timezone.utc),
+                    _repair_as_utc(r.completed_at or now),
                 )
+                if not res and r.commence_time is not None:
+                    res = await _mlb_final_for(
+                        service, r.home_team, r.away_team, r.hs, r.aws,
+                        _repair_as_utc(r.commence_time),
+                    )
                 if not res:
-                    review.append((r.id, "scored but no matching MLB Final near completed_at"))
+                    review.append((r.id, "scored but no matching MLB Final"))
                     continue
-                new_commence_iso, mh, ma = res
-                new_commence = datetime.fromisoformat(new_commence_iso.replace("Z", "+00:00"))
-                if r.completed_at is not None and new_commence > r.completed_at:
-                    review.append((r.id, f"MLB start {new_commence_iso} still after completed_at"))
-                    continue
-                redate.append((r.id, r.commence_time.isoformat(), new_commence_iso,
-                               f"MLB Final {mh} v {ma} @ {new_commence_iso}"))
+                new_start_iso, mh, ma = res
+                new_start = datetime.fromisoformat(new_start_iso.replace("Z", "+00:00"))
+                ev = f"MLB Final {mh} v {ma} @ {new_start_iso}"
+                completed_utc = _repair_as_utc(r.completed_at) if r.completed_at else None
+                commence_utc = _repair_as_utc(r.commence_time) if r.commence_time else None
+
+                action = _classify_scored_inverted(completed_utc, commence_utc, new_start)
+                if action == "redate":
+                    # commence was the wrong (future) field; completed_at is a real
+                    # post-game timestamp. Re-date commence to the confirmed start.
+                    redate.append((r.id, r.commence_time.isoformat(), new_start_iso, ev))
+                elif action == "fix_end":
+                    # commence already matches the confirmed Final start — completed_at
+                    # is the corrupt pre-first-pitch field. Move completed_at to the
+                    # game end (start + nominal 9-inning duration). Score / is_winner
+                    # untouched (gotcha #21).
+                    new_end = new_start + timedelta(hours=3, minutes=15)
+                    fix_end.append((r.id, r.completed_at.isoformat(), new_end.isoformat(),
+                                    f"{ev}; commence correct, completed_at was pre-start"))
+                else:
+                    review.append((r.id, f"ambiguous: Final start {new_start_iso} "
+                                          "neither after commence nor at commence"))
 
             ledger = {
                 "candidates": candidates,
                 "redate": len(redate),
+                "fix_end": len(fix_end),
                 "void": len(void),
                 "review": len(review),
                 "applied": False,
             }
 
-            if apply and (redate or void):
+            if apply and (redate or fix_end or void):
                 for eid, _old, new_iso, _ev in redate:
                     await s.execute(
                         text("UPDATE events SET commence_time = :c, "
                              "commence_time_source = 'mlb_schedule_repair' WHERE id = :id"),
+                        {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")), "id": eid},
+                    )
+                for eid, _old, new_iso, _ev in fix_end:
+                    await s.execute(
+                        text("UPDATE events SET completed_at = :c WHERE id = :id"),
                         {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")), "id": eid},
                     )
                 for eid, _reason in void:
@@ -270,8 +330,9 @@ async def repair_inverted_mlb_events(apply: bool = True) -> dict:
                 await s.commit()
                 ledger["applied"] = True
                 logger.info(
-                    "repair_inverted_mlb: APPLIED re-date %d, void %d (%d review, "
-                    "is_winner untouched)", len(redate), len(void), len(review))
+                    "repair_inverted_mlb: APPLIED re-date %d, fix-completed_at %d, void %d "
+                    "(%d review, is_winner untouched)",
+                    len(redate), len(fix_end), len(void), len(review))
             return ledger
     finally:
         await service.close()

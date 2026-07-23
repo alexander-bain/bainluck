@@ -24,15 +24,15 @@ async def _main(apply: bool) -> None:
     from app.tasks.schedule_coverage import repair_inverted_mlb_events
 
     ledger = await repair_inverted_mlb_events(apply=apply)
+    writable = ledger["redate"] + ledger.get("fix_end", 0) + ledger["void"]
     print(
         f"resolved_state-failing MLB events: {ledger['candidates']}\n"
-        f"ledger: {ledger['redate']} re-date · {ledger['void']} void · "
-        f"{ledger['review']} review-only · applied={ledger['applied']}"
+        f"ledger: {ledger['redate']} re-date · {ledger.get('fix_end', 0)} fix-completed_at · "
+        f"{ledger['void']} void · {ledger['review']} review-only · applied={ledger['applied']}"
     )
-    if not apply and (ledger["redate"] or ledger["void"]):
+    if not apply and writable:
         print(
-            f"\nDRY-RUN — pass --apply to repair "
-            f"{ledger['redate'] + ledger['void']} rows. No writes made."
+            f"\nDRY-RUN — pass --apply to repair {writable} rows. No writes made."
         )
 
 
