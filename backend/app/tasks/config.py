@@ -4,6 +4,33 @@ Shared constants and configuration for Celery tasks.
 
 from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING, STATPAL_PBP_SPORTS  # noqa: F401 — re-exported
 
+
+def socket_keepalive_options() -> dict:
+    """#1197: explicit TCP keepalive timers for every Redis connection.
+
+    ``socket_keepalive=True`` alone (the #233 keepalive fix) enables keepalive but
+    leaves the OS-default idle timer — ~2h on Linux — which is FAR longer than
+    Heroku Redis's idle-reap window, so a pooled connection still gets silently
+    reaped and dies on its next reuse with a TLS ``[SSL: UNEXPECTED_EOF]`` handshake
+    error (the ~294/24h churn #233's keepalive did not move). These timers make the
+    kernel probe the connection after 60s idle (then every 15s ×4) so it stays alive
+    well inside the reap window, cutting the reconnect frequency the handshake EOFs
+    ride on.
+
+    Only includes options that exist on the running platform — Linux (Heroku) has
+    ``TCP_KEEPIDLE``/``TCP_KEEPINTVL``/``TCP_KEEPCNT``; macOS CI hosts do not — so a
+    dev/test import never breaks. Returns ``{}`` on platforms with none available
+    (redis-py then falls back to plain ``socket_keepalive=True``).
+    """
+    import socket
+
+    opts: dict = {}
+    for name, value in (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 15), ("TCP_KEEPCNT", 4)):
+        const = getattr(socket, name, None)
+        if const is not None:
+            opts[const] = value
+    return opts
+
 # Adaptive polling state keys in Redis
 POLL_STATE_KEY = "bainluck:poll_state"
 LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"

@@ -75,6 +75,13 @@ if REDIS_URL.startswith("rediss://"):
         "ssl_cert_reqs": ssl.CERT_NONE,
     }
 
+# #1197: explicit TCP keepalive timers shared by the broker + result backend and
+# the get_redis_client helpers (single source in config.py). Empty {} on platforms
+# without TCP_KEEPIDLE (macOS CI) — redis-py then falls back to plain keepalive.
+from app.tasks.config import socket_keepalive_options as _socket_keepalive_options
+
+_KEEPALIVE_OPTS = _socket_keepalive_options()
+
 # Create Celery app
 celery_app = Celery(
     "bainluck",
@@ -107,13 +114,29 @@ celery_config = {
     "redis_socket_keepalive": True,          # result-backend TCP keepalive
     "redis_backend_health_check_interval": 25,
     "redis_socket_connect_timeout": 5,       # bound the handshake (was unbounded)
+    # #1197 (r246 option a) — the pool/recycle tuning the #233 keepalive-alone
+    # didn't deliver (churn rose 135→294/24h after it). Two levers:
+    #   1) socket_keepalive_options: explicit TCP KEEPIDLE/INTVL/CNT so pooled
+    #      connections are probed BEFORE Heroku's idle-reap window instead of dying
+    #      on next reuse with a TLS EOF (bare socket_keepalive=True uses the ~2h OS
+    #      default idle — longer than the reap, so it never helped). See config.py.
+    #   2) retry_on_timeout + broker_connection_retry_on_startup: a transient
+    #      handshake EOF/timeout retries transparently instead of surfacing as a
+    #      ConnectionError. Applied to BOTH broker and result backend.
+    "redis_retry_on_timeout": True,          # result-backend transient-error retry
+    "broker_connection_retry_on_startup": True,
+    "broker_connection_retry": True,
     "broker_transport_options": {
         "socket_keepalive": True,
+        "socket_keepalive_options": _KEEPALIVE_OPTS,
         "health_check_interval": 25,
+        "retry_on_timeout": True,
     },
     "result_backend_transport_options": {
         "socket_keepalive": True,
+        "socket_keepalive_options": _KEEPALIVE_OPTS,
         "health_check_interval": 25,
+        "retry_on_timeout": True,
     },
 }
 
@@ -249,6 +272,10 @@ HEAVY_TASKS = {
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
+    # #1201/#1193/#1202: daily MLB schedule self-heal + coverage. Cheap and daily
+    # like the sentinels, and it must fire promptly at 07:05 so the standing
+    # inverted rows are healed before the 07:10 flow sentinel reads resolved_state.
+    "app.tasks.mlb_schedule_coverage",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -851,6 +878,16 @@ def sync_mlb_win_probability(self):
     """Sync live MLB win probabilities from the MLB Stats API (every 2 min during games)."""
     from app.tasks.mlb_sync import _sync_mlb_win_probability
     return _tracked_run("mlb_sync", _sync_mlb_win_probability())
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=300, name="app.tasks.mlb_schedule_coverage")
+def mlb_schedule_coverage(self):
+    """#1201/#1193/#1202: daily MLB schedule self-heal + coverage. Repairs the
+    standing inverted / future-settled rows (gotcha #32/#46) via MLB ground truth,
+    then runs the read-only coverage check so the 07:10 Flow Sentinel resolved_state
+    reads a clean slate. Heavy queue (#233) — cheap, daily, must fire promptly."""
+    from app.tasks.schedule_coverage import run_mlb_schedule_coverage_and_repair
+    return _tracked_run("mlb_schedule_coverage", run_mlb_schedule_coverage_and_repair())
 
 
 # --- Roster Sync (ESPN + MLB Stats API) ---
@@ -2415,6 +2452,16 @@ celery_app.conf.beat_schedule = {
         # a 50K-outcome pileup, so a weekly cadence is enough. heavy queue (#233).
         "task": "app.tasks.calibration_sentinel",
         "schedule": crontab(minute=20, hour=6, day_of_week=1),  # Weekly Monday 06:20 UTC
+        "options": {"queue": "heavy"},
+    },
+    "mlb-schedule-coverage-daily": {
+        # #1201/#1193/#1202: daily MLB schedule self-heal + coverage. Runs at 07:05
+        # UTC — 5 min BEFORE the flow sentinel (07:10) — so the standing inverted /
+        # future-settled MLB rows (gotcha #32/#46) are re-dated/voided and the
+        # official-slate reconciliation is fresh when resolved_state reads. heavy
+        # queue (#233 — must fire promptly; no bg starvation).
+        "task": "app.tasks.mlb_schedule_coverage",
+        "schedule": crontab(minute=5, hour=7),  # Daily 07:05 UTC
         "options": {"queue": "heavy"},
     },
     "flow-sentinel-daily": {

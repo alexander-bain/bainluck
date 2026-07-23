@@ -58,8 +58,16 @@ def get_redis_client(
     # #1197: TCP keepalive + a health-check interval so a connection that Heroku
     # Redis has idle-closed is PINGed and transparently recycled instead of
     # failing its next reuse with a TLS [SSL: UNEXPECTED_EOF] handshake error.
+    # r246 option (a): explicit keepalive timers (probe before the idle-reap window,
+    # not the ~2h OS default) + retry_on_timeout so a transient EOF self-heals.
+    from app.tasks.config import socket_keepalive_options
+
     kwargs["socket_keepalive"] = True
+    _ka = socket_keepalive_options()
+    if _ka:
+        kwargs["socket_keepalive_options"] = _ka
     kwargs["health_check_interval"] = 25
+    kwargs["retry_on_timeout"] = True
 
     if REDIS_URL.startswith("rediss://"):
         return redis.from_url(
@@ -77,12 +85,19 @@ def get_async_redis_client():
 
     # #1197 / #969: bound the connect + keep pooled connections alive with a
     # health-check interval so idle-reaped Heroku Redis connections recycle
-    # transparently rather than raising a TLS handshake ConnectionError.
+    # transparently rather than raising a TLS handshake ConnectionError. r246
+    # option (a): explicit keepalive timers + retry_on_timeout (see get_redis_client).
+    from app.tasks.config import socket_keepalive_options
+
     stability = {
         "socket_connect_timeout": 5,
         "socket_keepalive": True,
         "health_check_interval": 25,
+        "retry_on_timeout": True,
     }
+    _ka = socket_keepalive_options()
+    if _ka:
+        stability["socket_keepalive_options"] = _ka
     if REDIS_URL.startswith("rediss://"):
         return aioredis.from_url(
             REDIS_URL,

@@ -271,6 +271,7 @@ class TestBeatScheduleCompleteness:
         "backfill-combat-wps",
         "data-quality-watchdog",
         "calibration-sentinel-weekly",
+        "mlb-schedule-coverage-daily",
         "flow-sentinel-daily",
         "grid-sentinel-daily",
         "horizon-sentinel-daily",

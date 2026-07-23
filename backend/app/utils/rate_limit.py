@@ -66,12 +66,27 @@ def _get_rate_limiter():
 
     if redis_url:
         try:
+            # #1197 (r246 option a): the rate-limiter was the one Redis client that
+            # bypassed the keepalive/health-check hardening applied everywhere else
+            # (the `limits` lib passes these kwargs through to the redis client), so
+            # its idle connections were prime candidates for the TLS handshake churn.
+            from app.tasks.config import socket_keepalive_options
+
+            _stability = {
+                "socket_keepalive": True,
+                "health_check_interval": 25,
+                "socket_connect_timeout": 5,
+                "retry_on_timeout": True,
+            }
+            _ka = socket_keepalive_options()
+            if _ka:
+                _stability["socket_keepalive_options"] = _ka
             if redis_url.startswith("rediss://"):
                 storage = storage_from_string(
-                    redis_url, ssl_cert_reqs=ssl.CERT_NONE
+                    redis_url, ssl_cert_reqs=ssl.CERT_NONE, **_stability
                 )
             else:
-                storage = storage_from_string(redis_url)
+                storage = storage_from_string(redis_url, **_stability)
             logger.info("Rate limiter using Redis storage")
         except Exception:
             logger.warning(

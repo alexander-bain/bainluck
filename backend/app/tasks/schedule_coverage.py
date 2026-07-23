@@ -104,3 +104,193 @@ async def run_mlb_schedule_coverage(date: Optional[str] = None) -> dict:
         "counts": counts,
         "failures": failures,
     }
+
+
+# ---------------------------------------------------------------------------
+# #1201/#1193 self-heal — repair the standing inverted / future-settled MLB rows.
+#
+# The resolved_state Flow Sentinel goes RED on MLB events that are settled but
+# violate ``completed_at >= commence_time`` (gotcha #32/#46): commence_time is in
+# the FUTURE, or completed_at PRECEDES commence_time. These are cross-merged rows
+# (an earlier game's terminal state folded onto a later sibling via a collapsed
+# commence_time) or a postponed game closed by the staleness net and later
+# rescheduled. The durable *prevention* already ships (the ESPN write-side fold
+# guards + the un-settle-on-replay branch in ``espn_helpers.py``). This heals the
+# rows corrupted BEFORE those guards existed, and — wired to the daily beat below
+# — keeps healing any that slip through, using the free MLB Stats API as ground
+# truth. It is the importable core; ``scripts/repair_inverted_mlb_events.py`` is a
+# thin CLI over it. Bounded (MLB + invariant-violating rows only), evidence-logged
+# per row, Core SQL, and never touches is_winner / calibration (gotcha #21).
+# ---------------------------------------------------------------------------
+
+# Settled MLB rows that violate the invariant: settled but commence in the future
+# OR completed_at before commence_time. Pull scores + ids to classify scored-vs-
+# empty and re-date via ground truth.
+_INVERTED_CANDIDATE_SQL = """
+    SELECT e.id, e.status, e.commence_time, e.completed_at,
+           e.home_score AS hs, e.away_score AS aws,
+           ht.name AS home_team, at.name AS away_team
+    FROM events e
+    JOIN sports s ON s.id = e.sport_id
+    LEFT JOIN teams ht ON ht.id = e.home_team_id
+    LEFT JOIN teams at ON at.id = e.away_team_id
+    WHERE s.key IN ('baseball_mlb', 'baseball_mlb_preseason')
+      AND e.status IN ('completed', 'closed')
+      AND (
+          e.commence_time > (now() at time zone 'utc')
+          OR (e.completed_at IS NOT NULL AND e.completed_at < e.commence_time)
+      )
+    ORDER BY e.commence_time
+"""
+
+
+def _repair_tokens(s) -> set:
+    return set((s or "").lower().replace(".", "").split())
+
+
+def _repair_teams_match(our_home, our_away, mlb_home, mlb_away) -> bool:
+    """True if our (home, away) matches the MLB game in either orientation."""
+    hh = bool(_repair_tokens(our_home) & _repair_tokens(mlb_home))
+    aa = bool(_repair_tokens(our_away) & _repair_tokens(mlb_away))
+    hswap = bool(_repair_tokens(our_home) & _repair_tokens(mlb_away))
+    aswap = bool(_repair_tokens(our_away) & _repair_tokens(mlb_home))
+    return (hh and aa) or (hswap and aswap)
+
+
+async def _mlb_final_for(service, home, away, hs, aws, around_date):
+    """Find the real MLB game (Final) matching our teams + score within ±1 day of
+    ``around_date``. Returns (game_datetime_iso, mlb_home, mlb_away) or None.
+
+    Score match is orientation-aware: accept either {hs,aws} == {mlbHome,mlbAway}
+    score set so a home/away swap in our row doesn't cause a miss."""
+    want_scores = sorted([s for s in (hs, aws) if s is not None])
+    for delta in (0, -1, 1):
+        day = (around_date + timedelta(days=delta)).strftime("%Y-%m-%d")
+        try:
+            games = await service.get_todays_games(date=day)
+        except Exception:
+            continue
+        for g in games:
+            state = (g.get("status", {}) or {}).get("detailedState", "")
+            if state not in ("Final", "Game Over", "Completed Early"):
+                continue
+            teams = g.get("teams", {}) or {}
+            mh = (teams.get("home", {}) or {}).get("team", {}).get("name", "")
+            ma = (teams.get("away", {}) or {}).get("team", {}).get("name", "")
+            if not _repair_teams_match(home, away, mh, ma):
+                continue
+            mhs = (teams.get("home", {}) or {}).get("score")
+            mas = (teams.get("away", {}) or {}).get("score")
+            got_scores = sorted([s for s in (mhs, mas) if s is not None])
+            if want_scores and got_scores and want_scores != got_scores:
+                continue
+            return (g.get("gameDate"), mh, ma)
+    return None
+
+
+async def repair_inverted_mlb_events(apply: bool = True) -> dict:
+    """Heal (re-date / void) the standing inverted / future-settled MLB rows.
+
+    * SCORED rows -> re-date. completed_at + score belong to a REAL finished game;
+      commence_time points at the wrong (future) sibling. Look the game up on MLB's
+      schedule (teams + final score near completed_at) and set commence_time to its
+      real start, so completed_at >= commence_time holds.
+    * 0-0 / NULL-score rows -> void the settle (status->scheduled, completed_at/
+      scores->NULL). The normal pipeline re-settles it once it actually plays.
+    * Anything unverifiable vs MLB ground truth is LOGGED and SKIPPED.
+
+    Returns a ledger dict ``{candidates, redate, void, review, applied}``. Idempotent.
+    """
+    from sqlalchemy import text
+
+    from app.services.mlb_api import MLBAPIService
+    from app.tasks.base import get_task_session
+
+    now = datetime.now(timezone.utc)
+    service = MLBAPIService()
+
+    redate: list = []   # (id, old_commence_iso, new_commence_iso, evidence)
+    void: list = []     # (id, reason)
+    review: list = []    # (id, reason)
+    candidates = 0
+
+    try:
+        async with get_task_session() as s:
+            rows = (await s.execute(text(_INVERTED_CANDIDATE_SQL))).all()
+            candidates = len(rows)
+            logger.info(
+                "repair_inverted_mlb: %d resolved_state-failing MLB rows", candidates
+            )
+
+            for r in rows:
+                scored = (r.hs is not None and r.aws is not None
+                          and not (r.hs == 0 and r.aws == 0))
+                if not scored:
+                    void.append((r.id, "empty/0-0 score, settled before a real result"))
+                    continue
+
+                anchor = r.completed_at or now
+                res = await _mlb_final_for(
+                    service, r.home_team, r.away_team, r.hs, r.aws,
+                    anchor.astimezone(timezone.utc) if anchor.tzinfo
+                    else anchor.replace(tzinfo=timezone.utc),
+                )
+                if not res:
+                    review.append((r.id, "scored but no matching MLB Final near completed_at"))
+                    continue
+                new_commence_iso, mh, ma = res
+                new_commence = datetime.fromisoformat(new_commence_iso.replace("Z", "+00:00"))
+                if r.completed_at is not None and new_commence > r.completed_at:
+                    review.append((r.id, f"MLB start {new_commence_iso} still after completed_at"))
+                    continue
+                redate.append((r.id, r.commence_time.isoformat(), new_commence_iso,
+                               f"MLB Final {mh} v {ma} @ {new_commence_iso}"))
+
+            ledger = {
+                "candidates": candidates,
+                "redate": len(redate),
+                "void": len(void),
+                "review": len(review),
+                "applied": False,
+            }
+
+            if apply and (redate or void):
+                for eid, _old, new_iso, _ev in redate:
+                    await s.execute(
+                        text("UPDATE events SET commence_time = :c, "
+                             "commence_time_source = 'mlb_schedule_repair' WHERE id = :id"),
+                        {"c": datetime.fromisoformat(new_iso.replace("Z", "+00:00")), "id": eid},
+                    )
+                for eid, _reason in void:
+                    await s.execute(
+                        text("UPDATE events SET status = 'scheduled', completed_at = NULL, "
+                             "home_score = NULL, away_score = NULL WHERE id = :id"),
+                        {"id": eid},
+                    )
+                await s.commit()
+                ledger["applied"] = True
+                logger.info(
+                    "repair_inverted_mlb: APPLIED re-date %d, void %d (%d review, "
+                    "is_winner untouched)", len(redate), len(void), len(review))
+            return ledger
+    finally:
+        await service.close()
+
+
+async def run_mlb_schedule_coverage_and_repair() -> dict:
+    """Daily beat entry point (#1201/#1193/#1202): self-heal the standing inverted
+    MLB rows, then run the read-only coverage check so the 07:10 Flow Sentinel and
+    the cockpit read a clean, freshly-reconciled slate. Both halves are best-effort
+    and independent; a failure in one never suppresses the other."""
+    result: dict = {}
+    try:
+        result["repair"] = await repair_inverted_mlb_events(apply=True)
+    except Exception as exc:  # heal is best-effort; still run detection
+        logger.warning("repair_inverted_mlb_events failed: %s", exc)
+        result["repair"] = {"error": str(exc)[:200]}
+    try:
+        result["coverage"] = await run_mlb_schedule_coverage()
+    except Exception as exc:
+        logger.warning("run_mlb_schedule_coverage failed: %s", exc)
+        result["coverage"] = {"error": str(exc)[:200]}
+    return result
