@@ -573,8 +573,10 @@ export default function AdminCockpit() {
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-semibold text-text-primary">Quick eval queue</h3>
           <div className="flex gap-3 text-micro">
-            <Link href={evalQ.eval_href} className="text-accent-brand hover:underline">
-              {evalQ.pending_eval_count} pending
+            {/* L2-168: point straight into the fast Label Speed Pass flow
+                (keyboard verdicts + live progress), not the old tabbed /admin/eval. */}
+            <Link href="/admin/label-pass" className="text-accent-brand hover:underline font-medium">
+              Review {evalQ.pending_eval_count} pending →
             </Link>
             {evalQ.applied_boosts_count != null && (
               <span

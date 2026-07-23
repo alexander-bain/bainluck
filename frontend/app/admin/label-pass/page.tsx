@@ -1,11 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
 import { trackEvent } from "@/lib/analytics";
+import {
+  INITIAL_SESSION,
+  keyToAction,
+  recordVerdict,
+  reconcileVerdict,
+  rollbackVerdict,
+  undoLast,
+  navigate,
+  sessionTotals,
+  progressLabel,
+  type Verdict,
+} from "@/lib/labelPassSession";
 
 export default function LabelPassPage() {
   usePageTracking({ pageType: "admin_label_pass" });
@@ -14,91 +26,103 @@ export default function LabelPassPage() {
 
   const { secret } = useAdminAuth();
 
-  const { data, error, mutate } = useSWR(
+  const { data, error } = useSWR(
     secret ? ["label-pass-pending", secret] : null,
     () => adminFetchJSON("/api/admin/label-pass/pending", secret)
   );
-  const [index, setIndex] = useState(0);
-  const [history, setHistory] = useState<
-    Array<{ id: number; verdict: string; newId?: number; applied?: boolean }>
-  >([]);
-  const [submitting, setSubmitting] = useState(false);
+
+  // L2-168: the whole session is a pure state machine (labelPassSession.ts) so
+  // the velocity logic is node-testable; this component is a thin wiring shell.
+  const [session, setSession] = useState(INITIAL_SESSION);
+  const uidRef = useRef(0);
 
   const items = (data as Record<string, unknown[]>)?.items || [];
-  const current = items[index] as Record<string, unknown> | null || null;
   const total = items.length;
-  const reviewed = history.length;
+  const current = (items[session.index] as Record<string, unknown> | null) || null;
+  const totals = sessionTotals(session);
 
-  const handleVerdict = useCallback(async (verdict: string) => {
-    if (!current || submitting || !secret) return;
-    setSubmitting(true);
-    const c = current as Record<string, unknown>;
-    try {
-      const res = (await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision_id: c.id, verdict, features: c.features || {} }),
-      })) as { new_id?: number; applied?: boolean } | null;
-      // Cockpit (Alex-ops) funnel (measurement_spec §2). #222: `applied` now
-      // reflects reality — true when an Accept applied a live Discover-ranking
-      // term (kill switch on), false for reject/skip or when the switch is off.
-      const applied = verdict === "accept" ? Boolean(res?.applied) : false;
-      if (verdict === "accept" || verdict === "reject" || verdict === "skip") {
-        trackEvent("eval_verdict", {
-          verdict,
-          decision_id: c.id as number,
-          proposal: ((c.decision as string) || "").replace("llm_proposed_", "") || undefined,
-          item_name: (c.item_name as string) || undefined,
-          category: (c.category as string) || undefined,
-          applied,
-          surface: "label_pass",
-        });
-      }
-      setHistory((h) => [
-        ...h,
-        { id: c.id as number, verdict, newId: res?.new_id, applied },
-      ]);
-      setIndex((i) => i + 1);
-    } catch (e) {
-      console.error(e);
-    }
-    setSubmitting(false);
-  }, [current, submitting, secret]);
+  const handleVerdict = useCallback(
+    (verdict: Verdict) => {
+      if (!current || !secret) return;
+      const c = current as Record<string, unknown>;
+      const decisionId = c.id as number;
+      // Arrow-navigation can land back on an already-decided card — never double-record.
+      if (session.history.some((h) => h.id === decisionId)) return;
 
-  const handleUndo = useCallback(async () => {
-    if (history.length === 0 || !secret) return;
-    const last = history[history.length - 1];
+      const uid = ++uidRef.current;
+      // Optimistic advance: the next card slides in immediately (no spinner-per-verdict).
+      setSession((s) =>
+        recordVerdict(s, { uid, id: decisionId, verdict, applied: false, pending: true })
+      );
+
+      (async () => {
+        try {
+          const res = (await adminFetchJSON("/api/admin/label-pass/verdict", secret, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision_id: decisionId, verdict, features: c.features || {} }),
+          })) as { new_id?: number; applied?: boolean } | null;
+          // #222: `applied` reflects reality — true only when an Accept applied a
+          // live Discover-ranking term (kill switch on), false otherwise.
+          const applied = verdict === "accept" ? Boolean(res?.applied) : false;
+          trackEvent("eval_verdict", {
+            verdict,
+            decision_id: decisionId,
+            proposal: ((c.decision as string) || "").replace("llm_proposed_", "") || undefined,
+            item_name: (c.item_name as string) || undefined,
+            category: (c.category as string) || undefined,
+            applied,
+            surface: "label_pass",
+          });
+          setSession((s) => reconcileVerdict(s, uid, { newId: res?.new_id, applied }));
+        } catch (e) {
+          console.error(e);
+          // POST failed — drop the phantom verdict and step back so it can be retried.
+          setSession((s) => rollbackVerdict(s, uid));
+        }
+      })();
+    },
+    [current, secret, session.history]
+  );
+
+  const handleUndo = useCallback(() => {
+    const { state: next, undone } = undoLast(session);
+    if (!undone) return;
+    setSession(next);
     // #222 server-side undo: delete the verdict row so any applied ranking boost
     // is reverted and the proposal returns to the pending queue.
-    if (last.newId != null) {
-      try {
-        await adminFetchJSON("/api/admin/label-pass/undo", secret, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision_id: last.newId }),
-        });
-        mutate();
-      } catch (e) {
-        console.error(e);
-      }
+    if (undone.newId != null && secret) {
+      (async () => {
+        try {
+          await adminFetchJSON("/api/admin/label-pass/undo", secret, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision_id: undone.newId }),
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      })();
     }
-    setHistory((h) => h.slice(0, -1));
-    setIndex((i) => Math.max(0, i - 1));
-  }, [history, secret, mutate]);
+  }, [session, secret]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      switch (e.key) {
-        case "j": handleVerdict("accept"); break;
-        case "k": handleVerdict("reject"); break;
-        case " ": e.preventDefault(); handleVerdict("skip"); break;
-        case "u": handleUndo(); break;
+      const action = keyToAction(e.key);
+      if (!action) return;
+      if (action === "accept" || action === "reject" || action === "skip") {
+        if (e.key === " ") e.preventDefault();
+        handleVerdict(action);
+      } else if (action === "undo") {
+        handleUndo();
+      } else if (action === "next" || action === "prev") {
+        setSession((s) => navigate(s, action, total));
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleVerdict, handleUndo]);
+  }, [handleVerdict, handleUndo, total]);
 
   if (!secret) return <div className="p-8 text-text-muted">Enter admin secret to access label pass.</div>;
   if (error) return <div className="p-8 text-red-500">Error loading proposals.</div>;
@@ -108,10 +132,21 @@ export default function LabelPassPage() {
     return (
       <div className="max-w-2xl mx-auto p-8">
         <h1 className="text-2xl font-bold mb-4">Label Pass Complete</h1>
-        <p className="text-text-secondary">{reviewed} of {total} proposals reviewed.</p>
+        <p className="text-text-secondary">{progressLabel(session, total)}.</p>
+        {session.history.length > 0 && (
+          <button
+            onClick={handleUndo}
+            className="mt-3 text-xs text-text-muted hover:text-text-primary"
+          >
+            Undo last (u)
+          </button>
+        )}
         <div className="mt-4 space-y-1">
-          {history.map((h, i) => (
-            <div key={i} className="text-xs text-text-muted">#{h.id} → {h.verdict}</div>
+          {session.history.map((h) => (
+            <div key={h.uid} className="text-xs text-text-muted">
+              #{h.id} → {h.verdict}
+              {h.applied ? " · applied" : ""}
+            </div>
           ))}
         </div>
       </div>
@@ -129,14 +164,32 @@ export default function LabelPassPage() {
     <div className="max-w-2xl mx-auto p-8">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">Label Speed Pass</h1>
-        <span className="text-sm text-text-muted font-mono">{reviewed + 1} / {total}</span>
+        <span className="text-sm text-text-muted font-mono">{session.index + 1} / {total}</span>
       </div>
+
+      {/* L2-168 session progress strip — live counts reflect accepts in real time */}
+      <div className="text-sm text-text-secondary font-mono mb-2" data-testid="progress-strip">
+        {progressLabel(session, total)}
+        {totals.applied > 0 && (
+          <span className="ml-2 text-emerald-600">● {totals.applied} live boost{totals.applied === 1 ? "" : "s"}</span>
+        )}
+      </div>
+
       {/* #222 shipped: verdicts now steer live Discover ranking AND train the
           scorer. Accept applies a bounded, 14-day term; Reject suppresses + trains. */}
-      <p className="text-xs text-text-muted mb-6 leading-relaxed">
+      <p className="text-xs text-text-muted mb-3 leading-relaxed">
         Accept promotes this market in Discover (bounded steer, expires in 14 days) and trains
-        the scorer. Reject suppresses it and trains the scorer. Undo (u) reverts the last steer.
+        the scorer. Reject suppresses it and trains the scorer.
       </p>
+
+      {/* Visible keyboard legend (L2-168) */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted mb-6">
+        <span><kbd className="font-mono font-semibold text-text-secondary">a</kbd> accept</span>
+        <span><kbd className="font-mono font-semibold text-text-secondary">r</kbd> reject</span>
+        <span><kbd className="font-mono font-semibold text-text-secondary">s</kbd> skip</span>
+        <span><kbd className="font-mono font-semibold text-text-secondary">u</kbd> undo last</span>
+        <span><kbd className="font-mono font-semibold text-text-secondary">← →</kbd> navigate</span>
+      </div>
 
       {/* Card */}
       <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6 shadow-md">
@@ -164,31 +217,32 @@ export default function LabelPassPage() {
         </div>
       </div>
 
-      {/* Actions */}
+      {/* Actions — optimistic (never disabled; the next card slides in on click) */}
       <div className="flex gap-3 mb-4">
         <button
           onClick={() => handleVerdict("accept")}
-          disabled={submitting}
-          className="flex-1 py-3 rounded-lg bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          className="flex-1 py-3 rounded-lg bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors"
         >
-          Accept (j)
+          Accept (a)
         </button>
         <button
           onClick={() => handleVerdict("reject")}
-          disabled={submitting}
-          className="flex-1 py-3 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 transition-colors disabled:opacity-50"
+          className="flex-1 py-3 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 transition-colors"
         >
-          Reject (k)
+          Reject (r)
         </button>
         <button
           onClick={() => handleVerdict("skip")}
-          disabled={submitting}
-          className="flex-1 py-3 rounded-lg bg-surface-elevated text-text-secondary font-semibold hover:bg-surface-border transition-colors disabled:opacity-50"
+          className="flex-1 py-3 rounded-lg bg-surface-elevated text-text-secondary font-semibold hover:bg-surface-border transition-colors"
         >
-          Skip (space)
+          Skip (s)
         </button>
       </div>
-      <button onClick={handleUndo} disabled={history.length === 0} className="text-xs text-text-muted hover:text-text-primary disabled:opacity-30">
+      <button
+        onClick={handleUndo}
+        disabled={session.history.length === 0}
+        className="text-xs text-text-muted hover:text-text-primary disabled:opacity-30"
+      >
         Undo last (u)
       </button>
     </div>
