@@ -17,10 +17,12 @@ from app.tasks.flow_sentinel import (
     feed_event_card_count,
     feed_quality_failures,
     find_duplicate_events,
+    find_matching_open_issue,
     flow_fingerprint,
     future_settled_events,
     game_markets_empty,
     inverted_completed_events,
+    issue_matches_flow,
     gold_set_recoveries,
     gold_set_regressions,
     overnormalized_participation_family,
@@ -307,6 +309,59 @@ class TestFingerprintAndSeverity:
 
     def test_chart_density_caps_at_p2(self):
         assert severity_for_flow("chart_density", failed_count=1, checked=1) == "P2"
+
+
+class TestDedupLookup:
+    """r252 (#243 Item 1): the sentinel filed 5 dupes with one fingerprint because
+    the /search index dedup was unreliable. The dedup must match an OPEN issue by
+    body marker OR title, and comment instead of filing when one exists."""
+
+    FLOW = "chart_density"
+
+    def _body_issue(self, number, flow=FLOW):
+        fp = flow_fingerprint(flow)
+        return {"number": number, "title": "whatever", "body": build_flow_issue_body(
+            {"flow": flow, "checked": 1, "failures": [], "evidence": {}})}
+
+    def _title_issue(self, number, flow=FLOW):
+        # A body whose dedupe marker was edited away — title must still match.
+        title = build_flow_issue_title({"flow": flow, "checked": 3, "failures": [1, 2]})
+        return {"number": number, "title": title, "body": "marker removed by a human"}
+
+    def test_new_fingerprint_no_match_would_file(self):
+        # No open issue for this flow → returns None → file path taken.
+        others = [{"number": 5, "title": "unrelated", "body": "nothing here"}]
+        assert find_matching_open_issue(others, self.FLOW, flow_fingerprint(self.FLOW)) is None
+
+    def test_existing_body_marker_matches(self):
+        issues = [self._body_issue(1147)]
+        assert find_matching_open_issue(issues, self.FLOW, flow_fingerprint(self.FLOW)) == 1147
+
+    def test_title_fallback_matches_when_body_marker_gone(self):
+        issues = [self._title_issue(1147)]
+        assert find_matching_open_issue(issues, self.FLOW, flow_fingerprint(self.FLOW)) == 1147
+
+    def test_lowest_number_wins_when_dupes_exist(self):
+        # The r252 mess: 5 open dupes. Dedup must pick the canonical (lowest).
+        issues = [self._body_issue(n) for n in (1226, 1147, 1225, 1194, 1223)]
+        assert find_matching_open_issue(issues, self.FLOW, flow_fingerprint(self.FLOW)) == 1147
+
+    def test_different_flow_does_not_match(self):
+        # A chart_density issue must not satisfy a search_gold_set lookup.
+        issues = [self._body_issue(1147, flow="chart_density")]
+        assert find_matching_open_issue(
+            issues, "search_gold_set", flow_fingerprint("search_gold_set")
+        ) is None
+
+    def test_robust_to_missing_fields(self):
+        issues = [None, {"title": None, "body": None}, {"number": None, "body": "x"}]
+        assert find_matching_open_issue(issues, self.FLOW, flow_fingerprint(self.FLOW)) is None
+
+    def test_issue_matches_flow_body_and_title(self):
+        fp = flow_fingerprint(self.FLOW)
+        assert issue_matches_flow(self._body_issue(1), self.FLOW, fp) is True
+        assert issue_matches_flow(self._title_issue(1), self.FLOW, fp) is True
+        assert issue_matches_flow({"title": "x", "body": "y"}, self.FLOW, fp) is False
 
 
 class TestIssueRendering:

@@ -975,7 +975,100 @@ def build_flow_issue_body(flow_result: dict) -> str:
 # Filing + dedup (reuses the bug_report_github httpx client, per calibration
 # sentinel — the GITHUB_TOKEN rail is live and proven)
 # ---------------------------------------------------------------------------
-def _find_open_issue_by_fingerprint(fingerprint: str) -> int | None:
+def issue_matches_flow(issue: dict, flow: str, fingerprint: str) -> bool:
+    """True when an OPEN issue is the sentinel's issue for this flow/fingerprint.
+
+    Two match paths (pure, so both are unit-tested):
+      * **body marker** — the ``flow-sentinel-fingerprint:{fp}`` dedupe key is in
+        the body (the primary key; matched as a plain substring so backticks /
+        the colon can't break it, unlike a GitHub quoted-phrase search).
+      * **title** — ``[Flow Sentinel] {flow name} (`` prefix. This is the
+        fingerprint-equivalent fallback (title name ↔ flow ↔ fingerprint are 1:1)
+        that catches an issue whose body marker was edited away.
+    """
+    if not isinstance(issue, dict):
+        return False
+    body = issue.get("body") or ""
+    if f"flow-sentinel-fingerprint:{fingerprint}" in body:
+        return True
+    title = issue.get("title") or ""
+    name = _FLOW_TITLES.get(flow, flow)
+    return title.startswith(f"[Flow Sentinel] {name} (")
+
+
+def find_matching_open_issue(
+    open_issues: list[dict], flow: str, fingerprint: str
+) -> int | None:
+    """Pure dedup lookup over a list of open issues → matching issue number.
+
+    Returns the LOWEST matching issue number so a stable canonical issue wins
+    when duplicates already exist (the r252 cleanup: comment the oldest, not a
+    later dupe)."""
+    matches = [
+        i["number"]
+        for i in (open_issues or [])
+        if isinstance(i, dict)
+        and i.get("number") is not None
+        and issue_matches_flow(i, flow, fingerprint)
+    ]
+    return min(matches) if matches else None
+
+
+def _list_open_sentinel_issues() -> list[dict]:
+    """Fetch OPEN alert-intake issues via the REST list API (strongly consistent,
+    unlike the eventually-consistent /search index that let 5 dupes through —
+    r252). Returns [] on any error so filing degrades safely."""
+    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
+
+    if not GITHUB_TOKEN:
+        return []
+    issues: list[dict] = []
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        for page in range(1, 4):  # up to 300 open alert-intake issues — ample
+            resp = httpx.get(
+                f"https://api.github.com/repos/{REPO}/issues",
+                headers=headers,
+                params={
+                    "state": "open",
+                    "labels": "alert-intake",
+                    "per_page": 100,
+                    "page": page,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not isinstance(batch, list) or not batch:
+                break
+            # Drop PRs (the issues endpoint includes them).
+            issues.extend(i for i in batch if "pull_request" not in i)
+            if len(batch) < 100:
+                break
+    except Exception as exc:
+        logger.warning("Flow sentinel open-issue list failed: %s", exc)
+        return []
+    return issues
+
+
+def _find_open_issue_by_fingerprint(fingerprint: str, flow: str) -> int | None:
+    """Reliable dedup: match the fingerprint against the REST-listed OPEN
+    alert-intake issues (body marker or title). Falls back to the /search index
+    only if the REST list came back empty (e.g. transient error)."""
+    open_issues = _list_open_sentinel_issues()
+    match = find_matching_open_issue(open_issues, flow, fingerprint)
+    if match is not None:
+        return match
+    if open_issues:
+        # REST list succeeded and genuinely has no match → do not file a phantom
+        # dupe via the flaky search index; there is no open issue for this flow.
+        return None
+
+    # REST list failed (empty) — last-resort search index (kept for safety).
     from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
 
     if not GITHUB_TOKEN:
@@ -1014,7 +1107,7 @@ def file_flow_issue(flow_result: dict) -> dict:
     if not GITHUB_TOKEN:
         return {"flow": flow, "fingerprint": fp, "action": "skipped_no_token"}
 
-    existing = _find_open_issue_by_fingerprint(fp)
+    existing = _find_open_issue_by_fingerprint(fp, flow)
     if existing:
         try:
             comment_on_issue(

@@ -14,7 +14,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team, User
+from app.dependencies.auth import get_optional_user
 from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils import (
@@ -1239,6 +1240,7 @@ async def search_events(
     days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
     include_upcoming: bool = Query(True, description="Include scheduled games"),
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
 ):
     """
     Search for events by team name, city, or other keywords.
@@ -1877,7 +1879,10 @@ async def search_events(
     # (user_id from auth middleware state, session_id from the x-session-id header).
     try:
         _top_id = formatted_results[0].get("id") if formatted_results else None
-        _uid = getattr(request.state, "user_id", None)
+        # #243 Item 2: attribute signed-in searches via the optional-auth dep
+        # (request.state.user_id is never set for this route); fall back to the
+        # middleware state for any other path that does populate it.
+        _uid = current_user.id if current_user else getattr(request.state, "user_id", None)
         _sid = request.headers.get("x-session-id") or request.cookies.get("session_id")
         await _log_search_query(q, total_count, _top_id, _uid, _sid)
     except Exception as exc:  # noqa: BLE001
