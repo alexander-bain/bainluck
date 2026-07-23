@@ -6,8 +6,13 @@
 import {
   computeLastChartPoint,
   computeSharedChartDomain,
+  latestBlendPoint,
+  resolveProbability,
 } from "../../lib/eventKeyStats";
-import type { EventHistoryResponse } from "../../lib/types";
+import type {
+  EventHistoryResponse,
+  EventDetailResponse,
+} from "../../lib/types";
 
 function hist(partial: Partial<EventHistoryResponse>): EventHistoryResponse {
   return {
@@ -15,6 +20,17 @@ function hist(partial: Partial<EventHistoryResponse>): EventHistoryResponse {
     history: [],
     ...partial,
   } as unknown as EventHistoryResponse;
+}
+
+function evt(partial: Partial<EventDetailResponse>): EventDetailResponse {
+  return {
+    id: 1,
+    home_team: "Home",
+    away_team: "Away",
+    status: "live",
+    commence_time: "2026-07-23T00:00:00Z",
+    ...partial,
+  } as unknown as EventDetailResponse;
 }
 
 describe("computeLastChartPoint (#1003 fraction fix)", () => {
@@ -96,5 +112,169 @@ describe("computeSharedChartDomain (Queue #189: mis-attributed game-end)", () =>
     // Domain must be forward (start < end) and cover the real game window.
     expect(startMs).toBeLessThan(endMs);
     expect(endMs).toBeGreaterThanOrEqual(new Date(commence).getTime());
+  });
+
+  // L2-163 Item 2c: a LIVE game's "All" window is capped to ≤2h before first
+  // pitch so it can never span >12h — which is what lets the 12-hour "h:mm a"
+  // inning markers collide and render T9 left of T1. (Previously the cap was
+  // completed-only; live "All" could run all the way back to morning pregame
+  // odds.)
+  test("live 'All' domain start is capped to 2h before commence", () => {
+    const commence = "2026-07-23T02:00:00Z"; // 7:00 PM PT first pitch
+    const domain = computeSharedChartDomain(
+      hist({
+        commence_time: commence,
+        status: "live",
+        // Pregame betting odds captured ~16h before first pitch (morning-of).
+        history: [
+          { timestamp: "2026-07-22T10:00:00Z", home_probability: 0.5 },
+          { timestamp: "2026-07-23T02:30:00Z", home_probability: 0.55 },
+          { timestamp: "2026-07-23T03:30:00Z", home_probability: 0.6 },
+        ] as never,
+      }),
+      "all",
+      "live",
+      commence,
+      "baseball_mlb",
+    );
+    expect(domain).not.toBeNull();
+    const startMs = new Date(domain!.start).getTime();
+    const twoHoursBefore = new Date(commence).getTime() - 2 * 60 * 60 * 1000;
+    expect(startMs).toBeGreaterThanOrEqual(twoHoursBefore);
+    // The rendered window stays under 12h → no "h:mm a" categorical collision.
+    const spanMs = new Date(domain!.end).getTime() - startMs;
+    expect(spanMs).toBeLessThan(12 * 60 * 60 * 1000);
+  });
+
+  test("scheduled/pregame 'All' domain is NOT capped (odds drift is the story)", () => {
+    const commence = "2026-07-23T02:00:00Z";
+    const domain = computeSharedChartDomain(
+      hist({
+        commence_time: commence,
+        status: "scheduled",
+        history: [
+          { timestamp: "2026-07-22T10:00:00Z", home_probability: 0.5 },
+          { timestamp: "2026-07-23T01:00:00Z", home_probability: 0.55 },
+        ] as never,
+      }),
+      "all",
+      "scheduled",
+      commence,
+      "baseball_mlb",
+    );
+    expect(domain).not.toBeNull();
+    // Full pre-game window preserved (starts at the earliest odds snapshot).
+    expect(new Date(domain!.start).getTime()).toBe(
+      new Date("2026-07-22T10:00:00Z").getTime(),
+    );
+  });
+});
+
+describe("latestBlendPoint (L2-163 Item 2b)", () => {
+  test("returns the last valid aggregate_line home probability", () => {
+    expect(
+      latestBlendPoint([
+        { timestamp: "t1", home_probability: 0.4 },
+        { timestamp: "t2", home_probability: 0.48 },
+      ]),
+    ).toBeCloseTo(0.48);
+  });
+
+  test("walks back past a trailing null value", () => {
+    expect(
+      latestBlendPoint([
+        { timestamp: "t1", home_probability: 0.4 },
+        { timestamp: "t2", home_probability: null as never },
+      ]),
+    ).toBeCloseTo(0.4);
+  });
+
+  test("empty / missing → null", () => {
+    expect(latestBlendPoint([])).toBeNull();
+    expect(latestBlendPoint(undefined)).toBeNull();
+  });
+});
+
+describe("resolveProbability — live hero binds to the blend (L2-163 Item 2b)", () => {
+  // The 57%-hero vs 20%-chart bug: the hero read a lagged sportsbook consensus
+  // while the chart drew the blend. Live, the hero must read the SAME
+  // aggregate_line the chart draws.
+  test("live hero uses aggregate_line, not the diverging current_odds", () => {
+    const r = resolveProbability(
+      evt({
+        status: "live",
+        current_odds: { home_probability: 0.57, away_probability: 0.43, bookmaker_count: 12 } as never,
+        opening_odds: { home_probability: 0.5, away_probability: 0.5 } as never,
+      }),
+      hist({
+        aggregate_line: [
+          { timestamp: "2026-07-23T00:10:00Z", home_probability: 0.22 },
+          { timestamp: "2026-07-23T00:17:00Z", home_probability: 0.2 },
+        ],
+      }),
+      null,
+      true, // isLive
+      false, // isFinished
+    );
+    expect(r.homeProb).toBeCloseTo(0.2);
+    expect(r.awayProb).toBeCloseTo(0.8);
+    expect(r.probSourceLabel).toBe("Live · Bain Luck blend");
+  });
+
+  test("live hero falls back to current_odds when no blend exists yet", () => {
+    const r = resolveProbability(
+      evt({
+        status: "live",
+        current_odds: { home_probability: 0.57, away_probability: 0.43, bookmaker_count: 12 } as never,
+      }),
+      hist({ aggregate_line: [] }),
+      null,
+      true,
+      false,
+    );
+    expect(r.homeProb).toBeCloseTo(0.57);
+    expect(r.probSourceLabel).toContain("12 sportsbook");
+  });
+
+  test("finished hero still shows pregame opening odds (unchanged)", () => {
+    const r = resolveProbability(
+      evt({
+        status: "completed",
+        current_odds: { home_probability: 0.9, away_probability: 0.1 } as never,
+        opening_odds: { home_probability: 0.35, away_probability: 0.65 } as never,
+      }),
+      hist({ aggregate_line: [{ timestamp: "t", home_probability: 0.99 }] }),
+      null,
+      false,
+      true, // isFinished
+    );
+    expect(r.homeProb).toBeCloseTo(0.35);
+    expect(r.probSourceLabel).toBe("Pre-game odds");
+  });
+});
+
+describe("computeLastChartPoint — moments readout scaffold (L2-163 Item 3)", () => {
+  test("attaches the most recent scoring play for the resting readout", () => {
+    const pt = computeLastChartPoint(
+      hist({
+        win_prob_history: {
+          espn: [{ timestamp: "2026-07-23T00:16:00Z", home_probability: 0.6 }],
+        } as never,
+        scoring_plays: [
+          { timestamp: "2026-07-23T00:05:00Z", description: "Solo homer", type: "HR", team: "Home", home_score: 1, away_score: 0 },
+          { timestamp: "2026-07-23T00:15:00Z", description: "RBI double", type: "2B", team: "Away", home_score: 1, away_score: 1 },
+        ] as never,
+      }),
+      1,
+      1,
+    );
+    expect(pt).not.toBeNull();
+    // The LATEST play by timestamp, not array order.
+    expect(pt!.scoringPlay?.description).toBe("RBI double");
+  });
+
+  test("no scoring plays → scoringPlay null (no crash)", () => {
+    const pt = computeLastChartPoint(hist({ win_prob_history: {}, history: [] }), null, null);
+    expect(pt!.scoringPlay ?? null).toBeNull();
   });
 });

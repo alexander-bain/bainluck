@@ -11,6 +11,7 @@ import type {
   EventHistoryResponse,
   EventDetailResponse,
   ActiveChartPoint,
+  ScoringPlay,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -282,6 +283,23 @@ export interface ResolvedProbability {
 }
 
 /**
+ * The most recent valid home-win probability from the backend blend line
+ * (aggregate_line — the weighted-median "Bain Luck" line the chart draws).
+ * Returns null when there is no usable blend point yet. Walks backwards so a
+ * trailing null/undefined doesn't hide a good earlier value.
+ */
+export function latestBlendPoint(
+  aggregateLine: Array<{ timestamp: string; home_probability: number }> | null | undefined,
+): number | null {
+  if (!aggregateLine || aggregateLine.length === 0) return null;
+  for (let i = aggregateLine.length - 1; i >= 0; i--) {
+    const p = aggregateLine[i]?.home_probability;
+    if (typeof p === "number" && !isNaN(p)) return p;
+  }
+  return null;
+}
+
+/**
  * Determine the probability to display based on game status.
  *
  *   - Scheduled: current betting consensus
@@ -315,7 +333,26 @@ export function resolveProbability(
       awayProb = odds?.away_probability ?? null;
     }
   } else if (isLive) {
-    // Live: show current odds, cross-checked against history
+    // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
+    // the aggregated Bain Luck line (historyData.aggregate_line); the hero must
+    // read the SAME number so a lagged sportsbook consensus never contradicts the
+    // chart on screen (the 57%-hero vs 20%-chart bug). Prefer the latest blend
+    // point; fall back to the sportsbook consensus only when no blend exists yet.
+    const blendPoint = latestBlendPoint(historyData?.aggregate_line);
+    if (blendPoint !== null) {
+      homeProb = blendPoint;
+      awayProb = 1 - blendPoint;
+      probSourceLabel = "Live · Bain Luck blend";
+      return {
+        homeProb,
+        awayProb,
+        probSourceLabel,
+        openingHomeProb,
+        openingAwayProb,
+      };
+    }
+
+    // No blend yet — show current odds, cross-checked against history
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
     const count = odds?.bookmaker_count ?? 0;
@@ -543,11 +580,16 @@ export function computeSharedChartDomain(
   const liveStart =
     gameStart && !isNaN(gameStart.getTime()) ? gameStart : allStart;
 
-  // "All" mode: cap the start to at most 2 hours before commenceTime for
-  // completed/closed games. Prevents charts from showing many hours of
-  // flat pre-game odds data that makes the in-game chart unreadable.
+  // "All" mode: cap the start to at most 2 hours before commenceTime once a game
+  // is in-game (live) or finished. Prevents charts from showing many hours of
+  // flat pre-game odds data that makes the in-game chart unreadable — AND keeps
+  // the rendered window under 12h so the "h:mm a" categorical inning markers
+  // can't collide across a day boundary and render out of order (L2-163 Item 2c;
+  // the "T9 left of T1" collision). Scheduled/pregame is left uncapped — there
+  // the multi-hour odds-drift IS the story.
+  const isInGame = isCompleted || eventStatus === "live";
   let allModeStart = allStart;
-  if (isCompleted && gameStart && !isNaN(gameStart.getTime())) {
+  if (isInGame && gameStart && !isNaN(gameStart.getTime())) {
     const twoHoursBefore = new Date(gameStart.getTime() - 2 * 60 * 60 * 1000);
     if (allModeStart < twoHoursBefore) {
       allModeStart = twoHoursBefore;
@@ -672,6 +714,23 @@ export function computeLastChartPoint(
     lastHist?.home_probability ??
     0.5;
 
+  // L2-163 Item 3 — moments readout scaffold. Surface the most recent scoring
+  // play so the below-chart readout (GamePlayCard) shows the CURRENT moment at
+  // rest, not just a static win-prob line: for a live game that is the play that
+  // just happened; for a settled game it is "what hit" last. On-chart dots wait
+  // for #1168 — this is the socket the moments engine plugs into. Scored by
+  // timestamp so an out-of-order plays array can't surface a stale play.
+  const plays = historyData.scoring_plays;
+  let latestPlay: ScoringPlay | null = null;
+  if (plays && plays.length > 0) {
+    for (const play of plays) {
+      if (!play?.timestamp) continue;
+      if (!latestPlay || play.timestamp > latestPlay.timestamp) {
+        latestPlay = play;
+      }
+    }
+  }
+
   return {
     timestamp:
       lastEspn?.timestamp ||
@@ -684,5 +743,6 @@ export function computeLastChartPoint(
     awayScore: lastEspn?.away_score ?? awayScore ?? null,
     period: lastEspn?.period?.toString() ?? null,
     clock: lastEspn?.game_clock ?? null,
+    scoringPlay: latestPlay,
   };
 }

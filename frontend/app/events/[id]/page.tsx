@@ -582,7 +582,10 @@ export default function EventPage({ params }: EventPageProps) {
                 </span>
               )}
               {(isLive || isFinished || hasStarted) && bestHomeScore !== null && (
-                <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
+                /* L2-163 Item 2a: once there's a real score it is the hero's
+                   biggest element after the probability — Alex's 0-4 exhibit
+                   rendered it nearly invisible at text-2xl. */
+                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-1">
                   {bestHomeScore}
                 </span>
               )}
@@ -748,7 +751,9 @@ export default function EventPage({ params }: EventPageProps) {
                 </span>
               )}
               {(isLive || isFinished || hasStarted) && bestAwayScore !== null && (
-                <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
+                /* L2-163 Item 2a: score is the hero's biggest element after the
+                   probability once the game is underway. */
+                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-1">
                   {bestAwayScore}
                 </span>
               )}

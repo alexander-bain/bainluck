@@ -225,6 +225,11 @@ export default function OddsChart({
   // Lead-change diamonds are OFF by default (L2-131): they clutter the one clean
   // blend line. A toggle surfaces them for the games where they tell a story.
   const [showLeadChanges, setShowLeadChanges] = useState(false);
+
+  // Source legend collapses to "Bain Luck + N sources" by default (L2-163 Item 1,
+  // Ruling 1/4): the blend is labeled and dominant; the faint source lines stay
+  // unlabeled until the reader expands the legend (or isolates one via hover).
+  const [legendExpanded, setLegendExpanded] = useState(false);
   useEffect(() => {
     if (!hasUserOverridden && !externalTimeRange && defaultTimeRange === "live") {
       setInternalTimeRange("live");
@@ -1481,7 +1486,7 @@ export default function OddsChart({
 
       {/* Source legend */}
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
-        {/* Multi-source mode: Bain Luck aggregated line first */}
+        {/* Multi-source mode: Bain Luck aggregated line first (always labeled) */}
         {isMultiSource && (
           <div className="flex items-center gap-1.5">
             <svg width="20" height="4" className="shrink-0">
@@ -1497,8 +1502,26 @@ export default function OddsChart({
           </div>
         )}
 
-        {/* Individual sources */}
-        {resolvedSources.map((source) => {
+        {/* Multi-source: the individual source lines stay collapsed behind an
+            expander so the blend dominates (L2-163 Item 1). Sportsbooks-only mode
+            keeps its flat legend (there is no blend to dominate). */}
+        {isMultiSource && resolvedSources.length > 0 && !legendExpanded && (
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(true)}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+            aria-expanded={false}
+          >
+            + {resolvedSources.length} source{resolvedSources.length !== 1 ? "s" : ""}
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        )}
+
+        {/* Individual sources — always shown in sportsbooks-only mode; in
+            multi-source mode only once the reader expands the legend. */}
+        {(!isMultiSource || legendExpanded) && resolvedSources.map((source) => {
           const inner = (
             <>
               <svg width="20" height="4" className="shrink-0">
@@ -1530,6 +1553,21 @@ export default function OddsChart({
             </div>
           );
         })}
+
+        {/* Collapse control when expanded (multi-source only) */}
+        {isMultiSource && legendExpanded && resolvedSources.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(false)}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+            aria-expanded={true}
+          >
+            Hide
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="shrink-0 rotate-180">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        )}
 
         {/* Bookmaker legend (sportsbooks-only mode) */}
         {!isMultiSource && bookmakers.length > 0 && (

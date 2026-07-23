@@ -14,6 +14,39 @@ export interface PeriodBoundary {
 }
 
 /**
+ * Largest plausible gap WITHIN a single game's period/inning markers. No sport
+ * that renders period gridlines (NBA/NFL/MLB/NHL/soccer) has a 6-hour mid-game
+ * pause, so a gap this large means the marker stream jumped to a DIFFERENT
+ * game's data merged onto the same event (gotcha #32 territory — e.g. the
+ * live-MLB exhibit whose period_markers still carried the prior day's innings).
+ */
+const SESSION_GAP_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Keep only the LAST contiguous session of a timestamp-ascending marker list.
+ *
+ * When markers from an earlier game are wrongly merged onto an event, their
+ * inning/period labels ("Top 5th" from yesterday) get anchored to yesterday's
+ * timestamp by the first-seen collapse below, then either vanish from the
+ * visible domain or — in a wide "All" window — collide on the 12-hour "h:mm a"
+ * categorical axis and render an inning to the LEFT of an earlier one (the
+ * "T9 left of T1" bug, L2-163 Item 2c). Cutting to the latest contiguous run
+ * discards the stale segment so the current game's innings stay monotonic. A
+ * clean single-game stream (no large gaps) passes through unchanged.
+ */
+function keepLatestSession<T extends { timestamp: string }>(sorted: T[]): T[] {
+  if (sorted.length < 2) return sorted;
+  let cut = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap =
+      new Date(sorted[i].timestamp).getTime() -
+      new Date(sorted[i - 1].timestamp).getTime();
+    if (gap > SESSION_GAP_MS) cut = i;
+  }
+  return cut > 0 ? sorted.slice(cut) : sorted;
+}
+
+/**
  * Normalize ESPN's verbose period strings into short chart labels.
  *
  * Basketball/Football: "1st Quarter" -> "Q1", "Halftime" -> "HT"
@@ -115,8 +148,10 @@ export function derivePeriodBoundaries(
   // covering games where ESPN and win_prob_history have no period data.
   if (periodMarkers && periodMarkers.length > 0) {
     // Dedup by exact label (start "Q1" and end "/Q1" are distinct)
-    const sorted = [...periodMarkers].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    const sorted = keepLatestSession(
+      [...periodMarkers].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      )
     );
     const firstSeen = new Map<string, string>();
     for (const m of sorted) {
@@ -171,7 +206,7 @@ function applyCommenceTime(
   // Fix first period: use commenceTime if available
   if (commenceTime) {
     const first = result[0];
-    const isFirstPeriod = /^(Q1|P1|1H|1|R1)$/i.test(first.label);
+    const isFirstPeriod = /^(Q1|P1|1H|1|R1|T1|B1)$/i.test(first.label);
     if (isFirstPeriod) {
       result[0] = { ...first, timestamp: commenceTime };
     }
@@ -181,9 +216,11 @@ function applyCommenceTime(
 }
 
 function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[] {
-  // Sort by timestamp
-  const sorted = [...history].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  // Sort by timestamp, then drop any stale earlier-game segment (L2-163).
+  const sorted = keepLatestSession(
+    [...history].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
   );
 
   // Collect the first timestamp we see for each unique period label
@@ -241,14 +278,15 @@ function deriveBoundariesFromWinProb(
 
   if (allPoints.length === 0) return [];
 
-  // Sort by timestamp
+  // Sort by timestamp, then drop any stale earlier-game segment (L2-163).
   allPoints.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const session = keepLatestSession(allPoints);
 
   // Collect the first timestamp we see for each unique period label.
   // This handles missed transitions (e.g., ESPN sync started in Q2).
   const firstSeen = new Map<string, string>();
 
-  for (const point of allPoints) {
+  for (const point of session) {
     const label = normalizePeriodLabel(point.period);
     if (!label) continue;
     if (!firstSeen.has(label)) {
@@ -262,10 +300,13 @@ function deriveBoundariesFromWinProb(
 }
 
 function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[] {
-  // Group scoring plays by period, use earliest timestamp per unique period
-  const sorted = [...plays]
-    .filter((p) => p.period && p.timestamp)
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Group scoring plays by period, use earliest timestamp per unique period.
+  // Drop any stale earlier-game segment first (L2-163).
+  const sorted = keepLatestSession(
+    [...plays]
+      .filter((p) => p.period && p.timestamp)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+  );
 
   if (sorted.length === 0) return [];
 
