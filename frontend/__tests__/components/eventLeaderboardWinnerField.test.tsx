@@ -15,8 +15,10 @@ jest.mock("@/lib/api", () => ({
 import EventLeaderboard from "../../components/event/EventLeaderboard";
 
 describe("EventLeaderboard winner-field contender/tail chrome (L2-132)", () => {
-  test("contenders show green bars; the 0% longshot tail collapses into 'Show all N' with NO OUT chip", () => {
+  test("contenders show green bars; the 0% longshot tail collapses behind the Full toggle with NO OUT chip", () => {
     // Mirrors the real pre-tournament WC envelope: 3 priced, the rest at ~0%.
+    // L2-175 Item 2a: the tail now collapses under the Top 5 / Top 10 / Full toggle
+    // (was a "Show all N" expander). Default Top 5 shows contenders only.
     const field: EventConceptCompetitor[] = [
       { name: "Spain", probability: 0.44 },
       { name: "Argentina", probability: 0.32 },
@@ -30,27 +32,36 @@ describe("EventLeaderboard winner-field contender/tail chrome (L2-132)", () => {
     // Contenders visible with a green (accent-brand) bar.
     expect(html).toContain("Spain");
     expect(html).toContain("bg-accent-brand");
-    // The 0% tail collapses behind the field expander (2 hidden of 5 total).
-    expect(html).toContain("Show all 5");
-    expect(html).toContain("Ghana");
-    expect(html).toContain("Egypt");
+    // The 0% tail is hidden by default (Top 5 caps contenders); Full reveals it.
+    expect(html).toContain("Full 5");
+    expect(html).not.toContain("Ghana");
+    expect(html).not.toContain("Egypt");
     // HONESTY BAR: a pre-kickoff longshot is NOT eliminated — no OUT chip anywhere.
     expect(html).not.toContain(">Out<");
   });
 
-  test("adapter `eliminated` flag marks a row OUT even at a stale non-zero price", () => {
+  test("Full view: adapter `eliminated` flag marks a row OUT even at a stale non-zero price; default view hides it", () => {
     const field: EventConceptCompetitor[] = [
       { name: "Spain", probability: 0.3 },
       // Knocked-out nation the adapter graded eliminated before the price zeroed.
       { name: "Ghana", probability: 0.02, eliminated: true } as EventConceptCompetitor,
     ];
-    const html = renderToStaticMarkup(
+    // Default (Top 5) view: the eliminated entrant sits in the collapsed tail — not
+    // shown, and its stale 2% never renders as a live probability.
+    const collapsed = renderToStaticMarkup(
       <EventLeaderboard competitors={field} label="Winner" live />,
     );
-    expect(html).toContain("Show all 2");
-    expect(html).toContain(">Out<");
-    // The stale 2% must NOT render as a live probability for an OUT entrant.
-    expect(html).not.toContain("2%");
+    expect(collapsed).toContain("Full 2");
+    expect(collapsed).toContain("Spain");
+    expect(collapsed).not.toContain("Ghana");
+    expect(collapsed).not.toContain("2%");
+    // Full view: the eliminated entrant renders with an OUT chip, still no stale %.
+    const expanded = renderToStaticMarkup(
+      <EventLeaderboard competitors={field} label="Winner" live initialView="full" />,
+    );
+    expect(expanded).toContain("Ghana");
+    expect(expanded).toContain(">Out<");
+    expect(expanded).not.toContain("2%");
   });
 
   test("an all-contender field shows no expander and no OUT chip", () => {

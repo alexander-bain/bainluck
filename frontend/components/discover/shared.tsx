@@ -268,12 +268,29 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
 
 // ── Swipe Hook ──
 
-export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
+// L2-175 Item 1: how far the mouse must move before a press becomes a drag. Below
+// this a press is a plain CLICK and must reach the card's link/tap handler — we do
+// NOT capture the pointer until a real drag starts (see onPointerDown note).
+const DRAG_THRESHOLD_PX = 8;
+
+export function useSwipe(
+  onSwipeLeft?: () => void,
+  onSwipeRight?: () => void,
+  // L2-175 Item 1: a genuine (non-swipe, unmodified) click anywhere on the card.
+  // The card body/hero is not itself a link, so without this a plain click on the
+  // top Discover cards did NOTHING (only the small title <Link> was clickable, and
+  // even that was swallowed by pointer capture). Fires only for real taps.
+  onTap?: (e: React.MouseEvent) => void,
+) {
   const ref = useRef<HTMLDivElement>(null);
   const startX = useRef(0);
   const currentX = useRef(0);
   const swiping = useRef(false);
   const suppressClick = useRef(false);
+  // L2-175 Item 1: the pointerId we captured, or null while none is captured. We
+  // defer setPointerCapture until a drag actually starts so plain clicks are not
+  // retargeted off the inner <Link> (the dead-click bug).
+  const capturedId = useRef<number | null>(null);
   const [offset, setOffset] = useState(0);
   const [swipeAction, setSwipeAction] = useState<"like" | "dismiss" | null>(null);
 
@@ -323,32 +340,63 @@ export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
     beginSwipe(e.clientX);
-    ref.current?.setPointerCapture?.(e.pointerId);
+    // L2-175 Item 1: do NOT setPointerCapture here. Capturing on pointerdown makes
+    // Chromium retarget the subsequent `click` to this wrapper div, so the inner
+    // Next.js <Link> never receives it — plain-click was dead while ctrl-click (a
+    // native modified activation) still worked. Capture is deferred to the first
+    // real drag in onPointerMove.
   }, [beginSwipe]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
+    if (!swiping.current) return;
+    // Once the press moves past the drag threshold it's a swipe, not a click:
+    // capture the pointer so the drag keeps tracking if it leaves the card.
+    if (capturedId.current === null) {
+      const dx = Math.abs(e.clientX - startX.current);
+      if (dx > DRAG_THRESHOLD_PX) {
+        ref.current?.setPointerCapture?.(e.pointerId);
+        capturedId.current = e.pointerId;
+      }
+    }
     updateSwipe(e.clientX);
   }, [updateSwipe]);
+
+  const releaseCapture = useCallback(() => {
+    if (capturedId.current !== null) {
+      ref.current?.releasePointerCapture?.(capturedId.current);
+      capturedId.current = null;
+    }
+  }, []);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
     finishSwipe(e);
-    ref.current?.releasePointerCapture?.(e.pointerId);
-  }, [finishSwipe]);
+    releaseCapture();
+  }, [finishSwipe, releaseCapture]);
 
   const onPointerCancel = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
     swiping.current = false;
     setOffset(0);
     setSwipeAction(null);
-  }, []);
+    releaseCapture();
+  }, [releaseCapture]);
 
   const onClickCapture = useCallback((e: React.MouseEvent) => {
     if (!suppressClick.current) return;
     e.preventDefault();
     e.stopPropagation();
   }, []);
+
+  // L2-175 Item 1: whole-card tap navigation. A genuine click (not a swipe — those
+  // are stopped in onClickCapture above) fires onTap. The caller guards against
+  // clicks that land on real interactive children (links/buttons handle themselves)
+  // and against modified clicks (ctrl/cmd = open-in-new-tab via the anchor).
+  const onClick = useCallback((e: React.MouseEvent) => {
+    if (!onTap) return;
+    onTap(e);
+  }, [onTap]);
 
   return {
     ref,
@@ -363,6 +411,7 @@ export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
       onPointerUp,
       onPointerCancel,
       onClickCapture,
+      onClick,
     },
   };
 }

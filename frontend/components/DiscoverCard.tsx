@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedBundleData, FeedConceptData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
-import { isTrending, suppressBareZeroFuturesCard } from "./discover/utils";
+import { isTrending, suppressBareZeroFuturesCard, feedItemHref } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
 import { EventCard } from "./discover/EventCard";
 import { FuturesCard } from "./discover/FuturesCard";
@@ -52,9 +53,11 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex }: 
 // ── Single Card Wrapper (handles swipe + analytics delegation) ──
 
 function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number }) {
+  const router = useRouter();
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
   const analytics = getDiscoverItemAnalytics(item);
+  const detailHref = feedItemHref(item);
 
   const trackAction = useCallback((action: "detail_click" | "like" | "unlike" | "share" | "context_expand" | "context_collapse") => {
     trackEvent("feed_card_action", {
@@ -81,7 +84,24 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
     trackAction("unlike");
     onDismiss?.();
   }, [onDismiss, trackAction]);
-  const swipe = useSwipe(handleLessLike, handleSwipeLike);
+  // L2-175 Item 1: whole-card tap navigation. The card hero is not a link, so a
+  // plain click on the top Discover cards did nothing. Navigate on a genuine,
+  // unmodified click that didn't land on a real interactive child (the title
+  // <Link>, like/share/dismiss buttons handle themselves), and wasn't a swipe
+  // (useSwipe stops post-swipe clicks in onClickCapture).
+  const handleTap = useCallback(
+    (e: React.MouseEvent) => {
+      if (!detailHref) return;
+      if (e.defaultPrevented) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('a, button, [role="button"], input, textarea, select, label')) return;
+      trackAction("detail_click");
+      router.push(detailHref);
+    },
+    [detailHref, router, trackAction],
+  );
+  const swipe = useSwipe(handleLessLike, handleSwipeLike, handleTap);
 
   const cardStyle = {
     transform: `translateX(${swipe.offset}px) rotate(${swipe.offset * 0.02}deg)`,
@@ -95,7 +115,11 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   if (suppressBareZeroFuturesCard(item)) return null;
 
   return (
-    <div ref={swipe.ref} className="relative touch-pan-y select-none" {...swipe.handlers}>
+    <div
+      ref={swipe.ref}
+      className={`relative touch-pan-y select-none${detailHref ? " cursor-pointer" : ""}`}
+      {...swipe.handlers}
+    >
       {/* Swipe-reveal backdrop (L2-160 — the handoff's "swipe & tap coexistence"
           treatment). The colored action panel sits BEHIND the card and is revealed
           as the whole card translates, so the horizontal drag never competes with

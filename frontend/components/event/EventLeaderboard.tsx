@@ -5,6 +5,7 @@
 // optional sparkline (real history only), the big probability %, and 24h
 // movement. Probability-only, no source names, light tokens.
 
+import { useState } from "react";
 import { formatProbability } from "@/lib/api";
 import {
   fieldOrder,
@@ -47,6 +48,9 @@ interface EventLeaderboardProps {
    *  onto competitors by the golf aggregation — no extra fetch. Empty/absent →
    *  the leaderboard renders exactly as before. */
   finishColumns?: FinishColumnDef[];
+  /** L2-175 Item 2a: initial GC view for the Top 5 / Top 10 / Full toggle. Defaults
+   *  to "top5" (leader story first). */
+  initialView?: "top5" | "top10" | "full";
 }
 
 /** A placement column appended to the leaderboard grid. */
@@ -382,9 +386,16 @@ export default function EventLeaderboard({
   asOf = null,
   domain = null,
   finishColumns = [],
+  initialView = "top5",
 }: EventLeaderboardProps) {
-  // L2-135: golf person-field rows carry a Wikipedia headshot avatar.
-  const golfAvatar = domain === "golf";
+  // L2-135: golf person-field rows carry a Wikipedia headshot avatar. L2-175 Item
+  // 2c: cyclists are people too — the Tour de France GC field gets the same
+  // Wikipedia headshot (initials fallback) via the shared EntityImage path.
+  const personAvatar = domain === "golf" || domain === "cycling";
+  // L2-175 Item 2a: GC list view — a 184-rider winner field defaulted to ~20 rows
+  // (mostly ~1% no-names, "the full 1% tail"). Lead with the leader story (Top 5),
+  // expand on demand; Full reveals the whole field incl. the 0%/eliminated tail.
+  const [gcView, setGcView] = useState<"top5" | "top10" | "full">(initialView);
   // L2-81 settled winner-field: once the event concludes, showing a normalized
   // field ("champion 30%, runner-up 25%") reads as a live prediction and is
   // dishonest. Render the champion with a "Won" chip and NO stale percentages;
@@ -407,7 +418,7 @@ export default function EventLeaderboard({
         <span className="text-text-muted font-mono text-xs w-5 text-right tabular-nums shrink-0">
           {rank}
         </span>
-        {golfAvatar && !c.team && <PlayerAvatar name={c.name} size={20} />}
+        {personAvatar && !c.team && <PlayerAvatar name={c.name} size={20} />}
         {c.team && <TeamCrest side={c.team} size={20} />}
         <span className="flex-1 min-w-0 truncate text-sm text-text-secondary">
           {c.name}
@@ -429,7 +440,7 @@ export default function EventLeaderboard({
             {champion.team ? (
               <TeamCrest side={champion.team} size={28} />
             ) : (
-              golfAvatar && <PlayerAvatar name={champion.name} size={28} />
+              personAvatar && <PlayerAvatar name={champion.name} size={28} />
             )}
             <span className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
               {champion.name}
@@ -519,7 +530,7 @@ export default function EventLeaderboard({
                   key={`${c.name}-${i}`}
                   c={c}
                   index={i}
-                  avatar={golfAvatar}
+                  avatar={personAvatar}
                   finishColumns={finishColumns}
                 />
               ))}
@@ -535,7 +546,7 @@ export default function EventLeaderboard({
                       key={`rest-${c.name}-${i}`}
                       c={c}
                       index={active.length + i}
-                      avatar={golfAvatar}
+                      avatar={personAvatar}
                       finishColumns={finishColumns}
                     />
                   ))}
@@ -554,7 +565,7 @@ export default function EventLeaderboard({
                       c={c}
                       index={i}
                       cut
-                      avatar={golfAvatar}
+                      avatar={personAvatar}
                       finishColumns={finishColumns}
                     />
                   ))}
@@ -578,14 +589,47 @@ export default function EventLeaderboard({
   // L2-130: reserve a crest slot only when at least one competitor resolved to a
   // team (soccer World Cup) — golf/tennis/F1 fields stay text-only and unshifted.
   const anyCrest = competitors.some((c) => c.team);
-  const visible = contenders.slice(0, limit);
-  const rest = [...contenders.slice(limit), ...tail];
+  // L2-175 Item 2a: the Top 5 / Top 10 / Full toggle. Top 5 (default) and Top 10 cap
+  // the CONTENDERS so a 184-rider GC leads with the leader story, not 20 rows of ~1%
+  // no-names; the 0%/eliminated tail (48-nation WC: 45 zeros) stays hidden until
+  // Full, which reveals the whole field with OUT chips on eliminated rows. A small
+  // field with nothing to hide gets no toggle.
+  const total = competitors.length;
+  const visibleRows =
+    gcView === "full"
+      ? [...contenders, ...tail]
+      : contenders.slice(0, gcView === "top5" ? 5 : 10);
+  const showToggle = contenders.length > 5 || tail.length > 0;
+  const toggleBtn = (v: "top5" | "top10" | "full", labelText: string) => (
+    <button
+      key={v}
+      type="button"
+      onClick={() => setGcView(v)}
+      aria-pressed={gcView === v}
+      className={`px-2 py-0.5 text-[11px] font-semibold rounded-full transition-colors ${
+        gcView === v
+          ? "bg-accent-brand/15 text-accent-brand"
+          : "text-text-muted hover:text-text-secondary"
+      }`}
+    >
+      {labelText}
+    </button>
+  );
 
   return (
     <section id="leaderboard" className="bg-surface-card rounded-card shadow-card p-6">
       <div className="flex items-center justify-between gap-2 mb-4">
         <h2 className="text-title-3 font-semibold text-text-primary">{label || "Winner"}</h2>
-        {live && <FreshnessChip asOf={asOf} />}
+        <div className="flex items-center gap-2">
+          {live && <FreshnessChip asOf={asOf} />}
+          {showToggle && (
+            <div className="flex items-center gap-0.5 rounded-full bg-surface-elevated p-0.5">
+              {toggleBtn("top5", "Top 5")}
+              {toggleBtn("top10", "Top 10")}
+              {toggleBtn("full", `Full ${total}`)}
+            </div>
+          )}
+        </div>
       </div>
       <div className="overflow-x-auto -mx-2 px-2">
         <div style={{ minWidth: gridMinWidth(24, finishColumns) }}>
@@ -594,7 +638,7 @@ export default function EventLeaderboard({
                leaderboard box, so it earns a header row naming them. */
             <div className="flex items-center gap-3 pb-1.5 text-[10px] uppercase tracking-wide text-text-muted">
               <span className="w-5 shrink-0" />
-              {(anyCrest || golfAvatar) && (
+              {(anyCrest || personAvatar) && (
                 <span className="shrink-0" style={{ width: 22 }} />
               )}
               <span className="flex-1 min-w-0">Player</span>
@@ -608,7 +652,7 @@ export default function EventLeaderboard({
             </div>
           )}
           <div className="space-y-0.5">
-            {visible.map((c, i) => (
+            {visibleRows.map((c, i) => (
               <WinnerFieldRow
                 key={`${c.name}-${i}`}
                 c={c}
@@ -617,35 +661,12 @@ export default function EventLeaderboard({
                 live={live}
                 showSparkline={showSparkline}
                 historyOutcomes={historyOutcomes}
-                out={false}
-                avatar={golfAvatar}
+                out={isEliminatedCompetitor(c)}
+                avatar={personAvatar}
                 finishColumns={finishColumns}
               />
             ))}
           </div>
-          {rest.length > 0 && (
-            <details className="mt-3">
-              <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
-                Show all {competitors.length}
-              </summary>
-              <div className="space-y-0.5 mt-2">
-                {rest.map((c, i) => (
-                  <WinnerFieldRow
-                    key={`rest-${c.name}-${i}`}
-                    c={c}
-                    rank={visible.length + i + 1}
-                    anyCrest={anyCrest}
-                    live={live}
-                    showSparkline={showSparkline}
-                    historyOutcomes={historyOutcomes}
-                    out={isEliminatedCompetitor(c)}
-                    avatar={golfAvatar}
-                    finishColumns={finishColumns}
-                  />
-                ))}
-              </div>
-            </details>
-          )}
         </div>
       </div>
     </section>

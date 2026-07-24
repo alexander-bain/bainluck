@@ -24,7 +24,7 @@ export function statusLabel(status: string): string {
  *  a Wikipedia headshot is meaningful (the leaderboard already opts golf in; this
  *  extends the same signal to the props section). Team/region/numeric fields are
  *  excluded — no headshot for "United States" or "Under 63.5". */
-const PERSON_FIELD_DOMAINS = new Set(["golf", "mma", "boxing", "tennis"]);
+const PERSON_FIELD_DOMAINS = new Set(["golf", "mma", "boxing", "tennis", "cycling"]);
 
 /** True when a domain's competitors are individual people (headshot-worthy). */
 export function isPersonFieldDomain(domain?: string | null): boolean {
@@ -55,6 +55,60 @@ export function childLeader(
   if (child.name) return { name: child.name, probability: child.probability ?? null };
   if (child.market_name) return { name: child.market_name, probability: child.probability ?? null };
   return null;
+}
+
+// L2-175 Item 2b: a single-winner prop is "decided" only if a runner-up is also at
+// an impossible-live extreme. Two riders can't both be ~certain to win ONE stage —
+// prices like {Vingegaard 0.99, Vauquelin 0.94} are stale/settled independent
+// binaries (Kalshi settled markets keep status=open, gotcha #33), not a live race.
+const STAGE_SETTLED_FLOOR = 0.9;
+
+/** L2-175 Item 2b: the graded winner of a settled single-winner child (a completed
+ *  Tour de France stage), or null when it is genuinely live/undecided. Prefers
+ *  authoritative signals — the backend `graded_winner` (#249 Item 4c) or an outcome
+ *  flagged `won` on a settled child — then falls back to the impossible-live tell
+ *  above so a completed stage never renders two riders at 90%+ even before the
+ *  grading pass ships. NEVER crowns a genuine live favorite (a sole leader < 0.90,
+ *  or a lone extreme with no second extreme and no settled flag → null). Pure. */
+export function stageGradedWinner(
+  child: EventConceptChild,
+): { name: string } | null {
+  const outs = child.outcomes || [];
+  const graded = child.graded_winner?.trim();
+  if (graded) return { name: graded };
+  const wonOutcome = outs.find((o) => o.won === true);
+  if (wonOutcome) return { name: wonOutcome.name };
+  if (outs.length === 0) return null;
+  const ranked = [...outs].sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1));
+  const top = ranked[0];
+  const second = ranked[1];
+  if (child.settled === true) return top ? { name: top.name } : null;
+  // Impossible-live: two outcomes both at/above the extreme floor → stale/settled.
+  if (
+    top &&
+    second &&
+    (top.probability ?? 0) >= STAGE_SETTLED_FLOOR &&
+    (second.probability ?? 0) >= STAGE_SETTLED_FLOOR
+  ) {
+    return { name: top.name };
+  }
+  return null;
+}
+
+/** L2-175 Item 2b: an honest label for an upcoming (unpriced) stage card — "Stage
+ *  20 · Saturday" — instead of an empty card. Extracts the stage number from the
+ *  market name and a weekday from `commence_time` when present. Falls back to the
+ *  bare market name; never fabricates a date. Pure. */
+export function stagePendingLabel(child: EventConceptChild): string {
+  const name = child.market_name || child.name || "Stage";
+  const stageMatch = name.match(/stage\s+\d+/i);
+  const base = stageMatch ? stageMatch[0].replace(/^s/, "S") : name;
+  const ts = child.commence_time ? Date.parse(child.commence_time) : NaN;
+  if (!Number.isNaN(ts)) {
+    const weekday = new Date(ts).toLocaleDateString("en-US", { weekday: "long" });
+    return `${base} · ${weekday}`;
+  }
+  return base;
 }
 
 /** Split children into live vs settled (decided) so the page keeps live matchups

@@ -10,6 +10,7 @@ import {
   fetchRelatedEvents,
   fetchProgression,
   fetchFuturesGroup,
+  fetchEventConcept,
   formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
@@ -185,6 +186,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const historyOutcomes = Array.isArray(historyData?.outcomes)
     ? historyData.outcomes
     : [];
+
+  // L2-175 Item 3a: a UFC/boxing fight belongs to its CARD. Fetch the card concept
+  // (combat only) so the breadcrumb can name it ("← UFC Fight Night · Aug 2") and we
+  // can rail the card's OTHER fights — the hierarchy the URL pair implies but never
+  // expressed. Combat-scoped so non-combat futures pay no extra request.
+  const cardConceptKey = market
+    ? market.event_concept_key || marketEventKey(market)
+    : null;
+  const isCombatCard = !!cardConceptKey && /^event:(ufc|boxing|mma):/i.test(cardConceptKey);
+  const { data: cardConcept } = useSWR(
+    isCombatCard ? ["event-concept-card", cardConceptKey] : null,
+    () => fetchEventConcept(cardConceptKey as string),
+    { revalidateOnFocus: false },
+  );
+  // The card's other fights (exclude props and THIS fight); each links to its page.
+  const siblingFights = (cardConcept?.children || []).filter(
+    (c) => c.kind !== "prop" && typeof c.market_id === "number" && c.market_id !== marketId,
+  );
 
   // Track futures detail view once data loads
   const hasTrackedFutures = useRef(false);
@@ -444,6 +463,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // that instead. Where neither exists, no link — honest.
   const conceptKey = market.event_concept_key || marketEventKey(market);
   const conceptLabel = conceptDisplayLabel(conceptKey, market.name);
+  // L2-175 Item 3a: a named card breadcrumb ("← UFC Fight Night · Aug 2") when the
+  // combat card concept resolved — beats the generic "the full fight card".
+  const cardDate = cardConcept?.event?.start_date ? new Date(cardConcept.event.start_date) : null;
+  const cardDateLabel =
+    cardDate && !Number.isNaN(cardDate.getTime())
+      ? cardDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+  const cardName = cardConcept?.event?.name || null;
   const hubSlug = !conceptKey ? market.hub_slug || null : null;
   const hubLinkLabel = hubLabel(hubSlug);
   // L2-94: fallbacks below the hub — a themed-category market (politics/economics/
@@ -510,7 +537,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
           (leaderboard, race chart, matchups), or the competition hub when there's no
           specific concept. */}
-      {conceptKey && conceptLabel ? (
+      {conceptKey && cardName ? (
+        // L2-175 Item 3a: the named card breadcrumb — a fight belongs to its card.
+        <Link
+          href={eventPath(conceptKey)}
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
+        >
+          <span aria-hidden="true">←</span>
+          {cardName}
+          {cardDateLabel ? ` · ${cardDateLabel}` : ""}
+        </Link>
+      ) : conceptKey && conceptLabel ? (
         <Link
           href={eventPath(conceptKey)}
           className="inline-flex items-center gap-1 text-sm font-medium text-accent-brand hover:underline"
@@ -543,6 +580,28 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           <span aria-hidden="true">→</span>
         </Link>
       ) : null}
+
+      {/* L2-175 Item 3a: the card's OTHER fights — the sibling rail the card concept
+          already carries. Each links to its own fight page (data exists; give the
+          hierarchy a home). */}
+      {siblingFights.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Also on this card
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            {siblingFights.map((f) => (
+              <Link
+                key={f.market_id}
+                href={`/futures/${f.market_id}`}
+                className="flex-shrink-0 rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary hover:shadow-card-hover transition-shadow"
+              >
+                {f.market_name || f.name || "Fight"}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Context line (auto-upgrades when #870 ships) */}
       {market.hook_description && (

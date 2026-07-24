@@ -9,7 +9,7 @@
 // individual-competitor event via /api/event/{key}.
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import Link from "next/link";
@@ -68,11 +68,28 @@ export default function EventConceptPage() {
   useScrollDepth({ pageType: "event_concept" });
   useEngagementTime({ pageType: "event_concept" });
 
-  const { data, error, isLoading } = useSWR(
+  // L2-175 Item 2d: don't flash the "Event not found" error while the very first
+  // fetch is still retrying (the backend can be slow/cold — #249's 45s half). We
+  // keep the skeleton up until retries are genuinely exhausted, then show the error.
+  const [retriesExhausted, setRetriesExhausted] = useState(false);
+  useEffect(() => {
+    setRetriesExhausted(false);
+  }, [decodedKey]);
+
+  const { data, error, isLoading, isValidating } = useSWR(
     decodedKey ? ["event-concept", decodedKey] : null,
     () => fetchEventConcept(decodedKey),
     {
       revalidateOnFocus: false,
+      errorRetryCount: 3,
+      onErrorRetry: (err, key, config, revalidate, { retryCount }) => {
+        if (retryCount >= 3) {
+          setRetriesExhausted(true);
+          return;
+        }
+        setTimeout(() => revalidate({ retryCount }), Math.min(4000, 1000 * 2 ** retryCount));
+      },
+      onSuccess: () => setRetriesExhausted(false),
       // L2-66 freshness-as-a-feature: during live play, refetch at in-play cadence
       // so the fused leaderboard + "as of" chip stay honestly fresh. L2-138:
       // tightened 45s → 30s (top of Alex's 15-30s "updating before your eyes"
@@ -130,7 +147,12 @@ export default function EventConceptPage() {
   // still needed for the settled path-to-resolution chart.
   const evolutionId = data?.primary?.evolution_market_id ?? null;
 
-  if (isLoading) {
+  // L2-175 Item 2d: show the skeleton until we have data OR retries are genuinely
+  // exhausted. During the retry window (error present, not yet given up) we keep the
+  // spinner instead of flashing "Event not found" and then loading successfully.
+  const stillLoading =
+    !data && (isLoading || isValidating || (!!error && !retriesExhausted));
+  if (stillLoading) {
     return (
       <div className="max-w-4xl mx-auto py-12">
         <LoadingSpinner text="Loading event..." />
@@ -199,8 +221,19 @@ export default function EventConceptPage() {
   // exclusion can only apply to children that carry one.
   const inPropsScript = (c: (typeof children)[number]) =>
     typeof c.market_id === "number" && propScriptIds.has(c.market_id);
+  // L2-175 Item 3b: on a co-equal combat CARD the main event renders in the hero
+  // (TwoSidedTimeline, "Main event"), so it must NOT also appear in the Matchups
+  // rail — one market, one display. Exclude the primary/evolution market from the
+  // rail (backend puts the main event in BOTH primary.competitors and children[0]).
+  const primaryMarketId =
+    primary.kind === "co_equal_list" && typeof primary.evolution_market_id === "number"
+      ? primary.evolution_market_id
+      : null;
   const fightChildren = children.filter(
-    (c) => c.kind !== "prop" && !inPropsScript(c),
+    (c) =>
+      c.kind !== "prop" &&
+      !inPropsScript(c) &&
+      !(primaryMarketId !== null && c.market_id === primaryMarketId),
   );
   const propChildren = children.filter(
     (c) => c.kind === "prop" && !inPropsScript(c),
@@ -257,7 +290,12 @@ export default function EventConceptPage() {
   if (soccerHero) nav.push({ id: "headliner", label: "Now" });
   else if (hasWinnerField && evolutionId && !isSettled)
     nav.push({ id: "race", label: "Race" });
-  if (isCoEqual) nav.push({ id: "head-to-head", label: "Head to head" });
+  // L2-175 Item 3c: only surface the head-to-head pill when the section will
+  // actually render (TwoSidedTimeline needs ≥2 competitors), and label it to MATCH
+  // the section heading (primary.label — "Main event" for UFC) so the pill isn't
+  // dead chrome pointing at a mistitled/absent anchor.
+  if (isCoEqual && competitors.length >= 2)
+    nav.push({ id: "head-to-head", label: primary.label || "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
   if (showBubbleWatch) nav.push({ id: "bubble-watch", label: "Bubble Watch" });
   if (showWinnerEvolution) nav.push({ id: "evolution", label: "Evolution" });
@@ -392,6 +430,7 @@ export default function EventConceptPage() {
         sections={data.sections}
         title={hasPropsScript ? "More props" : undefined}
         anchorId={hasPropsScript ? "more-props" : undefined}
+        domain={event.domain}
       />
 
       {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,

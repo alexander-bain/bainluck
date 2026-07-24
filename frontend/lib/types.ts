@@ -1848,7 +1848,12 @@ export interface EventConceptChild {
   name?: string;
   probability?: number | null;
   settled?: boolean;
-  outcomes?: { name: string; probability: number | null }[];
+  // L2-175 Item 2b: the graded winner of a settled child (e.g. a completed Tour de
+  // France stage). Emitted by the backend grading pass (#249 Item 4c). When present
+  // (or a `settled` outcome carries `won:true`) the stage card renders the winner +
+  // "Won" chip instead of two riders at 90%+ stale independent-binary prices.
+  graded_winner?: string | null;
+  outcomes?: { name: string; probability: number | null; won?: boolean | null }[];
   // L2-84: UFC cards tag children so the page splits fights (matchups rail) from
   // props (dedicated props section). Other domains leave these unset (all → rail).
   // L2-130: soccer bracket games tag `kind:"matchup"` and render as team duels.

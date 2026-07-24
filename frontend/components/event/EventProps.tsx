@@ -8,6 +8,12 @@
 
 import { formatProbability } from "@/lib/api";
 import type { EventConceptChild, EventConceptSection } from "@/lib/types";
+import {
+  stageGradedWinner,
+  stagePendingLabel,
+  isPersonFieldDomain,
+} from "@/lib/eventConceptDisplay";
+import EntityImage from "@/components/EntityImage";
 
 const PROP_GROUPS: { key: string; label: string }[] = [
   { key: "method", label: "Method of victory" },
@@ -35,20 +41,64 @@ function topOutcomes(child: EventConceptChild): { name: string; probability: num
     .slice(0, 2);
 }
 
-function PropCard({ child }: { child: EventConceptChild }) {
-  const outs = topOutcomes(child);
-  return (
-    <div className="flex-shrink-0 w-60 md:w-auto bg-surface-card rounded-card shadow-card border border-surface-border p-3.5 transition-shadow hover:shadow-card-hover">
-      <div className="text-xs text-text-muted truncate mb-2.5">
-        {child.market_name || child.name || "Prop"}
+const CARD_CLASS =
+  "flex-shrink-0 w-60 md:w-auto bg-surface-card rounded-card shadow-card border border-surface-border p-3.5 transition-shadow hover:shadow-card-hover";
+
+function PropCard({ child, domain }: { child: EventConceptChild; domain?: string | null }) {
+  const title = child.market_name || child.name || "Prop";
+  const person = isPersonFieldDomain(domain);
+  // L2-175 Item 2c: person-field rows (cyclists, fighters, golfers) carry a
+  // Wikipedia headshot with an initials fallback — the shared EntityImage path.
+  const avatar = (name: string, size = 22) =>
+    person ? (
+      <EntityImage type="wikipedia" name={name} size={size} className="shrink-0" />
+    ) : null;
+
+  // L2-175 Item 2b: a settled stage renders GRADED — the winner + a "Won" chip —
+  // never two riders at 90%+ stale independent-binary prices on a finished stage.
+  const winner = stageGradedWinner(child);
+  if (winner) {
+    return (
+      <div className={`${CARD_CLASS} opacity-90`}>
+        <div className="text-xs text-text-muted truncate mb-2.5">{title}</div>
+        <div className="flex items-center gap-2">
+          {avatar(winner.name)}
+          <span className="flex-1 min-w-0 truncate text-sm font-semibold text-text-primary">
+            {winner.name}
+          </span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-brand/15 text-accent-brand shrink-0">
+            Won
+          </span>
+        </div>
       </div>
+    );
+  }
+
+  const outs = topOutcomes(child);
+  // L2-175 Item 2b: an upcoming (unpriced) stage gets an honest "Stage 20 · Saturday"
+  // label instead of an empty card.
+  if (outs.length === 0) {
+    return (
+      <div className={CARD_CLASS}>
+        <div className="text-xs text-text-muted truncate mb-2.5">{title}</div>
+        <div className="text-sm text-text-secondary">{stagePendingLabel(child)}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={CARD_CLASS}>
+      <div className="text-xs text-text-muted truncate mb-2.5">{title}</div>
       <div className="space-y-1.5">
         {outs.map((o, i) => {
           const pct = o.probability != null ? Math.round(o.probability * 100) : null;
           return (
             <div key={`${o.name}-${i}`}>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-text-primary truncate">{o.name}</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {avatar(o.name, 18)}
+                  <span className="text-sm text-text-primary truncate">{o.name}</span>
+                </span>
                 <span className="font-mono text-xs font-semibold text-text-primary tabular-nums shrink-0">
                   {formatProbability(o.probability)}
                 </span>
@@ -144,6 +194,9 @@ interface EventPropsProps {
    *  section's "Props" / #props. Defaults preserve the sole-section behavior. */
   title?: string;
   anchorId?: string;
+  /** L2-175 Item 2c: event domain — person-field domains (cycling, mma, …) render
+   *  a Wikipedia headshot on each prop outcome/winner. Absent → text-only. */
+  domain?: string | null;
 }
 
 export default function EventProps({
@@ -151,6 +204,7 @@ export default function EventProps({
   sections,
   title = "Props",
   anchorId = "props",
+  domain = null,
 }: EventPropsProps) {
   if (!items || items.length === 0) return null;
 
@@ -170,7 +224,7 @@ export default function EventProps({
             </div>
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4 md:overflow-visible md:mx-0 md:px-0 md:pb-0">
               {g.props.map((p) => (
-                <PropCard key={p.market_id} child={p} />
+                <PropCard key={p.market_id} child={p} domain={domain} />
               ))}
             </div>
           </div>

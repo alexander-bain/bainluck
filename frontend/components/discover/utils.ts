@@ -1,4 +1,41 @@
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type {
+  FeedItem,
+  FeedEventData,
+  FeedFuturesData,
+  FeedConceptData,
+  FeedTournamentData,
+} from "@/lib/types";
+import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
+
+// L2-175 Item 1: the single detail destination for a feed card, mirroring each leaf
+// card's own <Link href>. Used for whole-card tap navigation so the hero (which is
+// NOT a link) is clickable, not just the small title. Returns null for card types
+// that own their internal navigation (bundles/groups/comparison sub-links).
+export function feedItemHref(item: FeedItem): string | null {
+  switch (item.type) {
+    case "event": {
+      const d = item.data as FeedEventData;
+      return d?.id != null ? `/events/${d.id}` : null;
+    }
+    case "futures": {
+      const d = item.data as FeedFuturesData;
+      const conceptKey = marketEventKey(d);
+      if (conceptKey) return eventPath(conceptKey);
+      return d?.id != null ? `/futures/${d.id}` : null;
+    }
+    case "concept": {
+      const d = item.data as FeedConceptData;
+      return d?.key ? eventPath(d.key) : null;
+    }
+    case "tournament": {
+      const d = item.data as FeedTournamentData;
+      const key = tournamentEventKey(d);
+      return key ? eventPath(key) : "/sport/golf";
+    }
+    default:
+      return null;
+  }
+}
 
 export function resolvesLabel(d: string | null | undefined): string {
   if (!d) return "";
