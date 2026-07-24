@@ -117,6 +117,20 @@ describe("buildDivisionRace", () => {
     expect(buildDivisionRace(grid(noDiv), 1, "A")).toBeNull();
   });
 
+  test("L2-174: championshipResolved reflects the grid's championship column resolved flag", () => {
+    // Settled-means-settled: a resolved championship column marks the whole race
+    // graded so the component crowns the champion instead of framing a live race.
+    const g = grid(AL_EAST);
+    (g as { columns: unknown[] }).columns = [
+      { key: "championship", label: "Champion", order: 3, sequential: false, resolved: true },
+    ];
+    expect(buildDivisionRace(g, 111, "Boston Red Sox")!.championshipResolved).toBe(true);
+    // Absent/false flag → a live race (the default fixture has columns: []).
+    expect(
+      buildDivisionRace(grid(AL_EAST), 111, "Boston Red Sox")!.championshipResolved,
+    ).toBe(false);
+  });
+
   test("returns null on missing/errored grid", () => {
     expect(buildDivisionRace(null, 1, "A")).toBeNull();
     expect(

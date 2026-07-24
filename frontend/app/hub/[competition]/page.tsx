@@ -20,6 +20,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchHub, formatProbability } from "@/lib/api";
 import type { HubResponse, HubUpcoming, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { eventPath } from "@/lib/eventKey";
+import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 
 // ---------------------------------------------------------------------------
 // Section display config: friendly labels + render order. Sections the backend
@@ -38,10 +39,9 @@ const SECTION_META: Record<string, { label: string }> = {
 const SECTION_ORDER = ["futures", "props", "matches", "awards", "season_stats", "series", "more_markets"];
 
 function sectionLabel(key: string): string {
-  return (
-    SECTION_META[key]?.label ||
-    key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-  );
+  // L2-174 Item 3b — acronym-safe so an unmapped section key like "pga_tour_major"
+  // reads "PGA Tour Major", not "Pga Tour Major".
+  return SECTION_META[key]?.label || toTitleCaseAcronymSafe(key);
 }
 
 function orderedSections(sections: Record<string, LeagueMarket[]>): [string, LeagueMarket[]][] {

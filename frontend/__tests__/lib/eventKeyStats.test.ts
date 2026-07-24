@@ -76,6 +76,57 @@ describe("computeLastChartPoint (#1003 fraction fix)", () => {
   test("null historyData → null", () => {
     expect(computeLastChartPoint(null, null, null)).toBeNull();
   });
+
+  test("L2-174: readout-at-rest reads the aggregate_line BLEND, not an oppositely-oriented win_prob_history source", () => {
+    // THE READOUT INVERSION. The hero (resolveProbability live branch) and the
+    // scrub tooltip (OddsChart bainLuckDelta) both read the aggregate_line blend.
+    // The at-rest readout used to trust a single win_prob_history source whose
+    // home-orientation was OPPOSITE the blend — so the strip showed "home 99%"
+    // under a hero that correctly showed "home 1%". Asymmetric probs (0.01 vs
+    // 0.99) so an accidental 1-x swap cannot pass this test.
+    const historyData = hist({
+      aggregate_line: [
+        { timestamp: "2026-07-23T02:00:00Z", home_probability: 0.01 },
+      ],
+      win_prob_history: {
+        espn: [{ timestamp: "2026-07-23T03:00:00Z", home_probability: 0.99 }],
+      } as never,
+      history: [
+        { timestamp: "2026-07-23T03:00:00Z", home_probability: 0.99 },
+      ] as never,
+    });
+
+    const pt = computeLastChartPoint(historyData, null, null);
+    expect(pt!.homeProb).toBeCloseTo(0.01); // the blend, NOT the 0.99 source
+    expect(pt!.awayProb).toBeCloseTo(0.99);
+
+    // The strip-at-rest must match the hero: resolveProbability's live branch
+    // reads the same blend, so the two speak one orientation-consistent number.
+    const hero = resolveProbability(
+      evt({ status: "live" }),
+      historyData,
+      pt,
+      true, // isLive
+      false, // isFinished
+    );
+    expect(hero.homeProb).toBeCloseTo(0.01);
+    expect(pt!.homeProb).toBeCloseTo(hero.homeProb!);
+  });
+
+  test("L2-174: with no blend point, the readout still falls back to win_prob_history", () => {
+    // The blend-first change must not break the win_prob_history path for sports
+    // that never emit an aggregate_line yet.
+    const pt = computeLastChartPoint(
+      hist({
+        win_prob_history: {
+          espn: [{ timestamp: "2026-07-09T16:00:00Z", home_probability: 0.62 }],
+        } as never,
+      }),
+      null,
+      null,
+    );
+    expect(pt!.homeProb).toBeCloseTo(0.62);
+  });
 });
 
 describe("computeSharedChartDomain (Queue #189: mis-attributed game-end)", () => {

@@ -1686,6 +1686,13 @@ async def _query_team_futures(
             "rank": outcome.rank,
             "total_outcomes": outcome_total,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            # L2-174 Item 3d — the settled-WON grade signal. Kalshi settled markets
+            # stay status='open' (gotcha #33) so these rows surface at ~100% with no
+            # settled framing. is_winner is non-nullable (default False); only the
+            # graded winner gets True, so is_winner=True is a reliable "hit" signal
+            # for the WHAT-HIT label. (False stays ambiguous with a live losing side,
+            # so the frontend only labels the True case.)
+            "is_winner": bool(outcome.is_winner),
             "matched_team": matched,
             "canonical_market_key": market.canonical_market_key,
             "season_year": season_year,

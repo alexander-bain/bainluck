@@ -1,4 +1,5 @@
 import type { FuturesMarket } from "./types";
+import { toTitleCaseAcronymSafe } from "./titleCase";
 
 /**
  * Sport categories for grouping leagues under parent sports.
@@ -1071,11 +1072,9 @@ export function getSubcategory(
 export function getSubcategoryDisplayName(tag: string): string {
   const display = SUBCATEGORY_DISPLAY_NAMES[tag];
   if (display) return display;
-  // Auto-format: "fed_rate" → "Fed Rate"
-  return tag
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+  // Auto-format acronym-safe: "fed_rate" → "Fed Rate", "pga_tour_major" →
+  // "PGA Tour Major" (L2-174 Item 3b — no more "Pga"/"Mvp" mangling).
+  return toTitleCaseAcronymSafe(tag);
 }
 
 /**

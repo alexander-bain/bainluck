@@ -1,0 +1,33 @@
+// L2-174 Item 3b — acronym-safe title casing. Guards the exact mangles the queue
+// called out ("A Pga Tour Major") plus the underscore-tag path the two callers
+// (getSubcategoryDisplayName, hub sectionLabel) feed it.
+
+import { toTitleCaseAcronymSafe } from "../../lib/titleCase";
+
+describe("toTitleCaseAcronymSafe", () => {
+  it("preserves known acronyms while capitalizing the rest", () => {
+    expect(toTitleCaseAcronymSafe("a pga tour major")).toBe("A PGA Tour Major");
+    expect(toTitleCaseAcronymSafe("nba mvp")).toBe("NBA MVP");
+    expect(toTitleCaseAcronymSafe("nfl roy race")).toBe("NFL ROY Race");
+  });
+
+  it("handles underscore-separated tags (the subcategory/hub path)", () => {
+    expect(toTitleCaseAcronymSafe("pga_tour_major")).toBe("PGA Tour Major");
+    expect(toTitleCaseAcronymSafe("fed_rate")).toBe("Fed Rate");
+    expect(toTitleCaseAcronymSafe("al_east")).toBe("AL East");
+  });
+
+  it("still title-cases plain words with no acronyms", () => {
+    expect(toTitleCaseAcronymSafe("best picture")).toBe("Best Picture");
+  });
+
+  it("matches acronyms even with surrounding punctuation", () => {
+    expect(toTitleCaseAcronymSafe("(mvp) odds")).toBe("(MVP) Odds");
+  });
+
+  it("returns empty string for empty/nullish input", () => {
+    expect(toTitleCaseAcronymSafe("")).toBe("");
+    expect(toTitleCaseAcronymSafe(null)).toBe("");
+    expect(toTitleCaseAcronymSafe(undefined)).toBe("");
+  });
+});

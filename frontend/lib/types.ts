@@ -1105,6 +1105,10 @@ export interface TeamFutureItem {
   rank: number | null;
   total_outcomes: number | null;
   resolution_date: string | null;
+  /** L2-174 Item 3d — settled-WON grade. True only for the graded winner (Kalshi
+   *  settled markets stay status='open', gotcha #33), so the row can carry the
+   *  WHAT-HIT/settled label. Null/false = not a confirmed hit → framed as live. */
+  is_winner?: boolean | null;
   canonical_market_key?: string | null;
   /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
   season_year?: string | null;

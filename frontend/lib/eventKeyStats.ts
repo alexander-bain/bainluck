@@ -703,6 +703,17 @@ export function computeLastChartPoint(
   const hist = historyData.history;
   const lastHist = hist?.length ? hist[hist.length - 1] : null;
 
+  // L2-174 Item 1 — THE READOUT INVERSION. The resting readout must agree with
+  // the hero. The hero (resolveProbability, live branch) and the scrub tooltip
+  // (OddsChart `bainLuckDelta`) both read the aggregate_line BLEND — the weighted
+  // "Bain Luck" line the chart draws. The at-rest readout was instead trusting a
+  // SINGLE win_prob_history source's `home_probability`, whose orientation can be
+  // opposite the blend (a source's home-field is actually the away side). That
+  // rendered "Cardinals 99% — Diamondbacks 1%" under a hero that correctly showed
+  // the inverse. Read the blend FIRST so the strip-at-rest, the scrub, and the
+  // hero all speak one orientation-consistent number; the win_prob_history/history
+  // fallbacks only fire when there is no blend point yet.
+  //
   // #1003: `history[].home_probability` is a 0–1 FRACTION (API-verified — same as
   // win_prob_history, current_odds, bookmaker_odds), NOT 0–100. The old `/ 100`
   // here made the headline fallback show ~1% while the chart tooltip (OddsChart
@@ -710,6 +721,7 @@ export function computeLastChartPoint(
   // tooltip-vs-headline mismatch. It fired whenever win_prob_history was empty
   // (any live sport without an ESPN/stat win-prob source, e.g. cricket/soccer).
   const homeProb =
+    latestBlendPoint(historyData.aggregate_line) ??
     lastWp?.home_probability ??
     lastHist?.home_probability ??
     0.5;

@@ -211,6 +211,13 @@ def _format_event_brief(event: Event, team: Team) -> dict:
         agg = event.win_probability_sources.get("aggregate", {})
         wp = agg.get("home") if is_home else agg.get("away")
 
+    # L2-174 Item 3e — the recents expectation grammar ("we had them at 72%",
+    # L2-158) never fired because this brief never emitted the pre-game line or the
+    # settled timestamp; the frontend render (TeamGameCards) is league-agnostic and
+    # gates silently on the missing field. The team-relative OPENING probability is
+    # exactly "what we had them at" before the game; completed_at dates the result.
+    pre = event.opening_home_probability if is_home else event.opening_away_probability
+
     return {
         "id": event.id,
         "home_team": event.home_team_name,
@@ -223,6 +230,8 @@ def _format_event_brief(event: Event, team: Team) -> dict:
         "is_home": is_home,
         "opponent": opponent,
         "win_probability": round(wp, 3) if wp is not None else None,
+        "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
+        "completed_at": event.completed_at.isoformat() if event.completed_at else None,
     }
 
 

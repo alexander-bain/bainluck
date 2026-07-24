@@ -115,6 +115,42 @@ describe("TeamDivisionRace across leagues", () => {
     expect(html).toContain("Champion");
   });
 
+  test("L2-174 Item 3c: a resolved championship column renders GRADED — champion crowned + FINAL", () => {
+    // settled-means-settled on race grids: when the championship column is decided,
+    // crown the winner (championship === 1) and mark the header FINAL instead of a
+    // live race. Uses the derived `resolved` flag already in the grid payload.
+    const teams = [
+      gTeam({ name: "Boston Celtics", short_name: "BOS", team_id: 200, division: "Atlantic",
+        cells: { division: cell(1), make_playoffs: cell(1), championship: cell(1) } }),
+      gTeam({ name: "New York Knicks", short_name: "NYK", team_id: 201, division: "Atlantic",
+        cells: { division: cell(0), make_playoffs: cell(1), championship: cell(0) } }),
+    ];
+    const grid = gridOf(teams);
+    (grid as { columns: unknown[] }).columns = [
+      { key: "championship", label: "Champion", order: 3, sequential: false, resolved: true },
+    ];
+    const race = buildDivisionRace(grid, 200, "Boston Celtics")!;
+    expect(race.championshipResolved).toBe(true);
+    const html = renderToStaticMarkup(<TeamDivisionRace race={race} teamColor="#007A33" />);
+    expect(html).toContain("FINAL");
+    expect(html).toContain("🏆"); // the champion (championship === 1) is crowned
+    // Exactly one crown — the runner-up (championship 0) is not crowned.
+    expect(html.split("🏆").length - 1).toBe(1);
+  });
+
+  test("a live (unresolved) race renders no crown and no FINAL", () => {
+    const teams = [
+      gTeam({ name: "A", team_id: 1, division: "D",
+        cells: { championship: cell(0.4) } }),
+      gTeam({ name: "B", team_id: 2, division: "D",
+        cells: { championship: cell(0.2) } }),
+    ];
+    const race = buildDivisionRace(gridOf(teams), 1, "A")!;
+    const html = renderToStaticMarkup(<TeamDivisionRace race={race} teamColor={null} />);
+    expect(html).not.toContain("FINAL");
+    expect(html).not.toContain("🏆");
+  });
+
   test("omits a column entirely when no team has that stage's data", () => {
     const teams = [
       gTeam({ name: "A", team_id: 1, division: "D",

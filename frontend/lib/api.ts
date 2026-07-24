@@ -368,6 +368,8 @@ export interface TeamFutureItem {
   rank: number | null;
   total_outcomes: number | null;
   resolution_date: string | null;
+  /** L2-174 Item 3d — settled-WON grade (see types.ts TeamFutureItem). */
+  is_winner?: boolean | null;
 }
 
 export interface ChampionshipPathEntry {

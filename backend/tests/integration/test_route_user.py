@@ -684,6 +684,7 @@ async def test_query_team_futures_collapses_identity_duplicates():
     outcome = SimpleNamespace(
         id=1, name="Boston Bruins", team_id=12682,
         current_probability=0.3, probability_change_24h=0.0, rank=1,
+        is_winner=False,
     )
     market = SimpleNamespace(
         id=10, name="NHL Champion 2026", market_tier=1,

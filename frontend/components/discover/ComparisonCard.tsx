@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar } from "./shared";
+import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars } from "./shared";
 import type { CardActionCallbacks } from "./types";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 
@@ -115,15 +115,19 @@ export function ComparisonCard({
               Show more
             </Link>
           )}
-          <span className="ml-auto text-[11px] text-text-muted">
-            {data.outcome_count} markets
-            {data.volume_24h != null && data.volume_24h > 0
-              ? ` · $${data.volume_24h >= 1_000_000
-                  ? `${(data.volume_24h / 1_000_000).toFixed(1)}M`
-                  : data.volume_24h >= 1_000
-                  ? `${(data.volume_24h / 1_000).toFixed(0)}K`
-                  : data.volume_24h} vol`
-              : ""}
+          <span className="ml-auto flex items-center gap-2 text-[11px] text-text-muted">
+            <span>
+              {data.outcome_count} markets
+              {data.volume_24h != null && data.volume_24h > 0
+                ? ` · $${data.volume_24h >= 1_000_000
+                    ? `${(data.volume_24h / 1_000_000).toFixed(1)}M`
+                    : data.volume_24h >= 1_000
+                    ? `${(data.volume_24h / 1_000).toFixed(0)}K`
+                    : data.volume_24h} vol`
+                : ""}
+            </span>
+            {data.confidence_tier && <span>·</span>}
+            <SignalBars tier={data.confidence_tier} />
           </span>
         </div>
 

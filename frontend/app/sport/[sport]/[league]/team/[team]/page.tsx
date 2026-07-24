@@ -388,6 +388,11 @@ function FutureRow({ item }: { item: TeamFutureItem }) {
   const tierLabel = item.market_tier
     ? tierLabels[item.market_tier] || "Market"
     : "Market";
+  // L2-174 Item 3d — settled-means-settled. A graded winner (is_winner=True)
+  // surfaces here at ~100% because Kalshi settled markets stay status='open'
+  // (gotcha #33). Frame it as a RESULT (the L2-147 "What hit" grammar), not a
+  // live 100% probability: settled eyebrow, a Won badge, and no 24h movement.
+  const settledWon = item.is_winner === true;
 
   return (
     <Link
@@ -395,26 +400,36 @@ function FutureRow({ item }: { item: TeamFutureItem }) {
       className="bg-surface-card border border-surface-border rounded-card p-4 hover:shadow-md transition-shadow flex items-center justify-between"
     >
       <div className="min-w-0 flex-1">
-        <div className="text-xs text-accent-brand mb-0.5">{tierLabel}</div>
-        <div className="text-sm font-medium text-text-primary truncate">
-          {item.outcome_name}
+        <div className={`text-xs mb-0.5 ${settledWon ? "text-text-muted" : "text-accent-brand"}`}>
+          {settledWon ? "What hit" : tierLabel}
+        </div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="text-sm font-medium text-text-primary truncate">
+            {item.outcome_name}
+          </div>
+          {settledWon && (
+            <span className="flex-shrink-0 rounded-full bg-accent-live/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent-live">
+              ✓ Won
+            </span>
+          )}
         </div>
         <div className="text-xs text-text-secondary truncate">
           {item.market_name}
         </div>
       </div>
       <div className="text-right flex-shrink-0 ml-4">
-        <div className="text-lg font-mono font-bold text-text-primary">
+        <div className={`text-lg font-mono font-bold ${settledWon ? "text-accent-live" : "text-text-primary"}`}>
           {item.probability !== null
             ? `${Math.round(item.probability * 100)}%`
             : "—"}
         </div>
-        {item.rank && item.total_outcomes && (
+        {!settledWon && item.rank && item.total_outcomes && (
           <div className="text-xs text-text-muted">
             #{item.rank} of {item.total_outcomes}
           </div>
         )}
-        {item.probability_change_24h !== null &&
+        {!settledWon &&
+          item.probability_change_24h !== null &&
           item.probability_change_24h !== 0 && (
             <div
               className={`text-xs ${

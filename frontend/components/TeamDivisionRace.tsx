@@ -53,6 +53,13 @@ export function TeamDivisionRace({
     { key: "championship", label: "Champion", show: race.hasChampionship },
   ];
   const shown = cols.filter((c) => c.show);
+  // L2-174 Item 3c — settled-means-settled: when the championship column is
+  // decided, the grid is graded. Crown the champion (championship === 1) and mark
+  // the header FINAL instead of framing it as a live race.
+  const isSettled = race.championshipResolved;
+  const championName = isSettled
+    ? rows.find((r) => (r.championship ?? 0) >= 0.999)?.name ?? null
+    : null;
   // L2-164: the name column used to be `minmax(120px,1fr)`, so on a wide card it
   // flex-grew to absorb ALL leftover width — shoving the number columns to the far
   // right and opening the dead space Alex flagged. Now the name column hugs its
@@ -67,6 +74,11 @@ export function TeamDivisionRace({
         {race.season && (
           <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold tracking-wide text-text-muted normal-case">
             {race.season}
+          </span>
+        )}
+        {isSettled && (
+          <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold tracking-wide text-text-muted">
+            FINAL
           </span>
         )}
       </h2>
@@ -118,6 +130,11 @@ export function TeamDivisionRace({
                 >
                   {row.name}
                 </span>
+                {championName === row.name && (
+                  <span className="flex-shrink-0" title="Champion" aria-label="Champion">
+                    🏆
+                  </span>
+                )}
               </div>
               {shown.map((c) => (
                 <span

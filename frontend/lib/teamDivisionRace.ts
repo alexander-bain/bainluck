@@ -39,6 +39,10 @@ export interface DivisionRace {
   hasDivision: boolean;
   hasPlayoffs: boolean;
   hasChampionship: boolean;
+  /** L2-174 Item 3c — settled-means-settled on race grids. True when the
+   *  championship column is fully decided (every team at 0/1); the grid then
+   *  renders GRADED — the champion crowned, not a live probability race. */
+  championshipResolved: boolean;
 }
 
 function normName(s: string | null | undefined): string {
@@ -105,6 +109,14 @@ export function buildDivisionRace(
 
   const sorted = sortDivisionRows(rows, sortKey);
 
+  // The championship column carries a derived `resolved` flag (#927): true when
+  // every team is decided (0/1). When it's set the labeled season is over, so the
+  // race grid renders graded with the champion crowned rather than a live race.
+  const champCol = Array.isArray(grid.columns)
+    ? grid.columns.find((c) => c.key === "championship")
+    : undefined;
+  const championshipResolved = champCol?.resolved === true;
+
   return {
     divisionLabel: me.division,
     // Only surface a real season string; empty/whitespace collapses to null so the
@@ -114,6 +126,7 @@ export function buildDivisionRace(
     hasDivision: rows.some((r) => r.division !== null),
     hasPlayoffs: rows.some((r) => r.playoffs !== null),
     hasChampionship: rows.some((r) => r.championship !== null),
+    championshipResolved,
   };
 }
 

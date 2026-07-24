@@ -132,7 +132,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <TemporalBadge badge={data.temporal_badge} />
-            {resolveText && <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>}
+            <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
+              {resolveText && <span>{resolveText}</span>}
+              {data.confidence_tier && resolveText && <span>·</span>}
+              <SignalBars tier={data.confidence_tier} />
+            </span>
           </div>
           <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
 
