@@ -59,10 +59,18 @@ class TestPropFamiliesSeeded:
             (_outcome(21, "Suns", 0.5), m2),
             (_outcome(22, "Rockets", 0.1), m2),
         ]
+        # #1249: the single or_() query was split into separately-indexed
+        # branches (FK, outcome-name trigram, market-name trigram). The seeded
+        # team has a name (→ both name branches fire) and no roster, so three
+        # branch queries run after the team lookup + statement_timeout. The FK
+        # branch returns all rows; the name branches return nothing new (dedup
+        # by outcome id keeps the result identical to the pre-split behaviour).
         mock_db.execute.side_effect = [
             _scalars_result([team]),   # team lookup
             MagicMock(),               # SET LOCAL statement_timeout (#1197)
-            _scalars_result(rows),     # outcomes + markets query
+            _scalars_result(rows),     # branch 1: team_id FK
+            _scalars_result([]),       # branch 2: outcome-name trigram
+            _scalars_result([]),       # branch 3: market-name trigram
         ]
 
         resp = await client.get("/api/teams/lakers/prop-families")
@@ -82,13 +90,46 @@ class TestPropFamiliesSeeded:
         mock_db.execute.side_effect = [
             _scalars_result([team]),
             MagicMock(),               # SET LOCAL statement_timeout (#1197)
-            _scalars_result([]),
+            _scalars_result([]),       # branch 1: team_id FK
+            _scalars_result([]),       # branch 2: outcome-name trigram
+            _scalars_result([]),       # branch 3: market-name trigram
         ]
         resp = await client.get("/api/teams/42/prop-families")
         assert resp.status_code == 200
         body = resp.json()
         assert body["families"] == []
         assert body["total_families"] == 0
+
+
+class TestPropFamiliesBranchSplit:
+    """#1249: the team→props match runs as separate per-index branches (FK +
+    outcome-name trigram + market-name trigram) that are merged and deduped by
+    outcome id, rather than one or_() join that seq-scanned to a 12s timeout."""
+
+    async def test_dedups_outcomes_across_branches(self, client, mock_db):
+        team = _mock_team()
+        m1 = _market(1, "LeBron James Next Team")
+        m2 = _market(2, "Kevin Durant Next Team")
+        # Outcome 11 appears in BOTH the FK branch and the outcome-name branch;
+        # it must be counted once. Outcome 21 is unique to the name branch.
+        fk_rows = [(_outcome(11, "Lakers", 0.4), m1), (_outcome(12, "Warriors", 0.2), m1)]
+        fo_name_rows = [(_outcome(11, "Lakers", 0.4), m1), (_outcome(21, "Suns", 0.5), m2)]
+        fm_name_rows = [(_outcome(22, "Rockets", 0.1), m2)]
+        mock_db.execute.side_effect = [
+            _scalars_result([team]),   # team lookup
+            MagicMock(),               # SET LOCAL statement_timeout
+            _scalars_result(fk_rows),      # branch 1: team_id FK
+            _scalars_result(fo_name_rows), # branch 2: outcome-name trigram
+            _scalars_result(fm_name_rows), # branch 3: market-name trigram
+        ]
+        resp = await client.get("/api/teams/lakers/prop-families")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Both markets surface (two Next Team entities); outcome 11 not double-counted.
+        assert body["total_families"] == 1
+        fam = body["families"][0]
+        assert fam["family_key"] == "next team"
+        assert {r["entity"] for r in fam["rows"]} == {"Lebron James", "Kevin Durant"}
 
 
 class TestPropFamiliesHTTP:

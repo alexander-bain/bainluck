@@ -86,38 +86,65 @@ async def get_team_prop_families(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    # Build match conditions: team_id FK, full team-name ILIKE (on outcome
-    # names AND market names), and roster player-name ILIKE.
-    conditions = [FuturesOutcome.team_id == team.id]
-    if team.name:
-        pat = f"%{_escape_like(team.name.strip())}%"
-        conditions.append(FuturesOutcome.name.ilike(pat))
-        conditions.append(FuturesMarket.name.ilike(pat))
-    for player in _roster_player_names(team):
-        ppat = f"%{_escape_like(player)}%"
-        conditions.append(FuturesMarket.name.ilike(ppat))
-        conditions.append(FuturesOutcome.name.ilike(ppat))
-
-    query = (
-        select(FuturesOutcome, FuturesMarket)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            and_(
-                FuturesMarket.event_id.is_(None),
-                FuturesMarket.status.in_(_INCLUDED_STATUSES),
-                or_(*conditions),
-            )
-        )
-        .order_by(FuturesOutcome.current_probability.desc().nulls_last())
-        .limit(max(1, min(limit, 2000)))
+    # Match a team's props by three criteria: team_id FK, full team-name ILIKE
+    # (on outcome AND market names), and roster player-name ILIKE. These MUST be
+    # run as SEPARATE, per-index queries rather than a single or_() over the join.
+    #
+    # #1249 / #1197 (r262): a single `or_(team_id == X, name ILIKE '%…%', …)`
+    # mixing the FK branch with many leading-wildcard ILIKE patterns (team name +
+    # up to 40 roster players, on BOTH outcome and market names) defeats every
+    # index and seq-scans the ~1.2M-row futures_outcomes ⋈ futures_markets join.
+    # Measured live at ~12.5s for the Yankees — tripping the statement_timeout
+    # below into an empty degrade, which zeroed team yield and blocked the cohort
+    # card (L2-167). Mirror _query_team_futures's proven fix (routes/user.py
+    # r259): run each criterion as its OWN query so it hits its OWN index
+    # (ix_futures_outcomes_team_id for the FK branch; the GIN trigram indexes
+    # ix_futures_outcomes_name_trgm and ix_futures_markets_name_trgm for the two
+    # name branches), then merge/dedup by outcome id. Same rows, each branch
+    # index-served.
+    _cap = max(1, min(limit, 2000))
+    _base_filters = (
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.status.in_(_INCLUDED_STATUSES),
     )
-    # #1197 / #1239: the multi-ILIKE roster scan can occasionally run long enough
-    # to hit Heroku's 30s H12 request timeout (a hung 503). Bound it with a
-    # per-statement timeout so a slow scan fails fast and the endpoint degrades to
-    # an empty families list (200) instead of hanging the dyno to a 503.
+
+    def _branch(cond):
+        return (
+            select(FuturesOutcome, FuturesMarket)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .where(and_(*_base_filters, cond))
+            .order_by(FuturesOutcome.current_probability.desc().nulls_last())
+            .limit(_cap)
+        )
+
+    # Name patterns (team full name + roster players) drive the two trigram
+    # branches; the FK branch needs no pattern.
+    _name_pats: list[str] = []
+    if team.name:
+        _name_pats.append(f"%{_escape_like(team.name.strip())}%")
+    for player in _roster_player_names(team):
+        _name_pats.append(f"%{_escape_like(player)}%")
+
+    branch_conds = [FuturesOutcome.team_id == team.id]  # FK branch (indexed)
+    if _name_pats:
+        # OR of trigram ILIKEs per column → Postgres BitmapOr over the GIN
+        # trigram index for that column, NOT a join-wide seq scan.
+        branch_conds.append(or_(*[FuturesOutcome.name.ilike(p) for p in _name_pats]))
+        branch_conds.append(or_(*[FuturesMarket.name.ilike(p) for p in _name_pats]))
+
+    # #1197 / #1239: statement_timeout stays as a backstop so any pathological
+    # branch fails fast and the endpoint degrades to an empty families list (200)
+    # rather than hanging the dyno to a 503.
+    rows: list = []
+    _seen_oids: set[int] = set()
     try:
         await db.execute(text("SET LOCAL statement_timeout = '12000'"))
-        rows = (await db.execute(query)).all()
+        for _cond in branch_conds:
+            for r in (await db.execute(_branch(_cond))).all():
+                oid = r[0].id
+                if oid not in _seen_oids:
+                    _seen_oids.add(oid)
+                    rows.append(r)
     except Exception:
         logger.exception(
             "prop-families: query failed/timed out for team %s — empty degrade",
