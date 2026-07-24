@@ -148,6 +148,7 @@ _FLOW_AREA_LABELS = {
     "matured_linkage": "area:event-details",  # covers matching/linkage per label desc
     "unlinked_held": "area:event-details",  # matcher missed a link we could have made
     "season_aggregate_linkage": "area:event-details",  # season market on a game event (#1220)
+    "team_identity_dupes": "area:event-details",  # unmerged team-identity dupes / adjudication backlog
 }
 _FLOW_TITLES = {
     "search_gold_set": "search misses gold-set entities",
@@ -161,6 +162,7 @@ _FLOW_TITLES = {
     "matured_linkage": "imminent event has a phantom blend source (in blend, no linked market)",
     "unlinked_held": "imminent event has an unlinked winner market we already hold (matcher miss)",
     "season_aggregate_linkage": "season-aggregate market mislinked to a single game event",
+    "team_identity_dupes": "unmerged team-identity dupes remain or adjudication backlog is climbing",
 }
 
 
@@ -1080,6 +1082,87 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
     }
 
 
+# Clusters awaiting HUMAN adjudication (L2-173) is a needs-user backlog, not an
+# agent-fixable bug — a small standing queue is normal. It only alarms past a
+# conservative backlog size so its CLIMB is visible without crying wolf on the
+# handful that always await Alex's verdict.
+_AWAITING_ADJUDICATION_ALARM = 25
+
+
+async def _run_team_identity_dupes(client: httpx.AsyncClient) -> dict:
+    """#247 Item 2 / #1204 — the team-identity dupe class files ITSELF. Two
+    DB-derived signals, read-only:
+
+      • ``unresolved`` SAFE auto-mergeable bare-location stub pairs — should be 0
+        after a clean run of the merge rail. >0 means the auto-merge regressed or
+        did not run (a REAL, agent-fixable failure: run the repair with apply).
+      • ``awaiting`` clusters queued for HUMAN adjudication (L2-173) — surfaced
+        always; alarms only past ``_AWAITING_ADJUDICATION_ALARM`` since clearing
+        it needs Alex's verdicts, not an agent.
+
+    Reads the repairs dry-run census (no writes) + the pending-clusters summary.
+    A broken/absent admin path is SKIPPED, never filed — filing on our own broken
+    measurement is the #1147 cry-wolf."""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        return {
+            "flow": "team_identity_dupes", "checked": 0, "passed": True,
+            "skipped": True, "failures": [],
+            "evidence": {"reason": "ADMIN_TOKEN unset — admin endpoints unavailable"},
+        }
+    try:
+        # apply=false → dry-run census only, no writes.
+        r1 = await client.post(
+            "/api/admin/repairs/team-identity-merge",
+            params={"secret": admin_token, "apply": "false"},
+        )
+        r1.raise_for_status()
+        census = r1.json() or {}
+        r2 = await client.get(
+            "/api/admin/team-clusters/pending",
+            params={"secret": admin_token, "summary": "true"},
+        )
+        r2.raise_for_status()
+        awaiting = int((r2.json() or {}).get("awaiting", 0) or 0)
+    except Exception as exc:
+        return {
+            "flow": "team_identity_dupes", "checked": 0, "passed": True,
+            "skipped": True, "failures": [],
+            "evidence": {"reason": f"admin endpoint failed: {str(exc)[:120]}"},
+        }
+
+    unresolved = int(census.get("pairs_remaining", census.get("pairs_planned", 0)) or 0)
+    failures = []
+    if unresolved > 0:
+        failures.append({
+            "detail": f"{unresolved} SAFE auto-mergeable team-identity dupe pair(s) "
+                      f"remain (bare-location stub folds) — the merge rail did not "
+                      f"run or regressed. Fix: POST /api/admin/repairs/"
+                      f"team-identity-merge?apply=true until pairs_remaining=0 "
+                      f"(#1204 / Queue #247).",
+        })
+    if awaiting >= _AWAITING_ADJUDICATION_ALARM:
+        failures.append({
+            "detail": f"{awaiting} team-identity clusters awaiting HUMAN adjudication "
+                      f"(L2-173) — backlog exceeds {_AWAITING_ADJUDICATION_ALARM}. "
+                      f"Needs Alex's verdicts at /admin (team-clusters), not an "
+                      f"agent fix. (needs-user)",
+        })
+    return {
+        "flow": "team_identity_dupes",
+        "checked": 2,
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "evidence": {
+            "unresolved_mergeable_pairs": unresolved,
+            "awaiting_adjudication": awaiting,
+            "awaiting_alarm_threshold": _AWAITING_ADJUDICATION_ALARM,
+            "clusters_planned": census.get("clusters_planned"),
+            "clusters_examined": census.get("clusters_examined"),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Evidence-pack rendering (the GitHub issue body)
 # ---------------------------------------------------------------------------
@@ -1343,6 +1426,7 @@ async def _run_flow_sentinel(
         ("matured_linkage", _run_matured_linkage),
         ("unlinked_held", _run_unlinked_held),
         ("season_aggregate_linkage", _run_season_aggregate_linkage),
+        ("team_identity_dupes", _run_team_identity_dupes),
     )
 
     async with httpx.AsyncClient(base_url=FLOW_SENTINEL_API, timeout=HTTP_TIMEOUT,

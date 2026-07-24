@@ -384,3 +384,74 @@ class TestIssueRendering:
         assert f"flow-sentinel-fingerprint:{flow_fingerprint('search_gold_set')}" in body
         assert "Failures" in body
         assert "Evidence" in body
+
+
+class TestTeamIdentityDupesFlow:
+    """Queue #249 Item 2 — the team-identity dupe class files itself, and the
+    L2-173 adjudication backlog alarms past a conservative threshold."""
+
+    def test_flow_registered_with_label_and_title(self):
+        from app.tasks import flow_sentinel as fs
+        assert "team_identity_dupes" in fs._FLOW_AREA_LABELS
+        assert "team_identity_dupes" in fs._FLOW_TITLES
+
+    def _client(self, census, awaiting, *, post_ok=True, get_ok=True):
+        from unittest.mock import AsyncMock, MagicMock
+
+        def _resp(payload, ok):
+            r = MagicMock()
+            r.json.return_value = payload
+            if ok:
+                r.raise_for_status.return_value = None
+            else:
+                r.raise_for_status.side_effect = RuntimeError("boom")
+            return r
+
+        client = MagicMock()
+        client.post = AsyncMock(return_value=_resp(census, post_ok))
+        client.get = AsyncMock(return_value=_resp({"awaiting": awaiting}, get_ok))
+        return client
+
+    async def test_passes_when_zero_dupes_and_low_backlog(self, monkeypatch):
+        from app.tasks import flow_sentinel as fs
+        monkeypatch.setenv("ADMIN_TOKEN", "x")
+        client = self._client({"pairs_remaining": 0, "clusters_planned": 0}, awaiting=3)
+        res = await fs._run_team_identity_dupes(client)
+        assert res["passed"] is True
+        assert res["failures"] == []
+        assert res["evidence"]["unresolved_mergeable_pairs"] == 0
+        assert res["evidence"]["awaiting_adjudication"] == 3
+
+    async def test_fails_when_unresolved_dupes_remain(self, monkeypatch):
+        from app.tasks import flow_sentinel as fs
+        monkeypatch.setenv("ADMIN_TOKEN", "x")
+        client = self._client({"pairs_remaining": 4}, awaiting=0)
+        res = await fs._run_team_identity_dupes(client)
+        assert res["passed"] is False
+        assert any("auto-mergeable" in f["detail"] for f in res["failures"])
+
+    async def test_alarms_when_adjudication_backlog_exceeds_threshold(self, monkeypatch):
+        from app.tasks import flow_sentinel as fs
+        monkeypatch.setenv("ADMIN_TOKEN", "x")
+        client = self._client(
+            {"pairs_remaining": 0}, awaiting=fs._AWAITING_ADJUDICATION_ALARM + 1
+        )
+        res = await fs._run_team_identity_dupes(client)
+        assert res["passed"] is False
+        assert any("awaiting HUMAN adjudication" in f["detail"] for f in res["failures"])
+
+    async def test_skips_never_fails_on_broken_admin_path(self, monkeypatch):
+        from app.tasks import flow_sentinel as fs
+        monkeypatch.setenv("ADMIN_TOKEN", "x")
+        client = self._client({"pairs_remaining": 9}, awaiting=99, post_ok=False)
+        res = await fs._run_team_identity_dupes(client)
+        # Never file on our own broken measurement (#1147 cry-wolf).
+        assert res["passed"] is True
+        assert res["skipped"] is True
+
+    async def test_skips_when_admin_token_unset(self, monkeypatch):
+        from app.tasks import flow_sentinel as fs
+        monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+        client = self._client({"pairs_remaining": 9}, awaiting=99)
+        res = await fs._run_team_identity_dupes(client)
+        assert res["passed"] is True and res["skipped"] is True
