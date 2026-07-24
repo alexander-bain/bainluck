@@ -84,6 +84,7 @@ struct PreferencesView: View {
                 accountHero
                 teamsSection
                 interestsSection
+                notificationsSection
                 actionsSection
             }
             .padding(.vertical)
@@ -696,6 +697,57 @@ struct PreferencesView: View {
             }
         }
         .padding(.horizontal)
+    }
+
+    // MARK: - Notifications
+
+    /// Notification preferences. Only shown when signed in — the underlying
+    /// preference is per-account and the endpoint requires authentication.
+    @ViewBuilder
+    private var notificationsSection: some View {
+        if authManager.isAuthenticated {
+            VStack(spacing: 10) {
+                sectionHeader(emoji: "\u{1F514}", title: "Notifications", count: nil)
+                morningDigestRow
+                    .padding(.horizontal)
+            }
+        }
+    }
+
+    private var morningDigestSubtitle: String {
+        if let error = viewModel.morningDigestError { return error }
+        if viewModel.morningDigestSaving { return "Saving\u{2026}" }
+        return "A daily push with the most interesting odds moves"
+    }
+
+    private var morningDigestRow: some View {
+        Toggle(isOn: Binding(
+            get: { viewModel.morningDigestEnabled },
+            set: { viewModel.setMorningDigest($0) }
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: "sun.horizon.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Morning Digest")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                    Text(morningDigestSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(viewModel.morningDigestError == nil ? Color.secondary.opacity(0.7) : Color.red)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(Color.accentColor)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
     }
 
     // MARK: - Shared Components
