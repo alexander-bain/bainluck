@@ -7,27 +7,7 @@ import type { TypeaheadSuggestion } from "@/lib/api";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
-
-const RECENT_SEARCHES_KEY = "bainluck_recent_searches";
-
-function getRecentSearches(): string[] {
-  try {
-    const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentSearch(q: string) {
-  const cleaned = q.trim();
-  if (!cleaned || cleaned.length < 2) return;
-  const recent = getRecentSearches().filter((s) => s !== cleaned);
-  recent.unshift(cleaned);
-  try {
-    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(recent.slice(0, 5)));
-  } catch {}
-}
+import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 
 interface Props {
   isOpen: boolean;
@@ -42,6 +22,10 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
   const [didYouMean, setDidYouMean] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Aborts the previous in-flight typeahead so a slow earlier keystroke can't
+  // clobber the results of a newer one (the mobile stale-response race — the
+  // desktop SearchBar was already guarded, mobile was not). L2-178.
+  const typeaheadAbortRef = useRef<AbortController | null>(null);
   const recentSearches = getRecentSearches();
 
   useEffect(() => {
@@ -61,11 +45,16 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
       setSuggestions([]);
       return;
     }
+    // Cancel any in-flight typeahead so stale results can't overwrite fresh ones.
+    typeaheadAbortRef.current?.abort();
+    const controller = new AbortController();
+    typeaheadAbortRef.current = controller;
+
     setLoading(true);
     // L2-96: curated concept hubs (e.g. "midterms") not derivable from market names.
     const curated = matchCuratedConcepts(q);
     try {
-      const data = await fetchTypeahead(q);
+      const data = await fetchTypeahead(q, controller.signal);
       const backendKeys = new Set(
         data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
       );
@@ -74,10 +63,14 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
         ...data.suggestions,
       ]);
       setDidYouMean(data.did_you_mean ?? null);
-    } catch {
+    } catch (err) {
+      // A newer keystroke aborted this request — a fresher one owns the state.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setSuggestions(curated);
     } finally {
-      setLoading(false);
+      // Only the latest request clears the spinner; a superseded (aborted)
+      // request must not turn it off out from under the fresh one.
+      if (typeaheadAbortRef.current === controller) setLoading(false);
     }
   }, []);
 

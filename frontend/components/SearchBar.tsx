@@ -8,29 +8,7 @@ import { useAnalyticsContext } from "@/components/Analytics";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
-
-const RECENT_SEARCHES_KEY = "bainluck_recent_searches";
-const MAX_RECENT = 5;
-
-function getRecentSearches(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentSearch(q: string) {
-  const cleaned = q.trim();
-  if (!cleaned || cleaned.length < 2) return;
-  const recent = getRecentSearches().filter((s) => s !== cleaned);
-  recent.unshift(cleaned);
-  try {
-    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(recent.slice(0, MAX_RECENT)));
-  } catch {}
-}
+import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 
 interface SearchBarProps {
   initialQuery?: string;

@@ -195,7 +195,15 @@ export default function GroupedFeedRenderer({
       animate="visible"
     >
       {items.map((item, idx) => {
-        const key = `${item.type}-${idx}`;
+        // Key by a STABLE entity id, not the array index. Index keys made React
+        // recycle a card instance (and its resolved player headshot) for a
+        // different entity when the list reordered/updated — the "wrong-face"
+        // bug (L2-178). group_key is the grouping identity for grouped items;
+        // ungrouped markets key by their market id.
+        const key =
+          item.type === "market"
+            ? `market-${item.market.id}`
+            : `${item.type}-${item.group_key}`;
 
         switch (item.type) {
           case "stat_prop":

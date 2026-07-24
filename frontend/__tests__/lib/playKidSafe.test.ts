@@ -7,9 +7,15 @@ import {
   isKidSafeText,
   isKidSafeCategory,
   isKidSafeItem,
+  collectKidVisibleText,
   filterKidSafe,
 } from "@/lib/play/kidSafe";
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type {
+  FeedItem,
+  FeedEventData,
+  FeedFuturesData,
+  FeedFuturesOutcome,
+} from "@/lib/types";
 
 // The exact blocklist the queue named must always be rejected.
 const REQUIRED_BLOCKED = [
@@ -154,6 +160,35 @@ function futuresItem(
   };
 }
 
+function futuresItemWithOutcomes(
+  name: string,
+  category: string,
+  outcomeNames: string[],
+): FeedItem {
+  const top_outcomes: FeedFuturesOutcome[] = outcomeNames.map((n, i) => ({
+    id: i + 1,
+    name: n,
+    probability: 0.5,
+    rank: i + 1,
+    movement: null,
+  }));
+  const data: Partial<FeedFuturesData> = {
+    id: 3,
+    name,
+    llm_sport_category: category,
+    sport_name: category,
+    sport: category,
+    top_outcomes,
+  };
+  return {
+    type: "futures",
+    score: 50,
+    reason: "",
+    headline: null,
+    data: data as FeedFuturesData,
+  };
+}
+
 function eventItem(sport: string, home: string, away: string): FeedItem {
   const data: Partial<FeedEventData> = {
     id: 2,
@@ -210,6 +245,50 @@ describe("isKidSafeItem", () => {
   it("blocks bundle cards outright", () => {
     const bundle = { type: "bundle", score: 50, reason: "", headline: null, data: {} } as unknown as FeedItem;
     expect(isKidSafeItem(bundle)).toBe(false);
+  });
+
+  // L2-178 — the gate must run the blocklist over OUTCOME labels too, not just
+  // the title/headline. /play renders the outcome name as the guess subject, so a
+  // clean title hiding a blocked outcome is the exact bypass this closes.
+  it("blocks a clean-title card whose OUTCOME label hits the blocklist", () => {
+    const item = futuresItemWithOutcomes(
+      "Who will be the newsmaker of the year?", // clean title, allowed category
+      "entertainment",
+      ["A popular musician", "Regime change leader"], // blocked outcome ("regime")
+    );
+    expect(isKidSafeItem(item)).toBe(false);
+  });
+
+  it("keeps a clean-title card whose outcomes are also clean", () => {
+    const item = futuresItemWithOutcomes(
+      "Who wins Album of the Year?",
+      "culture",
+      ["Taylor Swift", "Beyoncé", "Olivia Rodrigo"],
+    );
+    expect(isKidSafeItem(item)).toBe(true);
+  });
+
+  it("blocks an event whose TEAM name hits the blocklist", () => {
+    // Team names render as "<team> to win" — they are visible strings too.
+    expect(isKidSafeItem(eventItem("basketball_nba", "Gun Club", "Lakers"))).toBe(false);
+  });
+});
+
+describe("collectKidVisibleText", () => {
+  it("includes futures outcome labels in the haystack", () => {
+    const item = futuresItemWithOutcomes("Trophy winner", "entertainment", [
+      "Nuclear option",
+      "Safe pick",
+    ]);
+    const text = collectKidVisibleText(item);
+    expect(text.toLowerCase()).toContain("nuclear option");
+    expect(text).toContain("Trophy winner");
+  });
+
+  it("includes both event team names", () => {
+    const text = collectKidVisibleText(eventItem("basketball_nba", "Warriors", "Lakers"));
+    expect(text).toContain("Warriors");
+    expect(text).toContain("Lakers");
   });
 });
 

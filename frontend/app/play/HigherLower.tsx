@@ -9,7 +9,7 @@ import { useCallback, useMemo, useState } from "react";
 import { generateThreshold } from "@/components/discover/utils";
 import { getCat } from "@/components/discover/constants";
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedFuturesData, FeedEventData } from "@/lib/types";
+import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { recordBestStreak, sendKidPrediction } from "@/lib/play/session";
 import s from "./play.module.css";
 
@@ -37,6 +37,16 @@ interface Question {
   threshold: number;
 }
 
+// Only FUTURES cards become Higher/Lower questions. `marketId` is submitted to
+// /api/predictions as `market_id`, which the backend (and all its downstream
+// stats/resolution joins) treats strictly as a FuturesMarket id — see
+// predictions.py. Event cards carry an events-table id with no linked
+// futures-market id on the feed payload, so submitting one poisons
+// user_predictions (the FuturesOutcome lookup misses → the client `correct` is
+// trusted, and the row joins to an unrelated market by numeric-id collision).
+// L2-178: skip event cards from the guess pool entirely rather than send a
+// mis-namespaced id. (CoolOrBoring still uses events — it writes interactions,
+// not predictions.)
 function usableProb(item: FeedItem): { prob: number; subject: string; marketId: number } | null {
   if (item.type === "futures") {
     const d = item.data as FeedFuturesData;
@@ -44,11 +54,6 @@ function usableProb(item: FeedItem): { prob: number; subject: string; marketId: 
     if (leader?.probability && leader.probability > 0) {
       return { prob: leader.probability, subject: leader.name, marketId: d.id };
     }
-  }
-  if (item.type === "event") {
-    const d = item.data as FeedEventData;
-    const p = d.current_odds?.home_probability;
-    if (p && p > 0) return { prob: p, subject: `${d.home_team} to win`, marketId: d.id };
   }
   return null;
 }

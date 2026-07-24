@@ -63,6 +63,19 @@ function PlayerAvatar({
   );
   const [failed, setFailed] = useState(false);
 
+  // Re-seed when the player identity changes. If this avatar instance is ever
+  // reused for a different player (e.g. a list re-render), it must NOT keep the
+  // previous player's resolved face — the "wrong-face" bug (L2-178). The
+  // GroupedFeedRenderer key fix prevents the recycle in the common path; this is
+  // the belt-and-suspenders reset for any other reuse.
+  useEffect(() => {
+    setResolvedUrl(
+      headshotUrl ||
+        (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey ?? null)) : null)
+    );
+    setFailed(false);
+  }, [playerName, headshotUrl, espnPlayerId, sportKey]);
+
   useEffect(() => {
     if (resolvedUrl || failed) return;
     // Fallback to Wikipedia

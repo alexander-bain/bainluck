@@ -10,7 +10,7 @@
 // Pure module (no window / no fetch) so it is unit-tested in the node jest env.
 
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
-import type { FeedItem } from "@/lib/types";
+import type { FeedItem, FeedFuturesData, FeedEventData } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Category allowlist
@@ -181,18 +181,48 @@ export function isKidSafeText(text: string | null | undefined): boolean {
 }
 
 /**
+ * Every user-visible string a /play card can render, joined into one haystack.
+ * This is the single source the blocklist runs over — there must be NO bypass
+ * path. The L2-178 bug: the gate only checked title/headline/reason, so a card
+ * with a clean title but a blocked OUTCOME label slipped through — and /play
+ * literally renders outcome text as the guess subject (HigherLower.tsx `subject`),
+ * so a blocked entity in an outcome would be shown to an 8-year-old. Collect the
+ * title, headline/hook, reason, category, AND every outcome label:
+ *   - futures: each `top_outcomes[].name`
+ *   - events: both team names (they render as "<team> to win")
+ */
+export function collectKidVisibleText(item: FeedItem): string {
+  const a = getDiscoverItemAnalytics(item);
+  const parts: (string | null | undefined)[] = [
+    a.item_name,
+    a.headline,
+    a.category,
+    item.headline,
+    item.reason,
+  ];
+  if (item.type === "futures") {
+    const d = item.data as FeedFuturesData;
+    for (const o of d.top_outcomes ?? []) parts.push(o.name);
+  } else if (item.type === "event") {
+    const d = item.data as FeedEventData;
+    parts.push(d.home_team, d.away_team);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+/**
  * The single gate a feed card must pass to render in /play.
- * Rejects: disallowed categories, blocklist text, and bundle cards (which fold
- * multiple un-vetted markets and can't be safely categorized here).
+ * Rejects: disallowed categories, blocklist text (over ALL rendered strings —
+ * see collectKidVisibleText), and bundle cards (which fold multiple un-vetted
+ * markets and can't be safely categorized here). The affinity-seeded deck is a
+ * reordering of this already-filtered pool (see /play page loadPool →
+ * seedByAffinity), so it passes through the same gate — no separate path.
  */
 export function isKidSafeItem(item: FeedItem): boolean {
   if (!item || item.type === "bundle") return false;
   const a = getDiscoverItemAnalytics(item);
   if (!isKidSafeCategory(a.category)) return false;
-  const text = [a.item_name, a.headline, item.headline, item.reason]
-    .filter(Boolean)
-    .join(" · ");
-  return isKidSafeText(text);
+  return isKidSafeText(collectKidVisibleText(item));
 }
 
 export function filterKidSafe(items: FeedItem[]): FeedItem[] {
