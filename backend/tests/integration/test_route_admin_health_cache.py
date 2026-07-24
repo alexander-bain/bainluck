@@ -91,6 +91,50 @@ class TestLinkRateCache:
         resp = await client.get(f"{self.PATH}?secret=bad")
         assert resp.status_code == 403
 
+    async def test_compute_timeout_serves_stale_cache(self, client, admin_secret, monkeypatch):
+        """Queue #250 Item 3c: when the fresh compute raises (e.g. a
+        statement_timeout QueryCanceledError under ?bust=1), the endpoint must
+        serve the last cached snapshot marked stale — never 503."""
+        cached = {"generated_at": "2026-07-12T00:00:00+00:00", "overall": {"link_rate_pct": 91.2}}
+        fake = _FakeRedis({"bainluck:admin:link_rate": json.dumps(cached)})
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: fake)
+
+        class _QueryCanceledError(Exception):
+            pass
+
+        compute = AsyncMock(
+            side_effect=_QueryCanceledError("canceling statement due to statement timeout")
+        )
+        monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
+
+        # ?bust=1 forces the fresh compute path (the one that would 503).
+        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        compute.assert_awaited_once()
+        # Served the cached numbers, marked stale.
+        assert body["overall"]["link_rate_pct"] == 91.2
+        assert body["stale"] is True
+        assert body["stale_reason"] == "compute_timeout"
+
+    async def test_compute_error_no_cache_degrades_gracefully(self, client, admin_secret, monkeypatch):
+        """No cached snapshot to fall back to → clearly-marked empty payload,
+        still a 200 (never a 503)."""
+        fake = _FakeRedis()  # empty
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: fake)
+        compute = AsyncMock(side_effect=RuntimeError("boom"))
+        monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
+
+        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["stale"] is True
+        assert body["unavailable"] is True
+        assert body["stale_reason"] == "compute_error"
+        assert body["overall"] == {}
+
 
 # ---------------------------------------------------------------------------
 # audit/all

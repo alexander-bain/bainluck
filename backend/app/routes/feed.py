@@ -5373,175 +5373,474 @@ async def _score_futures(
 
     scored_items = []
     for market in markets:
-        is_recycled = False
-        if not my_teams_only:
-            if market.id in ctx.recent_dismissed_futures_ids:
-                continue
-            if market.id in ctx.recent_seen_futures_ids:
-                # Exhausted-feed recycling: re-show a stale-but-still-relevant
-                # seen card (penalized below fresh) instead of walling. Otherwise
-                # keep the hard skip that fresh users rely on.
-                if _futures_recycle_eligible(market, ctx, now):
-                    is_recycled = True
-                else:
+        try:
+            is_recycled = False
+            if not my_teams_only:
+                if market.id in ctx.recent_dismissed_futures_ids:
                     continue
+                if market.id in ctx.recent_seen_futures_ids:
+                    # Exhausted-feed recycling: re-show a stale-but-still-relevant
+                    # seen card (penalized below fresh) instead of walling. Otherwise
+                    # keep the hard skip that fresh users rely on.
+                    if _futures_recycle_eligible(market, ctx, now):
+                        is_recycled = True
+                    else:
+                        continue
+                if _should_skip_futures_for_recent_dismissal(
+                    market=market,
+                    ctx=ctx,
+                    my_teams_only=my_teams_only,
+                ):
+                    continue
+
+            # Skip markets past their resolution date (belt-and-suspenders;
+            # base_filters should exclude these at the SQL level, but naive
+            # datetime timezone mismatches can let them through — issue #486).
+            if market.resolution_date:
+                res_dt = _utc(market.resolution_date)
+                if res_dt and res_dt < now:
+                    continue
+
+            # Prepare outcome data for scoring
+            outcomes_data = []
+            leader_name = None
+            leader_prob = None
+
+            sorted_outcomes = sorted(
+                market.outcomes,
+                key=lambda o: float(o.current_probability) if o.current_probability else 0,
+                reverse=True,
+            )
+
+            for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
+                prob = float(o.current_probability) if o.current_probability else None
+                change = (
+                    float(o.probability_change_24h) if o.probability_change_24h else None
+                )
+                outcomes_data.append(
+                    {
+                        "name": o.name,
+                        "probability": prob,
+                        "probability_change_24h": change,
+                        "rank": o.rank,
+                        "rank_change_24h": o.rank_change_24h,
+                        "opening_probability": (
+                            float(o.opening_probability) if o.opening_probability else None
+                        ),
+                    }
+                )
+
+            if sorted_outcomes:
+                leader = sorted_outcomes[0]
+                leader_name = leader.name
+                leader_prob = (
+                    float(leader.current_probability)
+                    if leader.current_probability
+                    else None
+                )
+
+            # --- Staleness filters ---
+            # Keep serving-time exclusions on the same helper used by admin trace
+            # output so stale/debug decisions cannot drift.
+            runtime_filters = _market_runtime_filter_trace(
+                market,
+                outcomes_data,
+                leader_name,
+                leader_prob,
+                now,
+                sport_category=market.llm_sport_category,
+                stale_no_movement_days=stale_no_movement_days,
+                no_resolution_stale_days=no_resolution_stale_days,
+            )
+            if not runtime_filters["eligible"]:
+                continue
+
+            # #921: drop markets with no REAL price — every outcome null/zero (dead)
+            # OR even the top outcome below the 0.5% display floor (rounds to 0% — the
+            # "0% on active markets" junk). Genuine even-odds / longshot-leader races
+            # are far above the floor and stay eligible.
+            if market.outcomes and has_no_real_price(
+                [o["probability"] for o in outcomes_data]
+            ):
+                continue
+
+            # #1004: drop unresolved markets pinned at a dead-extreme price (leader
+            # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
+            # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
+            # or a high-volume market stays eligible.
+            if market.outcomes and is_locked_near_certain(
+                leader_prob,
+                max(
+                    (
+                        abs(o["probability_change_24h"])
+                        for o in outcomes_data
+                        if o.get("probability_change_24h") is not None
+                    ),
+                    default=None,
+                ),
+                float(market.volume_24h) if market.volume_24h is not None else None,
+            ):
+                continue
+
+            # Get source count from canonical key
+            source_count = 1
+            if market.canonical_market_key:
+                source_count = canonical_source_counts.get(market.canonical_market_key, 1)
+
+            highlight_result = compute_futures_highlight(
+                market_tier=market.market_tier,
+                sport_category=market.llm_sport_category,
+                resolution_date=market.resolution_date,
+                outcomes=outcomes_data,
+                source_count=source_count,
+                now=now,
+                market_name=market.name,
+                volume_24h=market.volume_24h,
+                curation_score_adj=market.__dict__.get("curation_score_adj", 0) or 0,
+            )
+
+            top_mover_name = highlight_result.top_mover_name
+            top_mover_change = None
+            if top_mover_name:
+                for o in outcomes_data:
+                    if o["name"] == top_mover_name and o.get("probability_change_24h"):
+                        top_mover_change = o["probability_change_24h"]
+                        break
+
+            top_surprise_name = None
+            top_surprise_change = None
+            for o in outcomes_data:
+                opening = o.get("opening_probability")
+                current = o.get("probability")
+                if opening is None or current is None:
+                    continue
+                surprise_change = current - opening
+                if top_surprise_change is None or abs(surprise_change) > abs(
+                    top_surprise_change
+                ):
+                    top_surprise_name = o.get("name")
+                    top_surprise_change = surprise_change
+
+            # Humanize Yes/No outcome names for display (BR49).
+            # Scoring/filtering above uses the raw names; display-facing
+            # generators below use humanized versions so headlines read
+            # "Anthropic leads at 69%" instead of "Yes leads at 69%".
+            _h_leader = (
+                humanize_binary_outcome_name(leader_name, market.name)
+                if leader_name
+                else leader_name
+            )
+            _h_mover = (
+                humanize_binary_outcome_name(top_mover_name, market.name)
+                if top_mover_name
+                else top_mover_name
+            )
+            _h_surprise = (
+                humanize_binary_outcome_name(top_surprise_name, market.name)
+                if top_surprise_name
+                else top_surprise_name
+            )
+
+            headline = (
+                generate_futures_headline(
+                    highlight_reasons=highlight_result.reasons,
+                    top_mover_name=_h_mover,
+                    top_mover_change=top_mover_change,
+                    top_surprise_name=_h_surprise,
+                    top_surprise_change=top_surprise_change,
+                    leader_name=_h_leader,
+                    leader_probability=leader_prob,
+                    source_count=source_count,
+                    market_name=market.name,
+                )
+                or highlight_result.primary_reason
+            )
+            context_summary = generate_futures_context_summary(
+                headline=headline,
+                highlight_reasons=highlight_result.reasons,
+                market_name=market.name,
+                leader_name=_h_leader,
+                leader_probability=leader_prob,
+                source_count=source_count,
+            )
+
+            quality = classify_market_quality(
+                market_name=market.name,
+                sport_category=market.llm_sport_category,
+                outcome_names=[o.name for o in market.outcomes if o.name],
+                external_id=market.external_id,
+                status=market.status,  # R6: resolved sports never surface
+            )
+            if quality.quality_class == "suppress":
+                continue
             if _should_skip_futures_for_recent_dismissal(
                 market=market,
+                quality=quality,
                 ctx=ctx,
                 my_teams_only=my_teams_only,
             ):
                 continue
 
-        # Skip markets past their resolution date (belt-and-suspenders;
-        # base_filters should exclude these at the SQL level, but naive
-        # datetime timezone mismatches can let them through — issue #486).
-        if market.resolution_date:
-            res_dt = _utc(market.resolution_date)
-            if res_dt and res_dt < now:
-                continue
-
-        # Prepare outcome data for scoring
-        outcomes_data = []
-        leader_name = None
-        leader_prob = None
-
-        sorted_outcomes = sorted(
-            market.outcomes,
-            key=lambda o: float(o.current_probability) if o.current_probability else 0,
-            reverse=True,
-        )
-
-        for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
-            prob = float(o.current_probability) if o.current_probability else None
-            change = (
-                float(o.probability_change_24h) if o.probability_change_24h else None
-            )
-            outcomes_data.append(
-                {
-                    "name": o.name,
-                    "probability": prob,
-                    "probability_change_24h": change,
-                    "rank": o.rank,
-                    "rank_change_24h": o.rank_change_24h,
-                    "opening_probability": (
-                        float(o.opening_probability) if o.opening_probability else None
-                    ),
-                }
-            )
-
-        if sorted_outcomes:
-            leader = sorted_outcomes[0]
-            leader_name = leader.name
-            leader_prob = (
-                float(leader.current_probability)
-                if leader.current_probability
-                else None
-            )
-
-        # --- Staleness filters ---
-        # Keep serving-time exclusions on the same helper used by admin trace
-        # output so stale/debug decisions cannot drift.
-        runtime_filters = _market_runtime_filter_trace(
-            market,
-            outcomes_data,
-            leader_name,
-            leader_prob,
-            now,
-            sport_category=market.llm_sport_category,
-            stale_no_movement_days=stale_no_movement_days,
-            no_resolution_stale_days=no_resolution_stale_days,
-        )
-        if not runtime_filters["eligible"]:
-            continue
-
-        # #921: drop markets with no REAL price — every outcome null/zero (dead)
-        # OR even the top outcome below the 0.5% display floor (rounds to 0% — the
-        # "0% on active markets" junk). Genuine even-odds / longshot-leader races
-        # are far above the floor and stay eligible.
-        if market.outcomes and has_no_real_price(
-            [o["probability"] for o in outcomes_data]
-        ):
-            continue
-
-        # #1004: drop unresolved markets pinned at a dead-extreme price (leader
-        # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
-        # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
-        # or a high-volume market stays eligible.
-        if market.outcomes and is_locked_near_certain(
-            leader_prob,
-            max(
-                (
-                    abs(o["probability_change_24h"])
-                    for o in outcomes_data
-                    if o.get("probability_change_24h") is not None
-                ),
-                default=None,
-            ),
-            float(market.volume_24h) if market.volume_24h is not None else None,
-        ):
-            continue
-
-        # Get source count from canonical key
-        source_count = 1
-        if market.canonical_market_key:
-            source_count = canonical_source_counts.get(market.canonical_market_key, 1)
-
-        highlight_result = compute_futures_highlight(
-            market_tier=market.market_tier,
-            sport_category=market.llm_sport_category,
-            resolution_date=market.resolution_date,
-            outcomes=outcomes_data,
-            source_count=source_count,
-            now=now,
-            market_name=market.name,
-            volume_24h=market.volume_24h,
-            curation_score_adj=market.__dict__.get("curation_score_adj", 0) or 0,
-        )
-
-        top_mover_name = highlight_result.top_mover_name
-        top_mover_change = None
-        if top_mover_name:
-            for o in outcomes_data:
-                if o["name"] == top_mover_name and o.get("probability_change_24h"):
-                    top_mover_change = o["probability_change_24h"]
-                    break
-
-        top_surprise_name = None
-        top_surprise_change = None
-        for o in outcomes_data:
-            opening = o.get("opening_probability")
-            current = o.get("probability")
-            if opening is None or current is None:
-                continue
-            surprise_change = current - opening
-            if top_surprise_change is None or abs(surprise_change) > abs(
-                top_surprise_change
+            # Detect stale hooks early so explanation scoring uses the
+            # effective (possibly suppressed) hook, not the raw DB value.
+            effective_hook = market.hook_description
+            if effective_hook and is_hook_stale(
+                hook_description=effective_hook,
+                hook_generated_at=market.hook_generated_at,
+                hook_leader_at_generation=market.hook_leader_at_generation,
+                current_leader_name=leader_name,
+                current_leader_probability=leader_prob,
+                market_metadata=market.market_metadata,
+                now=now,
             ):
-                top_surprise_name = o.get("name")
-                top_surprise_change = surprise_change
+                effective_hook = None
 
-        # Humanize Yes/No outcome names for display (BR49).
-        # Scoring/filtering above uses the raw names; display-facing
-        # generators below use humanized versions so headlines read
-        # "Anthropic leads at 69%" instead of "Yes leads at 69%".
-        _h_leader = (
-            humanize_binary_outcome_name(leader_name, market.name)
-            if leader_name
-            else leader_name
-        )
-        _h_mover = (
-            humanize_binary_outcome_name(top_mover_name, market.name)
-            if top_mover_name
-            else top_mover_name
-        )
-        _h_surprise = (
-            humanize_binary_outcome_name(top_surprise_name, market.name)
-            if top_surprise_name
-            else top_surprise_name
-        )
+            base_score = apply_quality_score(highlight_result.score, quality)
+            base_score = apply_explanation_quality_score(
+                base_score,
+                hook_description=effective_hook,
+                headline=headline,
+                quality=quality,
+            )
+            base_score = _apply_external_curator_recall_score(
+                base_score,
+                highlight_result.reasons,
+                is_external_curator_recall=market.id in external_curator_recall_ids,
+            )
+            discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
+            llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
+            if llm_score_adjustment:
+                base_score = max(0, min(98, base_score + llm_score_adjustment))
+                highlight_result.reasons.append(
+                    f"discover_llm_score:{llm_score_adjustment:+d}"
+                )
 
-        headline = (
-            generate_futures_headline(
+            # === UNCAPPED ORDERING SCORE (de-saturated) === #141/Item 1
+            # Mirror the display pipeline WITHOUT the flat-98 clamps so distinct
+            # high-signal cards keep a strict order instead of tying at 98 and
+            # falling back to a recency tiebreak. The display `score` and every
+            # `personalized_score`-based filter stay capped; only the final feed
+            # sort consumes `_rank_score`. Curation is already folded into
+            # highlight_result.raw_score (applied before the highlight cap).
+            rank_score = quality_score_rank(highlight_result.raw_score, quality)
+            rank_score = explanation_score_rank(
+                rank_score,
+                hook_description=effective_hook,
+                headline=headline,
+                quality=quality,
+            )
+            if market.id in external_curator_recall_ids:
+                rank_score += _EXTERNAL_CURATOR_RECALL_SCORE_BONUS
+            if llm_score_adjustment:
+                rank_score = max(0.0, rank_score + llm_score_adjustment)
+
+            # === INTERESTINGNESS BLEND ===
+            # Read precomputed interestingness from Redis and blend with base_score.
+            # Weight is controllable via Redis key (default 0.2, kill switch at 0).
+            if _interestingness_cache is not None:
+                cached_entry = _interestingness_cache.get(market.id)
+                if cached_entry is not None and _interestingness_blend_weight > 0:
+                    i_score = cached_entry.get("score", 0)
+                    # DISPLAY chain — de-saturated (#143/RANK-3 Item 1 follow-up,
+                    # L2-79). The legacy `* 100` was the #142 double-scale bug: the
+                    # cached interestingness score is ALREADY 0-100 (the scorer
+                    # normalizes to 0-100; see market_interestingness /
+                    # precompute_interestingness), so `i_score * 100` inflated the
+                    # blend target to ~6000-8000 and the +15 cap ALWAYS bound — every
+                    # cache-hit card gained a constant +15 display bump (bounded
+                    # 0-98), which SATURATED the top of the feed at 98 and defeated
+                    # the personalized_score<15 / <55 serving filters (the +15 lifted
+                    # every card over the floor). Blend two 0-100 quantities directly,
+                    # matching the ranking chain below. The +15 cap stays as a genuine
+                    # (now rarely-binding) bound on how much interestingness can lift
+                    # a card's DISPLAY score over its base.
+                    #
+                    # Serving-filter thresholds (<15 / <55) are UNCHANGED. The fix
+                    # restores those filters to their intended behavior: a boring-base
+                    # card only clears the floor if interestingness genuinely lifts it,
+                    # instead of every card being rescued by the constant +15. The
+                    # served page is not floor-starved (audit_feed_quality BEFORE:
+                    # 48 items, tail score 78, 0 boring, 20/20 explanation coverage),
+                    # so top-N composition is backfilled from the deep high-score
+                    # bench while only low-signal cards the bug wrongly rescued drop.
+                    pre_blend = base_score
+                    blended = (
+                        base_score * (1 - _interestingness_blend_weight)
+                        + i_score * _interestingness_blend_weight
+                    )
+                    # Cap: interestingness can add at most 15 points over base
+                    base_score = min(blended, pre_blend + 15)
+                    base_score = max(0, min(98, base_score))
+                    # RANKING chain — de-saturated (#143/RANK-3 Item 1). Two fixes
+                    # vs #141:
+                    #   1. The cached interestingness score is ALREADY 0-100 (the
+                    #      scorer normalizes to 0-100; see market_interestingness and
+                    #      precompute_interestingness which caches result.score). The
+                    #      prior `* 100` treated it as 0-1, inflating the blend target
+                    #      to ~6000-8000 so the +15 cap ALWAYS bound → every card got
+                    #      a constant +15 and weight changes could not re-order the
+                    #      feed (the RANK-2 saturation finding, #142). Blend two 0-100
+                    #      quantities directly.
+                    #   2. NO +15 uplift cap on the ranking chain: the blend weight w
+                    #      is now the ONLY bound on interestingness' ordering
+                    #      influence, so weight changes genuinely re-order the top-K.
+                    # Kill switch preserved by the `_interestingness_blend_weight > 0`
+                    # guard above (w=0 → this block is skipped → identical ordering).
+                    # The DISPLAY chain above intentionally keeps its bounded (+15
+                    # cap, 0-98 clamp) behavior so display-score filters are
+                    # unperturbed.
+                    rank_blended = (
+                        rank_score * (1 - _interestingness_blend_weight)
+                        + i_score * _interestingness_blend_weight
+                    )
+                    rank_score = max(0.0, rank_blended)
+                    i_reasons = cached_entry.get("reasons") or []
+                    if abs(base_score - pre_blend) >= 0.5:
+                        delta = base_score - pre_blend
+                        delta_label: int | float = (
+                            int(delta) if float(delta).is_integer() else round(delta, 1)
+                        )
+                        highlight_result.reasons.append(f"interestingness:{delta_label:+g}")
+
+            if quality.reasons:
+                highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
+
+            # Apply personalization multiplier
+            outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+
+            # my_teams_only: skip futures that don't involve the user's teams
+            if my_teams_only:
+                # Skip Tier 3 sports — same filter as events to avoid false
+                # positives from name collisions. BR42/BR43.
+                market_sport_key = market.sport.key if market.sport else None
+                if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
+                    continue
+                # Also filter by llm_sport_category for markets without a sport FK
+                if not market_sport_key and market.llm_sport_category:
+                    if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                        continue
+
+                matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
+
+                # Fall back to outcome name matching when team_ids aren't linked.
+                # BR53: require sport-category match to prevent cross-sport false
+                # positives (e.g., "Aliya Boston" matching "Boston Bruins" via
+                # token overlap, or "Believers: Boston Red Sox" Sports Emmy
+                # matching a baseball team).
+                matched_by_name = False
+                if not matched_by_id and my_team_names:
+                    market_cat = market.llm_sport_category
+                    if not market_cat and market_sport_key:
+                        market_cat = _personalization_category_from_sport_key(
+                            market_sport_key
+                        )
+                    for o in market.outcomes:
+                        if o.name:
+                            for team_name in my_team_names or []:
+                                if _team_name_matches(team_name, o.name):
+                                    # Verify sport compatibility (BR53)
+                                    if my_team_sport_categories and market_cat:
+                                        team_cats = my_team_sport_categories.get(team_name)
+                                        if team_cats and market_cat not in team_cats:
+                                            continue  # sport mismatch — skip
+                                    matched_by_name = True
+                                    break
+                        if matched_by_name:
+                            break
+
+                if not matched_by_id and not matched_by_name:
+                    continue
+
+            # Collect matched outcome details for "why is this here?" context
+            matched_outcomes_list = []
+            if my_teams_only and user_team_ids:
+                market_cat_for_match = market.llm_sport_category
+                if not market_cat_for_match and (market.sport and market.sport.key):
+                    market_cat_for_match = _personalization_category_from_sport_key(
+                        market.sport.key
+                    )
+                for o in market.outcomes:
+                    is_match = False
+                    if o.team_id and o.team_id in user_team_ids:
+                        is_match = True
+                    elif my_team_names and o.name:
+                        for team_name in my_team_names or []:
+                            if _team_name_matches(team_name, o.name):
+                                # BR53: sport-category check for name-matched outcomes
+                                if my_team_sport_categories and market_cat_for_match:
+                                    team_cats = my_team_sport_categories.get(team_name)
+                                    if team_cats and market_cat_for_match not in team_cats:
+                                        continue
+                                is_match = True
+                                break
+                    if is_match:
+                        matched_outcomes_list.append(
+                            {
+                                "name": o.name,
+                                "probability": (
+                                    float(o.current_probability)
+                                    if o.current_probability
+                                    else None
+                                ),
+                                "rank": o.rank,
+                                "movement": (
+                                    float(o.probability_change_24h)
+                                    if o.probability_change_24h
+                                    else None
+                                ),
+                            }
+                        )
+
+            outcome_names = [o.name for o in market.outcomes if o.name]
+            p_result = compute_futures_multiplier(
+                ctx=ctx,
+                sport_category=market.llm_sport_category,
+                outcome_team_ids=outcome_team_ids,
+                futures_market_id=market.id,
+                sport_key=market.sport.key if market.sport else None,
+                outcome_names=outcome_names,
+                feature_tokens=list(
+                    _discover_feature_tokens(
+                        item_name=market.name,
+                        category=market.llm_sport_category,
+                        item_type="futures",
+                    )
+                )
+                + list(
+                    _discover_semantic_tokens(
+                        item_name=market.name,
+                        category=market.llm_sport_category,
+                        item_type="futures",
+                    )
+                )
+                + _discover_llm_feature_tokens(discover_llm_metadata),
+            )
+            personalized_score = min(98, int(base_score * p_result.multiplier))
+            # Personalization multiplies the ORDERING score last (uncapped). #141/Item 1.
+            rank_score = max(0.0, rank_score * p_result.multiplier)
+
+            # Recycled (previously-seen) cards rank below fresh ones, so they only
+            # surface when the fresh pool can't fill the page (implicit serving floor).
+            if is_recycled:
+                personalized_score = max(1, int(personalized_score - FEED_RECYCLE_PENALTY))
+                rank_score = max(1.0, rank_score - FEED_RECYCLE_PENALTY)
+
+            # --- "Nah" category hard filter for futures ---
+            is_nah = any("sport_nah" in r for r in p_result.reasons)
+            if is_nah and not my_teams_only:
+                continue  # No override for futures — no "championship" equivalent
+
+            # "If it's wild" — higher bar for low-affinity futures too
+            is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
+            if is_low_affinity and not my_teams_only and personalized_score < 55:
+                continue
+
+            # Filter low-signal futures (my_teams_only shows everything)
+            if not my_teams_only and personalized_score < 15:
+                continue
+
+            reason = generate_futures_reason(
+                market_name=market.name,
                 highlight_reasons=highlight_result.reasons,
                 top_mover_name=_h_mover,
                 top_mover_change=top_mover_change,
@@ -5550,521 +5849,238 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_probability=leader_prob,
                 source_count=source_count,
-                market_name=market.name,
-            )
-            or highlight_result.primary_reason
-        )
-        context_summary = generate_futures_context_summary(
-            headline=headline,
-            highlight_reasons=highlight_result.reasons,
-            market_name=market.name,
-            leader_name=_h_leader,
-            leader_probability=leader_prob,
-            source_count=source_count,
-        )
-
-        quality = classify_market_quality(
-            market_name=market.name,
-            sport_category=market.llm_sport_category,
-            outcome_names=[o.name for o in market.outcomes if o.name],
-            external_id=market.external_id,
-            status=market.status,  # R6: resolved sports never surface
-        )
-        if quality.quality_class == "suppress":
-            continue
-        if _should_skip_futures_for_recent_dismissal(
-            market=market,
-            quality=quality,
-            ctx=ctx,
-            my_teams_only=my_teams_only,
-        ):
-            continue
-
-        # Detect stale hooks early so explanation scoring uses the
-        # effective (possibly suppressed) hook, not the raw DB value.
-        effective_hook = market.hook_description
-        if effective_hook and is_hook_stale(
-            hook_description=effective_hook,
-            hook_generated_at=market.hook_generated_at,
-            hook_leader_at_generation=market.hook_leader_at_generation,
-            current_leader_name=leader_name,
-            current_leader_probability=leader_prob,
-            market_metadata=market.market_metadata,
-            now=now,
-        ):
-            effective_hook = None
-
-        base_score = apply_quality_score(highlight_result.score, quality)
-        base_score = apply_explanation_quality_score(
-            base_score,
-            hook_description=effective_hook,
-            headline=headline,
-            quality=quality,
-        )
-        base_score = _apply_external_curator_recall_score(
-            base_score,
-            highlight_result.reasons,
-            is_external_curator_recall=market.id in external_curator_recall_ids,
-        )
-        discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
-        llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
-        if llm_score_adjustment:
-            base_score = max(0, min(98, base_score + llm_score_adjustment))
-            highlight_result.reasons.append(
-                f"discover_llm_score:{llm_score_adjustment:+d}"
             )
 
-        # === UNCAPPED ORDERING SCORE (de-saturated) === #141/Item 1
-        # Mirror the display pipeline WITHOUT the flat-98 clamps so distinct
-        # high-signal cards keep a strict order instead of tying at 98 and
-        # falling back to a recency tiebreak. The display `score` and every
-        # `personalized_score`-based filter stay capped; only the final feed
-        # sort consumes `_rank_score`. Curation is already folded into
-        # highlight_result.raw_score (applied before the highlight cap).
-        rank_score = quality_score_rank(highlight_result.raw_score, quality)
-        rank_score = explanation_score_rank(
-            rank_score,
-            hook_description=effective_hook,
-            headline=headline,
-            quality=quality,
-        )
-        if market.id in external_curator_recall_ids:
-            rank_score += _EXTERNAL_CURATOR_RECALL_SCORE_BONUS
-        if llm_score_adjustment:
-            rank_score = max(0.0, rank_score + llm_score_adjustment)
+            # #235 Item 2: segregate a Yes/No parent binary out of a mixed candidate
+            # field so the card renders a clean nominee distribution (never a binary
+            # merged into a candidate list). Pure binary markets pass through untouched.
+            card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
 
-        # === INTERESTINGNESS BLEND ===
-        # Read precomputed interestingness from Redis and blend with base_score.
-        # Weight is controllable via Redis key (default 0.2, kill switch at 0).
-        if _interestingness_cache is not None:
-            cached_entry = _interestingness_cache.get(market.id)
-            if cached_entry is not None and _interestingness_blend_weight > 0:
-                i_score = cached_entry.get("score", 0)
-                # DISPLAY chain — de-saturated (#143/RANK-3 Item 1 follow-up,
-                # L2-79). The legacy `* 100` was the #142 double-scale bug: the
-                # cached interestingness score is ALREADY 0-100 (the scorer
-                # normalizes to 0-100; see market_interestingness /
-                # precompute_interestingness), so `i_score * 100` inflated the
-                # blend target to ~6000-8000 and the +15 cap ALWAYS bound — every
-                # cache-hit card gained a constant +15 display bump (bounded
-                # 0-98), which SATURATED the top of the feed at 98 and defeated
-                # the personalized_score<15 / <55 serving filters (the +15 lifted
-                # every card over the floor). Blend two 0-100 quantities directly,
-                # matching the ranking chain below. The +15 cap stays as a genuine
-                # (now rarely-binding) bound on how much interestingness can lift
-                # a card's DISPLAY score over its base.
-                #
-                # Serving-filter thresholds (<15 / <55) are UNCHANGED. The fix
-                # restores those filters to their intended behavior: a boring-base
-                # card only clears the floor if interestingness genuinely lifts it,
-                # instead of every card being rescued by the constant +15. The
-                # served page is not floor-starved (audit_feed_quality BEFORE:
-                # 48 items, tail score 78, 0 boring, 20/20 explanation coverage),
-                # so top-N composition is backfilled from the deep high-score
-                # bench while only low-signal cards the bug wrongly rescued drop.
-                pre_blend = base_score
-                blended = (
-                    base_score * (1 - _interestingness_blend_weight)
-                    + i_score * _interestingness_blend_weight
+            # Build compact futures data for the feed. #235 Item 2: null the 24h
+            # movement badge for near-0% outcomes — a thin placeholder nominee ticking
+            # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
+            # display class).
+            top_outcomes_data = [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "probability": (
+                        float(o.current_probability) if o.current_probability else None
+                    ),
+                    "rank": o.rank,
+                    "movement": (
+                        float(o.probability_change_24h)
+                        if o.probability_change_24h
+                        and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                        else None
+                    ),
+                }
+                for o in card_outcomes[:3]  # Show top 3 in feed card
+            ]
+
+            # Humanize Yes/No outcome names for feed card display (BR49)
+            top_outcomes_data = humanize_outcome_names_for_feed(
+                top_outcomes_data, market.name
+            )
+
+            # Normalize probabilities for independent binary markets (gotcha #58).
+            # Use the ALL-outcomes sum to distinguish mutually-exclusive markets
+            # (sum ~100-150%) from threshold/cumulative markets (sum >>200%).
+            # Threshold markets (e.g. "rank 3+", "rank 4+") have non-exclusive
+            # outcomes whose raw probabilities are meaningful — normalizing them
+            # flattens an 81% leader to 33% when the top 3 are all high.
+            top_outcomes_data = _normalize_feed_probabilities(
+                top_outcomes_data, card_outcomes
+            )
+
+            source_names = (
+                (_canonical_source_names_cache or {}).get(
+                    market.canonical_market_key, [market.source]
                 )
-                # Cap: interestingness can add at most 15 points over base
-                base_score = min(blended, pre_blend + 15)
-                base_score = max(0, min(98, base_score))
-                # RANKING chain — de-saturated (#143/RANK-3 Item 1). Two fixes
-                # vs #141:
-                #   1. The cached interestingness score is ALREADY 0-100 (the
-                #      scorer normalizes to 0-100; see market_interestingness and
-                #      precompute_interestingness which caches result.score). The
-                #      prior `* 100` treated it as 0-1, inflating the blend target
-                #      to ~6000-8000 so the +15 cap ALWAYS bound → every card got
-                #      a constant +15 and weight changes could not re-order the
-                #      feed (the RANK-2 saturation finding, #142). Blend two 0-100
-                #      quantities directly.
-                #   2. NO +15 uplift cap on the ranking chain: the blend weight w
-                #      is now the ONLY bound on interestingness' ordering
-                #      influence, so weight changes genuinely re-order the top-K.
-                # Kill switch preserved by the `_interestingness_blend_weight > 0`
-                # guard above (w=0 → this block is skipped → identical ordering).
-                # The DISPLAY chain above intentionally keeps its bounded (+15
-                # cap, 0-98 clamp) behavior so display-score filters are
-                # unperturbed.
-                rank_blended = (
-                    rank_score * (1 - _interestingness_blend_weight)
-                    + i_score * _interestingness_blend_weight
-                )
-                rank_score = max(0.0, rank_blended)
-                i_reasons = cached_entry.get("reasons") or []
-                if abs(base_score - pre_blend) >= 0.5:
-                    delta = base_score - pre_blend
-                    delta_label: int | float = (
-                        int(delta) if float(delta).is_integer() else round(delta, 1)
-                    )
-                    highlight_result.reasons.append(f"interestingness:{delta_label:+g}")
+                if market.canonical_market_key
+                else [market.source]
+            )
+            # #235 Item 2: card_outcomes has the mixed Yes/No meta stripped; movement
+            # nulled for near-0% placeholder nominees.
+            all_outcomes_for_card = [
+                {
+                    "name": o.name,
+                    "probability": (
+                        float(o.current_probability)
+                        if o.current_probability is not None
+                        else None
+                    ),
+                    "movement": (
+                        float(o.probability_change_24h)
+                        if o.probability_change_24h is not None
+                        and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                        else None
+                    ),
+                }
+                for o in card_outcomes
+            ]
+            is_effectively_resolved = market.status == "resolved"
+            discover_card = classify_discover_card_archetype(
+                name=market.name,
+                category=market.llm_sport_category,
+                outcomes=all_outcomes_for_card,
+                outcome_count=len(card_outcomes),
+                source_count=source_count,
+                sources=source_names,
+                group_id=market.group_id,
+                group_type=market.group_type,
+                canonical_market_key=market.canonical_market_key,
+                discover_llm=discover_llm_metadata,
+                resolved=is_effectively_resolved,
+                status=market.status,
+            )
 
-        if quality.reasons:
-            highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
+            futures_data = {
+                "id": market.id,
+                "name": market.name,
+                "sport": market.sport.key if market.sport else None,
+                "sport_name": market.sport.name if market.sport else None,
+                "llm_sport_category": market.llm_sport_category,
+                "source": market.source,
+                "source_count": source_count,
+                "sources": source_names,
+                "market_tier": market.market_tier,
+                "status": market.status,
+                "resolution_date": (
+                    market.resolution_date.isoformat() if market.resolution_date else None
+                ),
+                "top_outcomes": top_outcomes_data,
+                "outcome_count": len(market.outcomes),
+                "canonical_market_key": market.canonical_market_key,
+                "group_id": market.group_id,
+                "group_type": market.group_type,
+                "discover_card": discover_card,
+                "image_url": market.image_url,
+                "hook_description": effective_hook,
+                "temporal_badge": _compute_temporal_badge(
+                    status=market.status,
+                    resolution_date=market.resolution_date,
+                    created_at=market.created_at,
+                    now=now,
+                ),
+            }
+            # #490: data-driven confidence signal (1-3 bars) from signals already on
+            # the card — source count, recent movement, real volume. None -> no glyph.
+            # L2-172: record has_closing_line (calibration-ready, not scored) when any
+            # outcome carries a captured closing/settled price.
+            _conf_signal = confidence_signal(
+                source_count=source_count,
+                has_recent_movement=any(
+                    o.get("movement") for o in top_outcomes_data
+                ),
+                has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
+                has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
+            )
+            if _conf_signal:
+                futures_data["confidence_tier"] = _conf_signal["tier"]
+                futures_data["confidence_score"] = _conf_signal["score"]
+                if _conf_signal.get("signals"):
+                    futures_data["confidence_signals"] = _conf_signal["signals"]
+            if discover_llm_metadata:
+                futures_data["discover_llm"] = {
+                    "topic": discover_llm_metadata.get("topic"),
+                    "subtopic": discover_llm_metadata.get("subtopic"),
+                    "archetype": discover_llm_metadata.get("archetype"),
+                    "audience_scope": discover_llm_metadata.get("audience_scope"),
+                    "salience_score": discover_llm_metadata.get("salience_score"),
+                    "junk_flags": discover_llm_metadata.get("junk_flags") or [],
+                    "comparison_axes": discover_llm_metadata.get("comparison_axes") or [],
+                }
+            # Attach interestingness metadata to feed item data
+            if _interestingness_cache is not None:
+                cached_entry = _interestingness_cache.get(market.id)
+                if cached_entry is not None:
+                    futures_data["interestingness_score"] = cached_entry.get("score")
+                    futures_data["interestingness_reasons"] = cached_entry.get("reasons")
 
-        # Apply personalization multiplier
-        outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+            # Compute market_tags on-the-fly
+            inline_market_tags = compute_market_tags(
+                llm_sport_category=market.llm_sport_category,
+                llm_league=getattr(market, "llm_league", None),
+                llm_gender=getattr(market, "llm_gender", None),
+                llm_level=getattr(market, "llm_level", None),
+                market_tier=market.market_tier,
+                category=market.category,
+                status=market.status,
+                source=market.source,
+            )
+            futures_data["market_tags"] = inline_market_tags
 
-        # my_teams_only: skip futures that don't involve the user's teams
-        if my_teams_only:
-            # Skip Tier 3 sports — same filter as events to avoid false
-            # positives from name collisions. BR42/BR43.
-            market_sport_key = market.sport.key if market.sport else None
-            if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
-                continue
-            # Also filter by llm_sport_category for markets without a sport FK
-            if not market_sport_key and market.llm_sport_category:
-                if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+            # Tag filter: skip futures that don't match requested tags
+            if tag_filter:
+                if not all(t in inline_market_tags for t in tag_filter):
                     continue
 
-            matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
+            if matched_outcomes_list:
+                futures_data["matched_outcomes"] = matched_outcomes_list
 
-            # Fall back to outcome name matching when team_ids aren't linked.
-            # BR53: require sport-category match to prevent cross-sport false
-            # positives (e.g., "Aliya Boston" matching "Boston Bruins" via
-            # token overlap, or "Believers: Boston Red Sox" Sports Emmy
-            # matching a baseball team).
-            matched_by_name = False
-            if not matched_by_id and my_team_names:
-                market_cat = market.llm_sport_category
-                if not market_cat and market_sport_key:
-                    market_cat = _personalization_category_from_sport_key(
-                        market_sport_key
-                    )
-                for o in market.outcomes:
-                    if o.name:
-                        for team_name in my_team_names or []:
-                            if _team_name_matches(team_name, o.name):
-                                # Verify sport compatibility (BR53)
-                                if my_team_sport_categories and market_cat:
-                                    team_cats = my_team_sport_categories.get(team_name)
-                                    if team_cats and market_cat not in team_cats:
-                                        continue  # sport mismatch — skip
-                                matched_by_name = True
-                                break
-                    if matched_by_name:
-                        break
+            # Add resolved metadata for markets that have effectively settled
+            if is_effectively_resolved:
+                futures_data["resolved"] = True
+                futures_data["winner"] = leader_name
+                futures_data["winner_opening_probability"] = leader_opening
 
-            if not matched_by_id and not matched_by_name:
-                continue
+            # Sort time: higher-tier markets and markets resolving soon get priority.
+            # Reuse the tz-normalized res_dt — subtracting the RAW resolution_date
+            # (which can be naive) from tz-aware `now` raises TypeError and, without
+            # the per-item guard below, would wipe the entire futures pass (#1091).
+            sort_time = now.timestamp()
+            if market.resolution_date:
+                res_dt = _utc(market.resolution_date)
+                if res_dt:
+                    # Closer resolution = more timely
+                    days_until = (res_dt - now).total_seconds()
+                    sort_time = now.timestamp() + max(0, 86400 * 30 - days_until)
 
-        # Collect matched outcome details for "why is this here?" context
-        matched_outcomes_list = []
-        if my_teams_only and user_team_ids:
-            market_cat_for_match = market.llm_sport_category
-            if not market_cat_for_match and (market.sport and market.sport.key):
-                market_cat_for_match = _personalization_category_from_sport_key(
-                    market.sport.key
-                )
-            for o in market.outcomes:
-                is_match = False
-                if o.team_id and o.team_id in user_team_ids:
-                    is_match = True
-                elif my_team_names and o.name:
-                    for team_name in my_team_names or []:
-                        if _team_name_matches(team_name, o.name):
-                            # BR53: sport-category check for name-matched outcomes
-                            if my_team_sport_categories and market_cat_for_match:
-                                team_cats = my_team_sport_categories.get(team_name)
-                                if team_cats and market_cat_for_match not in team_cats:
-                                    continue
-                            is_match = True
-                            break
-                if is_match:
-                    matched_outcomes_list.append(
-                        {
-                            "name": o.name,
-                            "probability": (
-                                float(o.current_probability)
-                                if o.current_probability
-                                else None
-                            ),
-                            "rank": o.rank,
-                            "movement": (
-                                float(o.probability_change_24h)
-                                if o.probability_change_24h
-                                else None
-                            ),
-                        }
-                    )
-
-        outcome_names = [o.name for o in market.outcomes if o.name]
-        p_result = compute_futures_multiplier(
-            ctx=ctx,
-            sport_category=market.llm_sport_category,
-            outcome_team_ids=outcome_team_ids,
-            futures_market_id=market.id,
-            sport_key=market.sport.key if market.sport else None,
-            outcome_names=outcome_names,
-            feature_tokens=list(
-                _discover_feature_tokens(
-                    item_name=market.name,
-                    category=market.llm_sport_category,
-                    item_type="futures",
-                )
+            item = {
+                "type": "futures",
+                "score": personalized_score,
+                "_rank_score": rank_score,
+                "reason": reason,
+                "headline": headline,
+                "context_summary": context_summary,
+                "data": futures_data,
+                "_sort_time": sort_time,
+                "_quality_class": quality.quality_class,
+                "_quality_family_key": quality.family_key,
+                "_quality_story_key": quality.story_key,
+            }
+            personalization_trace = _build_personalization_trace(
+                ctx=ctx,
+                item_type="futures",
+                category=market.llm_sport_category,
+                base_score=base_score,
+                final_score=personalized_score,
+                p_result=p_result,
             )
-            + list(
-                _discover_semantic_tokens(
-                    item_name=market.name,
-                    category=market.llm_sport_category,
-                    item_type="futures",
-                )
+            if personalization_trace:
+                item["personalization_trace"] = personalization_trace
+
+            if p_result.is_personalized:
+                item["personalized"] = True
+                item["base_score"] = base_score
+                item["multiplier"] = round(p_result.multiplier, 2)
+                item["personalization_reasons"] = p_result.reasons
+
+            if is_recycled:
+                item["recycled"] = True
+
+            scored_items.append(item)
+        except Exception as _score_err:
+            # One malformed market (bad datetime, missing field, etc.) must
+            # never wipe the entire futures pass — skip it and keep the rest
+            # (#1091 pattern, mirrors _score_events).
+            logger.warning(
+                "Feed: skipping futures market %s — scoring error: %s",
+                getattr(market, "id", "?"),
+                _score_err,
             )
-            + _discover_llm_feature_tokens(discover_llm_metadata),
-        )
-        personalized_score = min(98, int(base_score * p_result.multiplier))
-        # Personalization multiplies the ORDERING score last (uncapped). #141/Item 1.
-        rank_score = max(0.0, rank_score * p_result.multiplier)
-
-        # Recycled (previously-seen) cards rank below fresh ones, so they only
-        # surface when the fresh pool can't fill the page (implicit serving floor).
-        if is_recycled:
-            personalized_score = max(1, int(personalized_score - FEED_RECYCLE_PENALTY))
-            rank_score = max(1.0, rank_score - FEED_RECYCLE_PENALTY)
-
-        # --- "Nah" category hard filter for futures ---
-        is_nah = any("sport_nah" in r for r in p_result.reasons)
-        if is_nah and not my_teams_only:
-            continue  # No override for futures — no "championship" equivalent
-
-        # "If it's wild" — higher bar for low-affinity futures too
-        is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-        if is_low_affinity and not my_teams_only and personalized_score < 55:
             continue
-
-        # Filter low-signal futures (my_teams_only shows everything)
-        if not my_teams_only and personalized_score < 15:
-            continue
-
-        reason = generate_futures_reason(
-            market_name=market.name,
-            highlight_reasons=highlight_result.reasons,
-            top_mover_name=_h_mover,
-            top_mover_change=top_mover_change,
-            top_surprise_name=_h_surprise,
-            top_surprise_change=top_surprise_change,
-            leader_name=_h_leader,
-            leader_probability=leader_prob,
-            source_count=source_count,
-        )
-
-        # #235 Item 2: segregate a Yes/No parent binary out of a mixed candidate
-        # field so the card renders a clean nominee distribution (never a binary
-        # merged into a candidate list). Pure binary markets pass through untouched.
-        card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
-
-        # Build compact futures data for the feed. #235 Item 2: null the 24h
-        # movement badge for near-0% outcomes — a thin placeholder nominee ticking
-        # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
-        # display class).
-        top_outcomes_data = [
-            {
-                "id": o.id,
-                "name": o.name,
-                "probability": (
-                    float(o.current_probability) if o.current_probability else None
-                ),
-                "rank": o.rank,
-                "movement": (
-                    float(o.probability_change_24h)
-                    if o.probability_change_24h
-                    and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
-                    else None
-                ),
-            }
-            for o in card_outcomes[:3]  # Show top 3 in feed card
-        ]
-
-        # Humanize Yes/No outcome names for feed card display (BR49)
-        top_outcomes_data = humanize_outcome_names_for_feed(
-            top_outcomes_data, market.name
-        )
-
-        # Normalize probabilities for independent binary markets (gotcha #58).
-        # Use the ALL-outcomes sum to distinguish mutually-exclusive markets
-        # (sum ~100-150%) from threshold/cumulative markets (sum >>200%).
-        # Threshold markets (e.g. "rank 3+", "rank 4+") have non-exclusive
-        # outcomes whose raw probabilities are meaningful — normalizing them
-        # flattens an 81% leader to 33% when the top 3 are all high.
-        top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, card_outcomes
-        )
-
-        source_names = (
-            (_canonical_source_names_cache or {}).get(
-                market.canonical_market_key, [market.source]
-            )
-            if market.canonical_market_key
-            else [market.source]
-        )
-        # #235 Item 2: card_outcomes has the mixed Yes/No meta stripped; movement
-        # nulled for near-0% placeholder nominees.
-        all_outcomes_for_card = [
-            {
-                "name": o.name,
-                "probability": (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None
-                ),
-                "movement": (
-                    float(o.probability_change_24h)
-                    if o.probability_change_24h is not None
-                    and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
-                    else None
-                ),
-            }
-            for o in card_outcomes
-        ]
-        is_effectively_resolved = market.status == "resolved"
-        discover_card = classify_discover_card_archetype(
-            name=market.name,
-            category=market.llm_sport_category,
-            outcomes=all_outcomes_for_card,
-            outcome_count=len(card_outcomes),
-            source_count=source_count,
-            sources=source_names,
-            group_id=market.group_id,
-            group_type=market.group_type,
-            canonical_market_key=market.canonical_market_key,
-            discover_llm=discover_llm_metadata,
-            resolved=is_effectively_resolved,
-            status=market.status,
-        )
-
-        futures_data = {
-            "id": market.id,
-            "name": market.name,
-            "sport": market.sport.key if market.sport else None,
-            "sport_name": market.sport.name if market.sport else None,
-            "llm_sport_category": market.llm_sport_category,
-            "source": market.source,
-            "source_count": source_count,
-            "sources": source_names,
-            "market_tier": market.market_tier,
-            "status": market.status,
-            "resolution_date": (
-                market.resolution_date.isoformat() if market.resolution_date else None
-            ),
-            "top_outcomes": top_outcomes_data,
-            "outcome_count": len(market.outcomes),
-            "canonical_market_key": market.canonical_market_key,
-            "group_id": market.group_id,
-            "group_type": market.group_type,
-            "discover_card": discover_card,
-            "image_url": market.image_url,
-            "hook_description": effective_hook,
-            "temporal_badge": _compute_temporal_badge(
-                status=market.status,
-                resolution_date=market.resolution_date,
-                created_at=market.created_at,
-                now=now,
-            ),
-        }
-        # #490: data-driven confidence signal (1-3 bars) from signals already on
-        # the card — source count, recent movement, real volume. None -> no glyph.
-        # L2-172: record has_closing_line (calibration-ready, not scored) when any
-        # outcome carries a captured closing/settled price.
-        _conf_signal = confidence_signal(
-            source_count=source_count,
-            has_recent_movement=any(
-                o.get("movement") for o in top_outcomes_data
-            ),
-            has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
-            has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
-        )
-        if _conf_signal:
-            futures_data["confidence_tier"] = _conf_signal["tier"]
-            futures_data["confidence_score"] = _conf_signal["score"]
-            if _conf_signal.get("signals"):
-                futures_data["confidence_signals"] = _conf_signal["signals"]
-        if discover_llm_metadata:
-            futures_data["discover_llm"] = {
-                "topic": discover_llm_metadata.get("topic"),
-                "subtopic": discover_llm_metadata.get("subtopic"),
-                "archetype": discover_llm_metadata.get("archetype"),
-                "audience_scope": discover_llm_metadata.get("audience_scope"),
-                "salience_score": discover_llm_metadata.get("salience_score"),
-                "junk_flags": discover_llm_metadata.get("junk_flags") or [],
-                "comparison_axes": discover_llm_metadata.get("comparison_axes") or [],
-            }
-        # Attach interestingness metadata to feed item data
-        if _interestingness_cache is not None:
-            cached_entry = _interestingness_cache.get(market.id)
-            if cached_entry is not None:
-                futures_data["interestingness_score"] = cached_entry.get("score")
-                futures_data["interestingness_reasons"] = cached_entry.get("reasons")
-
-        # Compute market_tags on-the-fly
-        inline_market_tags = compute_market_tags(
-            llm_sport_category=market.llm_sport_category,
-            llm_league=getattr(market, "llm_league", None),
-            llm_gender=getattr(market, "llm_gender", None),
-            llm_level=getattr(market, "llm_level", None),
-            market_tier=market.market_tier,
-            category=market.category,
-            status=market.status,
-            source=market.source,
-        )
-        futures_data["market_tags"] = inline_market_tags
-
-        # Tag filter: skip futures that don't match requested tags
-        if tag_filter:
-            if not all(t in inline_market_tags for t in tag_filter):
-                continue
-
-        if matched_outcomes_list:
-            futures_data["matched_outcomes"] = matched_outcomes_list
-
-        # Add resolved metadata for markets that have effectively settled
-        if is_effectively_resolved:
-            futures_data["resolved"] = True
-            futures_data["winner"] = leader_name
-            futures_data["winner_opening_probability"] = leader_opening
-
-        # Sort time: higher-tier markets and markets resolving soon get priority
-        sort_time = now.timestamp()
-        if market.resolution_date:
-            # Closer resolution = more timely
-            days_until = (market.resolution_date - now).total_seconds()
-            sort_time = now.timestamp() + max(0, 86400 * 30 - days_until)
-
-        item = {
-            "type": "futures",
-            "score": personalized_score,
-            "_rank_score": rank_score,
-            "reason": reason,
-            "headline": headline,
-            "context_summary": context_summary,
-            "data": futures_data,
-            "_sort_time": sort_time,
-            "_quality_class": quality.quality_class,
-            "_quality_family_key": quality.family_key,
-            "_quality_story_key": quality.story_key,
-        }
-        personalization_trace = _build_personalization_trace(
-            ctx=ctx,
-            item_type="futures",
-            category=market.llm_sport_category,
-            base_score=base_score,
-            final_score=personalized_score,
-            p_result=p_result,
-        )
-        if personalization_trace:
-            item["personalization_trace"] = personalization_trace
-
-        if p_result.is_personalized:
-            item["personalized"] = True
-            item["base_score"] = base_score
-            item["multiplier"] = round(p_result.multiplier, 2)
-            item["personalization_reasons"] = p_result.reasons
-
-        if is_recycled:
-            item["recycled"] = True
-
-        scored_items.append(item)
     mark_timing("scoring_loop")
 
     # Dedup by group_id: keep only the highest-scoring market per group.
@@ -6654,8 +6670,19 @@ def _concept_headline(c: dict, now: datetime) -> Optional[str]:
 
 
 def _concept_reason(c: dict) -> str:
-    """Honest per-domain reason line for a concept card."""
+    """Honest, archetype-correct per-domain reason line for a concept card.
+
+    Each racing/fighting archetype gets its own framing — a cycling Grand Tour is
+    NOT "0 fights on the card" (Queue #250). When a domain has no honest,
+    count-based line to show, return "" — a blank subtitle beats a misleading
+    wrong-archetype one.
+    """
     domain = c.get("domain")
+    if domain == "ufc":
+        fc = c.get("fight_count", 0)
+        return (
+            f"{fc} fight{'' if fc == 1 else 's'} on the card" if fc else "Fight card"
+        )
     if domain == "f1":
         n = c.get("entry_count", 0)
         return (
@@ -6663,8 +6690,17 @@ def _concept_reason(c: dict) -> str:
             if n
             else "Grand Prix race winner"
         )
-    fc = c.get("fight_count", 0)
-    return f"{fc} fight{'' if fc == 1 else 's'} on the card"
+    if domain == "cycling":
+        n = c.get("entry_count", 0)
+        return (
+            f"{n} race market{'' if n == 1 else 's'}"
+            if n
+            else "General classification winner"
+        )
+    # Unknown archetype: show a generic market count if we have one, otherwise
+    # nothing — never fall back to a wrong-archetype default line.
+    n = c.get("entry_count", 0) or c.get("fight_count", 0)
+    return f"{n} market{'' if n == 1 else 's'}" if n else ""
 
 
 async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict]:

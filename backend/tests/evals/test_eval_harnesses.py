@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from scripts.evals.calibrate_interestingness import auc, fit_weights, signal_rows, verdict_label
 from scripts.evals.rater_reliability import agreement_report, inject_probes
 from scripts.evals.search_gold_eval import parse_gold_markdown
@@ -28,14 +26,14 @@ def test_fit_and_auc_on_separable_fixture():
 
 
 def test_gold_parser_reads_coverage_and_real_halves():
-    # The gold draft lives under the gitignored .claude/handoff/ dir, so it is a
-    # dev-only fixture that is absent in CI. Skip rather than fail when it is not
-    # checked out (it turned master red riding an unrelated push, Queue #249).
-    path = Path(__file__).parents[3] / ".claude/handoff/gold_queries_draft.md"
-    if not path.exists():
-        pytest.skip("gold_queries_draft.md is a gitignored dev-only fixture")
+    # The full gold set lives under the gitignored .claude/handoff/ dir, so CI
+    # parses a small COMMITTED sample instead (Queue #250). The sample mirrors the
+    # coverage + real-half format so the parser is exercised for real in CI rather
+    # than skipped (skipping turned master red riding an unrelated push, Queue #249).
+    path = Path(__file__).parent / "fixtures" / "gold_queries_sample.md"
     rows = parse_gold_markdown(path)
     queries = {row["query"] for row in rows}
+    # coverage half (team pages) + both real-half recents lists
     assert "red sox" in queries
     assert "Golf" in queries
     assert "Where will Taylor Swift and Travis Kelce's Wedding occur?" in queries

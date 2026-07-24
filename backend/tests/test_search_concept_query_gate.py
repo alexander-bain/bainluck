@@ -12,7 +12,14 @@ Pure unit tests (no DB): the acceptance is expressed directly on the gate.
   the query-gated prepend)
 """
 
-from app.routes.events import _query_names_concept, _concept_match_tokens
+import re
+
+from app.routes.events import (
+    _apply_search_synonyms,
+    _concept_match_tokens,
+    _query_names_concept,
+    _strip_search_scaffolding,
+)
 
 _EMMYS = {"key": "event:awards:emmys", "name": "The Emmys", "domain": "awards"}
 _OSCARS = {"key": "event:awards:oscars", "name": "The Oscars", "domain": "awards"}
@@ -73,3 +80,49 @@ class TestQueryNamesConcept:
     def test_all_generic_query_is_false(self):
         # a query of only stopwords shares nothing distinctive
         assert _query_names_concept("the winner", _EMMYS) is False
+
+
+def _query_tokens(query: str) -> set[str]:
+    """Reproduce the search token set: strip scaffolding, apply synonyms, flatten
+    each (term, expansion) pair into individual tokens (mirrors the /search ILIKE
+    expansion and the offline gold eval's token-overlap match)."""
+    terms = _strip_search_scaffolding(re.findall(r"[a-z0-9]+", query.lower()))
+    expanded = _apply_search_synonyms([(term, None) for term in terms])
+    return {
+        token
+        for term, synonym in expanded
+        for token in f"{term} {synonym or ''}".split()
+    }
+
+
+class TestAwardsPluralStemming:
+    """Queue #250 Item 3a: a plural award query must also match the singular-named
+    markets/outcomes. `%emmys%` cannot substring-match "Emmy" (and the offline eval
+    treats "emmys"/"emmy" as distinct whole tokens), so the plural must expand to
+    the singular via the search synonym map."""
+
+    def test_emmys_expands_to_singular_emmy(self):
+        tokens = _query_tokens("emmys")
+        assert "emmy" in tokens
+        assert "emmys" in tokens
+
+    def test_emmy_awards_reaches_emmy_family(self):
+        tokens = _query_tokens("emmy awards")
+        # both plural and singular ceremony tokens are present
+        assert {"emmy", "emmys"} <= tokens
+
+    def test_singular_emmy_also_reaches_plural(self):
+        # unambiguous ceremony token maps both ways so a singular query still
+        # matches plural-named markets ("How many Emmys will X win?")
+        assert "emmys" in _query_tokens("emmy")
+
+    def test_oscars_and_grammys_and_tonys_expand_to_singular(self):
+        assert "oscar" in _query_tokens("oscars")
+        assert "grammy" in _query_tokens("grammys")
+        assert "tony" in _query_tokens("tonys")
+
+    def test_bare_singular_person_names_do_not_expand(self):
+        # "oscar" / "tony" are common person names — a bare singular must NOT pull
+        # in the plural award token (mirrors the concept detector's plural-only gate)
+        assert "oscars" not in _query_tokens("oscar")
+        assert "tonys" not in _query_tokens("tony")

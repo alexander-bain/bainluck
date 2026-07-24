@@ -91,6 +91,32 @@ class TestConceptReason:
         assert _concept_reason({"domain": "f1", "entry_count": 1}) == "1 weekend market"
         assert _concept_reason({"domain": "f1", "entry_count": 0}) == "Grand Prix race winner"
 
+    def test_cycling_reason_is_archetype_correct(self):
+        # Queue #250: cycling must NOT read "0 fights on the card".
+        assert (
+            _concept_reason({"domain": "cycling", "entry_count": 8})
+            == "8 race markets"
+        )
+        assert (
+            _concept_reason({"domain": "cycling", "entry_count": 1})
+            == "1 race market"
+        )
+        assert (
+            _concept_reason({"domain": "cycling", "entry_count": 0})
+            == "General classification winner"
+        )
+        assert "fight" not in _concept_reason({"domain": "cycling", "entry_count": 0})
+
+    def test_unknown_domain_never_claims_fights(self):
+        # A new/unknown archetype gets a generic count or nothing — never the
+        # misleading "fights on the card" default.
+        assert (
+            _concept_reason({"domain": "tennis", "entry_count": 5}) == "5 markets"
+        )
+        assert _concept_reason({"domain": "tennis", "entry_count": 0}) == ""
+        assert _concept_reason({"domain": "mystery"}) == ""
+        assert "fight" not in _concept_reason({"domain": "mystery"})
+
 
 class _MockScalars:
     def __init__(self, rows):

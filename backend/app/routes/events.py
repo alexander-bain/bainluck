@@ -257,6 +257,22 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
     # "Coaches Out", never "fired" — so "fired" also matches "head coach", making
     # "next coach fired" find the "…Next Head Coach" markets.
     "fired": "head coach",
+    # Queue #250 Item 3a: awards-family plural↔singular stemming. Markets and
+    # outcomes name a ceremony either way ("How many Emmys…" vs "…Best Drama Series
+    # Emmy"), but a substring ILIKE on the plural ("%emmys%") CANNOT match a
+    # singular "Emmy" name — the reverse works, since "%emmy%" matches "Emmys". The
+    # offline token-overlap gold eval has the same asymmetry ("emmys" ≠ "emmy" as
+    # whole tokens). Map each award plural to its singular so a plural query still
+    # reaches the singular-named markets. "emmy"/"grammy" are unambiguous ceremony
+    # tokens, so the singular also maps up to the plural; "oscar"/"tony" are common
+    # person names, so only the plural is expanded (mirrors the concept detector's
+    # plural-only gate in `_AWARDS_QUERY_PATTERNS`).
+    "emmys": "emmy",
+    "emmy": "emmys",
+    "grammys": "grammy",
+    "grammy": "grammys",
+    "oscars": "oscar",
+    "tonys": "tony",
 }
 
 

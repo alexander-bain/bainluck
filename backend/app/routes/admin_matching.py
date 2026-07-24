@@ -1,6 +1,7 @@
 """Admin endpoints for prediction market matching, link rate, sawtooth, and matching review."""
 
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
@@ -29,7 +30,19 @@ from app.utils.sport_keys import (
 from app.routes.admin_utils import _check_admin_secret
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# Queue #250 Item 3c: per-query statement_timeout for the link-rate compute.
+# The full compute is ~25s and a runaway query under load would hang past the
+# 30s Heroku router limit (H12 → 503). Bounding each query at 20s (below the
+# limit) means a stuck query fails fast with a QueryCanceledError, which the
+# route catches to serve the last cached snapshot instead of erroring.
+_LINK_RATE_STMT_TIMEOUT_S = 20
+# Redis cache key shared with the precompute_admin_link_rate beat + the route's
+# cold-cache fallback. Keep in sync with app/tasks/precompute_admin_health.py.
+_LINK_RATE_CACHE_KEY = "bainluck:admin:link_rate"
 
 
 _CLOSED_GAME_STATUSES = {"closed", "completed", "final"}
@@ -435,7 +448,10 @@ async def fix_sport_categories(
     }
 
 
-async def _compute_link_rate(db: AsyncSession) -> dict:
+async def _compute_link_rate(
+    db: AsyncSession,
+    stmt_timeout_s: Optional[int] = _LINK_RATE_STMT_TIMEOUT_S,
+) -> dict:
     """Compute the game-level prediction-market link-rate payload.
 
     Filters to only markets that SHOULD be linked (game-level sports markets,
@@ -444,7 +460,20 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
 
     Extracted from the route (L2-90) so the precompute task and the route's
     cold-cache fallback share one implementation.
+
+    ``stmt_timeout_s`` (Queue #250 Item 3c) sets a per-query Postgres
+    ``statement_timeout`` so a runaway query fails fast (QueryCanceledError)
+    instead of hanging past the 30s router limit. The route uses the default
+    (20s, below the router limit); the background precompute passes a more
+    generous bound since it runs off the request path. Pass ``None`` to skip.
     """
+    if stmt_timeout_s:
+        # SET LOCAL scopes the timeout to this session's current transaction
+        # (same idiom as tier1_source_compliance below + the precompute tasks).
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = '{int(stmt_timeout_s)}s'")
+        )
+
     # Build game-level ticker filter for Kalshi.
     # Only count markets with game ticker prefixes — these are the markets
     # the matching task's Pass 1 scans. The old `event_id IS NOT NULL` clause
@@ -1074,6 +1103,13 @@ async def prediction_market_link_rate(
     router limit under load. The ``precompute_admin_link_rate`` beat keeps a
     Redis snapshot warm; a cold cache or ``?bust=1`` falls back to computing
     inline (same result as before) and rewarms the cache.
+
+    Queue #250 Item 3c hardening — this endpoint must never 503:
+    - the compute arms a per-query ``statement_timeout`` (below the 30s router
+      limit) so a runaway query fails fast instead of hanging into an H12; and
+    - if the fresh compute times out or errors, we serve the last cached
+      snapshot (marked ``stale``) rather than propagating the error. With no
+      cache at all we degrade to a clearly-marked empty payload.
     """
     _check_admin_secret(secret, request=request)
 
@@ -1082,20 +1118,58 @@ async def prediction_market_link_rate(
     if not bust:
         try:
             from app.tasks.redis_state import get_redis_client
-            cached = get_redis_client().get("bainluck:admin:link_rate")
+            cached = get_redis_client().get(_LINK_RATE_CACHE_KEY)
             if cached:
                 return _json.loads(cached)
         except Exception:
-            pass
+            logger.warning("link-rate: cache read failed, computing inline", exc_info=True)
 
-    payload = await _compute_link_rate(db)
+    try:
+        payload = await _compute_link_rate(db)
+    except Exception as exc:
+        # Serve-cache-on-timeout: the fresh compute (usually ?bust=1, which
+        # bypasses the warm cache) can hit the statement_timeout or otherwise
+        # exceed the 30s router limit. Fall back to the last cached snapshot so
+        # the endpoint never 503s. Log the timeout distinctly (do NOT swallow it
+        # silently — a repeated timeout is itself a signal worth seeing).
+        is_timeout = "canceling statement" in str(exc).lower() or (
+            type(exc).__name__ in ("QueryCanceledError", "OperationalError")
+        )
+        logger.warning(
+            "link-rate: fresh compute failed (%s: %s); serving cached snapshot",
+            "statement_timeout" if is_timeout else type(exc).__name__,
+            exc,
+        )
+        try:
+            from app.tasks.redis_state import get_redis_client
+            cached = get_redis_client().get(_LINK_RATE_CACHE_KEY)
+            if cached:
+                stale_payload = _json.loads(cached)
+                stale_payload["stale"] = True
+                stale_payload["stale_reason"] = (
+                    "compute_timeout" if is_timeout else "compute_error"
+                )
+                return stale_payload
+        except Exception:
+            logger.warning("link-rate: stale-cache fallback read failed", exc_info=True)
+        # No cache to fall back to — degrade gracefully rather than 503.
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "stale": True,
+            "unavailable": True,
+            "stale_reason": "compute_timeout" if is_timeout else "compute_error",
+            "overall": {},
+            "kalshi": {},
+            "polymarket": {},
+        }
+
     try:
         from app.tasks.redis_state import get_redis_client
         get_redis_client().set(
-            "bainluck:admin:link_rate", _json.dumps(payload), ex=3600
+            _LINK_RATE_CACHE_KEY, _json.dumps(payload), ex=3600
         )
     except Exception:
-        pass
+        logger.warning("link-rate: cache write failed", exc_info=True)
     return payload
 
 

@@ -48,7 +48,10 @@ async def _precompute_admin_link_rate():
     from app.tasks.redis_state import get_redis_client
 
     async with get_task_session() as db:
-        payload = await _compute_link_rate(db)
+        # Runs off the request path (soft_time_limit=120s), so give the compute
+        # a generous per-query statement_timeout rather than the route's tight
+        # 20s router-limit budget (Queue #250 Item 3c).
+        payload = await _compute_link_rate(db, stmt_timeout_s=90)
 
     rc = get_redis_client()
     rc.set(
