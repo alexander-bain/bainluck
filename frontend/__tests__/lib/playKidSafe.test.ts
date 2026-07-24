@@ -48,6 +48,25 @@ describe("isKidSafeText — blocklist", () => {
     }
   });
 
+  it("rejects pregnancy / relationship-gossip terms (L2-177 — the culture/TS corpus)", () => {
+    for (const s of [
+      "Will Taylor Swift be pregnant in 2026?",
+      "Taylor Swift and Travis Kelce to get engaged",
+      "Celebrity engagement announcement",
+      "Will the couple divorce this year?",
+      "Star caught in an affair",
+      "Reality star breakup drama",
+      "Who is the singer dating now?",
+      "Cheating scandal rocks the show",
+      "Secret mistress revealed",
+      "Summer romance rumors",
+      "Backstage hookup gossip",
+      "Adultery allegations surface",
+    ]) {
+      expect(isKidSafeText(s)).toBe(false);
+    }
+  });
+
   it("does NOT reject safe words that merely contain a blocked substring", () => {
     for (const s of [
       "Golden State Warriors to win the title",
@@ -58,6 +77,10 @@ describe("isKidSafeText — blocklist", () => {
       "Coupled dance routine score",
       "Team stability rating",
       "Shootout goals in the final",
+      // L2-177 gossip terms must respect word boundaries — these stay safe:
+      "Updating the tour schedule", // "dating" only at a word boundary
+      "Taylor Swift album of the year", // clean culture/music card — the point of L2-177
+      "Best Picture winner at the Oscars",
     ]) {
       expect(isKidSafeText(s)).toBe(true);
     }
@@ -71,7 +94,7 @@ describe("isKidSafeText — blocklist", () => {
 });
 
 describe("isKidSafeCategory — allowlist", () => {
-  it("allows sports, entertainment, and weather", () => {
+  it("allows sports, entertainment, weather, and culture", () => {
     for (const c of [
       "basketball",
       "baseball",
@@ -84,6 +107,7 @@ describe("isKidSafeCategory — allowlist", () => {
       "cycling",
       "entertainment",
       "weather",
+      "culture", // L2-177 — pop-culture / Taylor-Swift cards
     ]) {
       expect(isKidSafeCategory(c)).toBe(true);
     }
@@ -95,7 +119,6 @@ describe("isKidSafeCategory — allowlist", () => {
       "geopolitics",
       "economics",
       "tech",
-      "culture",
       "health",
       "crypto",
       "other",
@@ -160,6 +183,18 @@ describe("isKidSafeItem", () => {
 
   it("passes a clean entertainment futures card", () => {
     expect(isKidSafeItem(futuresItem("Taylor Swift album of the year", "entertainment"))).toBe(true);
+  });
+
+  it("passes a clean culture card (L2-177 — the Taylor Swift gap)", () => {
+    expect(
+      isKidSafeItem(futuresItem("Taylor Swift to win Album of the Year", "culture"))
+    ).toBe(true);
+  });
+
+  it("blocks a culture card whose text is relationship gossip (L2-177)", () => {
+    expect(
+      isKidSafeItem(futuresItem("Will Taylor Swift and Travis Kelce get engaged?", "culture"))
+    ).toBe(false);
   });
 
   it("blocks a politics card even with clean text", () => {

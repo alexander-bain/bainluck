@@ -13,6 +13,11 @@ import type { FeedItem, FeedFuturesData, FeedEventData } from "@/lib/types";
 import { recordBestStreak, sendKidPrediction } from "@/lib/play/session";
 import s from "./play.module.css";
 
+// A best-streak celebration only fires for a genuine run (not the first correct
+// answer) and auto-dismisses so the game keeps flowing.
+const RECORD_CELEBRATION_MIN = 3;
+const RECORD_CELEBRATION_MS = 2600;
+
 interface HigherLowerProps {
   deck: FeedItem[];
   playerName: string;
@@ -61,6 +66,10 @@ export default function HigherLower({
   const [streak, setStreak] = useState(0);
   const [best, setBest] = useState(initialBestStreak);
   const [confetti, setConfetti] = useState<number[]>([]);
+  // L2-177 — full-screen "NEW RECORD" celebration. Only a genuine streak
+  // (>= this many in a row) that also beats the prior best earns the big moment,
+  // so the very first correct answer doesn't fire an anticlimactic "record".
+  const [recordStreak, setRecordStreak] = useState<number | null>(null);
 
   // Only cards with a real probability can be questions.
   const questions = useMemo<Question[]>(() => {
@@ -92,6 +101,8 @@ export default function HigherLower({
     window.setTimeout(() => setConfetti([]), 1000);
   }, []);
 
+  const dismissRecord = useCallback(() => setRecordStreak(null), []);
+
   const submit = useCallback(
     (g: "higher" | "lower") => {
       if (!q || guess) return;
@@ -111,6 +122,11 @@ export default function HigherLower({
         if (nextStreak > best) {
           setBest(nextStreak);
           recordBestStreak(playerName, nextStreak);
+          // A real streak that beats the prior best = the full-screen moment.
+          if (nextStreak >= RECORD_CELEBRATION_MIN) {
+            setRecordStreak(nextStreak);
+            window.setTimeout(() => setRecordStreak(null), RECORD_CELEBRATION_MS);
+          }
         }
       } else {
         setStreak(0);
@@ -221,6 +237,46 @@ export default function HigherLower({
               {["🎉", "⭐", "🔥", "✨", "🏆"][i % 5]}
             </span>
           ))}
+        </div>
+      )}
+
+      {recordStreak !== null && (
+        <div
+          className={s.recordOverlay}
+          role="dialog"
+          aria-label="New best streak record"
+          onClick={dismissRecord}
+        >
+          <div className={s.burstLayer} aria-hidden>
+            {Array.from({ length: 18 }, (_, i) => (
+              <span
+                key={i}
+                className={s.rainDrop}
+                style={{ left: `${(i * 5.5) % 96}%`, animationDelay: `${(i % 6) * 90}ms` }}
+              >
+                {["🎉", "⭐", "🔥", "✨", "🏆", "🎊"][i % 6]}
+              </span>
+            ))}
+          </div>
+          <div className={s.recordCard}>
+            <div className={s.recordTrophy}>🏆</div>
+            <div className="mt-3 text-2xl font-black tracking-tight text-accent-brand">
+              NEW RECORD!
+            </div>
+            <div className="mt-1 text-5xl font-black tabular-nums text-text-primary">
+              {recordStreak}
+            </div>
+            <div className="mt-1 text-base font-bold text-text-secondary">
+              in a row, {playerName}! 🔥
+            </div>
+            <button
+              onClick={dismissRecord}
+              className="mt-5 rounded-2xl bg-accent-brand px-6 py-3 text-white font-black text-lg active:scale-95 transition-transform"
+              style={{ minHeight: 56 }}
+            >
+              Keep going →
+            </button>
+          </div>
         </div>
       )}
     </div>

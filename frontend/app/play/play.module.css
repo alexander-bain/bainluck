@@ -104,6 +104,61 @@
   }
 }
 
+/* --- New-record celebration (L2-177) — full-screen delight on a best streak --- */
+.recordOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(255, 214, 10, 0.28),
+    rgba(0, 0, 0, 0.55)
+  );
+  animation: recordFade 220ms ease-out;
+}
+.recordCard {
+  text-align: center;
+  padding: 32px 28px;
+  border-radius: 28px;
+  background: var(--surface-card, #fff);
+  border: 3px solid rgba(255, 193, 7, 0.7);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  animation: recordPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.recordTrophy {
+  font-size: 84px;
+  line-height: 1;
+  animation: recordTrophy 900ms ease-in-out infinite alternate;
+}
+@keyframes recordFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes recordPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(24px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes recordTrophy {
+  from {
+    transform: scale(1) rotate(-6deg);
+  }
+  to {
+    transform: scale(1.12) rotate(6deg);
+  }
+}
+
 /* --- Streak pulse --- */
 .streakPulse {
   animation: streakPulse 500ms ease;
@@ -127,7 +182,10 @@
   .flyLeft,
   .confetti,
   .rainDrop,
-  .streakPulse {
+  .streakPulse,
+  .recordOverlay,
+  .recordCard,
+  .recordTrophy {
     animation: none !important;
   }
 }

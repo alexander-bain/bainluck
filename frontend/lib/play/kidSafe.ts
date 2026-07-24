@@ -42,7 +42,12 @@ const SPORTS_CATEGORIES = new Set([
 ]);
 
 // The only non-sports categories a kid ever sees.
-const OTHER_ALLOWED = new Set(["entertainment", "weather"]);
+// `culture` is allowed (L2-177) so Taylor-Swift / pop-culture cards — the whole
+// point of the Music love-chip — actually reach the kid. The term blocklist below
+// (now carrying the pregnancy / relationship-gossip terms the TS market corpus
+// includes) is what keeps that category safe: a clean "Taylor Swift album of the
+// year?" passes, a "Will Taylor Swift be pregnant?" / "...get engaged?" does not.
+const OTHER_ALLOWED = new Set(["entertainment", "weather", "culture"]);
 
 export function isKidSafeCategory(category: string | null | undefined): boolean {
   const c = (category || "").toLowerCase();
@@ -88,6 +93,19 @@ const PREFIX_TERMS = [
   "regime",
   "election",
   "crypto",
+  // relationship / adult gossip (L2-177 — the `culture`/TS corpus carries these;
+  // an 8yo sees this page, so err broad — a hidden album card is fine, a
+  // pregnancy/affair speculation card is not):
+  "divorce",
+  "affair",
+  "mistress",
+  "adulter",
+  "breakup",
+  "dating",
+  "romance",
+  "hookup",
+  "cheat",
+  "engag",
   // violence / conflict:
   "kill",
   "murder",
