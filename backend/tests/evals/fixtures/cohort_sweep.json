@@ -1,0 +1,12 @@
+{
+  "rows": [
+    {"id": "anti-01", "source": "kalshi", "llm_league": "NFL", "market_type": "claim", "probability": 0.80, "is_winner": false},
+    {"id": "anti-02", "source": "kalshi", "llm_league": "NFL", "market_type": "claim", "probability": 0.80, "is_winner": false},
+    {"id": "anti-03", "source": "kalshi", "llm_league": "NFL", "market_type": "claim", "probability": 0.80, "is_winner": false},
+    {"id": "anti-04", "source": "kalshi", "llm_league": "NFL", "market_type": "claim", "probability": 0.80, "is_winner": false},
+    {"id": "anti-05", "source": "kalshi", "llm_league": "NFL", "market_type": "claim", "probability": 0.80, "is_winner": false},
+    {"id": "small-01", "source": "polymarket", "llm_sport_category": "politics", "market_type": "field", "probability": 0.99, "is_winner": false},
+    {"id": "small-02", "source": "polymarket", "llm_sport_category": "politics", "market_type": "field", "probability": 0.99, "is_winner": false}
+  ],
+  "fixture_expansion": {"anti_repeat": 8, "small_repeat": 10}
+}
