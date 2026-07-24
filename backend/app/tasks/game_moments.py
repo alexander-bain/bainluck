@@ -17,7 +17,11 @@ from sqlalchemy import delete, select
 
 from app.models import Event, GameMoment, Sport, WinProbSnapshot
 from app.tasks.base import get_task_session
-from app.utils.game_moments import agreement_rate, compute_moments
+from app.utils.game_moments import (
+    agreement_rate,
+    compute_moments,
+    synth_scoring_plays_from_snapshots,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,7 @@ def _snapshot_dicts(snaps: list[WinProbSnapshot]) -> list[dict]:
                 "home_prob": float(s.home_win_probability),
                 "home_score": gs.get("home_score"),
                 "away_score": gs.get("away_score"),
+                "period": gs.get("period"),
                 "mlb_game_pk": gs.get("mlb_game_pk"),
             }
         )
@@ -109,10 +114,6 @@ async def _compute_game_moments(limit: int = 60):
 
         for event in rows:
             stats["events_scanned"] += 1
-            box = event.box_score_data or {}
-            plays = box.get("scoring_plays") or []
-            if not plays:
-                continue
             snaps = (
                 await session.execute(
                     select(WinProbSnapshot).where(
@@ -124,12 +125,25 @@ async def _compute_game_moments(limit: int = 60):
             if len(snap_dicts) < 2:
                 continue
 
+            # Prefer real ESPN scoring plays (NBA/NFL); MLB's are empty, so fall
+            # back to synthesizing plays from snapshot score-transitions.
+            box = event.box_score_data or {}
+            plays = box.get("scoring_plays") or []
+            src = "espn"
+            if not plays:
+                plays = synth_scoring_plays_from_snapshots(
+                    snap_dicts, event.home_team_name, event.away_team_name
+                )
+                src = "mlb"
+            if not plays:
+                continue
+
             moments = compute_moments(
                 plays,
                 snap_dicts,
                 event.home_team_name,
                 event.away_team_name,
-                source="espn",
+                source=src,
             )
             if not moments:
                 continue

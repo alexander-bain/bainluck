@@ -212,6 +212,55 @@ def _dedupe_key(source: str, h, a, description: Optional[str]) -> str:
     return f"{source}:{h}-{a}:{desc}"[:120]
 
 
+def synth_scoring_plays_from_snapshots(
+    snapshots: list[dict],
+    home_team: Optional[str],
+    away_team: Optional[str],
+) -> list[dict]:
+    """Derive scoring plays from win-prob snapshot SCORE transitions.
+
+    MLB's ESPN box_score_data.scoring_plays is empty (the provider doesn't emit
+    baseball scoring plays), but our mlb/stat_model snapshots carry game_state
+    scores AND a wall-clock ts. Each snapshot where the score advances is a scoring
+    event: the team whose score rose is the actor. These synthesized plays feed the
+    same score-matched join + #871 gate as real plays. Descriptions are honest and
+    source-data-only ("Phillies scored — now 3-2"); richer play text (the batter)
+    is a v1.1 enrichment from the MLB per-at-bat feed."""
+    snaps = [
+        s
+        for s in snapshots
+        if isinstance(s.get("ts"), datetime)
+        and s.get("home_score") is not None
+        and s.get("away_score") is not None
+    ]
+    snaps.sort(key=lambda s: s["ts"])
+    plays: list[dict] = []
+    prev_h = prev_a = None
+    for s in snaps:
+        h, a = s["home_score"], s["away_score"]
+        if prev_h is not None and (h != prev_h or a != prev_a):
+            if h > prev_h and a == prev_a:
+                team, runs = home_team, h - prev_h
+            elif a > prev_a and h == prev_h:
+                team, runs = away_team, a - prev_a
+            else:
+                team, runs = None, 0  # simultaneous/correction — ambiguous actor
+            if team:
+                plural = "s" if runs != 1 else ""
+                plays.append(
+                    {
+                        "home_score": h,
+                        "away_score": a,
+                        "team": team,
+                        "description": f"{team} scored {runs} run{plural} — now {a}-{h}",
+                        "period": s.get("period"),
+                        "type": "score",
+                    }
+                )
+        prev_h, prev_a = h, a
+    return plays
+
+
 def confident_moments(moments: list[dict], gate: float = CONFIDENCE_GATE) -> list[dict]:
     """The subset the history payload surfaces: cause confident enough to help."""
     out = [

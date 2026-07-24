@@ -12,6 +12,7 @@ from app.utils.game_moments import (
     agreement_rate,
     compute_moments,
     confident_moments,
+    synth_scoring_plays_from_snapshots,
 )
 
 _T0 = datetime(2026, 7, 20, 18, 0, tzinfo=timezone.utc)
@@ -92,6 +93,34 @@ class TestComputeMoments:
         b = compute_moments(plays, snaps, "Yankees", "Red Sox", source="espn")[0]
         assert a["dedupe_key"] == b["dedupe_key"]
         assert a["dedupe_key"].startswith("espn:1-0:")
+
+
+class TestSynthPlaysFromSnapshots:
+    def test_score_transitions_become_plays_and_join(self):
+        # MLB path: no ESPN plays; synthesize from snapshot score jumps.
+        snaps = [
+            _snap(0, 0.50, 0, 0),
+            _snap(20, 0.66, 1, 0),  # home scored 1 → +16 pts
+            _snap(50, 0.42, 1, 2),  # away scored 2 → home prob drops
+        ]
+        plays = synth_scoring_plays_from_snapshots(snaps, "Phillies", "Mets")
+        assert [p["team"] for p in plays] == ["Phillies", "Mets"]
+        assert plays[0]["home_score"] == 1 and plays[0]["away_score"] == 0
+        assert "scored" in plays[0]["description"]
+        # feed back into the join — the home score is a confident moment
+        moments = compute_moments(plays, snaps, "Phillies", "Mets", source="mlb")
+        home_m = [m for m in moments if m["actor_team"] == "Phillies"][0]
+        assert home_m["confidence"] is not None and home_m["confidence"] >= CONFIDENCE_GATE
+        assert home_m["prob_delta"] == 0.16
+
+    def test_no_transitions_yields_nothing(self):
+        snaps = [_snap(0, 0.5, 2, 2), _snap(10, 0.55, 2, 2)]
+        assert synth_scoring_plays_from_snapshots(snaps, "A", "B") == []
+
+    def test_run_pluralization(self):
+        snaps = [_snap(0, 0.5, 0, 0), _snap(10, 0.7, 3, 0)]
+        plays = synth_scoring_plays_from_snapshots(snaps, "Yanks", "Sox")
+        assert "3 runs" in plays[0]["description"]
 
 
 class TestConfidentMoments:
