@@ -451,6 +451,61 @@ def _detect_query_awards_concept(q: str | None) -> dict | None:
     }
 
 
+# #1206 (r260/r262): a loop-derived event concept must share a DISTINCTIVE token
+# with the query, not just get pulled in because one of its markets matched on an
+# incidental OUTCOME token. The proven regression: an Emmys market ("… Best Drama
+# Series …", "How many Emmys will 'The Pitt' win?") FTS-matches the query "world
+# series" (or "champions league winner") on a nominee token, and the awards deriver
+# then surfaces "The Emmys" concept ABOVE the correct World Series / UCL futures.
+# This is specific to AWARDS because its outcomes are arbitrary movie/TV titles
+# whose words collide with unrelated queries; other domains' outcomes are entities
+# (teams/fighters/riders) where an outcome match legitimately implies the concept.
+# Generic connective/competition words never count as the shared token.
+_CONCEPT_MATCH_STOPWORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "for", "vs", "v",
+    "win", "wins", "winner", "winners", "winning", "champion", "champions",
+    "championship", "championships", "champ", "title", "final", "finals",
+    "who", "will", "next", "day", "night", "game", "games", "season", "year",
+    "world",  # "world series" vs "world cup" must not match on this alone
+})
+
+
+def _concept_match_tokens(text: str | None) -> set[str]:
+    """Distinctive (len>=3, non-stopword) lowercase tokens of a query or concept id."""
+    return {
+        t
+        for t in re.split(r"[^a-z0-9]+", (text or "").lower())
+        if len(t) >= 3 and t not in _CONCEPT_MATCH_STOPWORDS
+    }
+
+
+def _query_names_concept(q: str | None, concept: dict) -> bool:
+    """True iff the QUERY shares a distinctive token/stem with the concept's own
+    identity (its key slug + display name). Used to gate the market-derived awards
+    concept in the search loop (#1206). Prepended `_detect_query_*` concepts are
+    already query-gated by their resolvers, so this only guards the loop path.
+    Stem match (len>=4, prefix either way) handles emmy↔emmys, oscar↔oscars."""
+    if not q:
+        return False
+    q_tokens = _concept_match_tokens(q)
+    if not q_tokens:
+        return False
+    key = concept.get("key") or ""
+    slug = key.rsplit(":", 1)[-1] if ":" in key else key
+    c_tokens = _concept_match_tokens(slug.replace("-", " ")) | _concept_match_tokens(
+        concept.get("name")
+    )
+    if not c_tokens:
+        return False
+    for qt in q_tokens:
+        for ct in c_tokens:
+            if qt == ct:
+                return True
+            if len(qt) >= 4 and len(ct) >= 4 and (ct.startswith(qt) or qt.startswith(ct)):
+                return True
+    return False
+
+
 def _market_volume(m) -> float:
     try:
         return float(m.volume or 0)
@@ -1806,6 +1861,13 @@ async def search_events(
         # is category-agnostic (awards markets carry llm_sport_category=entertainment).
         _aw = _derive_awards_concept(_m.external_id, _m.name)
         if _aw is not None:
+            # #1206: only surface the awards concept if the QUERY actually names the
+            # ceremony — otherwise an incidental nominee-token FTS hit (an Emmys
+            # "…Series" nominee matching "world series") wrongly ranks "The Emmys"
+            # above the correct futures. A query that DOES name the ceremony is also
+            # covered by the query-gated prepend below (dedup-safe).
+            if not _query_names_concept(q, _aw):
+                continue
             if _aw["key"] in _seen_concept_keys:
                 continue
             _seen_concept_keys.add(_aw["key"])
