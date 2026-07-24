@@ -137,28 +137,39 @@ class TestConfidentMoments:
 
 class TestAgreementRate:
     def test_agreement_when_mlb_saw_same_swing(self):
+        # our moment: +18pt home swing. MLB series shows a matching ~+19pt swing.
         snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0)]
-        plays = [{"home_score": 1, "away_score": 0, "team": "Yankees",
-                  "description": "Aaron Judge homers (30)"}]
+        plays = [{"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR"}]
         moments = compute_moments(plays, snaps, "Yankees", "Red Sox")
         mlb = [
-            {"description": "Gleyber Torres grounds out", "home_win_probability": 0.50},
-            {"description": "Aaron Judge homers on a fly ball", "home_win_probability": 0.69},
+            {"home_win_probability": 0.50},
+            {"home_win_probability": 0.69},  # +19pt swing, within tolerance of +18
         ]
         rep = agreement_rate(moments, mlb)
         assert rep["checked"] == 1 and rep["agreed"] == 1 and rep["rate"] == 1.0
 
     def test_disagreement_when_mlb_flat(self):
         snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0)]
-        plays = [{"home_score": 1, "away_score": 0, "team": "Yankees",
-                  "description": "Aaron Judge homers (30)"}]
+        plays = [{"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR"}]
         moments = compute_moments(plays, snaps, "Yankees", "Red Sox")
         mlb = [
-            {"description": "Gleyber Torres grounds out", "home_win_probability": 0.50},
-            {"description": "Aaron Judge homers on a fly ball", "home_win_probability": 0.505},
+            {"home_win_probability": 0.50},
+            {"home_win_probability": 0.505},  # flat — no comparable swing
         ]
         rep = agreement_rate(moments, mlb)
         assert rep["checked"] == 1 and rep["agreed"] == 0 and rep["rate"] == 0.0
+
+    def test_greedy_match_does_not_double_count(self):
+        # two of our moments (+18, +12); MLB has only ONE big swing → 1/2 agree
+        snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0), _snap(20, 0.80, 2, 0)]
+        plays = [
+            {"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR"},
+            {"home_score": 2, "away_score": 0, "team": "Yankees", "description": "HR"},
+        ]
+        moments = compute_moments(plays, snaps, "Yankees", "Red Sox")
+        mlb = [{"home_win_probability": 0.50}, {"home_win_probability": 0.68}]  # one +18 swing
+        rep = agreement_rate(moments, mlb)
+        assert rep["checked"] == 2 and rep["agreed"] == 1
 
     def test_no_confident_moments_returns_none_rate(self):
         assert agreement_rate([], [])["rate"] is None

@@ -272,52 +272,58 @@ def confident_moments(moments: list[dict], gate: float = CONFIDENCE_GATE) -> lis
     return out
 
 
-def _desc_tokens(text: Optional[str]) -> set[str]:
-    """Distinctive (len>=4, alpha) description tokens — player surnames, verbs like
-    "homers"/"doubles" — for cross-source play matching."""
-    import re
-
-    return {
-        t
-        for t in re.split(r"[^a-z]+", (text or "").lower())
-        if len(t) >= 4
-    }
+AGREEMENT_TOLERANCE = 0.08  # |our swing − MLB swing| within this = a match
 
 
-def agreement_rate(our_moments: list[dict], mlb_entries: list[dict]) -> dict:
+def agreement_rate(
+    our_moments: list[dict],
+    mlb_entries: list[dict],
+    *,
+    tolerance: float = AGREEMENT_TOLERANCE,
+) -> dict:
     """MLB ground-truth validation gate (#1168). Compare our confident moments
     against MLB's OWN per-at-bat win probability (the source attributes WP to each
-    play). MLB's series carries a description + WP per at-bat but no score, so we
-    match on play DESCRIPTION overlap: agreement = for each confident moment, does
-    an MLB at-bat whose description shares a distinctive token ALSO show a
-    ≥MIN_DELTA win-prob swing?
+    play). MLB's series carries WP per at-bat but no score, and our MLB moments are
+    synthesized from snapshot score-transitions (synthetic descriptions), so we
+    match on the WIN-PROB SWING MAGNITUDE, not text: for each confident moment with
+    delta D, is there a (greedily-consumed) MLB at-bat swing within ``tolerance``?
 
-    mlb_entries: dicts with ``description`` and ``home_win_probability`` (0..1),
-        ordered by at-bat. Returns {checked, agreed, rate}. Poor agreement is the
-        signal to ship the TABLE but HOLD the annotations."""
+    mlb_entries: dicts with ``home_win_probability`` (0..1), ordered by at-bat.
+    Returns {checked, agreed, rate}. Poor agreement is the signal to ship the TABLE
+    but HOLD the annotations (Redis moments:surface_enabled)."""
     confident = confident_moments(our_moments)
     if not confident:
         return {"checked": 0, "agreed": 0, "rate": None}
 
-    # Per-at-bat MLB home-prob swings paired with their description tokens.
-    mlb_swings: list[tuple[set[str], float]] = []
+    # MLB per-at-bat home-prob swings that cleared the noise floor.
+    mlb_swings: list[float] = []
     prev = None
     for e in mlb_entries:
         hp = _to_prob(e.get("home_win_probability"))
         if hp is not None and prev is not None:
-            mlb_swings.append((_desc_tokens(e.get("description")), abs(hp - prev)))
+            d = abs(hp - prev)
+            if d >= MIN_DELTA:
+                mlb_swings.append(d)
         if hp is not None:
             prev = hp
 
+    used = [False] * len(mlb_swings)
     agreed = 0
-    for m in confident:
-        mtok = _desc_tokens(m.get("description"))
-        if not mtok:
-            continue
-        for toks, mag in mlb_swings:
-            if mag >= MIN_DELTA and (mtok & toks):
-                agreed += 1
-                break
+    # Match biggest-first so a large swing isn't consumed by a small one.
+    for m in sorted(
+        confident, key=lambda x: float(x.get("prob_delta") or 0), reverse=True
+    ):
+        d = float(m.get("prob_delta") or 0)
+        best, best_diff = -1, tolerance + 1
+        for i, sw in enumerate(mlb_swings):
+            if used[i]:
+                continue
+            diff = abs(sw - d)
+            if diff <= tolerance and diff < best_diff:
+                best, best_diff = i, diff
+        if best >= 0:
+            used[best] = True
+            agreed += 1
     checked = len(confident)
     return {
         "checked": checked,
