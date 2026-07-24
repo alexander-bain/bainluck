@@ -84,6 +84,21 @@ def _rows(result):
     return [dict(r._mapping) for r in result.all()]
 
 
+async def _no_timeout(session) -> None:
+    """Disable the statement timeout on the session's CURRENT connection.
+
+    statement_timeout is connection-local, and every ``_write_marker`` commit
+    can return the connection to the pool — so a later heavy query may run on a
+    fresh connection that still carries Heroku Postgres's default timeout (this
+    killed the first run: the game_ev GROUP BY hit the inherited timeout and
+    crashed the dyno). Consecutive executes with no commit between stay on the
+    same connection, so calling this immediately before each heavy read arms it
+    reliably. Session-level SET (not SET LOCAL, which resets on commit)."""
+    from sqlalchemy import text
+
+    await session.execute(text("SET statement_timeout = 0"))
+
+
 async def run() -> None:
     from sqlalchemy import text
 
@@ -102,6 +117,7 @@ async def run() -> None:
         # ==================================================================
 
         # --- Games: monthly volume (raw rows vs effective poll count) -------
+        await _no_timeout(session)
         games_monthly = _rows(await session.execute(text(f"""
             SELECT date_trunc('month', captured_at)::date AS month,
                    count(*)                         AS rows,
@@ -118,6 +134,7 @@ async def run() -> None:
         # marker commit can return the connection to the pool and drop a
         # connection-scoped temp table). Effective points = sum(reading_count)
         # (true poll count post-collapse); span = last coverage instant - first.
+        await _no_timeout(session)
         game_ev = _rows(await session.execute(text("""
             SELECT d.event_id, d.rows, d.eff, d.n_sources,
                    e.llm_league AS league, e.status,
@@ -189,6 +206,7 @@ async def run() -> None:
         await _write_marker(session, "progress", {"stage": "games_done"})
 
         # --- Futures: dedup magnitude (raw vs effective) -------------------
+        await _no_timeout(session)
         dedup = _rows(await session.execute(text(f"""
             SELECT 'win_prob_snapshots' AS tbl,
                    round(avg(reading_count)::numeric,3) AS avg_rc,
@@ -208,6 +226,7 @@ async def run() -> None:
         # --- Futures: per-outcome density, joined to source/league --------
         # Single heavy GROUP BY + join, read into Python (same temp-table
         # avoidance as games).
+        await _no_timeout(session)
         fut_ev = _rows(await session.execute(text("""
             SELECT d.outcome_id, d.rows, d.eff, d.n_books,
                    m.source,
@@ -311,6 +330,7 @@ async def run() -> None:
             sweep,
         )
 
+        await _no_timeout(session)
         raw = await load_from_session(session)
         await _write_marker(session, "progress", {"stage": "loaded_rows", "n": len(raw)})
 
