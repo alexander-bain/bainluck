@@ -67,7 +67,7 @@ class TestSeedTriggers:
         mock_task.delay.return_value.id = "fake-seed-task"
         with patch("app.tasks.seed_entity_registry", mock_task):
             resp = await client.post(
-                "/api/admin/entity-registry/seed?secret=test-secret"
+                "/api/admin/entity-registry/seed", headers={"Authorization": "Bearer test-secret"}
             )
         assert resp.status_code == 200
         body = resp.json()
@@ -84,7 +84,7 @@ class TestSeedTriggers:
         mock_task.delay.return_value.id = "fake-seed-task"
         with patch("app.tasks.seed_entity_registry", mock_task):
             resp = await client.post(
-                "/api/admin/entity-registry/seed?secret=test-secret&persons_only=false"
+                "/api/admin/entity-registry/seed?persons_only=false", headers={"Authorization": "Bearer test-secret"}
             )
         assert resp.status_code == 200
         assert resp.json()["persons_only"] is False
@@ -98,7 +98,7 @@ class TestSeedTriggers:
         mock_task.delay.return_value.id = "fake-backfill-task"
         with patch("app.tasks.backfill_polymarket_matchups", mock_task):
             resp = await client.post(
-                "/api/admin/polymarket/backfill-matchups?secret=test-secret"
+                "/api/admin/polymarket/backfill-matchups", headers={"Authorization": "Bearer test-secret"}
             )
         assert resp.status_code == 200
         body = resp.json()

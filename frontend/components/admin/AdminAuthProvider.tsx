@@ -37,17 +37,27 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
       return;
     }
 
-    // 2. Check URL params
-    const params = new URLSearchParams(window.location.search);
-    const fromUrl = params.get("secret");
-    if (fromUrl) {
-      localStorage.setItem(STORAGE_KEY, fromUrl);
-      setSecret(fromUrl);
-      setChecking(false);
-      return;
+    // SECURITY (Queue #252 Item 3): the ?secret= URL-param path is removed.
+    // A secret in the URL leaks via browser history, the Referer header, and
+    // shared links, and was being persisted straight into localStorage. The
+    // admin token must be entered once via the form below (or already present in
+    // localStorage). If a stale ?secret= is present in the URL, strip it so it
+    // does not linger in history for this tab.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("secret")) {
+        params.delete("secret");
+        const clean =
+          window.location.pathname +
+          (params.toString() ? `?${params.toString()}` : "") +
+          window.location.hash;
+        window.history.replaceState(null, "", clean);
+      }
+    } catch {
+      // no-op: URL cleanup is best-effort
     }
 
-    // 3. Check if user is signed in via Firebase — auto-use stored secret
+    // 2. Check if user is signed in via Firebase — auto-use stored secret
     try {
       const auth = getAuth();
       const unsub = onAuthStateChanged(auth, (user) => {

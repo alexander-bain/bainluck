@@ -69,17 +69,41 @@ class EmailSignInRequest(BaseModel):
     email: str
 
 
+def _email_sign_in_enabled() -> bool:
+    """Whether the passwordless email sign-in path is enabled.
+
+    SECURITY (Queue #252 Item 1): this endpoint mints a full session token from
+    an email address ALONE — no credential, no proof of identity. That is a live
+    admin-takeover path: anyone who knows an allowlisted admin email becomes that
+    admin. It is therefore DISABLED by default and must be explicitly opted into
+    for local/dev convenience via ENABLE_INSECURE_EMAIL_SIGN_IN=1. In production
+    the flag is unset, so the endpoint always returns 401. Real admins sign in via
+    the verified Google/Apple OAuth flows (/api/auth/google, /api/auth/apple).
+    """
+    return os.getenv("ENABLE_INSECURE_EMAIL_SIGN_IN", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 @router.post("/email-sign-in")
 async def email_sign_in(
     body: EmailSignInRequest,
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Direct sign-in for admin emails — no OAuth needed.
+    """Direct sign-in for admin emails — DISABLED by default (dev-only).
 
-    Only works for emails in DEFAULT_ADMIN_EMAILS. Creates or looks up
-    the Firebase user and issues a session token directly.
+    See ``_email_sign_in_enabled``. Email-in-body alone is never sufficient to
+    mint a token; without the explicit non-production opt-in flag this returns
+    401. When enabled for dev, it still requires the email to be allowlisted.
     """
     from app.routes.admin_utils import _admin_user_emails
+
+    if not _email_sign_in_enabled():
+        logger.warning("Rejected disabled email-sign-in attempt for email=%s", body.email)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Direct email sign-in is disabled. Sign in with Google or Apple.",
+        )
 
     email = body.email.strip().lower()
     if email not in _admin_user_emails():

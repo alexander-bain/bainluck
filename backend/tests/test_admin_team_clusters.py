@@ -14,6 +14,11 @@ from fastapi import HTTPException
 from app.routes import admin_team_clusters as tc
 
 
+# Admin auth now flows only through the Authorization: Bearer header
+# (Queue #252 Item 3 removed the ?secret= query path).
+_ADMIN_REQ = SimpleNamespace(headers={"authorization": "Bearer test-secret"})
+
+
 # --------------------------------------------------------------------------- #
 # Pure helpers
 # --------------------------------------------------------------------------- #
@@ -164,7 +169,7 @@ def _admin_env(monkeypatch):
 async def test_keep_separate_persists_a_rejected_override():
     sess = _FakeSession()
     res = await tc.team_clusters_verdict(
-        request=None, body=_body(verdict="keep_separate"), secret="test-secret", db=sess
+        request=_ADMIN_REQ, body=_body(verdict="keep_separate"), secret="test-secret", db=sess
     )
     assert res["decision"] == "rejected"
     assert sess.committed
@@ -178,7 +183,7 @@ async def test_keep_separate_persists_a_rejected_override():
 async def test_defer_persists_a_deferred_override():
     sess = _FakeSession()
     res = await tc.team_clusters_verdict(
-        request=None, body=_body(verdict="defer"), secret="test-secret", db=sess
+        request=_ADMIN_REQ, body=_body(verdict="defer"), secret="test-secret", db=sess
     )
     assert res["decision"] == "deferred"
     assert sess.added[0].decision == "deferred"
@@ -187,7 +192,7 @@ async def test_defer_persists_a_deferred_override():
 async def test_invalid_verdict_rejected():
     with pytest.raises(HTTPException) as ei:
         await tc.team_clusters_verdict(
-            request=None, body=_body(verdict="bogus"), secret="test-secret", db=_FakeSession()
+            request=_ADMIN_REQ, body=_body(verdict="bogus"), secret="test-secret", db=_FakeSession()
         )
     assert ei.value.status_code == 400
 
@@ -195,7 +200,7 @@ async def test_invalid_verdict_rejected():
 async def test_merge_requires_canonical_and_folds():
     with pytest.raises(HTTPException) as ei:
         await tc.team_clusters_verdict(
-            request=None, body=_body(verdict="merge", canonical_id=None, fold_ids=[]),
+            request=_ADMIN_REQ, body=_body(verdict="merge", canonical_id=None, fold_ids=[]),
             secret="test-secret", db=_FakeSession(),
         )
     assert ei.value.status_code == 400
@@ -217,7 +222,7 @@ async def test_merge_refuses_non_cluster_member(monkeypatch):
     monkeypatch.setattr(tc, "_apply_merge", apply_spy)
     with pytest.raises(HTTPException) as ei:
         await tc.team_clusters_verdict(
-            request=None,
+            request=_ADMIN_REQ,
             body=_body(verdict="merge", canonical_id=1, fold_ids=[2], member_ids=[1, 2],
                        sport_key="baseball_ncaa", cluster_key="baseball_ncaa:1-2"),
             secret="test-secret", db=sess,
@@ -247,7 +252,7 @@ async def test_merge_calls_the_rail_and_records_merged(monkeypatch):
     monkeypatch.setattr(tc, "_apply_merge", spy)
 
     res = await tc.team_clusters_verdict(
-        request=None,
+        request=_ADMIN_REQ,
         body=_body(verdict="merge", canonical_id=1, fold_ids=[2], member_ids=[1, 2],
                    sport_key="usa_mls", cluster_key="usa_mls:1-2"),
         secret="test-secret", db=sess,
@@ -264,7 +269,7 @@ async def test_undo_deletes_the_override_and_reports_reversibility():
     ov = SimpleNamespace(decision="rejected")
     sess = _FakeSession(existing_override=ov)
     res = await tc.team_clusters_undo(
-        request=None, body=tc.UndoRequest(cluster_key="nba:1-2"), secret="test-secret", db=sess
+        request=_ADMIN_REQ, body=tc.UndoRequest(cluster_key="nba:1-2"), secret="test-secret", db=sess
     )
     assert res["reverted_decision"] == "rejected"
     assert res["reversible"] is True
@@ -274,7 +279,7 @@ async def test_undo_deletes_the_override_and_reports_reversibility():
     ov2 = SimpleNamespace(decision="merged")
     sess2 = _FakeSession(existing_override=ov2)
     res2 = await tc.team_clusters_undo(
-        request=None, body=tc.UndoRequest(cluster_key="usa_mls:1-2"), secret="test-secret", db=sess2
+        request=_ADMIN_REQ, body=tc.UndoRequest(cluster_key="usa_mls:1-2"), secret="test-secret", db=sess2
     )
     assert res2["reversible"] is False
 
@@ -282,7 +287,7 @@ async def test_undo_deletes_the_override_and_reports_reversibility():
 async def test_undo_404_when_no_verdict():
     with pytest.raises(HTTPException) as ei:
         await tc.team_clusters_undo(
-            request=None, body=tc.UndoRequest(cluster_key="none:0"), secret="test-secret",
+            request=_ADMIN_REQ, body=tc.UndoRequest(cluster_key="none:0"), secret="test-secret",
             db=_FakeSession(existing_override=None),
         )
     assert ei.value.status_code == 404

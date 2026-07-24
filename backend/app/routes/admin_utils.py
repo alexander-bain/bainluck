@@ -10,11 +10,16 @@ _logger = logging.getLogger(__name__)
 
 
 def _check_admin_secret(secret: str | None = None, *, request: Request | None = None) -> bool:
-    """Verify admin secret for protected endpoints.
+    """Verify the admin token for protected endpoints.
 
-    Accepts the token via:
-    1. Authorization: Bearer <token> header (PREFERRED)
-    2. ?secret= query parameter (DEPRECATED — logs a warning)
+    Accepts the token ONLY via the ``Authorization: Bearer <token>`` header.
+
+    SECURITY (Queue #252 Item 3): the legacy ``?secret=`` query-parameter path is
+    REMOVED. A secret in the URL leaks through browser history, the Referer
+    header, server access logs, and shared links. The ``secret`` argument is
+    retained purely for call-site signature compatibility (many endpoints still
+    declare ``secret: str = Query(...)``) but it is no longer honored for auth —
+    a request that supplies only ``?secret=`` is rejected.
 
     Raises HTTPException(403) on failure. Returns True on success.
     """
@@ -24,7 +29,7 @@ def _check_admin_secret(secret: str | None = None, *, request: Request | None = 
     if not expected:
         raise HTTPException(status_code=403, detail="Admin auth not configured")
 
-    # Prefer Authorization header
+    # Authorization header is the ONLY accepted transport.
     if request is not None:
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
@@ -32,10 +37,11 @@ def _check_admin_secret(secret: str | None = None, *, request: Request | None = 
             if token == expected:
                 return True
 
-    # Fall back to query param (deprecated)
-    if secret and secret == expected:
-        _logger.debug("Admin auth via query param (deprecated)")
-        return True
+    if secret:
+        _logger.warning(
+            "Rejected deprecated ?secret= query-param admin auth; "
+            "use 'Authorization: Bearer <token>'"
+        )
 
     raise HTTPException(status_code=403, detail="Invalid admin secret")
 
@@ -66,8 +72,16 @@ def _admin_user_emails() -> set[str]:
 
 
 async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
-    if secret and _check_admin_secret(secret, request=request):
-        return True
+    # 1. ADMIN_TOKEN via Authorization: Bearer header. Queue #252 Item 4: this
+    #    must work even when no ?secret= query value is present — identity-aware
+    #    endpoints previously only tried this when `secret` was truthy, so the
+    #    preferred header form was rejected. _check_admin_secret raises on
+    #    mismatch, so guard it and fall through to the identity check.
+    try:
+        if _check_admin_secret(secret, request=request):
+            return True
+    except Exception:
+        pass
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]

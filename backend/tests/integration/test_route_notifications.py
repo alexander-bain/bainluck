@@ -153,7 +153,7 @@ class TestNotificationAdminTokens:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        resp = await client.get("/api/notifications/admin/tokens?secret=test-secret")
+        resp = await client.get("/api/notifications/admin/tokens", headers={"Authorization": "Bearer test-secret"})
         assert resp.status_code == 200
         body = resp.json()
         assert "count" in body
@@ -170,7 +170,7 @@ class TestNotificationAdminTokens:
         mock_result.scalars.return_value.all.return_value = [token]
         mock_db.execute.return_value = mock_result
 
-        resp = await client.get("/api/notifications/admin/tokens?secret=test-secret")
+        resp = await client.get("/api/notifications/admin/tokens", headers={"Authorization": "Bearer test-secret"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["count"] == 1
@@ -219,7 +219,7 @@ class TestNotificationAdminSendTest:
         """Body without device_token should fail validation."""
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
         resp = await client.post(
-            "/api/notifications/admin/send-test?secret=test-secret",
+            "/api/notifications/admin/send-test", headers={"Authorization": "Bearer test-secret"},
             json={},
         )
         assert resp.status_code == 422

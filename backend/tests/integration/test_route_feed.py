@@ -286,7 +286,7 @@ class TestFeedDebug:
     async def test_debug_returns_diagnostics_for_admin(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
 
-        resp = await client.get("/api/feed?debug=true&secret=test-admin")
+        resp = await client.get("/api/feed?debug=true", headers={"Authorization": "Bearer test-admin"})
         body = resp.json()
 
         assert resp.status_code == 200
@@ -348,7 +348,7 @@ class TestDiscoverQualityTrace:
     async def test_trace_returns_404_for_missing_market(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
 
-        resp = await client.get("/api/admin/discover-quality/trace/123?secret=test-admin")
+        resp = await client.get("/api/admin/discover-quality/trace/123", headers={"Authorization": "Bearer test-admin"})
 
         assert resp.status_code == 404
         assert resp.json()["detail"] == "Market not found"
@@ -390,7 +390,7 @@ class TestDiscoverQualityTrace:
 
         monkeypatch.setattr(feed, "build_discover_market_trace", _fake_trace)
 
-        resp = await client.get("/api/admin/discover-quality/trace/123?secret=test-admin")
+        resp = await client.get("/api/admin/discover-quality/trace/123", headers={"Authorization": "Bearer test-admin"})
         body = resp.json()
 
         assert resp.status_code == 200
@@ -467,7 +467,7 @@ class TestDiscoverEffectiveSettlementFollowups:
         )
 
         resp = await client.get(
-            "/api/admin/discover-quality/effective-settlement-followups?secret=test-admin&limit=10"
+            "/api/admin/discover-quality/effective-settlement-followups?limit=10", headers={"Authorization": "Bearer test-admin"}
         )
         body = resp.json()
 
@@ -537,7 +537,7 @@ class TestDiscoverInteractions:
         mock_db.execute.side_effect = results
 
         resp = await client.get(
-            "/api/admin/discover-engagement/launch-health-trends?secret=test-admin"
+            "/api/admin/discover-engagement/launch-health-trends", headers={"Authorization": "Bearer test-admin"}
         )
         body = resp.json()
 
@@ -608,7 +608,7 @@ class TestDiscoverInteractions:
             top_items,
         ]
 
-        resp = await client.get("/api/admin/discover-engagement?secret=test-admin&days=7")
+        resp = await client.get("/api/admin/discover-engagement?days=7", headers={"Authorization": "Bearer test-admin"})
         body = resp.json()
 
         assert resp.status_code == 200

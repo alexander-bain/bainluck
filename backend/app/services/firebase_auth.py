@@ -132,10 +132,32 @@ def create_custom_token(uid: str) -> Optional[str]:
         return None
 
 
+DEFAULT_SESSION_TOKEN_TTL_SECONDS = 2592000  # 30 days
+
+
+def _session_token_ttl_seconds() -> int:
+    """TTL for backend-issued session tokens.
+
+    Env-configurable via SESSION_TOKEN_TTL_SECONDS (Queue #252 Item 2b) so the
+    30-day default can be dialed down without a deploy. Full jti + refresh-token
+    rotation (#216) is the durable follow-up; until a refresh flow ships,
+    shortening this logs Safari-ITP/Apple users out on expiry.
+    """
+    raw = os.getenv("SESSION_TOKEN_TTL_SECONDS", "").strip()
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            logger.warning("Invalid SESSION_TOKEN_TTL_SECONDS=%r; using default", raw)
+    return DEFAULT_SESSION_TOKEN_TTL_SECONDS
+
+
 def create_session_token(uid: str, email: Optional[str] = None,
                          name: Optional[str] = None,
                          picture: Optional[str] = None,
-                         ttl_seconds: int = 2592000) -> Optional[str]:
+                         ttl_seconds: Optional[int] = None) -> Optional[str]:
     """
     Create a backend-signed session token for Safari ITP fallback.
 
@@ -145,6 +167,7 @@ def create_session_token(uid: str, email: Optional[str] = None,
     validate alongside normal Firebase ID tokens.
 
     Uses PyJWT with HS256 signed by a hash of the service account key.
+    ``ttl_seconds`` defaults to the env-configurable session TTL.
     """
     import hashlib
     import time
@@ -152,6 +175,9 @@ def create_session_token(uid: str, email: Optional[str] = None,
     signing_key = _get_session_signing_key()
     if not signing_key:
         return None
+
+    if ttl_seconds is None:
+        ttl_seconds = _session_token_ttl_seconds()
 
     try:
         import jwt  # PyJWT

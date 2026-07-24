@@ -8,7 +8,8 @@ import pytest
 
 
 def _mock_request():
-    return SimpleNamespace(headers={})
+    # Admin auth is header-only now (Queue #252 Item 3).
+    return SimpleNamespace(headers={"authorization": "Bearer test-secret"})
 
 from app.routes.admin_matching import (
     _should_exclude_tier1_gap_for_closed_game,

@@ -68,7 +68,7 @@ class TestScheduleAccuracyLinkage:
             self._result(cts_rows),
         ]
 
-        resp = await client.get("/api/admin/schedule/accuracy?secret=s3cret&days=14")
+        resp = await client.get("/api/admin/schedule/accuracy?days=14", headers={"Authorization": "Bearer s3cret"})
         assert resp.status_code == 200
         data = resp.json()
 

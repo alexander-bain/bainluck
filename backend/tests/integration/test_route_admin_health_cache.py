@@ -51,7 +51,7 @@ class TestLinkRateCache:
         compute = AsyncMock()
         monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}")
+        resp = await client.get(f"{self.PATH}", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == cached
@@ -65,7 +65,7 @@ class TestLinkRateCache:
             "app.routes.admin_matching._compute_link_rate", AsyncMock(return_value=payload)
         )
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}")
+        resp = await client.get(f"{self.PATH}", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == payload
@@ -81,7 +81,7 @@ class TestLinkRateCache:
         compute = AsyncMock(return_value=fresh)
         monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+        resp = await client.get(f"{self.PATH}?bust=1", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == fresh
@@ -108,7 +108,7 @@ class TestLinkRateCache:
         monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
 
         # ?bust=1 forces the fresh compute path (the one that would 503).
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+        resp = await client.get(f"{self.PATH}?bust=1", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         body = resp.json()
@@ -140,7 +140,7 @@ class TestLinkRateCache:
 
         monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", slow_compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+        resp = await client.get(f"{self.PATH}?bust=1", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         body = resp.json()
@@ -156,7 +156,7 @@ class TestLinkRateCache:
         compute = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+        resp = await client.get(f"{self.PATH}?bust=1", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         body = resp.json()
@@ -179,7 +179,7 @@ class TestAuditAllCache:
         compute = AsyncMock()
         monkeypatch.setattr("app.routes.admin_data_quality._compute_audit_all_grids", compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}")
+        resp = await client.get(f"{self.PATH}", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == cached
@@ -194,7 +194,7 @@ class TestAuditAllCache:
             AsyncMock(return_value=payload),
         )
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}")
+        resp = await client.get(f"{self.PATH}", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == payload
@@ -209,7 +209,7 @@ class TestAuditAllCache:
         compute = AsyncMock(return_value=fresh)
         monkeypatch.setattr("app.routes.admin_data_quality._compute_audit_all_grids", compute)
 
-        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+        resp = await client.get(f"{self.PATH}?bust=1", headers={"Authorization": f"Bearer {admin_secret}"})
 
         assert resp.status_code == 200
         assert resp.json() == fresh

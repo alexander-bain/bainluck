@@ -36,7 +36,7 @@ async def test_403_without_secret():
 async def test_simple_select(admin_secret):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": "SELECT 1 AS n, 'hello' AS greeting"},
         )
     assert resp.status_code == 200
@@ -59,7 +59,7 @@ async def test_simple_select(admin_secret):
 async def test_mutation_rejected(admin_secret, sql):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": sql},
         )
     assert resp.status_code == 400
@@ -69,7 +69,7 @@ async def test_mutation_rejected(admin_secret, sql):
 async def test_multi_statement_rejected(admin_secret):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": "SELECT 1; DROP TABLE events"},
         )
     assert resp.status_code == 400
@@ -80,7 +80,7 @@ async def test_multi_statement_rejected(admin_secret):
 async def test_row_cap_enforced(admin_secret):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": "SELECT generate_series(1, 5000)", "limit": 10},
         )
     assert resp.status_code == 200
@@ -94,7 +94,7 @@ async def test_row_cap_enforced(admin_secret):
 async def test_with_cte_allowed(admin_secret):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": "WITH x AS (SELECT 1 AS n) SELECT * FROM x"},
         )
     assert resp.status_code == 200
@@ -107,7 +107,7 @@ async def test_with_cte_allowed(admin_secret):
 async def test_limit_capped_at_1000(admin_secret):
     async with _client() as client:
         resp = await client.post(
-            f"/api/admin/db-query?secret={admin_secret}",
+            f"/api/admin/db-query", headers={"Authorization": f"Bearer {admin_secret}"},
             json={"sql": "SELECT generate_series(1, 5000)", "limit": 9999},
         )
     assert resp.status_code == 200

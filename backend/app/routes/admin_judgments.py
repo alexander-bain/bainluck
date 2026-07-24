@@ -350,6 +350,24 @@ def _merged_value(
     return default
 
 
+async def _authorize_admin(secret_value: str | None, request, db) -> bool:
+    """Admin auth for the judgment write endpoints.
+
+    Accepts EITHER the ADMIN_TOKEN via the Authorization: Bearer header OR an
+    admin identity (Firebase Bearer token whose user is allowlisted). Queue #252:
+    the ?secret= query/body path is no longer honored by ``_check_admin_secret``
+    (it header-checks), so a request with only ?secret= is rejected in prod.
+    ``_check_admin_secret`` raises on mismatch, so guard it before falling back
+    to the identity-aware check.
+    """
+    try:
+        if _check_admin_secret(secret_value, request=request):
+            return True
+    except Exception:
+        pass
+    return await _check_admin_auth(secret_value, request, db)
+
+
 def _normalize_reason_tags(value: list[str] | str | None) -> list[str]:
     return canonical_reason_tags(value)
 
@@ -689,9 +707,7 @@ async def create_judgment(
 ):
     body = payload.model_dump(exclude_unset=True) if payload else {}
     secret_value = _merged_value(body, "secret", secret)
-    if not _check_admin_secret(secret_value) and not await _check_admin_auth(
-        secret_value, request, db
-    ):
+    if not await _authorize_admin(secret_value, request, db):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     label_value = _merged_value(body, "label", label)
@@ -1217,14 +1233,15 @@ async def repair_clusters(
 @router.post("/fixable-interest/clusters/{cluster_id}/triage")
 async def triage_fixable_interest_cluster(
     cluster_id: str,
+    request: Request,
     payload: FixableInterestClusterTriage | None = Body(None),
     db: AsyncSession = Depends(get_db_rw),
     secret: str | None = Query(None),
 ):
     body = payload.model_dump(exclude_unset=True) if payload else {}
     secret_value = _merged_value(body, "secret", secret)
-    if not _check_admin_secret(secret_value):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not await _authorize_admin(secret_value, request, db):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     status = str(body.get("status") or "").strip()
     if status not in {"open", "dismissed", "linked", "experiment"}:

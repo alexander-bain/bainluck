@@ -26,7 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import User, UserPreference
+from app.models.models import User
 from app.services.database import get_db_rw
 from app.services.firebase_auth import verify_id_token
 
@@ -63,33 +63,22 @@ async def _resolve_user(
     )
     user = result.scalar_one_or_none()
 
-    # Auto-create User if we have valid claims but no DB record.
-    # This catches the case where registerWithBackend (fire-and-forget)
-    # failed after sign-in, leaving the user with a valid token but no
-    # database record — which causes 401 on all authenticated endpoints.
-    if not user and firebase_uid:
-        email = claims.get("email")
-        name = claims.get("name")
-        picture = claims.get("picture")
-
-        user = User(
-            firebase_uid=firebase_uid,
-            email=email,
-            display_name=name,
-            photo_url=picture,
-        )
-        db.add(user)
-        await db.flush()
-
-        # Create empty preferences
-        prefs = UserPreference(user_id=user.id)
-        db.add(prefs)
-        await db.flush()
-
+    # SECURITY (Queue #252 Item 2): do NOT auto-create a User from a token that
+    # has no matching DB row. The old "safety net" resurrected DELETED accounts —
+    # a user could DELETE /me and their still-valid 30-day session token would
+    # silently re-create the account on the next request, so deletion never
+    # revoked anything. It also minted a User from *any* valid-looking claim.
+    # A token with no user now resolves to None -> 401. Legitimate sign-ins
+    # create the User row synchronously in /google, /apple and
+    # /google-access-token, so no real user depends on this path; if a client's
+    # registration genuinely failed, re-authenticating recreates the row.
+    if user is None:
         logger.info(
-            f"Auto-created User from valid token: uid={firebase_uid}, "
-            f"email={email} (registerWithBackend likely failed)"
+            "Rejecting token with no matching User row "
+            "(deleted account or unregistered): uid=%s",
+            firebase_uid,
         )
+        return None
 
     return user
 

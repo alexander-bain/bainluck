@@ -83,7 +83,7 @@ class TestFuturesCategorize:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/futures/categorize?secret=test-secret"
+                "/api/admin/futures/categorize", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -107,7 +107,7 @@ class TestFuturesRecategorizeOther:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/futures/recategorize-other?secret=test-secret"
+                "/api/admin/futures/recategorize-other", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -130,7 +130,7 @@ class TestFuturesRegenerateTags:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/futures/regenerate-tags?secret=test-secret"
+                "/api/admin/futures/regenerate-tags", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -153,7 +153,7 @@ class TestFuturesForceCategorize:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/futures/force-categorize?secret=test-secret"
+                "/api/admin/futures/force-categorize", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -180,7 +180,7 @@ class TestFuturesCategorizationStatus:
 
         with patch("app.services.llm.is_available", return_value=False):
             resp = await client.get(
-                "/api/admin/futures/categorization-status?secret=test-secret"
+                "/api/admin/futures/categorization-status", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -203,7 +203,7 @@ class TestFuturesUncategorized:
 
         # Mock returns empty list (no uncategorized markets)
         resp = await client.get(
-            "/api/admin/futures/uncategorized?secret=test-secret"
+            "/api/admin/futures/uncategorized", headers={"Authorization": "Bearer test-secret"}
         )
 
         assert resp.status_code == 200
@@ -228,7 +228,7 @@ class TestEventsMetadataStatus:
 
         with patch("app.services.llm.is_available", return_value=True):
             resp = await client.get(
-                "/api/admin/events/metadata-status?secret=test-secret"
+                "/api/admin/events/metadata-status", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -254,7 +254,7 @@ class TestFuturesMetadataStatus:
 
         with patch("app.services.llm.is_available", return_value=False):
             resp = await client.get(
-                "/api/admin/futures/metadata-status?secret=test-secret"
+                "/api/admin/futures/metadata-status", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -281,7 +281,7 @@ class TestTaxonomyDebugRedis:
 
         with patch("redis.from_url", return_value=mock_redis):
             resp = await client.get(
-                "/api/admin/taxonomy/debug-redis?secret=test-secret"
+                "/api/admin/taxonomy/debug-redis", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -304,7 +304,7 @@ class TestTaxonomyBackfill:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/taxonomy/backfill?secret=test-secret"
+                "/api/admin/taxonomy/backfill", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -328,7 +328,7 @@ class TestTaxonomyTaskStatus:
 
         with patch("app.tasks.celery_app", mock_app):
             resp = await client.get(
-                "/api/admin/taxonomy/task/fake-task-id?secret=test-secret"
+                "/api/admin/taxonomy/task/fake-task-id", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -344,7 +344,7 @@ class TestTaxonomyVocabulary:
         monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
 
         resp = await client.get(
-            "/api/admin/taxonomy/vocabulary?secret=test-secret"
+            "/api/admin/taxonomy/vocabulary", headers={"Authorization": "Bearer test-secret"}
         )
 
         assert resp.status_code == 200
@@ -367,7 +367,7 @@ class TestTaxonomyDashboard:
         # The dashboard runs 6 raw SQL queries, all returning empty rows
         # mock_db.execute already returns empty results from conftest
         resp = await client.get(
-            "/api/admin/taxonomy/dashboard?secret=test-secret"
+            "/api/admin/taxonomy/dashboard", headers={"Authorization": "Bearer test-secret"}
         )
 
         assert resp.status_code == 200
@@ -401,7 +401,7 @@ class TestTaxonomyEnrich:
         ) as mock_fn:
             mock_fn.delay.return_value = mock_task
             resp = await client.post(
-                "/api/admin/taxonomy/enrich?secret=test-secret"
+                "/api/admin/taxonomy/enrich", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -418,7 +418,7 @@ class TestTaxonomyEnrichmentStatus:
 
         # Runs raw SQL queries — mock_db returns empty results
         resp = await client.get(
-            "/api/admin/taxonomy/enrichment-status?secret=test-secret"
+            "/api/admin/taxonomy/enrichment-status", headers={"Authorization": "Bearer test-secret"}
         )
 
         assert resp.status_code == 200

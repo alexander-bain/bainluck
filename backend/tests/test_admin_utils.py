@@ -99,12 +99,41 @@ def test_check_admin_secret_empty(monkeypatch):
         admin_utils._check_admin_secret("")
 
 
-def test_check_admin_secret_correct(monkeypatch):
-    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
-    assert admin_utils._check_admin_secret("correct-secret") is True
-
-
 def test_check_admin_secret_wrong(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
     with pytest.raises(HTTPException):
         admin_utils._check_admin_secret("wrong-secret")
+
+
+def test_check_admin_secret_accepts_bearer_header(monkeypatch):
+    """Queue #252 Item 3/4: the Bearer header is the accepted transport."""
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert (
+        admin_utils._check_admin_secret(None, request=_request("correct-secret"))
+        is True
+    )
+
+
+def test_check_admin_secret_rejects_query_param(monkeypatch):
+    """Queue #252 Item 3: a correct secret supplied via ?secret= is REJECTED —
+    only the Authorization: Bearer header is honored."""
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    # Correct value, but query-param form only (no Bearer header) -> rejected.
+    with pytest.raises(HTTPException):
+        admin_utils._check_admin_secret("correct-secret")
+    # Even with a request that carries no matching Authorization header.
+    empty_req = SimpleNamespace(headers={})
+    with pytest.raises(HTTPException):
+        admin_utils._check_admin_secret("correct-secret", request=empty_req)
+
+
+@pytest.mark.asyncio
+async def test_check_admin_auth_accepts_admin_token_bearer(monkeypatch):
+    """Queue #252 Item 4: identity-aware auth accepts the ADMIN_TOKEN in the
+    preferred Authorization: Bearer form even with no ?secret= present."""
+    monkeypatch.setenv("ADMIN_TOKEN", "correct-secret")
+    assert await admin_utils._check_admin_auth(
+        None,
+        _request("correct-secret"),
+        _DB(None),
+    )

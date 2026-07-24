@@ -66,7 +66,7 @@ class TestCeleryHealth:
             "app.tasks.redis_state.get_redis_client", return_value=mock_redis
         ):
             resp = await client.get(
-                "/api/admin/celery/health?secret=test-secret"
+                "/api/admin/celery/health", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -84,7 +84,7 @@ class TestCeleryHealth:
             "app.tasks.redis_state.get_redis_client", return_value=mock_redis
         ):
             resp = await client.get(
-                "/api/admin/celery/health?secret=test-secret"
+                "/api/admin/celery/health", headers={"Authorization": "Bearer test-secret"}
             )
 
         body = resp.json()
@@ -99,7 +99,7 @@ class TestCeleryHealth:
             side_effect=Exception("connection refused"),
         ):
             resp = await client.get(
-                "/api/admin/celery/health?secret=test-secret"
+                "/api/admin/celery/health", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -130,7 +130,7 @@ class TestCeleryDashboard:
             ),
         ):
             resp = await client.get(
-                "/api/admin/celery/dashboard?secret=test-secret"
+                "/api/admin/celery/dashboard", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -166,7 +166,7 @@ class TestCeleryDashboard:
             ),
         ):
             resp = await client.get(
-                "/api/admin/celery/dashboard?secret=test-secret"
+                "/api/admin/celery/dashboard", headers={"Authorization": "Bearer test-secret"}
             )
 
         body = resp.json()
@@ -184,7 +184,7 @@ class TestCeleryTaskMetrics:
             "app.tasks.redis_state.get_task_metrics", return_value={}
         ):
             resp = await client.get(
-                "/api/admin/celery/task-metrics/poll_odds?secret=test-secret"
+                "/api/admin/celery/task-metrics/poll_odds", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -206,7 +206,7 @@ class TestCeleryInspect:
 
         with patch("app.tasks.celery_app", mock_app):
             resp = await client.get(
-                "/api/admin/celery/inspect?secret=test-secret"
+                "/api/admin/celery/inspect", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -225,7 +225,7 @@ class TestCeleryPurgeBackground:
 
         with patch("app.tasks.celery_app", mock_app):
             resp = await client.post(
-                "/api/admin/celery-purge-background?secret=test-secret"
+                "/api/admin/celery-purge-background", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -264,7 +264,7 @@ class TestCeleryDebug:
             patch("redis.from_url", return_value=mock_redis_instance),
         ):
             resp = await client.get(
-                "/api/admin/celery-debug?secret=test-secret"
+                "/api/admin/celery-debug", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200
@@ -295,7 +295,7 @@ class TestCeleryDebug:
             patch("redis.from_url", return_value=mock_redis_instance),
         ):
             resp = await client.get(
-                "/api/admin/celery-debug?secret=test-secret"
+                "/api/admin/celery-debug", headers={"Authorization": "Bearer test-secret"}
             )
 
         assert resp.status_code == 200

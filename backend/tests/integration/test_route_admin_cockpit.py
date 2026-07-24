@@ -550,7 +550,7 @@ class TestCockpitEndpoint:
     async def test_returns_three_groups(self, client, monkeypatch, _fake_redis):
         monkeypatch.setenv("ADMIN_TOKEN", "right-token")
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        resp = await client.get("/api/admin/cockpit?secret=right-token&bust=1")
+        resp = await client.get("/api/admin/cockpit?bust=1", headers={"Authorization": "Bearer right-token"})
         assert resp.status_code == 200
         data = resp.json()
 
@@ -614,7 +614,7 @@ class TestCockpitEndpoint:
         r.llen.return_value = 0
         r.set.return_value = True
         with patch("app.tasks.redis_state.get_redis_client", return_value=r):
-            resp = await client.get("/api/admin/cockpit?secret=right-token&bust=1")
+            resp = await client.get("/api/admin/cockpit?bust=1", headers={"Authorization": "Bearer right-token"})
         assert resp.status_code == 200
         tiles = {t["key"]: t for t in resp.json()["health"]}
 
