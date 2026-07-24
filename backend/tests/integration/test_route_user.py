@@ -690,9 +690,11 @@ async def test_query_team_futures_collapses_identity_duplicates():
         llm_sport_category="hockey", source="kalshi",
         resolution_date=None, canonical_market_key="nhl:champion:2026",
     )
-    # query1 now returns (outcome, market, sport_key); per-market count + field
-    # prob sum are a separate scoped lookup (#1197 perf fix).
-    q1_rows = [(outcome, market, "icehockey_nhl")]
+    # query1 is split into a team_id-FK branch + a name-ILIKE branch (#1197 perf);
+    # each returns (outcome, market, sport_key). The dup-linked outcome matches the
+    # FK branch; the name branch is empty here.
+    q1a_rows = [(outcome, market, "icehockey_nhl")]  # team_id FK branch
+    q1b_rows = []                                     # name-ILIKE branch (empty)
     # scoped market-stats: (market_id, outcome_total, field_prob_sum) — coherent ~1.0.
     stats_rows = [(10, 32, 1.0)]
 
@@ -700,8 +702,9 @@ async def test_query_team_futures_collapses_identity_duplicates():
     db.execute = AsyncMock(side_effect=[
         _result_all(teams_rows),   # 1: load teams
         _result_all(tim_rows),     # 2: identity-mapping counts
-        _result_all(q1_rows),      # 3: query1 (no query2 — no roster players)
-        _result_all(stats_rows),   # 4: scoped per-market count + field_prob_sum
+        _result_all(q1a_rows),     # 3: query1 team_id FK branch
+        _result_all(q1b_rows),     # 4: query1 name-ILIKE branch
+        _result_all(stats_rows),   # 5: scoped per-market count + field_prob_sum
     ])
 
     data = await _query_team_futures([574, 12682, 100, 101], db, limit=20)

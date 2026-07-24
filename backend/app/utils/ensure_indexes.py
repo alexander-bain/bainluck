@@ -30,6 +30,9 @@ PERF_INDEXES = [
     ("ix_events_home_team_name", "events (home_team_name)"),
     ("ix_events_away_team_name", "events (away_team_name)"),
     ("ix_futures_outcomes_external_id", "futures_outcomes (external_id)"),
+    # #1197: the team-page futures query's FK branch (FuturesOutcome.team_id IN ...)
+    # was unindexed → seq-scanned the 1.2M-row table.
+    ("ix_futures_outcomes_team_id", "futures_outcomes (team_id)"),
 ]
 
 

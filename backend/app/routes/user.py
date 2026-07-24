@@ -1500,31 +1500,34 @@ async def _query_team_futures(
         ~FuturesMarket.name.ilike("% vs. %"),
     ]
 
-    # ── Query 1: Team matching (team_id + team name ILIKE) ──
-    # Fast — only team names in OR conditions, no roster players.
-    team_conditions = [FuturesOutcome.team_id.in_(team_ids)]
-    for pattern in team_patterns:
-        team_conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
-
-    query1 = (
-        select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-        .where(and_(*market_base_filters, or_(*team_conditions)))
-        # Item 2: order by current probability so a team's HEADLINE markets
-        # (championship/conference/division/awards) enter the window before noise.
-        # Movement is only a TIEBREAKER — a stable low-movement season championship
-        # (~-0.00002/day) previously sorted to the bottom and got truncated by the
-        # limit*5 cap, so a followed team showed 1 of several real markets.
-        .order_by(
-            FuturesOutcome.current_probability.desc().nulls_last(),
-            func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
-        )
-        .limit(limit * 5)
+    # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
+    # #1197 (r259): a single `or_(team_id IN (...), name ILIKE '%team%')` defeated
+    # index usage and seq-scanned the 1.2M-row futures_outcomes table (~3s for ~7
+    # rows). Split the OR into two SEPARATELY-INDEXED queries — the FK branch uses
+    # ix_futures_outcomes_team_id, the name branch the GIN trigram on name — and
+    # merge/dedup. Same rows, but each branch hits its index.
+    _order_by = (
+        FuturesOutcome.current_probability.desc().nulls_last(),
+        func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
     )
+
+    def _q1(cond):
+        return (
+            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+            .where(and_(*market_base_filters, cond))
+            .order_by(*_order_by)
+            .limit(limit * 5)
+        )
+
     _tq = time.perf_counter()
-    result1 = await db.execute(query1)
-    rows1 = result1.all()
+    rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
+    if team_patterns:
+        name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
+        name_rows = (await db.execute(_q1(name_cond))).all()
+        _seen_oids = {o.id for o, _m, _sk in rows1}
+        rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
     if timings is not None:
         timings["q1"] = round((time.perf_counter() - _tq) * 1000)
 
