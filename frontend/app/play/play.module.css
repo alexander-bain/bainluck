@@ -1,0 +1,133 @@
+/* L2-176 — THE PLAY PAGE. Bespoke game animations only; layout uses the
+   design-system Tailwind tokens (light-mode). Kept simple & juicy. */
+
+/* --- Full-screen swipe card --- */
+.card {
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+}
+
+.cardEnter {
+  animation: cardPop 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes cardPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* --- Swipe-away exits --- */
+.flyRight {
+  animation: flyRight 300ms ease-in forwards;
+}
+.flyLeft {
+  animation: flyLeft 300ms ease-in forwards;
+}
+@keyframes flyRight {
+  to {
+    opacity: 0;
+    transform: translateX(120%) rotate(18deg);
+  }
+}
+@keyframes flyLeft {
+  to {
+    opacity: 0;
+    transform: translateX(-120%) rotate(-18deg);
+  }
+}
+
+/* --- Big juicy vote buttons --- */
+.voteBtn {
+  min-width: 84px;
+  min-height: 84px;
+  font-size: 40px;
+  line-height: 1;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.voteBtn:active {
+  transform: scale(0.86);
+}
+
+/* --- Confetti / emoji rain --- */
+.burstLayer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 60;
+}
+.confetti {
+  position: absolute;
+  top: 40%;
+  font-size: 28px;
+  animation: confettiUp 900ms ease-out forwards;
+}
+@keyframes confettiUp {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(0.6) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-220px) scale(1.2) rotate(240deg);
+  }
+}
+.rainDrop {
+  position: absolute;
+  top: -60px;
+  font-size: 34px;
+  animation: rainFall 1400ms linear forwards;
+}
+@keyframes rainFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-60px) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.9;
+    transform: translateY(105vh) rotate(200deg);
+  }
+}
+
+/* --- Streak pulse --- */
+.streakPulse {
+  animation: streakPulse 500ms ease;
+}
+@keyframes streakPulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Respect reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .cardEnter,
+  .flyRight,
+  .flyLeft,
+  .confetti,
+  .rainDrop,
+  .streakPulse {
+    animation: none !important;
+  }
+}
