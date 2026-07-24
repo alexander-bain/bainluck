@@ -40,6 +40,13 @@ router = APIRouter()
 # limit) means a stuck query fails fast with a QueryCanceledError, which the
 # route catches to serve the last cached snapshot instead of erroring.
 _LINK_RATE_STMT_TIMEOUT_S = 20
+# Wall-clock bound on the WHOLE inline compute (below the 30s router limit). The
+# per-query statement_timeout above is necessary but NOT sufficient: the compute
+# is several queries plus Python aggregation, so no single statement need hit 20s
+# while the total still sails past 30s → H12/503 before Python can catch anything.
+# asyncio.wait_for cancels the compute at this bound so the serve-stale-cache
+# fallback actually fires and the endpoint returns 200 (marked stale) instead.
+_LINK_RATE_WALLCLOCK_S = 25
 # Redis cache key shared with the precompute_admin_link_rate beat + the route's
 # cold-cache fallback. Keep in sync with app/tasks/precompute_admin_health.py.
 _LINK_RATE_CACHE_KEY = "bainluck:admin:link_rate"
@@ -1113,6 +1120,7 @@ async def prediction_market_link_rate(
     """
     _check_admin_secret(secret, request=request)
 
+    import asyncio
     import json as _json
 
     if not bust:
@@ -1125,15 +1133,23 @@ async def prediction_market_link_rate(
             logger.warning("link-rate: cache read failed, computing inline", exc_info=True)
 
     try:
-        payload = await _compute_link_rate(db)
+        # Wall-clock bound below the 30s router limit — the primary 503 defense.
+        # If the compute overruns, wait_for cancels it and raises TimeoutError,
+        # which the handler below turns into a served-stale-cache 200.
+        payload = await asyncio.wait_for(
+            _compute_link_rate(db), timeout=_LINK_RATE_WALLCLOCK_S
+        )
     except Exception as exc:
         # Serve-cache-on-timeout: the fresh compute (usually ?bust=1, which
-        # bypasses the warm cache) can hit the statement_timeout or otherwise
-        # exceed the 30s router limit. Fall back to the last cached snapshot so
-        # the endpoint never 503s. Log the timeout distinctly (do NOT swallow it
-        # silently — a repeated timeout is itself a signal worth seeing).
-        is_timeout = "canceling statement" in str(exc).lower() or (
-            type(exc).__name__ in ("QueryCanceledError", "OperationalError")
+        # bypasses the warm cache) can hit the wall-clock bound, the per-query
+        # statement_timeout, or otherwise exceed the 30s router limit. Fall back
+        # to the last cached snapshot so the endpoint never 503s. Log the timeout
+        # distinctly (do NOT swallow it silently — a repeated timeout is itself a
+        # signal worth seeing).
+        is_timeout = (
+            isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+            or "canceling statement" in str(exc).lower()
+            or type(exc).__name__ in ("QueryCanceledError", "OperationalError")
         )
         logger.warning(
             "link-rate: fresh compute failed (%s: %s); serving cached snapshot",

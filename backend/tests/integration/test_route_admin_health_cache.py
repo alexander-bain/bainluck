@@ -118,6 +118,36 @@ class TestLinkRateCache:
         assert body["stale"] is True
         assert body["stale_reason"] == "compute_timeout"
 
+    async def test_slow_compute_hits_wallclock_and_serves_stale_cache(
+        self, client, admin_secret, monkeypatch
+    ):
+        """Queue #250 Item 3c (prod fix): the real failure mode is a compute that
+        does NOT raise but overruns the 30s router limit (multi-query + Python
+        aggregation, so no single statement_timeout fires). The wall-clock
+        asyncio.wait_for bound must cancel it and serve the stale cache — a 200,
+        never an H12/503."""
+        import asyncio
+
+        cached = {"generated_at": "2026-07-12T00:00:00+00:00", "overall": {"link_rate_pct": 88.0}}
+        fake = _FakeRedis({"bainluck:admin:link_rate": json.dumps(cached)})
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: fake)
+        # Tiny wall-clock bound so the test is fast; the compute sleeps past it.
+        monkeypatch.setattr("app.routes.admin_matching._LINK_RATE_WALLCLOCK_S", 0.05)
+
+        async def slow_compute(*a, **k):
+            await asyncio.sleep(5)  # never returns before the wall-clock bound
+            return {"overall": {"link_rate_pct": 0}}
+
+        monkeypatch.setattr("app.routes.admin_matching._compute_link_rate", slow_compute)
+
+        resp = await client.get(f"{self.PATH}?secret={admin_secret}&bust=1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["overall"]["link_rate_pct"] == 88.0
+        assert body["stale"] is True
+        assert body["stale_reason"] == "compute_timeout"
+
     async def test_compute_error_no_cache_degrades_gracefully(self, client, admin_secret, monkeypatch):
         """No cached snapshot to fall back to → clearly-marked empty payload,
         still a 200 (never a 503)."""
