@@ -246,6 +246,20 @@ export default function AdminCockpit() {
     { refreshInterval: 300000 }
   );
 
+  // L2-173: team-identity clusters awaiting human adjudication (the 189 #247
+  // skipped). Its own lightweight fetch so the tile is panel-adjacent without
+  // coupling to the cockpit payload; fails silent (0) if the endpoint is absent.
+  const { data: clustersData } = useSWR<{ awaiting: number }>(
+    secret ? ["team-clusters-awaiting", secret] : null,
+    () =>
+      adminFetchJSON<{ awaiting: number }>(
+        "/api/admin/team-clusters/pending?summary=true",
+        secret
+      ).catch(() => ({ awaiting: 0 })),
+    { refreshInterval: 300000 }
+  );
+  const clustersAwaiting = clustersData?.awaiting ?? 0;
+
   const [busyId, setBusyId] = useState<number | null>(null);
   // Kill switch (Item 1). `toggleUnavailable` is set when the toggle endpoint
   // 404s (#232 not deployed yet) so the button hides instead of crashing.
@@ -578,6 +592,16 @@ export default function AdminCockpit() {
             <Link href="/admin/label-pass" className="text-accent-brand hover:underline font-medium">
               Review {evalQ.pending_eval_count} pending →
             </Link>
+            {/* L2-173: the #247 team-identity clusters that need a human call. */}
+            {clustersAwaiting > 0 && (
+              <Link
+                href="/admin/team-clusters"
+                className="text-accent-brand hover:underline font-medium"
+                title="Ambiguous team-identity clusters #247's merge skipped"
+              >
+                Team clusters: {clustersAwaiting} awaiting →
+              </Link>
+            )}
             {evalQ.applied_boosts_count != null && (
               <span
                 className={

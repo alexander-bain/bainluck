@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_cockpit, admin_file_issue, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
+from app.routes import events, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -171,6 +171,7 @@ app.include_router(admin_llm_diagnosis.router, prefix="/api", tags=["Admin LLM"]
 app.include_router(admin_source_health.router, prefix="/api", tags=["Admin Source Health"])
 app.include_router(admin_feed_config.router, prefix="/api/admin", tags=["Admin Feed Config"])
 app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin Label Pass"])
+app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"])
 app.include_router(admin_cockpit.router, prefix="/api", tags=["Admin Cockpit"])
 app.include_router(admin_file_issue.router, prefix="/api", tags=["Admin File Issue"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
