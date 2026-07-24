@@ -1,0 +1,25 @@
+{
+  "discover_interactions": [
+    {"session_id":"kid:alex","source":"play","action":"like","item_type":"futures","item_id":"1","category":"music","item_name":"Album winner","score":20,"created_at":"2026-07-01T00:00:00Z"},
+    {"session_id":"kid:alex","source":"play","action":"like","item_type":"event","item_id":"2","category":"baseball","item_name":"Dodgers game","score":35,"created_at":"2026-07-01T00:01:00Z"},
+    {"session_id":"kid:alex","source":"play","action":"unlike","item_type":"futures","item_id":"3","category":"weather","item_name":"Rain tomorrow","score":90,"created_at":"2026-07-01T00:02:00Z"},
+    {"session_id":"kid:bea","source":"play","action":"like","item_type":"futures","item_id":"1","category":"music","item_name":"Album winner","score":20,"created_at":"2026-07-01T00:00:00Z"},
+    {"session_id":"kid:bea","source":"play","action":"unlike","item_type":"event","item_id":"2","category":"baseball","item_name":"Dodgers game","score":35,"created_at":"2026-07-01T00:01:00Z"},
+    {"session_id":"kid:bea","source":"play","action":"unlike","item_type":"futures","item_id":"3","category":"weather","item_name":"Rain tomorrow","score":90,"created_at":"2026-07-01T00:02:00Z"},
+    {"session_id":"adult:ignored","source":"play","action":"like","item_type":"futures","item_id":"4","category":"music","item_name":"Ignored","score":100},
+    {"session_id":"kid:alex","source":"web","action":"like","item_type":"futures","item_id":"5","category":"music","item_name":"Wrong surface","score":100}
+  ],
+  "user_predictions": [
+    {"session_id":"kid:alex","market_id":10,"correct":true,"created_at":"2026-07-01T00:00:00Z","subject_type":"futures"},
+    {"session_id":"kid:alex","market_id":11,"correct":true,"created_at":"2026-07-01T00:01:00Z","subject_type":"futures"},
+    {"session_id":"kid:alex","market_id":12,"correct":false,"created_at":"2026-07-01T00:02:00Z","market_exists":false},
+    {"session_id":"kid:alex","market_id":13,"correct":true,"created_at":"2026-07-01T00:03:00Z"},
+    {"session_id":"kid:alex","market_id":14,"correct":true,"created_at":"2026-07-01T00:04:00Z"},
+    {"session_id":"kid:bea","market_id":20,"correct":false,"created_at":"2026-07-01T00:00:00Z"}
+  ],
+  "interestingness": [
+    {"item_id":"1","interestingness_score":10},
+    {"item_id":"2","interestingness_score":40},
+    {"item_id":"3","interestingness_score":95}
+  ]
+}
