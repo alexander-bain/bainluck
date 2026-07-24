@@ -5,6 +5,7 @@ All endpoints require authentication unless noted otherwise.
 """
 
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -1336,6 +1337,7 @@ async def _query_team_futures(
     team_ids: list[int],
     db: AsyncSession,
     limit: int = 20,
+    timings: dict | None = None,
 ) -> dict:
     """Shared logic for querying futures outcomes matched to a set of teams.
 
@@ -1520,8 +1522,11 @@ async def _query_team_futures(
         )
         .limit(limit * 5)
     )
+    _tq = time.perf_counter()
     result1 = await db.execute(query1)
     rows1 = result1.all()
+    if timings is not None:
+        timings["q1"] = round((time.perf_counter() - _tq) * 1000)
 
     # ── Query 2: Award markets — fetch all outcomes, match players in Python ──
     # Only runs if we have roster players to match against.
@@ -1543,13 +1548,17 @@ async def _query_team_futures(
             .order_by(FuturesOutcome.current_probability.desc().nulls_last())
             .limit(500)  # Award markets are few — fetch all outcomes
         )
+        _tq = time.perf_counter()
         result2 = await db.execute(query2)
         rows2 = result2.all()
+        if timings is not None:
+            timings["q2"] = round((time.perf_counter() - _tq) * 1000)
 
     # #1197: scoped per-market count + field-prob-sum for ONLY the result markets
     # (replaces the old unfiltered full-table outcome_count_sq — the ~6s culprit).
     _mkt_ids = {m.id for _o, m, _sk in rows1} | {m.id for _o, m, _sk in rows2}
     _market_stats: dict[int, tuple[int, float | None]] = {}
+    _tq = time.perf_counter()
     if _mkt_ids:
         for _mid, _tot, _fsum in (await db.execute(
             select(
@@ -1561,6 +1570,10 @@ async def _query_team_futures(
             .group_by(FuturesOutcome.market_id)
         )).all():
             _market_stats[_mid] = (_tot, _fsum)
+    if timings is not None:
+        timings["stats"] = round((time.perf_counter() - _tq) * 1000)
+        timings["rows1"] = len(rows1)
+        timings["rows2"] = len(rows2)
 
     # For each outcome, figure out which followed team matched.
     # Uses strict suffix-word matching + roster player matching.

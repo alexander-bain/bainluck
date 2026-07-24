@@ -117,13 +117,18 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     # --- Team futures (championship, conference, division, awards) ---
     futures_items: list = []
+    _ftime: dict = {}
     try:
         from app.routes.user import _query_team_futures
-        futures_data = await _query_team_futures([team.id], db, limit=30)
+        futures_data = await _query_team_futures(
+            [team.id], db, limit=30, timings=_ftime if debug_timing else None
+        )
         futures_items = futures_data.get("items", [])
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
     _mark("futures")
+    if debug_timing:
+        _t["futures_detail"] = _ftime
 
     # --- Season context (every team-page number declares its season) ---
     season_ctx = None
