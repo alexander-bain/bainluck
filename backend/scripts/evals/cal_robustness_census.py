@@ -124,7 +124,11 @@ async def _run(conn) -> None:
     # --- Games: per-event density, joined to league/status ----------------
     # One heavy GROUP BY read into Python. Effective points = sum(reading_count)
     # (true poll count post-collapse); span = last coverage instant - first.
-    game_ev = _rows(await conn.execute(text("""
+    # START is inlined as a SQL literal (not a bind param): asyncpg types a
+    # str bind as VARCHAR, and `timestamptz >= varchar` has no operator
+    # (crashed the first three runs). A literal gets the implicit date cast, and
+    # `:start::timestamptz` would trip the asyncpg text()-drops-bind gotcha.
+    game_ev = _rows(await conn.execute(text(f"""
         SELECT d.event_id, d.rows, d.eff, d.n_sources,
                e.llm_league AS league, e.status,
                e.commence_time::date AS game_date,
@@ -137,12 +141,12 @@ async def _run(conn) -> None:
                    min(s.captured_at)                          AS first_at,
                    max(coalesce(s.valid_until, s.captured_at)) AS last_at
             FROM win_prob_snapshots s
-            WHERE s.captured_at >= :start
+            WHERE s.captured_at >= '{START}'
             GROUP BY s.event_id
         ) d
         JOIN events e ON e.id = d.event_id
-        WHERE e.commence_time >= :start
-    """).bindparams(start=START)))
+        WHERE e.commence_time >= '{START}'
+    """)))
     await _write_marker("progress", {"stage": "game_ev_loaded", "n": len(game_ev)})
 
     settled = [g for g in game_ev if g["status"] in ("completed", "closed")]
@@ -212,7 +216,7 @@ async def _run(conn) -> None:
     await _write_marker("progress", {"stage": "dedup"})
 
     # --- Futures: per-outcome density, joined to source/league ------------
-    fut_ev = _rows(await conn.execute(text("""
+    fut_ev = _rows(await conn.execute(text(f"""
         SELECT d.outcome_id, d.rows, d.eff, d.n_books,
                m.source,
                coalesce(m.llm_league, m.llm_sport_category, m.category, '(none)') AS league,
@@ -226,12 +230,12 @@ async def _run(conn) -> None:
                    min(s.captured_at)                          AS first_at,
                    max(coalesce(s.valid_until, s.captured_at)) AS last_at
             FROM futures_odds_snapshots s
-            WHERE s.captured_at >= :start
+            WHERE s.captured_at >= '{START}'
             GROUP BY s.outcome_id
         ) d
         JOIN futures_outcomes o ON o.id = d.outcome_id
         JOIN futures_markets m  ON m.id = o.market_id
-    """).bindparams(start=START)))
+    """)))
     await _write_marker("progress", {"stage": "fut_ev_loaded", "n": len(fut_ev)})
 
     # By-source rollup.
