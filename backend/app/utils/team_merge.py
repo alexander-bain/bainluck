@@ -236,16 +236,36 @@ def _plan_cluster(members: list) -> dict:
     return {"status": "planned", "canonical": canonical, "folds": folds, "reason": ""}
 
 
-# FK re-point statements (source stub id → canonical target id). user_favorites is
-# guarded against the (user_id, team_id) unique collision.
+# FK re-point statements (source stub id → canonical target id). EVERY FK that
+# references teams.id MUST re-point here before the stub row is deleted, or the
+# delete either orphans rows or (for ondelete=SET NULL/CASCADE columns) silently
+# detaches/removes them. The schema-derived guard test
+# tests/test_team_merge.py::TestFkCoverage enforces this: add a new teams FK to
+# the ORM and the test fails until it is covered here.
 _FK_STATEMENTS = [
     "UPDATE events SET home_team_id = :tgt WHERE home_team_id = :src",
     "UPDATE events SET away_team_id = :tgt WHERE away_team_id = :src",
     "UPDATE futures_outcomes SET team_id = :tgt WHERE team_id = :src",
     "UPDATE tournament_odds SET team_id = :tgt WHERE team_id = :src",
+    # entities.source_team_id is the identity-registry bridge (A1). It is
+    # ondelete=SET NULL, so deleting the stub team WITHOUT re-pointing first
+    # silently NULLs the bridge and detaches the folded team from its registry
+    # entity (Codex C1). Collision semantics: if the canonical team is ALREADY
+    # bridged to an entity, do NOT create a second bridge — leave the stub's
+    # now-redundant entity to SET-NULL on delete (canonical's bridge wins,
+    # exactly one entity per team). Only re-point when canonical has no bridge.
+    ("UPDATE entities SET source_team_id = :tgt WHERE source_team_id = :src "
+     "AND NOT EXISTS (SELECT 1 FROM entities e2 WHERE e2.source_team_id = :tgt)"),
+    # user_favorites is UNIQUE(user_id, team_id, relation_type). The collision
+    # guard MUST include relation_type — otherwise a user who favorited BOTH the
+    # stub and the canonical under DIFFERENT relation types (e.g. 'favorite' on
+    # the stub, 'following' on the canonical) has the stub row skipped by the
+    # NOT EXISTS and then DELETEd → silent loss of a distinct preference (Codex
+    # C1). Matching relation_type re-points each relation independently.
     ("UPDATE user_favorites uf SET team_id = :tgt WHERE team_id = :src "
      "AND NOT EXISTS (SELECT 1 FROM user_favorites u2 "
-     "WHERE u2.user_id = uf.user_id AND u2.team_id = :tgt)"),
+     "WHERE u2.user_id = uf.user_id AND u2.team_id = :tgt "
+     "AND u2.relation_type = uf.relation_type)"),
     "DELETE FROM user_favorites WHERE team_id = :src",
     "UPDATE team_identity_mapping SET team_id = :tgt WHERE team_id = :src",
 ]

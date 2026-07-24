@@ -100,3 +100,58 @@ class TestPlanCluster:
         busy = _member(2, "Chicago", recent=0, total=30, mappings=0)  # too many events
         plan = tm._plan_cluster([canon, busy])
         assert plan["status"] == "skip_no_stub"
+
+
+class TestFkCoverage:
+    """Schema-derived guard (Codex C1 / Queue #249 Item 5): EVERY ORM foreign
+    key that references teams.id must have a re-point in _FK_STATEMENTS BEFORE the
+    stub team row is deleted. Otherwise the delete orphans rows (ondelete=None
+    FKs) or silently detaches/removes them (ondelete=SET NULL / CASCADE). This is
+    the exact class that let entities.source_team_id (SET NULL) detach the
+    identity-registry bridge on merge. Add a new teams FK to the models and this
+    test fails until it is covered here."""
+
+    def _teams_fk_columns(self):
+        from app.models.models import Base
+        cols = []
+        for tname, table in Base.metadata.tables.items():
+            if tname == "teams":
+                continue
+            for col in table.columns:
+                for fk in col.foreign_keys:
+                    if fk.column.table.name == "teams" and fk.column.name == "id":
+                        cols.append((tname, col.name))
+        return cols
+
+    def test_every_teams_fk_is_repointed(self):
+        missing = []
+        for table, col in self._teams_fk_columns():
+            pat = re.compile(
+                rf"UPDATE\s+{re.escape(table)}\b[\s\S]*?\b{re.escape(col)}\s*=\s*:tgt",
+                re.I,
+            )
+            if not any(pat.search(s) for s in tm._FK_STATEMENTS):
+                missing.append(f"{table}.{col}")
+        assert not missing, (
+            f"teams FK(s) referenced but never re-pointed in _FK_STATEMENTS "
+            f"(merge would orphan/detach them): {missing}"
+        )
+
+    def test_entities_bridge_is_repointed(self):
+        # entities.source_team_id is ondelete=SET NULL: without a re-point the
+        # bridge is silently NULLed on stub delete.
+        assert any(
+            "entities" in s and re.search(r"source_team_id\s*=\s*:tgt", s)
+            for s in tm._FK_STATEMENTS
+        ), "entities.source_team_id must be re-pointed before stub delete"
+
+    def test_user_favorites_collision_matches_relation_type(self):
+        # UNIQUE(user_id, team_id, relation_type): the collision guard must
+        # compare relation_type or a distinct-relation favorite is dropped.
+        upd = next(
+            s for s in tm._FK_STATEMENTS
+            if re.match(r"UPDATE\s+user_favorites\b", s) and ":tgt" in s
+        )
+        assert "relation_type" in upd, (
+            "user_favorites collision predicate must include relation_type"
+        )
