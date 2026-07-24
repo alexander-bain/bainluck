@@ -11,6 +11,8 @@
 		A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E392F525C6D000542D3 /* GoogleSignIn */; };
 		A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */; };
 		A7C839010001000000000001 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7C839020001000000000001 /* FirebaseCrashlytics */; };
+		A7C0000000000000000000FD /* BainLuckWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000F2 /* BainLuckWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A7C0000000000000000000DD /* BainLuckComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000D2 /* BainLuckComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -20,6 +22,27 @@
 			proxyType = 1;
 			remoteGlobalIDString = A70F40102FA6C20000170BF2;
 			remoteInfo = "BainLuckWatch Watch App";
+		};
+		A7C0000000000000000000EB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A7869E222F525C69000542D3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7869E292F525C6A000542D3;
+			remoteInfo = "Bain Luck";
+		};
+		A7C0000000000000000000FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A7869E222F525C69000542D3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7C0000000000000000000F1;
+			remoteInfo = BainLuckWidget;
+		};
+		A7C0000000000000000000DB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A7869E222F525C69000542D3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7C0000000000000000000D1;
+			remoteInfo = BainLuckComplication;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -35,12 +58,37 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7C0000000000000000000FC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A7C0000000000000000000FD /* BainLuckWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000DC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A7C0000000000000000000DD /* BainLuckComplication.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A70F400C2FA6C20000170BF2 /* BainLuckWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BainLuckWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BainLuckWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7869E2A2F525C6A000542D3 /* Bain Luck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bain Luck.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7C0000000000000000000E2 /* BainLuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7C0000000000000000000F2 /* BainLuckWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BainLuckWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7C0000000000000000000D2 /* BainLuckComplication.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BainLuckComplication.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -61,6 +109,38 @@
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
+		A7C0000000000000000000EC /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				WatchFeedModels.swift,
+				WatchGuessPool.swift,
+			);
+			target = A7C0000000000000000000E1 /* BainLuckTests */;
+		};
+		A7C0000000000000000000FE /* Exceptions for "BainLuckWidget" folder in "BainLuckWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A7C0000000000000000000F1 /* BainLuckWidget */;
+		};
+		A7C0000000000000000000DE /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckComplication" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				BainLuckComplication.swift,
+				WatchAPIClient.swift,
+				WatchAuthStore.swift,
+				WatchFeedModels.swift,
+			);
+			target = A7C0000000000000000000D1 /* BainLuckComplication */;
+		};
+		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/PredictionModels.swift,
+			);
+			target = A7C0000000000000000000D1 /* BainLuckComplication */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -68,14 +148,30 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A7FF02752FA9AC0B00C82C55 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWatch Watch App" target */,
+				A7C0000000000000000000EC /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckTests" target */,
+				A7C0000000000000000000DE /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckComplication" target */,
 			);
 			path = "BainLuckWatch Watch App";
+			sourceTree = "<group>";
+		};
+		A7C0000000000000000000E3 /* BainLuckTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BainLuckTests;
+			sourceTree = "<group>";
+		};
+		A7C0000000000000000000F3 /* BainLuckWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A7C0000000000000000000FE /* Exceptions for "BainLuckWidget" folder in "BainLuckWidget" target */,
+			);
+			path = BainLuckWidget;
 			sourceTree = "<group>";
 		};
 		A7869E2C2F525C6A000542D3 /* Bain Luck */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A707F8062FA91A3700A4D63C /* Exceptions for "Bain Luck" folder in "BainLuckWatch Watch App" target */,
+				A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */,
 			);
 			path = "Bain Luck";
 			sourceTree = "<group>";
@@ -100,6 +196,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7C0000000000000000000E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000F5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000D5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -108,6 +225,8 @@
 			children = (
 				A7869E2C2F525C6A000542D3 /* Bain Luck */,
 				A70F40152FA6C20000170BF2 /* BainLuckWatch Watch App */,
+				A7C0000000000000000000F3 /* BainLuckWidget */,
+				A7C0000000000000000000E3 /* BainLuckTests */,
 				A7869E2B2F525C6A000542D3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -118,6 +237,9 @@
 				A7869E2A2F525C6A000542D3 /* Bain Luck.app */,
 				A70F400C2FA6C20000170BF2 /* BainLuckWatch.app */,
 				A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */,
+				A7C0000000000000000000E2 /* BainLuckTests.xctest */,
+				A7C0000000000000000000F2 /* BainLuckWidget.appex */,
+				A7C0000000000000000000D2 /* BainLuckComplication.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -151,10 +273,12 @@
 				A70F400D2FA6C20000170BF2 /* Sources */,
 				A70F400E2FA6C20000170BF2 /* Frameworks */,
 				A70F400F2FA6C20000170BF2 /* Resources */,
+				A7C0000000000000000000DC /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A7C0000000000000000000DA /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A70F40152FA6C20000170BF2 /* BainLuckWatch Watch App */,
@@ -173,11 +297,13 @@
 				A7869E262F525C6A000542D3 /* Sources */,
 				A7869E272F525C6A000542D3 /* Frameworks */,
 				A7869E282F525C6A000542D3 /* Resources */,
+				A7C0000000000000000000FC /* Embed Foundation Extensions */,
 				A7C839030001000000000001 /* Upload Crashlytics dSYMs */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A7C0000000000000000000FA /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A7869E2C2F525C6A000542D3 /* Bain Luck */,
@@ -191,6 +317,70 @@
 			productName = "Bain Luck";
 			productReference = A7869E2A2F525C6A000542D3 /* Bain Luck.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A7C0000000000000000000E1 /* BainLuckTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7C0000000000000000000E7 /* Build configuration list for PBXNativeTarget "BainLuckTests" */;
+			buildPhases = (
+				A7C0000000000000000000E4 /* Sources */,
+				A7C0000000000000000000E5 /* Frameworks */,
+				A7C0000000000000000000E6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A7C0000000000000000000EA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A7C0000000000000000000E3 /* BainLuckTests */,
+			);
+			name = BainLuckTests;
+			packageProductDependencies = (
+			);
+			productName = BainLuckTests;
+			productReference = A7C0000000000000000000E2 /* BainLuckTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A7C0000000000000000000F1 /* BainLuckWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7C0000000000000000000F7 /* Build configuration list for PBXNativeTarget "BainLuckWidget" */;
+			buildPhases = (
+				A7C0000000000000000000F4 /* Sources */,
+				A7C0000000000000000000F5 /* Frameworks */,
+				A7C0000000000000000000F6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A7C0000000000000000000F3 /* BainLuckWidget */,
+			);
+			name = BainLuckWidget;
+			packageProductDependencies = (
+			);
+			productName = BainLuckWidget;
+			productReference = A7C0000000000000000000F2 /* BainLuckWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A7C0000000000000000000D1 /* BainLuckComplication */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7C0000000000000000000D7 /* Build configuration list for PBXNativeTarget "BainLuckComplication" */;
+			buildPhases = (
+				A7C0000000000000000000D4 /* Sources */,
+				A7C0000000000000000000D5 /* Frameworks */,
+				A7C0000000000000000000D6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BainLuckComplication;
+			packageProductDependencies = (
+			);
+			productName = BainLuckComplication;
+			productReference = A7C0000000000000000000D2 /* BainLuckComplication.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -211,6 +401,16 @@
 					};
 					A7869E292F525C6A000542D3 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					A7C0000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = A7869E292F525C6A000542D3;
+					};
+					A7C0000000000000000000F1 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					A7C0000000000000000000D1 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -235,6 +435,9 @@
 				A7869E292F525C6A000542D3 /* Bain Luck */,
 				A70F400B2FA6C20000170BF2 /* BainLuckWatch */,
 				A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */,
+				A7C0000000000000000000E1 /* BainLuckTests */,
+				A7C0000000000000000000F1 /* BainLuckWidget */,
+				A7C0000000000000000000D1 /* BainLuckComplication */,
 			);
 		};
 /* End PBXProject section */
@@ -255,6 +458,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A7869E282F525C6A000542D3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000E6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000F6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000D6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -298,6 +522,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7C0000000000000000000E4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000F4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C0000000000000000000D4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -305,6 +550,21 @@
 			isa = PBXTargetDependency;
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 			targetProxy = A70F40132FA6C20000170BF2 /* PBXContainerItemProxy */;
+		};
+		A7C0000000000000000000EA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7869E292F525C6A000542D3 /* Bain Luck */;
+			targetProxy = A7C0000000000000000000EB /* PBXContainerItemProxy */;
+		};
+		A7C0000000000000000000FA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7C0000000000000000000F1 /* BainLuckWidget */;
+			targetProxy = A7C0000000000000000000FB /* PBXContainerItemProxy */;
+		};
+		A7C0000000000000000000DA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7C0000000000000000000D1 /* BainLuckComplication */;
+			targetProxy = A7C0000000000000000000DB /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -628,6 +888,182 @@
 			};
 			name = Release;
 		};
+		A7C0000000000000000000E8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bain Luck.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bain Luck";
+			};
+			name = Debug;
+		};
+		A7C0000000000000000000E9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bain Luck.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bain Luck";
+			};
+			name = Release;
+		};
+		A7C0000000000000000000F8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWidget/BainLuckWidget.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckWidget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.BainLuckWidget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.2;
+			};
+			name = Debug;
+		};
+		A7C0000000000000000000F9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWidget/BainLuckWidget.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckWidget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.BainLuckWidget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				VALIDATE_PRODUCT = YES;
+				XROS_DEPLOYMENT_TARGET = 26.2;
+			};
+			name = Release;
+		};
+		A7C0000000000000000000D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckComplication-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckWatch.watchkitapp.Complication";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		A7C0000000000000000000D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckComplication-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckWatch.watchkitapp.Complication";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -663,6 +1099,33 @@
 			buildConfigurations = (
 				A7869E362F525C6C000542D3 /* Debug */,
 				A7869E372F525C6C000542D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A7C0000000000000000000E7 /* Build configuration list for PBXNativeTarget "BainLuckTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7C0000000000000000000E8 /* Debug */,
+				A7C0000000000000000000E9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A7C0000000000000000000F7 /* Build configuration list for PBXNativeTarget "BainLuckWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7C0000000000000000000F8 /* Debug */,
+				A7C0000000000000000000F9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A7C0000000000000000000D7 /* Build configuration list for PBXNativeTarget "BainLuckComplication" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7C0000000000000000000D8 /* Debug */,
+				A7C0000000000000000000D9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

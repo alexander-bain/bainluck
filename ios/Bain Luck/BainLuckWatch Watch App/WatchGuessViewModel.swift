@@ -12,6 +12,10 @@ final class WatchGuessViewModel: ObservableObject {
     @Published var lastResult: GuessResult?
     @Published var streak: Int?
     @Published var error: String?
+    /// Non-disruptive flag: the last guess was scored locally but not persisted to
+    /// the backend. The result UI still shows; this just makes a failed save
+    /// diagnosable instead of silently swallowed (L2-180).
+    @Published var lastSaveFailed = false
 
     private var questions: [GuessQuestion] = []
     private var currentIndex = 0
@@ -25,35 +29,9 @@ final class WatchGuessViewModel: ObservableObject {
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
             logger.info("Guess feed received: \(feed.items.count) items")
-            questions = feed.items.compactMap { item -> GuessQuestion? in
-                if item.type == "futures", let f = item.futures {
-                    guard let leader = f.topOutcomes?.first,
-                          let prob = leader.probability, prob > 0.05, prob < 0.95 else { return nil }
-                    return GuessQuestion(
-                        id: f.id,
-                        title: f.name,
-                        subject: leader.name,
-                        actualProb: prob,
-                        threshold: Self.generateThreshold(prob),
-                        isEvent: false,
-                        category: f.llmSportCategory
-                    )
-                } else if item.type == "event", let e = item.event {
-                    guard let homeTeam = e.homeTeam, let awayTeam = e.awayTeam,
-                          let prob = e.currentOdds?.homeProbability,
-                          prob > 0.05, prob < 0.95 else { return nil }
-                    return GuessQuestion(
-                        id: e.id,
-                        title: "\(awayTeam) vs \(homeTeam)",
-                        subject: "\(homeTeam) to win",
-                        actualProb: prob,
-                        threshold: Self.generateThreshold(prob),
-                        isEvent: true,
-                        category: e.sport
-                    )
-                }
-                return nil
-            }
+            // Futures-only pool — an event id must never be submitted as market_id
+            // (L2-180, mirrors web L2-178). See WatchGuessPool.
+            questions = WatchGuessPool.buildQuestions(from: feed.items)
             logger.info("Guess: \(self.questions.count) questions from \(feed.items.count) items")
             questions.shuffle()
             currentIndex = 0
@@ -79,11 +57,13 @@ final class WatchGuessViewModel: ObservableObject {
         guard let q = currentQuestion else { return }
         let isCorrect = guess == "higher" ? q.actualPct > q.threshold : q.actualPct < q.threshold
         lastResult = GuessResult(correct: isCorrect, guess: guess)
+        lastSaveFailed = false
 
         // Haptic feedback
         WKInterfaceDevice.current().play(isCorrect ? .success : .failure)
 
-        // Submit to backend
+        // Submit to backend. q.id is always a FuturesMarket.id (WatchGuessPool is
+        // futures-only), so this is a valid market_id.
         do {
             _ = try await WatchAPIClient.shared.submitPrediction(
                 marketId: q.id,
@@ -95,7 +75,12 @@ final class WatchGuessViewModel: ObservableObject {
             )
             let stats = try await WatchAPIClient.shared.fetchPredictionStats()
             streak = stats.currentStreak
-        } catch {}
+        } catch {
+            // Don't disrupt the result UI, but never swallow silently: surface a
+            // diagnosable state + log so a failed save is visible (L2-180).
+            lastSaveFailed = true
+            logger.error("Guess submit failed for market \(q.id): \(error.localizedDescription)")
+        }
     }
 
     func nextQuestion() {
@@ -106,14 +91,5 @@ final class WatchGuessViewModel: ObservableObject {
         } else {
             currentQuestion = nil
         }
-    }
-
-    private static func generateThreshold(_ prob: Double) -> Int {
-        let actual = Int((prob * 100).rounded())
-        let offset = Int.random(in: 5...20)
-        let direction = Bool.random()
-        var threshold = direction ? actual + offset : actual - offset
-        threshold = max(5, min(95, threshold))
-        return threshold
     }
 }

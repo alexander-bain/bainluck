@@ -190,6 +190,7 @@ struct BainLuckComplicationView: View {
         }
     }
 
+    @ViewBuilder
     private var cornerView: some View {
         if let game = entry.liveGame {
             Text("\(game.homeProb)%")

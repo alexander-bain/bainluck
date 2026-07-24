@@ -135,17 +135,9 @@ struct WatchGuessView: View {
     }
 }
 
-struct GuessQuestion {
-    let id: Int
-    let title: String
-    let subject: String
-    let actualProb: Double
-    let threshold: Int
-    let isEvent: Bool
-    let category: String?
-
-    var actualPct: Int { Int((actualProb * 100).rounded()) }
-}
+// `GuessQuestion` now lives in WatchGuessPool.swift (Foundation-only) so its
+// futures-only construction can be unit-tested without pulling SwiftUI/WatchKit
+// into the test bundle.
 
 struct GuessResult {
     let correct: Bool
