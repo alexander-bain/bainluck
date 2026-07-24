@@ -339,6 +339,29 @@ def golf_live_deltas(
         c["prob_delta_live"] = round(cur * 100 - base, 1)
 
 
+def extend_series_to_now(pts: list, extend_to_now) -> list:
+    """Carry a (timestamp, probability) series forward to ``extend_to_now`` at its
+    last value — the winner-field analogue of the game-chart live-edge extension
+    (``_extend_win_prob_history_to_live_edge``). Pure — unit-tested.
+
+    Queue #249 Item 4b: the futures snapshot-retention pass
+    (``tasks/retention._collapse_snapshots_impl``) keeps ONE keeper per run of
+    identical prices, so a near-static winner field (the Kalshi Tour-de-France GC
+    field — Pogačar pinned at 0.945 for weeks) collapses to a SINGLE point per
+    outcome and the "Race to the title" chart draws nothing ("history isn't
+    available"). Anchoring the series to ``now`` turns a one-keeper series into an
+    honest 2-point flat line (the price genuinely didn't move) so the chart draws.
+
+    No-op when ``extend_to_now`` is None, the series is empty, or its last point is
+    already at/after ``extend_to_now``."""
+    if extend_to_now is None or not pts:
+        return pts
+    last_ts, last_p = pts[-1]
+    if last_ts is not None and last_ts < extend_to_now:
+        return list(pts) + [(extend_to_now, last_p)]
+    return pts
+
+
 def downsample_points(points: list, target: int = 25) -> list:
     """Stride-downsample a time-ordered list to at most `target` items, always
     keeping the first and last. Pure — unit-tested. Keeps sparklines/charts light
@@ -359,6 +382,7 @@ async def attach_competitor_history(
     hours: int = 168,
     top_n: int = 40,
     target_points: int = 150,
+    extend_to_now=None,
 ) -> None:
     """Attach a compact, downsampled probability series to the TOP-N competitors
     of a winner-field event (L2-71), so the leaderboard sparklines + the
@@ -373,6 +397,12 @@ async def attach_competitor_history(
 
     Mutates matched competitors in place: sets `outcome_id` and
     `history: [{"timestamp", "probability"}]` (probability as a 0–1 float).
+
+    `extend_to_now` (Queue #249 Item 4b): when a datetime is passed, each series is
+    carried forward to it at its last value (see `extend_series_to_now`) so a
+    retention-collapsed single-keeper series (a static winner field) still draws an
+    honest flat line instead of the empty "history isn't available" state. Left None
+    (the default) it is a no-op — the golf/F1/tennis/soccer callers are unchanged.
     """
     if not evolution_market_id or not competitors:
         return
@@ -466,6 +496,9 @@ async def attach_competitor_history(
     hist_li: dict[str, dict] = {}
     hist_li_ambiguous: set[str] = set()
     for oid, pts in series_by_outcome.items():
+        # #249 Item 4b: optionally carry the series to now at its last value so a
+        # snapshot-retention-collapsed single-keeper series still draws a line.
+        pts = extend_series_to_now(pts, extend_to_now)
         if len(pts) < 2:
             continue
         ds = downsample_points(pts, target_points)

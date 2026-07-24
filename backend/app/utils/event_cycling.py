@@ -222,6 +222,57 @@ def _select_gc_field(candidates: list):
     return fallback, fallback_real
 
 
+def concept_date_window(slug: str, resolution_date):
+    """(start_iso, end_iso) for the concept envelope's date range.
+
+    Queue #249 Item 4a: PREFER the majors-calendar entry (the real race window —
+    TdF is Jul 4–26 2026) over the Kalshi GC market's ``resolution_date``, which is
+    the market CLOSE/settle date (Aug 9), not the race window (gotcha #14). Without
+    this the page header reads "Aug 9 – Aug 9". Falls back to the resolution_date
+    (start == end) when no calendar entry exists. Pure + defensive."""
+    res_iso = resolution_date.isoformat() if resolution_date is not None else None
+    start_iso = end_iso = res_iso
+    try:
+        from app.utils.majors_calendar import (
+            _as_utc_date,
+            calendar_entry_by_concept_key,
+        )
+
+        entry = calendar_entry_by_concept_key().get(f"event:cycling:{slug}")
+        if entry:
+            s = _as_utc_date(entry.get("start"))
+            e = _as_utc_date(entry.get("end"))
+            if s is not None:
+                start_iso = s.isoformat()
+            if e is not None:
+                end_iso = e.isoformat()
+    except Exception:
+        pass
+    return start_iso, end_iso
+
+
+def stage_graded_winner(outcomes) -> str | None:
+    """Graded winner NAME for a cycling sub-market child (stage / classification),
+    or None when unsettled. Queue #249 Item 4c — the golf by-round graded contract
+    ported to cycling stages.
+
+    ``is_winner`` is authoritative (Kalshi settled markets stay ``status='open'``,
+    gotcha #33, so the grade — not status — is the settle signal). During the
+    Kalshi grading lag a leader priced at/above ``_WON_PRICE_THRESHOLD`` is a
+    display-only crown (L2-83 parity; gotcha #21 — never authoritative). Expects an
+    already field/placeholder-filtered outcome list. Pure — unit-tested."""
+    real = [o for o in (outcomes or []) if getattr(o, "name", None)]
+    for o in real:
+        if bool(getattr(o, "is_winner", False)):
+            return o.name
+    priced = [o for o in real if getattr(o, "current_probability", None) is not None]
+    if priced:
+        top = max(priced, key=lambda o: float(o.current_probability))
+        if float(top.current_probability) >= _WON_PRICE_THRESHOLD:
+            return top.name
+    return None
+
+
 def cycling_status(status: str | None, resolution_date, now) -> str:
     """upcoming / live / settled. A Grand Tour runs ~3 weeks, so the 'live' window is
     wide: within 25 days before resolution_date (Kalshi resolution is race-end/close;
@@ -449,6 +500,9 @@ class CyclingEventAdapter:
                 if lead and lead.current_probability is not None
                 else None
             )
+            # #249 Item 4c: emit the graded contract so the frontend can render a
+            # settled stage/classification as WHAT HIT (the golf by-round pattern).
+            graded = stage_graded_winner(outs)
             return {
                 "market_id": m.id,
                 "market_name": m.name,
@@ -456,6 +510,8 @@ class CyclingEventAdapter:
                 "prop_type": prop_type,
                 "source": m.source,  # data-only (audit); not rendered
                 "probability": round(lead_prob, 4) if lead_prob is not None else None,
+                "settled": graded is not None,
+                "graded_winner": graded,
                 "outcomes": [
                     {
                         "name": o.name,
@@ -503,19 +559,18 @@ class CyclingEventAdapter:
                 {"type": "prop", "label": "Classifications & jerseys", "market_ids": class_ids}
             )
 
-        race_iso = (
-            winner.resolution_date.isoformat()
-            if winner.resolution_date is not None
-            else None
-        )
+        # #249 Item 4a: the envelope date range comes from the majors calendar (the
+        # real race window, Jul 4–26) when present, NOT the Kalshi GC resolution/
+        # close date (Aug 9 — gotcha #14, which made the header read "Aug 9 – Aug 9").
+        start_iso, end_iso = concept_date_window(cfg.slug, winner.resolution_date)
         envelope = {
             "event": {
                 "key": f"event:cycling:{cfg.slug}",
                 "domain": "cycling",
                 "name": cfg.display,
                 "status": event_status,
-                "start_date": race_iso,
-                "end_date": race_iso,
+                "start_date": start_iso,
+                "end_date": end_iso,
                 "venue": None,
                 "location": None,
                 "is_major": True,
@@ -532,10 +587,17 @@ class CyclingEventAdapter:
         }
 
         # Shared per-competitor history (one fetch); best-effort.
+        # #249 Item 4b: a Grand Tour's GC futures opens weeks out AND its near-static
+        # field is collapsed to one keeper per rider by snapshot retention, so the
+        # default 7-day window misses the surviving keeper entirely (empty chart).
+        # Use a wide race-length window so the keeper is in range, and pass
+        # extend_to_now so a single collapsed keeper still draws an honest flat line.
         try:
             from app.utils.event_concept import attach_competitor_history
 
-            await attach_competitor_history(db, winner.id, competitors)
+            await attach_competitor_history(
+                db, winner.id, competitors, hours=2160, extend_to_now=now
+            )
         except Exception:
             pass
 

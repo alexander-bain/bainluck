@@ -10,6 +10,7 @@ from app.utils.event_concept import (
     fuse_golf_live,
     golf_live_deltas,
     downsample_points,
+    extend_series_to_now,
     build_golf_props_script,
     classify_prop_kind,
     _clean_prop_label,
@@ -39,6 +40,37 @@ class TestDownsamplePoints:
     def test_target_below_2_returns_copy(self):
         pts = [(1, 0.1), (2, 0.2)]
         assert downsample_points(pts, 1) == pts
+
+
+class TestExtendSeriesToNow:
+    """Queue #249 Item 4b: a snapshot-retention-collapsed single-keeper series must
+    become a drawable 2-point flat line when a live-edge anchor is supplied."""
+
+    def test_single_keeper_becomes_two_points(self):
+        t0 = datetime(2026, 7, 6, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+        out = extend_series_to_now([(t0, 0.945)], now)
+        assert out == [(t0, 0.945), (now, 0.945)]
+
+    def test_none_anchor_is_noop(self):
+        pts = [(datetime(2026, 7, 6, tzinfo=timezone.utc), 0.9)]
+        assert extend_series_to_now(pts, None) == pts
+
+    def test_empty_series_is_noop(self):
+        assert extend_series_to_now([], datetime.now(timezone.utc)) == []
+
+    def test_last_point_already_at_now_is_noop(self):
+        now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+        pts = [(datetime(2026, 7, 6, tzinfo=timezone.utc), 0.5), (now, 0.6)]
+        assert extend_series_to_now(pts, now) == pts
+
+    def test_multipoint_series_extends_right_edge(self):
+        t0 = datetime(2026, 7, 6, tzinfo=timezone.utc)
+        t1 = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+        out = extend_series_to_now([(t0, 0.4), (t1, 0.6)], now)
+        assert out[-1] == (now, 0.6)
+        assert len(out) == 3
 
 
 class TestGolfLiveDeltas:

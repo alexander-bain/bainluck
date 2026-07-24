@@ -191,6 +191,52 @@ class TestNormalizationGuard:
         assert abs(sum(c["probability"] for c in comps) - 1.0) < 0.01
 
 
+class TestConceptDateWindow:
+    """Queue #249 Item 4a: the envelope date window must come from the majors
+    calendar (TdF = Jul 4–26 2026), not the Kalshi GC resolution/close date."""
+
+    def test_prefers_calendar_over_resolution_date(self):
+        res = datetime(2026, 8, 9, 17, 50, tzinfo=timezone.utc)  # Kalshi close
+        start, end = ec.concept_date_window("tour-de-france-2026", res)
+        assert start == "2026-07-04"
+        assert end == "2026-07-26"
+
+    def test_falls_back_to_resolution_date_when_no_entry(self):
+        res = datetime(2026, 8, 9, 17, 50, tzinfo=timezone.utc)
+        start, end = ec.concept_date_window("nonexistent-race-2099", res)
+        assert start == res.isoformat()
+        assert end == res.isoformat()
+
+    def test_none_resolution_and_no_entry_is_none(self):
+        start, end = ec.concept_date_window("nonexistent-race-2099", None)
+        assert start is None and end is None
+
+
+class TestStageGradedWinner:
+    """Queue #249 Item 4c: settled stage/classification children carry the graded
+    winner (the golf by-round contract ported to cycling)."""
+
+    def test_is_winner_is_authoritative(self):
+        outs = [
+            _out("Winner Rider", 0.4),
+            SimpleNamespace(name="Graded Rider", current_probability=0.35, is_winner=True),
+        ]
+        assert ec.stage_graded_winner(outs) == "Graded Rider"
+
+    def test_price_threshold_crowns_during_grading_lag(self):
+        # Kalshi hasn't graded yet, but a settled stage's leader is priced ~1.0.
+        outs = [_out("Sprinter A", 0.99), _out("Sprinter B", 0.005)]
+        assert ec.stage_graded_winner(outs) == "Sprinter A"
+
+    def test_unsettled_stage_has_no_winner(self):
+        # A live/pending stage — no one graded, no near-lock leader.
+        outs = [_out("Rider A", 0.18), _out("Rider B", 0.12), _out("Rider C", 0.1)]
+        assert ec.stage_graded_winner(outs) is None
+
+    def test_empty_outcomes(self):
+        assert ec.stage_graded_winner([]) is None
+
+
 class TestCyclingStatus:
     def test_settled_when_resolved(self):
         assert ec.cycling_status("resolved", None, datetime.now(timezone.utc)) == "settled"
