@@ -283,6 +283,60 @@ class ScoringPlay(Base):
     event: Mapped["Event"] = relationship(back_populates="scoring_plays")
 
 
+class GameMoment(Base):
+    """A key in-game moment: a real-world event (score/home run/goal…) joined to a
+    win-probability delta, carrying a confidence from the #871 explainability gate.
+
+    THE MOMENTS ENGINE (#1168): an offline, per-event join detects prob deltas in a
+    tracked WP series and attaches the nearest causal event within a window. Rows
+    are precomputed and stored here (never computed at render); the event-history
+    payload surfaces the confident subset as ``moments:[{ts,label,confidence}]``.
+    MLB first — its scoring plays plus the MLB Stats API's per-play win probability
+    let the join be validated against the source's own attribution.
+    """
+
+    __tablename__ = "game_moments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+    # Wall-clock time of the moment, for chart placement. Nullable when only
+    # game-state (inning/score) is known and no snapshot timestamp matched.
+    ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+
+    # Real-world EVENT stream
+    moment_type: Mapped[str] = mapped_column(String(30))  # score/home_run/goal/…
+    description: Mapped[str] = mapped_column(Text)
+    actor_team: Mapped[Optional[str]] = mapped_column(String(100))
+    actor_player: Mapped[Optional[str]] = mapped_column(String(100))
+    period: Mapped[Optional[str]] = mapped_column(String(30))  # "Inning 5 (Top)"
+    home_score: Mapped[Optional[int]] = mapped_column(Integer)
+    away_score: Mapped[Optional[int]] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(20))  # "espn"/"mlb"/"statpal"
+
+    # The JOIN result (#871 gate) — null until a cause attaches; the history payload
+    # only surfaces rows above the confidence gate.
+    prob_delta: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    confidence: Mapped[Optional[float]] = mapped_column(Numeric(4, 3))
+    label: Mapped[Optional[str]] = mapped_column(String(200))
+
+    # Event-scoped idempotent upsert key — dedups re-runs of the offline join.
+    dedupe_key: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    event: Mapped["Event"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "dedupe_key", name="uq_game_moment_event_key"),
+        Index("ix_game_moments_event_conf", "event_id", "confidence"),
+    )
+
+
 class OddsSnapshot(Base):
     """Raw odds readings (high frequency, pruned after aggregation)."""
 

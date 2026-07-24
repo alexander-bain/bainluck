@@ -7027,6 +7027,56 @@ async def get_event_odds_history(
             "min_window_seconds": MIN_LIVE_DOMAIN_SECONDS,
         }
 
+    # THE MOMENTS ENGINE (#1168): surface the precomputed confident subset of the
+    # scoring-play → win-prob-swing join as moments:[{ts,label,confidence}] for the
+    # chart readout. Read-only (never computed here); the offline task owns the join
+    # and the #871 confidence gate. Cheap: the query returns empty for the vast
+    # majority of events (only recently-processed games carry rows), so the Redis
+    # kill switch (poor MLB-agreement → HOLD annotations) is only consulted when
+    # there is something to hold.
+    moments: list[dict] = []
+    try:
+        from app.models.models import GameMoment
+
+        _mrows = (
+            await db.execute(
+                select(GameMoment)
+                .where(
+                    GameMoment.event_id == event_id,
+                    GameMoment.confidence.isnot(None),
+                    GameMoment.confidence >= 0.5,
+                )
+                .order_by(GameMoment.ts)
+            )
+        ).scalars().all()
+        if _mrows:
+            _surface = True
+            try:
+                from app.tasks.redis_state import get_redis_client
+
+                _flag = get_redis_client().get("moments:surface_enabled")
+                if _flag is not None:
+                    _val = _flag.decode() if isinstance(_flag, bytes) else _flag
+                    _surface = str(_val) not in ("0", "false", "False")
+            except Exception:  # noqa: BLE001 — kill switch is best-effort; default surface
+                _surface = True
+            if _surface:
+                moments = [
+                    {
+                        "ts": m.ts.isoformat() if m.ts else None,
+                        "label": m.label,
+                        "confidence": float(m.confidence) if m.confidence is not None else None,
+                        "moment_type": m.moment_type,
+                        "actor_team": m.actor_team,
+                        "prob_delta": float(m.prob_delta) if m.prob_delta is not None else None,
+                        "period": m.period,
+                    }
+                    for m in _mrows
+                    if m.ts is not None
+                ]
+    except Exception as exc:  # noqa: BLE001 — moments are additive, never break history
+        logger.warning("moments load failed for event %s: %s", event_id, exc)
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -7042,6 +7092,7 @@ async def get_event_odds_history(
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
         "scoring_plays": scoring_plays,
+        "moments": moments,
         "period_markers": period_markers,
         "aggregate_line": aggregate_line if aggregate_line else None,
         "pm_spread_data": pm_spread_data if pm_spread_data else None,

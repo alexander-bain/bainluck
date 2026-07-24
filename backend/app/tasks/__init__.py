@@ -823,6 +823,16 @@ def backfill_espn_win_prob(self, limit: int = 200, oldest_first: bool = False):
     return _tracked_run("espn_win_prob_backfill", _backfill_espn_win_probability(limit, oldest_first))
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.compute_game_moments")
+def compute_game_moments(self, limit: int = 60):
+    """THE MOMENTS ENGINE (#1168): join scoring plays to win-prob swings for
+    recently-completed MLB games, persist confident moments, and report the MLB
+    ground-truth agreement rate. Soft limit set because it makes per-event MLB API
+    calls (gotcha #51)."""
+    from app.tasks.game_moments import _compute_game_moments
+    return _tracked_run("game_moments", _compute_game_moments(limit=limit))
+
+
 # --- Team Linking (Futures → Teams) ---
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_links")
@@ -2192,6 +2202,10 @@ celery_app.conf.beat_schedule = {
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",
         "schedule": 120.0,  # Every 2 minutes during MLB season
+    },
+    "compute-game-moments": {
+        "task": "app.tasks.compute_game_moments",
+        "schedule": crontab(minute=20, hour="*/2"),  # Every 2h — offline join over recently-completed MLB games
     },
     "track-statpal-usage": {
         "task": "app.tasks.track_statpal_usage",

@@ -199,6 +199,7 @@ class TestBeatScheduleCompleteness:
         "collapse-futures-snapshots-daily",
         "sync-rosters-daily",
         "sync-mlb-win-probability",
+        "compute-game-moments",
         "recategorize-other-daily",
         "backfill-canonical-keys-daily",
         "backfill-market-shapes",
