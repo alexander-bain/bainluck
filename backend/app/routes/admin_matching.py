@@ -46,7 +46,15 @@ _LINK_RATE_STMT_TIMEOUT_S = 20
 # while the total still sails past 30s → H12/503 before Python can catch anything.
 # asyncio.wait_for cancels the compute at this bound so the serve-stale-cache
 # fallback actually fires and the endpoint returns 200 (marked stale) instead.
-_LINK_RATE_WALLCLOCK_S = 25
+# Set well below 30s (not just under it): cancelling an in-flight asyncpg query
+# is not instant — the driver round-trips a cancel to Postgres — so a 25s bound
+# still crossed the H12 line on a slow prod run. 18s leaves ~12s of headroom for
+# the cancel + response so the fallback reliably returns before the router limit.
+# Trade-off: on a slow day ?bust=1 serves the (clearly-marked) stale snapshot
+# rather than a fresh compute — acceptable, since the hourly precompute keeps the
+# cache warm and "never 503" is the bar. (The durable fix is to move the compute
+# fully off the request path; flagged for a follow-up queue.)
+_LINK_RATE_WALLCLOCK_S = 18
 # Redis cache key shared with the precompute_admin_link_rate beat + the route's
 # cold-cache fallback. Keep in sync with app/tasks/precompute_admin_health.py.
 _LINK_RATE_CACHE_KEY = "bainluck:admin:link_rate"
