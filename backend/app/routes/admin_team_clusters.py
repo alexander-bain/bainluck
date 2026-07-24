@@ -69,7 +69,17 @@ def _recommend(status: str, members: list[dict]) -> dict:
     """Advisory verdict when the evidence is lopsided (the human always decides).
 
     canonical = most current events, then total, then mappings, then longest name
-    (mirrors ``team_merge._plan_cluster``'s r258 rule)."""
+    (mirrors ``team_merge._plan_cluster``'s r258 rule).
+
+    The useful signal is LOPSIDEDNESS, not name coherence: one established row
+    (its own identity mappings or a real schedule) sitting beside thin nameless
+    duplicates (zero recent events AND zero identity mappings) is almost always a
+    truncated/abbreviated dupe of the same team — e.g. "Los Angeles C" beside the
+    38-event, 4-mapping "Los Angeles Clippers". Note ``recent_events`` is season-
+    dependent (0 for every NBA row in July), so canonical liveness leans on
+    ``total_events``/``mappings``, never on recency alone. Two rows that BOTH carry
+    events/mappings (Kent State vs Ohio State — a real espn_id collision) are not
+    lopsided → keep separate."""
     canonical = max(
         members,
         key=lambda m: (
@@ -78,30 +88,27 @@ def _recommend(status: str, members: list[dict]) -> dict:
     )
     non_canon = [m for m in members if m["id"] != canonical["id"]]
 
-    if status == "skip_incoherent":
-        return {
-            "action": "keep_separate", "canonical_id": canonical["id"], "fold_ids": [],
-            "reason": "Names diverge (not a token-prefix) — likely distinct teams that "
-                      "share an espn_id (e.g. Kent State vs Ohio State).",
-        }
     if status == "skip_no_current":
         return {
             "action": "defer", "canonical_id": canonical["id"], "fold_ids": [],
             "reason": "No member carries any events — can't tell which row is canonical yet.",
         }
-    # skip_no_stub: a non-canonical member looked like a real team to the auto-gate.
+
     thin = [m for m in non_canon if m["recent_events"] == 0 and m["mappings"] == 0]
-    if non_canon and len(thin) == len(non_canon) and canonical["recent_events"] > 0:
+    canonical_established = canonical["mappings"] > 0 or canonical["total_events"] >= 10
+    if non_canon and len(thin) == len(non_canon) and canonical_established:
         return {
             "action": "merge", "canonical_id": canonical["id"],
             "fold_ids": [m["id"] for m in thin],
-            "reason": "One live team + thin dead duplicate(s) with no identity of their "
-                      "own — safe to fold.",
+            "reason": "One established team + thin nameless duplicate(s) with no events or "
+                      "identity of their own — almost certainly a truncated/abbreviated "
+                      "name of the same team; fold them in.",
         }
     return {
         "action": "keep_separate", "canonical_id": canonical["id"], "fold_ids": [],
-        "reason": "A non-canonical member has its own events or identity mappings — "
-                  "likely a genuinely distinct team.",
+        "reason": "More than one member carries its own events or identity mappings — "
+                  "likely genuinely distinct teams that happen to share an espn_id "
+                  "(e.g. Kent State vs Ohio State). Keep them separate.",
     }
 
 

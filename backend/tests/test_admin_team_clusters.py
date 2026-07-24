@@ -42,12 +42,25 @@ def _m(id, name, recent=0, total=0, mappings=0):
             "total_events": total, "mappings": mappings}
 
 
-def test_recommend_incoherent_names_keep_separate():
-    # Kent State ⊄ Ohio State — the catastrophic espn_id collision case.
+def test_recommend_two_real_teams_incoherent_keep_separate():
+    # Kent State ⊄ Ohio State — the catastrophic espn_id collision case. BOTH
+    # carry real events/mappings → not lopsided → keep separate.
     rec = tc._recommend("skip_incoherent",
-                        [_m(1, "Ohio State Buckeyes", recent=5, total=40),
-                         _m(2, "Kent State", recent=3, total=30)])
+                        [_m(1, "Ohio State Buckeyes", recent=5, total=40, mappings=3),
+                         _m(2, "Kent State", recent=3, total=30, mappings=2)])
     assert rec["action"] == "keep_separate"
+
+
+def test_recommend_lopsided_truncated_stub_merge_even_when_incoherent():
+    # "Los Angeles C" is a truncated dupe of the Clippers — the name is incoherent
+    # only because it's cut off. Lopsided (thin nameless stub + established team) →
+    # advise merge. recent_events=0 on both (NBA offseason) must NOT block it.
+    rec = tc._recommend("skip_incoherent",
+                        [_m(1, "Los Angeles Clippers", recent=0, total=38, mappings=4),
+                         _m(2, "Los Angeles C", recent=0, total=1, mappings=0)])
+    assert rec["action"] == "merge"
+    assert rec["canonical_id"] == 1
+    assert rec["fold_ids"] == [2]
 
 
 def test_recommend_no_current_events_defer():
@@ -57,7 +70,7 @@ def test_recommend_no_current_events_defer():
 
 
 def test_recommend_live_team_plus_dead_stub_merge():
-    # One live franchise + a thin dead duplicate with no identity → advise merge.
+    # One established franchise + a thin dead duplicate with no identity → merge.
     rec = tc._recommend("skip_no_stub",
                         [_m(1, "Philadelphia Union", recent=6, total=30, mappings=4),
                          _m(2, "Philadelphia", recent=0, total=8, mappings=0)])
