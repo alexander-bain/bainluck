@@ -690,14 +690,18 @@ async def test_query_team_futures_collapses_identity_duplicates():
         llm_sport_category="hockey", source="kalshi",
         resolution_date=None, canonical_market_key="nhl:champion:2026",
     )
-    # 5th col (#237 Item 3): field_prob_sum — coherent (~1.0) so it isn't suppressed.
-    q1_rows = [(outcome, market, 32, "icehockey_nhl", 1.0)]
+    # query1 now returns (outcome, market, sport_key); per-market count + field
+    # prob sum are a separate scoped lookup (#1197 perf fix).
+    q1_rows = [(outcome, market, "icehockey_nhl")]
+    # scoped market-stats: (market_id, outcome_total, field_prob_sum) — coherent ~1.0.
+    stats_rows = [(10, 32, 1.0)]
 
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _result_all(teams_rows),   # 1: load teams
         _result_all(tim_rows),     # 2: identity-mapping counts
         _result_all(q1_rows),      # 3: query1 (no query2 — no roster players)
+        _result_all(stats_rows),   # 4: scoped per-market count + field_prob_sum
     ])
 
     data = await _query_team_futures([574, 12682, 100, 101], db, limit=20)

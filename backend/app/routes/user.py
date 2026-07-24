@@ -1481,20 +1481,13 @@ async def _query_team_futures(
                 if isinstance(player_name, str) and len(player_name) >= 4:
                     player_to_team_id[player_name.lower()] = t.id
 
-    # Subquery: count outcomes per market (for ranking context like "#3 of 30")
-    outcome_count_sq = (
-        select(
-            FuturesOutcome.market_id,
-            func.count().label("outcome_total"),
-            # #237 Item 3: field probability sum — a coherent probability field sums
-            # to ~1.0; an illiquid Kalshi independent-binary award/prop ladder (player
-            # MVP / passing-yards YES markets) sums far past 100%. Used to prefer the
-            # legible odds_api field over the overrounded Kalshi noise.
-            func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
-        )
-        .group_by(FuturesOutcome.market_id)
-        .subquery()
-    )
+    # NOTE (#1197 r259 team-route latency): the per-market outcome count + field
+    # probability sum ("#3 of 30" context; #237 Item 3 coherence signal) used to be
+    # an outcome_count_sq subquery — a GROUP BY over the ENTIRE 1.2M-row
+    # futures_outcomes table with NO filter — pre-joined into query1/query2. That
+    # unfiltered full-table aggregate was the ~6s team-page futures section (and a
+    # drag on the feed). It is now a post-hoc lookup SCOPED to only the result
+    # markets (a few hundred), computed after query1/query2 below.
 
     # Common market-level filters
     market_base_filters = [
@@ -1512,10 +1505,9 @@ async def _query_team_futures(
         team_conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
 
     query1 = (
-        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"), outcome_count_sq.c.field_prob_sum)
+        select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-        .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
         .where(and_(*market_base_filters, or_(*team_conditions)))
         # Item 2: order by current probability so a team's HEADLINE markets
         # (championship/conference/division/awards) enter the window before noise.
@@ -1544,16 +1536,31 @@ async def _query_team_futures(
         award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
 
         query2 = (
-            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"), outcome_count_sq.c.field_prob_sum)
+            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-            .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
             .where(and_(*market_base_filters, or_(*award_filters)))
             .order_by(FuturesOutcome.current_probability.desc().nulls_last())
             .limit(500)  # Award markets are few — fetch all outcomes
         )
         result2 = await db.execute(query2)
         rows2 = result2.all()
+
+    # #1197: scoped per-market count + field-prob-sum for ONLY the result markets
+    # (replaces the old unfiltered full-table outcome_count_sq — the ~6s culprit).
+    _mkt_ids = {m.id for _o, m, _sk in rows1} | {m.id for _o, m, _sk in rows2}
+    _market_stats: dict[int, tuple[int, float | None]] = {}
+    if _mkt_ids:
+        for _mid, _tot, _fsum in (await db.execute(
+            select(
+                FuturesOutcome.market_id,
+                func.count().label("outcome_total"),
+                func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
+            )
+            .where(FuturesOutcome.market_id.in_(list(_mkt_ids)))
+            .group_by(FuturesOutcome.market_id)
+        )).all():
+            _market_stats[_mid] = (_tot, _fsum)
 
     # For each outcome, figure out which followed team matched.
     # Uses strict suffix-word matching + roster player matching.
@@ -1632,7 +1639,8 @@ async def _query_team_futures(
     # can't starve another (the "Celtics shows 1 of several" truncation).
     per_team_items: dict[int, list[dict]] = {}
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
-    for outcome, market, outcome_total, mkt_sport_key, field_prob_sum in list(rows1) + list(rows2):
+    for outcome, market, mkt_sport_key in list(rows1) + list(rows2):
+        outcome_total, field_prob_sum = _market_stats.get(market.id, (None, None))
         # Skip if we already have an outcome from this market
         if market.id in seen_market_ids:
             continue
