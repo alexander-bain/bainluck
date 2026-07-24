@@ -600,6 +600,7 @@ async def _process_event_batch(
         detect_market_type,
         extract_olympic_discipline,
         generate_category_tags,
+        detect_table_tennis_group,
     )
     from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall
 
@@ -626,6 +627,20 @@ async def _process_event_batch(
                 if llm_sport_category == "crypto" or category == "crypto":
                     stats["crypto_skipped"] += 1
                     continue
+
+                # #1230 / Queue #249 Item 3: table-tennis PREVENTION at ingest.
+                # Setka/TT-Cup matches have a bare "Player vs. Player" parent
+                # title that categorize_by_rules routes to baseball via summer
+                # seasonal inference. Their child props carry the unambiguous
+                # "Total Games O/U N" tell, so classify the whole group as
+                # table_tennis here — BEFORE the baseball fallback below — mirroring
+                # the retag's safe MLB-protecting predicate at the source. This
+                # makes retag_table_tennis a fix, not just a repair.
+                _group_names = [event.title or ""] + [
+                    (m.question or "") for m in event.markets
+                ]
+                if detect_table_tennis_group(_group_names):
+                    llm_sport_category = "table_tennis"
 
                 # Fall back to pattern matching + league inference if tags didn't help
                 if not llm_sport_category or llm_sport_category == "other":

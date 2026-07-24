@@ -14,7 +14,7 @@ Also provides:
 import re
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Sequence
 
 from app.services import llm
 
@@ -458,6 +458,53 @@ def _detect_racquet_game_stat(stat: str) -> Optional[str]:
     if nums and max(nums) >= _TABLE_TENNIS_MAX_GAMES:
         return "tennis"
     return "table_tennis"
+
+
+# #1230 / Queue #249 Item 3: group-level table-tennis PREVENTION at ingest.
+# A Setka/TT-Cup match's Polymarket parent title is a bare "Player vs. Player"
+# matchup with NO sport keyword, so categorize_by_rules → detect_bare_matchup_sport
+# → seasonal inference → "baseball" in summer (May–Jul). That bare-matchup path is
+# the root of the recurring "baseball 7.4% link rate" mis-tag: the earlier retag
+# (scripts/retag_table_tennis.py) was a repair, not a fix at the source. The
+# match's CHILD props, however, carry the unambiguous "Total Games O/U N" /
+# "Game Handicap" tell, which detect_game_prop_sport already splits from real
+# ATP/WTA tennis by the games threshold. So classify the whole group as
+# table_tennis at INGEST, protecting real MLB exactly as the retag does (any MLB
+# team token or baseball-stat name in the group → not table tennis). table_tennis
+# is not a link-rate sport category, so these correctly drop out of the denominator.
+_MLB_TEAM_TOKEN_RE = re.compile(
+    r"\b(yankees|red\s+sox|blue\s+jays|rays|orioles|guardians|twins|white\s+sox|"
+    r"tigers|royals|astros|mariners|rangers|angels|athletics|braves|mets|"
+    r"phillies|marlins|nationals|cubs|cardinals|brewers|reds|pirates|dodgers|"
+    r"padres|giants|diamondbacks|rockies|mlb)\b",
+    re.I,
+)
+_BASEBALL_STAT_TOKEN_RE = re.compile(
+    r"\b(home\s+runs|strikeout|rbi|innings|total\s+bases|earned\s+run|"
+    r"stolen\s+base|hits\s+o/?u|runs\s+o/?u)\b",
+    re.I,
+)
+
+
+def detect_table_tennis_group(market_names: Sequence[str]) -> bool:
+    """Group-level table-tennis detector for Polymarket ingest (#1230).
+
+    ``market_names`` is one Polymarket group (a single Setka/TT-Cup match): the
+    event title plus its child prop questions. Returns True when the group is a
+    table-tennis match — i.e. a child prop parses to ``table_tennis`` via
+    ``detect_game_prop_sport`` (small games total) — AND the group carries NO MLB
+    team token or baseball-stat token (so real MLB events are never swept). The
+    threshold split inside ``detect_game_prop_sport`` keeps real ATP/WTA tennis
+    (large games total) out of this predicate.
+    """
+    names = [n for n in market_names if n]
+    if not names:
+        return False
+    # Protect real MLB / real-baseball groups (mirror the retag's safe predicate).
+    for name in names:
+        if _MLB_TEAM_TOKEN_RE.search(name) or _BASEBALL_STAT_TOKEN_RE.search(name):
+            return False
+    return any(detect_game_prop_sport(name) == "table_tennis" for name in names)
 
 
 _GAME_MATCHUP_WINNER_RE = re.compile(

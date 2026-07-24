@@ -77,6 +77,36 @@ _LINK_RATE_NON_GAME_CATEGORIES = frozenset({
 })
 
 
+# #1230 / Queue #249 Item 3: Obscure upstream-coverage circuits that Bain Luck
+# has NO schedule/roster source for — ITF minor tennis (below the ATP/WTA tours we
+# ingest), Setka/TT-Cup table tennis, and minor cricket (European Cricket
+# Series). A market on one of these circuits can NEVER be linked to an event,
+# because the game/player entity does not exist on our side — so counting it in
+# the link-rate denominator makes an UPSTREAM COVERAGE GAP masquerade as a
+# name/ticker MATCHING bug (the #1230 diagnosis). These are dropped from the
+# HONEST denominator, but the RAW (pre-exclusion) rate is still reported alongside
+# so no data is hidden. Coverage would require a NEW schedule source, not a
+# matching-engine fix.
+_UPSTREAM_COVERAGE_GAP_NAME_RE = re.compile(
+    r"\bitf\b"                                          # ITF minor tennis tour
+    r"|\bsetka\b|\btt[\s.\-]?cup\b|\btable\s+tennis\b"  # Setka / TT-Cup table tennis
+    r"|\becs\b",                                        # European Cricket Series
+    re.I,
+)
+
+
+def _is_upstream_coverage_gap_market(name: str | None) -> bool:
+    """True for obscure circuits we have no event coverage for (#1230).
+
+    These markets cannot link to an event (no schedule/roster source covers them),
+    so they belong out of the honest link-rate denominator. Applied only to
+    UNLINKED markets — an already-linked market is always kept in the numerator.
+    """
+    if not name:
+        return False
+    return bool(_UPSTREAM_COVERAGE_GAP_NAME_RE.search(name))
+
+
 def _is_obvious_non_game_market_name(name: str | None) -> bool:
     """Identify season-level markets that can look matchup-shaped."""
     if not name:
@@ -443,6 +473,7 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
             FuturesMarket.status,
             FuturesMarket.external_id,
             FuturesMarket.category,
+            FuturesMarket.name,
         )
         .where(
             FuturesMarket.source == "kalshi",
@@ -456,6 +487,9 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     kalshi_rows_by_bucket = {}
     excluded_stale_open_unlinked = 0
     kalshi_excluded_by_category: dict[str, int] = {}
+    # #1230: upstream-coverage-gap exclusions (ITF/Setka-TT/minor cricket).
+    kalshi_excluded_upstream_gap = 0
+    kalshi_excluded_open_upstream_gap = 0
     for row in kalshi_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
             continue
@@ -467,6 +501,14 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
             kalshi_excluded_by_category[cat] = (
                 kalshi_excluded_by_category.get(cat, 0) + 1
             )
+            continue
+        # #1230: obscure upstream-coverage circuits (ITF/Setka-TT/minor cricket)
+        # can never link — an upstream gap, not a matching bug. Drop unlinked ones
+        # from the honest denominator; the raw rate below adds them back.
+        if row.event_id is None and _is_upstream_coverage_gap_market(row.name):
+            kalshi_excluded_upstream_gap += 1
+            if (row.status or "").lower() == "open":
+                kalshi_excluded_open_upstream_gap += 1
             continue
         if _should_exclude_stale_open_unlinked_game_market(
             source="kalshi",
@@ -549,6 +591,9 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     poly_excluded_open_not_matcher_game_level = 0
     poly_excluded_samples = []
     poly_excluded_by_category: dict[str, int] = {}
+    # #1230: upstream-coverage-gap exclusions (ITF/Setka-TT/minor cricket).
+    poly_excluded_upstream_gap = 0
+    poly_excluded_open_upstream_gap = 0
     for row in poly_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
             continue
@@ -558,6 +603,15 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
             poly_excluded_by_category[cat] = (
                 poly_excluded_by_category.get(cat, 0) + 1
             )
+            continue
+        # #1230: obscure upstream-coverage circuits (ITF minor tennis, Setka/TT-Cup
+        # table tennis, minor cricket) dominate the unlinked Polymarket residual and
+        # can never link — an upstream gap, not a matching bug. Drop unlinked ones
+        # from the honest denominator; the raw rate below adds them back.
+        if row.event_id is None and _is_upstream_coverage_gap_market(row.name):
+            poly_excluded_upstream_gap += 1
+            if (row.status or "").lower() == "open":
+                poly_excluded_open_upstream_gap += 1
             continue
         if not _is_polymarket_matcher_game_level(
             row.name,
@@ -623,6 +677,20 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
     grand_excluded_by_category = sum(kalshi_excluded_by_category.values()) + sum(
         poly_excluded_by_category.values()
     )
+    # #1230: upstream-coverage-gap totals. The honest denominator drops these;
+    # the RAW rate adds them back (they are all unlinked) so we never hide data.
+    grand_excluded_upstream_gap = (
+        kalshi_excluded_upstream_gap + poly_excluded_upstream_gap
+    )
+    grand_excluded_open_upstream_gap = (
+        kalshi_excluded_open_upstream_gap + poly_excluded_open_upstream_gap
+    )
+
+    def _raw_open_rate(open_linked: int, open_total: int, excluded_open: int) -> float:
+        """Rate against the RAW pre-exclusion denominator (excluded rows are all
+        unlinked, so they only inflate the denominator)."""
+        raw_total = open_total + excluded_open
+        return round(open_linked / raw_total * 100, 1) if raw_total else 0
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -631,18 +699,30 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
             "linked": grand_linked,
             "link_rate_pct": round(grand_open_linked / grand_open_total * 100, 1) if grand_open_total else 0,
             "link_rate_all_pct": round(grand_linked / grand_total * 100, 1) if grand_total else 0,
+            # #1230: raw rate keeps the upstream-coverage-gap markets in the
+            # denominator so the honest vs. raw gap stays visible (no hidden data).
+            "link_rate_raw_pct": _raw_open_rate(
+                grand_open_linked, grand_open_total, grand_excluded_open_upstream_gap
+            ),
             "open_total": grand_open_total,
             "open_linked": grand_open_linked,
-            "denominator_note": "Headline rate uses open markets only. link_rate_all_pct includes all statuses.",
+            "denominator_note": "Headline rate uses open markets only. link_rate_all_pct includes all statuses. link_rate_raw_pct re-adds the #1230 upstream-coverage-gap exclusions (ITF/Setka-TT/minor cricket) so both the honest and raw denominators are visible.",
             "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
             "excluded_non_game_category": grand_excluded_by_category,
+            "excluded_upstream_coverage_gap": grand_excluded_upstream_gap,
+            "excluded_open_upstream_coverage_gap": grand_excluded_open_upstream_gap,
         },
         "kalshi": {
             "totals": {
                 **kalshi_totals,
                 "link_rate_pct": round(kalshi_totals["open_linked"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
                 "link_rate_all_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
+                "link_rate_raw_pct": _raw_open_rate(
+                    kalshi_totals["open_linked"], kalshi_totals["open_total"], kalshi_excluded_open_upstream_gap
+                ),
                 "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
+                "excluded_upstream_coverage_gap": kalshi_excluded_upstream_gap,
+                "excluded_open_upstream_coverage_gap": kalshi_excluded_open_upstream_gap,
             },
             "by_sport": kalshi_by_sport,
             "excluded_from_denominator": {
@@ -656,8 +736,13 @@ async def _compute_link_rate(db: AsyncSession) -> dict:
                 **poly_totals,
                 "link_rate_pct": round(poly_totals["open_linked"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
                 "link_rate_all_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
+                "link_rate_raw_pct": _raw_open_rate(
+                    poly_totals["open_linked"], poly_totals["open_total"], poly_excluded_open_upstream_gap
+                ),
                 "excluded_not_matcher_game_level": poly_excluded_not_matcher_game_level,
                 "excluded_open_not_matcher_game_level": poly_excluded_open_not_matcher_game_level,
+                "excluded_upstream_coverage_gap": poly_excluded_upstream_gap,
+                "excluded_open_upstream_coverage_gap": poly_excluded_open_upstream_gap,
             },
             "by_sport": poly_by_sport,
             "excluded_from_denominator": {

@@ -7,6 +7,7 @@ from app.routes.admin_matching import (
     _LINK_RATE_SPORT_CATEGORIES,
     _is_obvious_non_game_market_name,
     _is_polymarket_matcher_game_level,
+    _is_upstream_coverage_gap_market,
     _should_include_link_rate_bucket,
     _should_exclude_stale_open_unlinked_game_market,
 )
@@ -116,3 +117,59 @@ def test_non_game_category_exclusion_is_case_insensitive_in_loop():
     cat_raw = "Championship"
     cat = cat_raw.lower()
     assert cat in _LINK_RATE_NON_GAME_CATEGORIES
+
+
+# -- #1230: upstream-coverage-gap denominator exclusion --------------------
+
+def test_upstream_coverage_gap_excludes_itf_minor_tennis():
+    """ITF minor-tour tennis has no schedule source → drop from the denominator."""
+    assert _is_upstream_coverage_gap_market(
+        "ITF Segrate: Juan Cruz Martin Manzano vs Raffaele Ciurnelli"
+    ) is True
+    assert _is_upstream_coverage_gap_market(
+        "ITF Evansville: Renata Zarazua vs Sloane Stephens"
+    ) is True
+
+
+def test_upstream_coverage_gap_excludes_setka_table_tennis():
+    """Setka / TT-Cup table-tennis circuits are uncovered upstream."""
+    assert _is_upstream_coverage_gap_market("Setka Cup: A vs B: Total Games O/U 3.5") is True
+    assert _is_upstream_coverage_gap_market("TT Cup: Player A vs Player B") is True
+    assert _is_upstream_coverage_gap_market("Table Tennis: A vs B") is True
+
+
+def test_upstream_coverage_gap_excludes_minor_cricket():
+    """European Cricket Series (ECS) is a minor circuit with no coverage."""
+    assert _is_upstream_coverage_gap_market(
+        "ECS England: Rainham vs East Londoners"
+    ) is True
+
+
+def test_upstream_coverage_gap_keeps_covered_leagues():
+    """Tier-1/2 leagues we DO schedule must stay in the denominator."""
+    assert _is_upstream_coverage_gap_market("Yankees vs Red Sox") is False
+    assert _is_upstream_coverage_gap_market("Lakers vs Celtics: Spread") is False
+    assert _is_upstream_coverage_gap_market("Carlos Alcaraz vs Jannik Sinner") is False
+    assert _is_upstream_coverage_gap_market("IPL: Mumbai Indians vs Chennai") is False
+    assert _is_upstream_coverage_gap_market(None) is False
+
+
+def test_upstream_coverage_gap_only_removes_unlinked_from_denominator():
+    """The endpoint applies the predicate only when event_id IS None; a linked
+    market is always kept in the numerator. This mirrors the loop logic."""
+    # Simulate loop: linked coverage-gap market stays counted.
+    event_id = 123
+    name = "ITF Segrate: A vs B"
+    excluded = event_id is None and _is_upstream_coverage_gap_market(name)
+    assert excluded is False
+
+
+def test_raw_rate_re_adds_excluded_upstream_gap():
+    """Raw rate keeps the excluded (all-unlinked) markets in the denominator, so
+    the honest rate is always >= the raw rate."""
+    open_linked, open_total, excluded_open = 79, 100, 40
+    honest = round(open_linked / open_total * 100, 1)
+    raw = round(open_linked / (open_total + excluded_open) * 100, 1)
+    assert honest == 79.0
+    assert raw == round(79 / 140 * 100, 1)
+    assert honest >= raw

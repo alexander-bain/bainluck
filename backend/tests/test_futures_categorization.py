@@ -9,6 +9,7 @@ from app.utils.futures_categorization import (
     detect_league, detect_season, compute_canonical_market_key,
     infer_sport_from_league, extract_olympic_discipline,
     detect_game_prop_sport, is_game_prop, generate_category_tags,
+    detect_table_tennis_group,
     LEAGUE_TO_SPORT_CATEGORY,
 )
 from app.utils.market_label_normalization import compute_market_tier
@@ -390,6 +391,52 @@ class TestRacquetGameStats:
             detect_game_prop_sport("Yankees vs Red Sox: Total Runs O/U 8.5")
             == "baseball"
         )
+
+
+# =============================================================================
+# Group-level table-tennis PREVENTION at ingest (#1230 / Queue #249 Item 3)
+# =============================================================================
+class TestTableTennisGroupPrevention:
+    """#1230: A Setka/TT-Cup Polymarket event's bare "Player vs. Player" parent
+    title routes to baseball via summer seasonal inference. The whole group must be
+    classified table_tennis at INGEST off its child props' "Total Games O/U" tell —
+    the fix at the source that makes the retag a repair, not a permanent crutch."""
+
+    def test_bare_parent_title_alone_is_not_table_tennis(self):
+        # The root cause we are preventing: the bare matchup, seen in isolation,
+        # carries no table-tennis signal (it routes to baseball/seasonal). The
+        # group-level fix is what supplies the signal.
+        assert categorize_by_rules("Melisek Marian vs. Moulis Pavel") != "table_tennis"
+
+    def test_group_with_total_games_child_is_table_tennis(self):
+        names = [
+            "Melisek Marian vs. Moulis Pavel",  # bare parent → seasonal baseball
+            "Melisek Marian vs. Moulis Pavel: Total Games O/U 3.5",  # TT tell
+            "Game Handicap: Melisek Marian (-1.5) vs Moulis Pavel (+1.5)",
+        ]
+        assert detect_table_tennis_group(names) is True
+
+    def test_real_mlb_group_is_protected(self):
+        # A real MLB event's group must NEVER be swept to table tennis, even if a
+        # sibling string coincidentally mentions games.
+        names = [
+            "Yankees vs Red Sox",
+            "Yankees vs Red Sox: Total Runs O/U 8.5",
+            "Aaron Judge: Home Runs O/U 1.5",
+        ]
+        assert detect_table_tennis_group(names) is False
+
+    def test_real_tennis_group_stays_out(self):
+        # Real ATP/WTA groups carry a large games total → not table tennis.
+        names = [
+            "Carlos Alcaraz vs. Jannik Sinner",
+            "Carlos Alcaraz vs. Jannik Sinner: Total Games O/U 21.5",
+        ]
+        assert detect_table_tennis_group(names) is False
+
+    def test_empty_group_is_false(self):
+        assert detect_table_tennis_group([]) is False
+        assert detect_table_tennis_group(["", None]) is False
 
 
 # =============================================================================
