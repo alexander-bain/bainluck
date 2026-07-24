@@ -49,7 +49,11 @@ struct BainLuckProvider: TimelineProvider {
 
     private func fetchEntry() async -> BainLuckEntry {
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 10)
+            // L2-179: widen the scan. The complication picks the first live game
+            // and first market; a marquee concept/tournament pinned atop the feed
+            // can push both past a limit:10 window, leaving a bare placeholder
+            // despite usable later stories.
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 20)
 
             var topMarket: ComplicationMarket?
             var liveGame: ComplicationGame?

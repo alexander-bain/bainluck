@@ -92,6 +92,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let event: FeedEventData?
     let futures: FeedFuturesData?
     let tournament: FeedTournamentData?
+    let concept: FeedConceptData?
     let bundle: FeedBundle?
 
     // Personalization fields
@@ -104,6 +105,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         if let e = event { return "event-\(e.id)" }
         if let f = futures { return "futures-\(f.id)" }
         if let t = tournament { return "tournament-\(t.key)" }
+        if let c = concept { return "concept-\(c.key)" }
         return [
             "feed",
             type,
@@ -147,16 +149,56 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
             futures = nil
             tournament = nil
+            concept = nil
         } else if type == "tournament" {
             tournament = try c.decodeIfPresent(FeedTournamentData.self, forKey: .data)
             event = nil
             futures = nil
+            concept = nil
+        } else if type == "concept" {
+            // L2-179: event-concept marquee cards (Tour de France, World Cup, UFC
+            // cards) carry a `data` shape with NO `id`/`name`-as-Int — decoding it
+            // as FeedFuturesData throws, and the FeedResponse skip loop then silently
+            // discarded EVERY concept card. That is why the native marquee never
+            // appeared on device. Decode the real concept payload instead.
+            concept = try c.decodeIfPresent(FeedConceptData.self, forKey: .data)
+            event = nil
+            futures = nil
+            tournament = nil
         } else {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
             tournament = nil
+            concept = nil
         }
     }
+}
+
+// MARK: - Feed Concept Data
+
+/// Event-concept payload embedded inside a `concept`-type feed card — a marquee
+/// hub (multi-day tournament / fight card / ceremony) that links to /event/{key}.
+/// Probability-free: the card is a hub teaser, not a single market. Mirrors the
+/// web `FeedConceptData` treatment (FeedCard.tsx `ConceptFeedCard`).
+nonisolated struct FeedConceptData: Decodable, Identifiable, Sendable {
+    let key: String
+    let name: String
+    let domain: String?
+    let status: String?
+    let startDate: String?
+    let isMajor: Bool?
+    let fightCount: Int?
+    let entryCount: Int?
+    let isMarquee: Bool?
+    /// True only in the post-settlement T+36h WHAT-HIT window — the card renders
+    /// "what happened" (winner/result) instead of the live/countdown framing.
+    let marqueeWhathit: Bool?
+    /// Graded champion, present only when a settled concept has an unambiguous
+    /// crown. Never fabricated — render gracefully when absent.
+    let winner: String?
+    let resultSummary: String?
+
+    var id: String { key }
 }
 
 // MARK: - Feed Event Data

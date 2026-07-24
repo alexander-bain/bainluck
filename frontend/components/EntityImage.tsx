@@ -46,6 +46,16 @@ export default function EntityImage({
   useEffect(() => {
     let cancelled = false;
 
+    // Reset per-identity state so a recycled instance never shows the previous
+    // entity's stale image or a sticky `failed` fallback (wrong-face bug). React
+    // reuses this component when a list re-orders; without this reset a prior
+    // entity whose image 404'd would suppress the new entity's valid image, and
+    // the old imageUrl could flash under the new name during the wikipedia await.
+    setFailed(false);
+    if (type === "wikipedia") {
+      setImageUrl(null);
+    }
+
     if (type === "player" && espnId) {
       const espnSport = sportKeyToEspnHeadshotSport(sport ?? null);
       setImageUrl(espnHeadshotUrl(espnId, espnSport));

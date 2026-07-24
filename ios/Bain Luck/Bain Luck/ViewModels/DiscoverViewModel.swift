@@ -28,11 +28,11 @@ final class DiscoverViewModel: ObservableObject {
         for attempt in 1...3 {
             do {
                 let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
-                let renderable = response.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil }
+                let renderable = response.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
 
                 if renderable.count < 10 {
                     let fallback = try await APIClient.shared.fetchFeed(limit: 200, cacheTTL: nil)
-                    let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil }
+                    let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
                     items = Self.interleave(fallbackRenderable)
                     hasMore = fallback.hasMore
                     nextOffset = fallback.offset + fallback.items.count
@@ -136,6 +136,7 @@ final class DiscoverViewModel: ObservableObject {
     private static func category(for item: FeedItem) -> String {
         if let f = item.futures { return f.llmSportCategory?.lowercased() ?? "other" }
         if let e = item.event { return e.sport?.split(separator: "_").first.map(String.init) ?? "other" }
+        if let c = item.concept { return c.domain?.lowercased() ?? "other" }
         return "other"
     }
 

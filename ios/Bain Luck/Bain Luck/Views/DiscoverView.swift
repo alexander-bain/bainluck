@@ -201,6 +201,9 @@ struct DiscoverView: View {
         if item.type == "bundle", let bundle = item.bundle, let first = bundle.items.first {
             return itemCategory(first)
         }
+        if item.type == "concept", let c = item.concept {
+            return c.domain?.lowercased() ?? "other"
+        }
         return "golf"
     }
 
@@ -231,6 +234,7 @@ struct DiscoverView: View {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
         if let t = item.tournament { return "tournament-\(t.key)" }
+        if let c = item.concept { return "concept-\(c.key)" }
         if let b = item.bundle { return "bundle-\(b.id)" }
         return UUID().uuidString
     }
@@ -246,6 +250,7 @@ struct DiscoverView: View {
         if let e = item.event { return String(e.id) }
         if let f = item.futures { return String(f.id) }
         if let t = item.tournament { return t.key }
+        if let c = item.concept { return c.key }
         if let b = item.bundle { return b.id }
         return item.id
     }
@@ -254,6 +259,7 @@ struct DiscoverView: View {
         if let e = item.event { return "\(e.awayTeam) vs \(e.homeTeam)" }
         if let f = item.futures { return f.name }
         if let t = item.tournament { return t.name }
+        if let c = item.concept { return c.name }
         if let b = item.bundle { return b.title }
         return nil
     }
@@ -869,6 +875,20 @@ struct DiscoverView: View {
                                             feedContext: item.contextSummary ?? item.reason ?? item.headline,
                                             navigationPath: $navigationPath
                                         )
+                                    } else if item.type == "concept", let c = item.concept {
+                                        // L2-179: event-concept marquee card (Tour de France,
+                                        // World Cup, UFC card). Previously dropped at decode; now
+                                        // rendered so the marquee finally appears on device.
+                                        NativeConceptDiscoverCard(
+                                            data: c,
+                                            headline: item.headline,
+                                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                                            navigationPath: $navigationPath,
+                                            onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                            }
+                                        )
+                                        .contextMenu { discoverCardMenu(item) }
                                     }
                                 }
                             }

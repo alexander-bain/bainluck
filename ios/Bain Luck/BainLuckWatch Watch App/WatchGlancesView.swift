@@ -144,7 +144,11 @@ final class WatchGlancesViewModel: ObservableObject {
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 5, forceRefresh: force)
+            // L2-179: fetch a wider window. Glances renders only futures markets;
+            // when a marquee concept/tournament card is pinned atop the feed it
+            // pushed the usable markets past a limit:5 window and the list showed
+            // "No markets yet" despite plenty of usable later stories.
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 20, forceRefresh: force)
             logger.info("Glances feed received: \(feed.items.count) items")
             markets = feed.items.compactMap { item -> WatchMarket? in
                 guard let f = item.futures,

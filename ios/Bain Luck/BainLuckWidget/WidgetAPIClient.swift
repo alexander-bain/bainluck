@@ -120,12 +120,45 @@ enum WidgetAPIError: LocalizedError {
 
 // MARK: - API Response Models (minimal, widget-only)
 
+/// Empty decode target used to advance past a malformed feed item without
+/// failing the whole response (mirrors the main app's `SkipOne`).
+private struct WidgetSkipOne: Decodable {}
+
+private enum WidgetItemsKey: String, CodingKey { case items }
+
+/// Per-item tolerant array decode. L2-179: the widget previously decoded the
+/// items array atomically, so a single concept/tournament card — whose `data`
+/// shape matches neither WidgetEventData nor WidgetFuturesData — threw out of the
+/// whole decode and took the ENTIRE widget down (all-or-nothing). Skip any item
+/// that fails to decode instead, exactly as `FeedResponse` does in the main app.
+private func decodeTolerantWidgetItems<T: Decodable>(from decoder: Decoder) throws -> [WidgetFeedItem<T>] {
+    let c = try decoder.container(keyedBy: WidgetItemsKey.self)
+    var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
+    var decoded: [WidgetFeedItem<T>] = []
+    while !itemsContainer.isAtEnd {
+        if let item = try? itemsContainer.decode(WidgetFeedItem<T>.self) {
+            decoded.append(item)
+        } else {
+            _ = try? itemsContainer.decode(WidgetSkipOne.self)
+        }
+    }
+    return decoded
+}
+
 private struct WidgetFeedResponse: Decodable {
     let items: [WidgetFeedItem<WidgetEventData>]
+
+    init(from decoder: Decoder) throws {
+        items = try decodeTolerantWidgetItems(from: decoder)
+    }
 }
 
 private struct WidgetDiscoverFeedResponse: Decodable {
     let items: [WidgetFeedItem<WidgetFuturesData>]
+
+    init(from decoder: Decoder) throws {
+        items = try decodeTolerantWidgetItems(from: decoder)
+    }
 }
 
 private struct WidgetFeedItem<T: Decodable>: Decodable {
