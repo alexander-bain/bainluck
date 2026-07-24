@@ -245,6 +245,8 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/app/routes/admin_matching.py` (link rate endpoint), `backend/app/utils/league_classification.py`, `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
+**Jul 24, 2026 update (#1230, Queue #249 Item 3 — shipped, verify pending):** the poly 72.5% "drag" was upstream coverage, not a matching bug. Two fixes landed: (1) **classifier prevention** — Setka/TT-Cup markets were ingesting as *baseball* (bare "Player vs Player" Poly parent → summer seasonal inference); `detect_table_tennis_group()` now tags the group `table_tennis` at ingest before the baseball fallback (`tasks/polymarket.py`), so the retag is a repair not a crutch. (2) **denominator honesty** — `_is_upstream_coverage_gap_market()` drops unlinked ITF/Setka-TT/minor-cricket from the honest denominator while reporting `link_rate_raw_pct` + excluded counts (no hidden data). Live honest-metric verification is pending the next hourly `precompute_admin_link_rate` refresh (the endpoint serves a stale cache; `?bust=1` inline recompute 503s on the pre-existing ~25s H12 heaviness — a separate hardening candidate).
+
 ### ~~Kalshi Sawtooth Oscillation~~ — FIXED (May 14)
 
 ### ~~Double-Header Date Matching~~ — FIXED (May 14)
