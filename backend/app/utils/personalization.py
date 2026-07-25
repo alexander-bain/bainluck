@@ -30,9 +30,32 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from app.utils.feed_market_quality import _SPORTS_CATEGORIES
 from app.utils.league_classification import get_league_class
 
 logger = logging.getLogger(__name__)
+
+
+def _is_sports_candidate(
+    sport_key: Optional[str],
+    sport_category: Optional[str],
+) -> bool:
+    """Whether a futures candidate is a genuine sports card.
+
+    Queue #255 Item 2: the implicit sport-affinity "Nah" must apply ONLY to
+    actual sports candidates. A user who picked one sport during onboarding did
+    not thereby ask for "less politics/economics/tech/etc." — those non-sports
+    futures must flow through the bounded Discover category/feature
+    personalization instead of being hard-suppressed by an unmatched sports key.
+
+    A candidate is sports if it carries a sport_key (all game-shaped futures do)
+    or its category is a known sports category (reuses the canonical set from
+    ``feed_market_quality`` so the two never drift).
+    """
+    if sport_key:
+        return True
+    cat = (sport_category or "").strip().lower()
+    return cat in _SPORTS_CATEGORIES
 
 
 # --- Constants ---
@@ -331,7 +354,14 @@ def compute_futures_multiplier(
     # With split affinities (nfl vs college_football), a direct lookup on
     # "americanfootball_nfl" correctly returns the NFL affinity, not the
     # max of NFL + college football from substring matching on "football".
-    if ctx.sport_affinities:
+    # Queue #255 Item 2: gate the sport-affinity block (incl. its implicit "Nah"
+    # fallback) on the candidate being a genuine sports card. Otherwise a single
+    # onboarding sport preference hard-drops every non-sports future (politics,
+    # economics, tech, entertainment, health, weather, culture) via an unmatched
+    # sports key. Non-sports candidates skip straight to category/feature
+    # personalization below. Explicit sports "Nah" (an un-picked *sport*) still
+    # suppresses, because those candidates pass _is_sports_candidate.
+    if ctx.sport_affinities and _is_sports_candidate(sport_key, sport_category):
         matched_affinity = None
         if sport_key:
             matched_affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)

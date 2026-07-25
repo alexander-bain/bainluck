@@ -23,8 +23,37 @@ from app.services import get_db, get_db_rw
 
 from app.routes.admin_utils import _check_admin_secret
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _safe_send_task(task_name: str, *, queue: str, **kwargs):
+    """Enqueue a Celery task, converting a broker failure into a clean 503.
+
+    Queue #255 Item 3: ``POST /api/admin/calibration/recompute`` returned an
+    opaque 500 "instead of enqueueing" when the Redis broker was briefly
+    unreachable — ``celery_app.send_task`` raises ``kombu.exceptions.OperationalError``
+    (a connection error), which FastAPI surfaced as an unhandled 500. That is a
+    transient infra condition, not a bug in the request, so the operational
+    contract is a retryable 503 with a clear message — never a bare 500. Auth and
+    validation still happen before this is called, so a 503 here means "broker
+    down, retry", nothing more.
+    """
+    from app.tasks import celery_app
+    try:
+        return celery_app.send_task(task_name, queue=queue, **kwargs)
+    except Exception as exc:  # kombu OperationalError + any broker/transport error
+        logger.warning("Enqueue failed for %s on queue=%s: %s", task_name, queue, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Task broker is temporarily unavailable; the job was not enqueued. "
+                "Please retry shortly."
+            ),
+        ) from exc
 
 
 @router.post("/snapshots/collapse")
@@ -1799,9 +1828,9 @@ async def trigger_backfill_kalshi_settled(
 async def trigger_calibration_recompute(request: Request, secret: str = Query(None)):
     """Force recompute the public calibration cache."""
     _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
     # Route to the dedicated heavy-compute worker (#224) — same lane as the beat.
-    result = celery_app.send_task("app.tasks.precompute_calibration_main", queue="heavy")
+    # Broker hiccups surface as a retryable 503, never an opaque 500 (#255 Item 3).
+    result = _safe_send_task("app.tasks.precompute_calibration_main", queue="heavy")
     return {"status": "queued", "task_id": result.id}
 
 
@@ -1815,8 +1844,7 @@ async def trigger_time_horizon_calibration(request: Request, secret: str = Query
     same heavy lane as the beat so manual and scheduled paths agree (#224 pattern).
     """
     _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.compute_time_horizon_calibration", queue="heavy"
     )
     return {"status": "queued", "task_id": result.id}

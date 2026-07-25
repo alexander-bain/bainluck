@@ -136,7 +136,7 @@ async def test_google_sign_in_requires_id_token(client):
 @pytest.mark.asyncio
 async def test_google_sign_in_rejects_invalid_token(client, monkeypatch):
     """Google sign-in should return 401 for an invalid token."""
-    monkeypatch.setattr("app.routes.auth.verify_id_token", lambda token: None)
+    monkeypatch.setattr("app.routes.auth.verify_id_token", lambda token, **_kw: None)
 
     resp = await client.post("/api/auth/google", json={"id_token": "bad-token"})
 
@@ -149,7 +149,7 @@ async def test_google_sign_in_rejects_token_without_uid(client, monkeypatch):
     """Google sign-in should return 400 when token has no uid."""
     monkeypatch.setattr(
         "app.routes.auth.verify_id_token",
-        lambda token: {"email": "test@example.com"},  # no uid
+        lambda token, **_kw: {"email": "test@example.com"},  # no uid
     )
 
     resp = await client.post("/api/auth/google", json={"id_token": "no-uid-token"})
@@ -164,7 +164,7 @@ async def test_google_sign_in_existing_user(client, mock_db, monkeypatch):
     user = _make_user()
     monkeypatch.setattr(
         "app.routes.auth.verify_id_token",
-        lambda token: {"uid": "fb-uid-123", "email": "test@example.com", "name": "Test User", "picture": "https://example.com/photo.jpg"},
+        lambda token, **_kw: {"uid": "fb-uid-123", "email": "test@example.com", "name": "Test User", "picture": "https://example.com/photo.jpg"},
     )
     mock_db.execute.return_value = _make_mock_result(scalar_one_or_none_value=user)
 
@@ -184,7 +184,7 @@ async def test_google_sign_in_new_user(client, mock_db, monkeypatch):
     """Google sign-in for new user calls add and flush to create user."""
     monkeypatch.setattr(
         "app.routes.auth.verify_id_token",
-        lambda token: {"uid": "new-uid-456", "email": "new@example.com", "name": "New User", "picture": None},
+        lambda token, **_kw: {"uid": "new-uid-456", "email": "new@example.com", "name": "New User", "picture": None},
     )
     # First execute returns None (user not found), triggering creation
     mock_db.execute.return_value = _make_mock_result(scalar_one_or_none_value=None)

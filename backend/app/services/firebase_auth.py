@@ -53,11 +53,21 @@ def _init_firebase() -> bool:
         return False
 
 
-def verify_id_token(id_token: str) -> Optional[dict]:
+def verify_id_token(id_token: str, allow_session_token: bool = True) -> Optional[dict]:
     """
     Verify a Firebase ID token and return the decoded claims.
 
-    Also accepts backend-issued session tokens (for Safari ITP fallback).
+    Also accepts backend-issued session tokens (for Safari ITP fallback) when
+    ``allow_session_token`` is True (the default, used by the Bearer-auth
+    ``get_current_user`` path).
+
+    SECURITY (Queue #255 Item 1): sign-in / user-creation paths pass
+    ``allow_session_token=False`` so a backend-issued session token can NEVER
+    enter a create path. A backend session token is a stateless 30-day JWT with
+    no server-side revocation; if it were accepted at ``/api/auth/google`` it
+    would let an old token from a since-deleted account re-create (resurrect)
+    that account, defeating account deletion. Only a genuine provider-issued
+    (Firebase) ID token may mint/refresh a User row.
 
     Returns None if verification fails or Firebase is not configured.
     Claims include: uid, email, name, picture, email_verified, etc.
@@ -73,11 +83,13 @@ def verify_id_token(id_token: str) -> Optional[dict]:
     except Exception:
         pass  # Fall through to session token check
 
-    # Try backend-issued session token (Safari ITP fallback)
-    session_claims = verify_session_token(id_token)
-    if session_claims:
-        logger.debug(f"Verified backend session token for uid={session_claims.get('uid')}")
-        return session_claims
+    # Try backend-issued session token (Safari ITP fallback) — never on
+    # user-creation paths (allow_session_token=False).
+    if allow_session_token:
+        session_claims = verify_session_token(id_token)
+        if session_claims:
+            logger.debug(f"Verified backend session token for uid={session_claims.get('uid')}")
+            return session_claims
 
     logger.warning("Token verification failed: neither Firebase ID token nor backend session token")
     return None

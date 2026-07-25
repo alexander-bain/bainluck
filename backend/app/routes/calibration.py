@@ -5,12 +5,13 @@ import random
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func
 
 from app.models import FuturesMarket
+from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
 
 
@@ -59,16 +60,14 @@ CACHE_TTL = 3600
 
 @router.get("/calibration/outcome-timeline")
 async def calibration_outcome_timeline(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
     market_ext_id: str = Query(...),
     source: str = Query("kalshi"),
 ):
     """Show snapshot timeline for all outcomes in a market."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fo.name AS outcome, fo.opening_probability, fo.calibration_probability,
@@ -104,6 +103,7 @@ async def calibration_outcome_timeline(
 
 @router.get("/calibration/bucket-debug")
 async def calibration_bucket_debug(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
     category: str = Query("golf"),
@@ -111,10 +111,7 @@ async def calibration_bucket_debug(
     bucket: int = Query(1),
 ):
     """Show specific outcomes in a calibration bucket for debugging."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fo.name AS outcome_name, fm.name AS market_name,
@@ -153,14 +150,12 @@ async def calibration_bucket_debug(
 
 @router.get("/calibration/snapshot-health")
 async def calibration_snapshot_health(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """How many calibration-eligible outcomes have 0 snapshots?"""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fm.source,
@@ -207,14 +202,12 @@ async def calibration_snapshot_health(
 
 @router.get("/calibration/unchanged-samples")
 async def calibration_unchanged_samples(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """Show specific outcomes where calibration_probability = opening_probability."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     # Sample of unchanged outcomes by category, with snapshot count and volume
     result = await db.execute(text("""
@@ -292,15 +285,13 @@ async def calibration_unchanged_samples(
 
 @router.get("/calibration/volume-samples")
 async def calibration_volume_samples(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
     category: str = Query("soccer"),
 ):
     """Sample resolved Polymarket markets with $0 volume to check if it's real."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fm.name, fm.external_id, fm.volume, fm.volume_24h,
@@ -377,14 +368,12 @@ async def calibration_volume_samples(
 
 @router.get("/calibration/volume-distribution")
 async def calibration_volume_distribution(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """Volume distribution of outcomes in calibration, by source+category."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fm.source,
@@ -416,14 +405,12 @@ async def calibration_volume_distribution(
 
 @router.get("/calibration/price-quality")
 async def calibration_price_quality(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """Lightweight: how many outcomes still use opening prices, by source+category."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT fm.source,
@@ -460,14 +447,12 @@ async def calibration_price_quality(
 
 @router.get("/calibration/diagnostics")
 async def calibration_diagnostics(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """Diagnostic data for calibration debugging — admin only."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
@@ -631,14 +616,12 @@ async def calibration_diagnostics(
 
 @router.get("/calibration/events-funnel")
 async def calibration_events_funnel(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
     """Per-sport filter funnel for odds_api calibration events — admin only."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         SELECT s.key,
@@ -758,15 +741,13 @@ async def calibration_events_funnel(
 
 @router.post("/calibration/rescue")
 async def calibration_rescue(
+    request: Request,
     db: AsyncSession = Depends(get_db_rw),
     secret: str = Query(""),
     limit: int = Query(50000),
 ):
     """Run Part C rescue directly — admin only."""
-    import os
-
-    if secret != os.environ.get("ADMIN_TOKEN", ""):
-        return {"error": "invalid secret"}
+    _check_admin_secret(secret, request=request)
 
     result = await db.execute(text("""
         WITH stuck AS (

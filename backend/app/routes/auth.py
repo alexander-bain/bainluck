@@ -214,8 +214,13 @@ async def google_sign_in(
     """
     Verify a Firebase ID token from Google Sign-In and return the user profile.
     Creates a new user if this is the first sign-in.
+
+    SECURITY (Queue #255 Item 1): ``allow_session_token=False`` so ONLY a genuine
+    Firebase ID token reaches this create path. A backend-issued session token
+    (Safari ITP fallback) must never mint/resurrect a User here — otherwise an old
+    token from a since-deleted account could re-create it on the next sign-in.
     """
-    claims = verify_id_token(body.id_token)
+    claims = verify_id_token(body.id_token, allow_session_token=False)
     if not claims:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

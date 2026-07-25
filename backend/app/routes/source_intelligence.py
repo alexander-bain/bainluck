@@ -19,10 +19,11 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
@@ -850,6 +851,7 @@ async def date_mismatch_audit(db: AsyncSession = Depends(get_db)):
 
 @router.post("/source-intelligence/fix-date-mismatches")
 async def fix_date_mismatches(
+    request: Request,
     secret: str = "",
     dry_run: bool = True,
     db: AsyncSession = Depends(get_db_rw),
@@ -862,11 +864,7 @@ async def fix_date_mismatches(
 
     Pass ?dry_run=false&secret=ADMIN_TOKEN to execute.
     """
-    import os
-    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
-    if not expected or secret != expected:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     await _set_timeout(db)
 
@@ -932,6 +930,7 @@ async def fix_date_mismatches(
 
 @router.post("/source-intelligence/cleanup-orphaned-snapshots")
 async def cleanup_orphaned_snapshots(
+    request: Request,
     secret: str = "",
     dry_run: bool = True,
     db: AsyncSession = Depends(get_db_rw),
@@ -947,11 +946,7 @@ async def cleanup_orphaned_snapshots(
     a futures_market that currently has event_id = NULL (unlinked), and
     deletes them.
     """
-    import os
-    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
-    if not expected or secret != expected:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     await _set_timeout(db)
 
@@ -1184,6 +1179,7 @@ async def oscillation_audit(db: AsyncSession = Depends(get_db)):
 
 @router.post("/source-intelligence/cleanup-oscillation")
 async def cleanup_oscillation(
+    request: Request,
     secret: str = "",
     dry_run: bool = True,
     db: AsyncSession = Depends(get_db_rw),
@@ -1193,11 +1189,7 @@ async def cleanup_oscillation(
     Pass ?dry_run=false&secret=ADMIN_TOKEN to execute.
     Default is dry_run=true (report only).
     """
-    import os
-    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
-    if not expected or secret != expected:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    _check_admin_secret(secret, request=request)
 
     await _set_timeout(db)
 
