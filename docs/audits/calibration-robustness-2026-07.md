@@ -7,6 +7,33 @@ The deliverable is findings for Fable to read *before* any backfill/recalibratio
 
 ---
 
+## Queue #254 — field normalization (FIX APPLIED, from this audit's #1 finding)
+
+The audit's #1 finding — the population over-prediction is a **field normalization artifact** — was actioned in Queue #254. Key correction the fix hinges on: the audit's cohort_sweep reads **raw** `calibration_probability`, but the live `/api/calibration` curve already normalizes single-winner mutually-exclusive fields (Queue #157's `mex_norm_markets`). The real gap was that **65,219 `field`-shape markets carry `mutually_exclusive=false`** and therefore escaped that gate, entering the curve raw (avg sum ~3.45–4.56).
+
+**Fix shipped (Item 1, calibration layer):** the `mex_win_counts` + `mex_norm_markets` CTEs in BOTH synced query sites (`tasks/precompute_calibration.py` + `routes/calibration.py`) now trust `market_type='field'` (the shape classifier's ">2 outcomes, one winner" signal), not only the `mutually_exclusive` flag. Read-side only (gotcha #21 — raw `calibration_probability`/`is_winner` untouched), still guarded by `win_count=1 / ≥3 outcomes / cp_sum>1.15`.
+- **Live data-level proof (2026-07-24):** 2,679 resolved field markets / **30,948 outcomes** (avg field sum **3.45**) newly qualify for per-market normalization — the curve's `mex_normalization.normalized_outcomes` rises **79,496 → ~110,444** (+39%). Baseline curve `mce_closing_line` = 1.23pp; the field cohort's raw +8.5pp is now divided toward its per-market sum (~1.0). Full curve MCE re-measure lands on the next `precompute_calibration_main` beat (the manual `/api/admin/calibration/recompute` trigger 500s — pre-existing infra, flagged for Fable).
+- The guards correctly filtered the 65K field markets down to the 2,679 genuine resolved single-winner partitions summing >1.15 — a multi-winner or coherent field is left untouched.
+
+**Item 2 (Alex's golf catch) — sport×shape re-cut, source-collapsed golf-by-shape:** `cohort_sweep.sweep()` now emits a source-collapsed `by_sport_shape` cut (each sport×shape gets its own reliability curve instead of being split by source / averaged into the winner-field). Golf, collapsed across DataGolf+Kalshi+Polymarket:
+
+| golf shape | N | predicted | actual | signed error |
+|---|---:|---:|---:|---:|
+| field | 69,719 | 0.213 | 0.127 | **+0.086** |
+| container_member | 4,193 | 0.416 | 0.323 | **+0.093** |
+| duel (make-cut / H2H) | 939 | 0.524 | 0.486 | **+0.038** |
+| quantity (top-N) | 68 | 0.554 | 0.559 | **−0.004** |
+| unshaped | 68 | 0.372 | 0.382 | −0.010 |
+
+Confirms Alex's hypothesis: golf's over-prediction is **concentrated in `field`/`container_member`** (the multi-outcome artifact the Item-1 fix targets), while golf's **make-cut/H2H (`duel`, +3.8pp) and top-N (`quantity`, −0.4pp) outcomes are well-calibrated** — the high-probability outcomes were simply hidden inside the sport-alone "golf field 14%" headline.
+
+**Item 3 recon (pre-final-period high-prob cohort):** DataGolf futures density is **2,040 points/outcome** over a ~10.6-day span (§futures below), so the R4-tee-off boundary snapshot is **already in snapshot history** — no new capture is needed. The remaining build (detect the last-period boundary, grade the boundary snapshot vs the final result, report the 0.6–1.0 reliability deciles) is a genuine new cohort-analysis deliverable, scoped as follow-up.
+
+**Deferred to Alex/Fable (product judgment, not shipped):**
+- **Item 1 display layer.** `normalize_display_probs` deliberately returns RAW above `_FIELD_SUM_MAX=1.60` ("independent-binary overround — raw YES price is the honest marginal"), and the category pages (entertainment/weather/economics) don't call it at all. Whether a `field`-shape overround market should be *squeezed to 100%* on display (matching the calibration fix + Alex's "blend is the product / one number per question" ruling) **reverses a deliberate design decision** and is outward-facing — recommend Alex rules on squeeze-field-shape-on-display before it ships across surfaces.
+
+---
+
 ## Queue #253 — authoritative raw-row / per-event census (supersedes #251's estimates where they differ)
 
 ### Item 2 — full raw-row sub-cohort sweep (1,279,310 rows · 374 cohorts)
