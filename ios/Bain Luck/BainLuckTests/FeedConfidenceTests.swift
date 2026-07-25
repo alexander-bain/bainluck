@@ -5,10 +5,6 @@ import XCTest
 /// signal fields (`confidence_tier`/`confidence_score`) and that the native
 /// confidence math (`Confidence`) mirrors the web (`frontend/lib/confidence.ts`)
 /// and backend (`feed_market_quality.compute_confidence_score`) exactly.
-///
-/// NOTE: this file is NOT yet wired into an Xcode target — the project currently
-/// has no unit-test bundle (see BainLuckTests/README.md). Once a `Bain LuckTests`
-/// target exists and includes this file, `xcodebuild test` runs it as-is.
 final class FeedConfidenceTests: XCTestCase {
 
     private func decoder() -> JSONDecoder {

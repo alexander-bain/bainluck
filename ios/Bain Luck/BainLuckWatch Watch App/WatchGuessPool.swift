@@ -20,6 +20,14 @@ struct GuessQuestion {
     var actualPct: Int { Int((actualProb * 100).rounded()) }
 }
 
+/// The graded outcome of a submitted guess. Foundation-only (lives here rather
+/// than in the SwiftUI view) so the view model's result-reveal path is unit
+/// testable off-watchOS (L2-182).
+struct GuessResult: Equatable {
+    let correct: Bool
+    let guess: String
+}
+
 // MARK: - Guess Pool (pure, testable)
 
 /// Builds the Watch Higher/Lower question deck from a decoded feed.

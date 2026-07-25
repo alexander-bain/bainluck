@@ -92,6 +92,34 @@ struct WatchGuessView: View {
                     }
                     .tint(.red)
                 }
+                // A guess is disabled while its save is in flight or awaiting a
+                // retry — never let a failed/pending guess be double-submitted or
+                // silently re-scored (L2-182).
+                .disabled(vm.submission != .idle)
+
+                if vm.submission == .submitting {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                        Text("Saving…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 2)
+                } else if vm.submission == .failed {
+                    VStack(spacing: 4) {
+                        Text("Couldn't save your guess")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                        Button { Task { await vm.retrySubmit() } } label: {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                        }
+                        .tint(.blue)
+                    }
+                    .padding(.top, 2)
+                }
             }
             .padding(.horizontal, 4)
             }
@@ -135,11 +163,6 @@ struct WatchGuessView: View {
     }
 }
 
-// `GuessQuestion` now lives in WatchGuessPool.swift (Foundation-only) so its
-// futures-only construction can be unit-tested without pulling SwiftUI/WatchKit
-// into the test bundle.
-
-struct GuessResult {
-    let correct: Bool
-    let guess: String
-}
+// `GuessQuestion` and `GuessResult` now live in WatchGuessPool.swift
+// (Foundation-only) so the futures-only construction and the guess-result reveal
+// path can be unit-tested without pulling SwiftUI/WatchKit into the test bundle.

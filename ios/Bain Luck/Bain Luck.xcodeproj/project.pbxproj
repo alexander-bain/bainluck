@@ -114,6 +114,8 @@
 			membershipExceptions = (
 				WatchFeedModels.swift,
 				WatchGuessPool.swift,
+				WatchGuessBackend.swift,
+				WatchGuessViewModel.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -124,6 +126,13 @@
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};
+		A7C0000000000000000000FF /* Exceptions for "BainLuckWidget" folder in "BainLuckTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				WidgetFeedDecoding.swift,
+			);
+			target = A7C0000000000000000000E1 /* BainLuckTests */;
+		};
 		A7C0000000000000000000DE /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -131,6 +140,7 @@
 				WatchAPIClient.swift,
 				WatchAuthStore.swift,
 				WatchFeedModels.swift,
+				WatchGuessBackend.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -163,6 +173,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A7C0000000000000000000FE /* Exceptions for "BainLuckWidget" folder in "BainLuckWidget" target */,
+				A7C0000000000000000000FF /* Exceptions for "BainLuckWidget" folder in "BainLuckTests" target */,
 			);
 			path = BainLuckWidget;
 			sourceTree = "<group>";

@@ -9,9 +9,6 @@ import XCTest
 /// discarded EVERY concept card. That is why the Tour de France / World Cup
 /// marquee never appeared natively. These tests assert a concept item survives
 /// the full feed decode with a populated `concept` payload.
-///
-/// NOTE: like FeedConfidenceTests, this file is not yet wired into an Xcode
-/// unit-test bundle (see BainLuckTests/README.md); it runs as-is once one exists.
 final class FeedConceptDecodeTests: XCTestCase {
 
     private func decoder() -> JSONDecoder {

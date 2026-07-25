@@ -6,10 +6,6 @@ import XCTest
 /// parity fix). Every expected value below was cross-computed independently from
 /// the web's `frontend/lib/calibrationMath.ts` math on the same fixture, so a
 /// regression in either the port or the rounding fails this suite.
-///
-/// NOTE: this file is NOT yet wired into an Xcode target — the project currently
-/// has no unit-test bundle (see BainLuckTests/README.md). Once a `Bain LuckTests`
-/// target exists and includes this file, `xcodebuild test` runs it as-is.
 final class CalibrationMathTests: XCTestCase {
 
     // A deterministic payload-v2-shaped fixture with hand-verifiable math:

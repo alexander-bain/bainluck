@@ -160,3 +160,35 @@ enum WatchAPIError: LocalizedError {
         }
     }
 }
+
+// MARK: - WatchGuessBackend conformance
+// Lives here (watch target only, NOT the iOS test bundle) because it references
+// PredictionStats + the concrete client; the protocol itself is pure Foundation
+// so WatchGuessViewModel stays testable off-watchOS (L2-182).
+extension WatchAPIClient: WatchGuessBackend {
+    func fetchFeedItems(limit: Int, forceRefresh: Bool) async throws -> [WatchFeedItem] {
+        try await fetchFeed(limit: limit, forceRefresh: forceRefresh).items
+    }
+
+    func submitGuess(
+        marketId: Int,
+        guess: String,
+        threshold: Int,
+        actualProbability: Double,
+        correct: Bool,
+        category: String?
+    ) async throws {
+        try await submitPrediction(
+            marketId: marketId,
+            guess: guess,
+            threshold: threshold,
+            actualProbability: actualProbability,
+            correct: correct,
+            category: category
+        )
+    }
+
+    func currentStreak() async throws -> Int? {
+        try await fetchPredictionStats().currentStreak
+    }
+}
