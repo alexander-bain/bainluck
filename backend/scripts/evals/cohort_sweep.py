@@ -202,6 +202,31 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
     }
 
 
+def sweep_by_sport_shape(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Source-COLLAPSED (league_category × market_type) reliability cells.
+
+    #254 Item 2 (Alex's golf catch): the per-source drill-down splits golf across
+    kalshi/datagolf, and the sport-alone view ("golf field 14%") hides that a
+    sport carries multiple shapes with very different calibration — golf's
+    make-cut (duel) / top-N (quantity) / H2H (duel) outcomes deserve their OWN
+    reliability curve, not to be averaged into the winner-field. This collapses
+    source so each (sport, shape) gets one honest curve. Reuses ``analyze_cohort``
+    with a synthetic ``_all_sources`` source token."""
+    normalized = normalize_rows(rows)
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in normalized:
+        grouped[(row["league_category"], row["market_type"])].append(row)
+    cells = [
+        analyze_cohort(("_all_sources", league, shape), cell_rows)
+        for (league, shape), cell_rows in sorted(grouped.items())
+    ]
+    return sorted(
+        cells,
+        key=lambda c: (c["severity"] if c["sufficient"] else -1.0),
+        reverse=True,
+    )
+
+
 def sweep(rows: Iterable[dict[str, Any]], worst_n: int = 20) -> dict[str, Any]:
     normalized = normalize_rows(rows)
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -219,6 +244,7 @@ def sweep(rows: Iterable[dict[str, Any]], worst_n: int = 20) -> dict[str, Any]:
         "minimum_cohort_n": MIN_COHORT_N,
         "worst_20": ranked,
         "drill_down": cohorts,
+        "by_sport_shape": sweep_by_sport_shape(normalized),
     }
 
 

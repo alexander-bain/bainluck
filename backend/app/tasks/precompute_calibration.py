@@ -409,9 +409,11 @@ def market_needs_mex_normalization(
     single-winner partition — not a multi-winner ladder / independent-binary set,
     not a zero-winner void), and its eligible cp sum exceeds
     ``MEX_NORMALIZE_THRESHOLD`` (a sum already ~1.0 needs no correction). The
-    caller must have already confirmed mutually_exclusive=true. Read-side only
-    (gotcha #21) — the divisor is the eligible cp sum; each outcome's normalized
-    probability is ``cp / cp_sum``.
+    caller must have already confirmed the market is a single-winner partition —
+    ``mutually_exclusive=true`` OR ``market_type='field'`` (#254: 65K field
+    markets carry the mutually_exclusive flag unset yet are definitionally one
+    winner among >2 competitors). Read-side only (gotcha #21) — the divisor is
+    the eligible cp sum; each outcome's normalized probability is ``cp / cp_sum``.
     """
     return (
         n_eligible >= 3
@@ -939,7 +941,8 @@ async def _precompute_calibration_main():
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
                     COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                    fm.mutually_exclusive
+                    fm.mutually_exclusive,
+                    fm.market_type
                 FROM futures_markets fm
                 WHERE fm.status = 'resolved'
                   -- #994 symmetric exclusion: DataGolf markets whose full field
@@ -1013,25 +1016,30 @@ async def _precompute_calibration_main():
             -- mex_win_counts: winner count over ALL outcomes of each mex market
             -- (the structure test — genuine partitions have exactly 1 winner;
             -- multi-winner = ladder/independent, zero-winner = void).
+            -- #254: also trust market_type='field' (the shape classifier's
+            -- ">2 outcomes, one winner" signal) — 65K field markets have the
+            -- mutually_exclusive flag UNSET and were escaping this gate raw
+            -- (sum ~4.56). The win_count=1 / >=3 / sum>1.15 guards below keep a
+            -- mis-shaped or multi-winner field from being normalized anyway.
             mex_win_counts AS (
                 SELECT fo.market_id,
                     COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
-                WHERE mi.mutually_exclusive = true
+                WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
                 GROUP BY fo.market_id
             ),
             -- mex_norm_markets: per-market divisor (eligible cp sum) for markets
-            -- that qualify — mex, exactly one winner, >=3 eligible outcomes, and
-            -- an eligible cp sum over the threshold. Same eligibility predicate as
-            -- the main outcome scan so the divisor matches the curve population.
+            -- that qualify — mex/field, exactly one winner, >=3 eligible outcomes,
+            -- and an eligible cp sum over the threshold. Same eligibility predicate
+            -- as the main outcome scan so the divisor matches the curve population.
             mex_norm_markets AS (
                 SELECT fo.market_id,
                     SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS cp_sum
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
                 JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
-                WHERE mi.mutually_exclusive = true
+                WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
                   AND mwc.win_count = 1
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1

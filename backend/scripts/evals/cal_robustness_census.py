@@ -384,6 +384,23 @@ async def _run(conn) -> None:
             })
     duel_ece = round(expected_calibration_error(duel), 4) if duel else None
 
+    # #254 Item 2: source-collapsed sport×shape cells (compact — drop examples),
+    # plus a golf-only breakout (Alex's catch: golf's duel/quantity outcomes
+    # deserve their own curve, not to be averaged into the winner-field).
+    sport_shape = [
+        {k: c[k] for k in (
+            "league_category", "market_type", "n", "sufficient",
+            "predicted_rate", "actual_rate", "signed_error", "ece",
+            "calibration_slope", "severity",
+        )} | {"anti_flag": c["anti_calibration"]["flag"]}
+        for c in report["by_sport_shape"]
+    ]
+    golf_by_shape = [
+        c for c in sport_shape
+        if c["league_category"] in ("golf", "PGA", "LPGA", "DPWorld")
+        or "golf" in c["league_category"].lower()
+    ]
+
     await _write_marker("sweep", {
         "population": report["rows"],
         "cohorts": report["cohorts"],
@@ -391,6 +408,8 @@ async def _run(conn) -> None:
         "by_shape": by_shape,
         "by_source": by_source,
         "by_source_shape": by_source_shape,
+        "by_sport_shape": sport_shape,
+        "golf_by_shape": golf_by_shape,
         "duel_curve": curve,
         "duel_ece": duel_ece,
     })

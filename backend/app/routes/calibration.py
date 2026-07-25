@@ -837,7 +837,8 @@ async def public_calibration(
             SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                 fm.commence_time,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                fm.mutually_exclusive
+                fm.mutually_exclusive,
+                fm.market_type
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
         ),
@@ -896,12 +897,15 @@ async def public_calibration(
         -- Queue #157 (#1012): multi-candidate normalization (mirrors the
         -- precompute task's mex_win_counts / mex_norm_markets). Kept in sync so a
         -- cold-cache fallback serve is not wildly over-confident on mex markets.
+        -- #254: also trust market_type='field' (65K field markets have the
+        -- mutually_exclusive flag unset and escaped this gate summing ~4.56).
+        -- Guarded by win_count=1 / >=3 / sum>1.15 below.
         mex_win_counts AS (
             SELECT fo.market_id,
                 COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
             FROM futures_outcomes fo
             JOIN market_info mi ON mi.market_id = fo.market_id
-            WHERE mi.mutually_exclusive = true
+            WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
             GROUP BY fo.market_id
         ),
         mex_norm_markets AS (
@@ -910,7 +914,7 @@ async def public_calibration(
             FROM futures_outcomes fo
             JOIN market_info mi ON mi.market_id = fo.market_id
             JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
-            WHERE mi.mutually_exclusive = true
+            WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
               AND mwc.win_count = 1
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1

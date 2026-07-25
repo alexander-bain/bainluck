@@ -103,3 +103,30 @@ class TestRouteFallbackEmbedsNormalization:
         src = inspect.getsource(calibration_route)
         assert "mex_norm_markets" in src
         assert "/ mnm.cp_sum" in src
+
+
+class TestFieldShapeGate254:
+    """#254: the normalization gate must ALSO trust market_type='field', not only
+    the mutually_exclusive flag — 65K field markets carry the flag unset yet are
+    definitionally single-winner partitions summing ~4.56, and were polluting the
+    curve raw. Both synced query sites must embed the extended gate."""
+
+    def test_precompute_gate_includes_field_shape(self):
+        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        assert "mi.market_type = 'field'" in src
+        # market_info must expose market_type for the gate to reference it.
+        assert "fm.market_type" in src
+
+    def test_route_fallback_gate_includes_field_shape(self):
+        from app.routes import calibration as calibration_route
+
+        src = inspect.getsource(calibration_route)
+        assert "mi.market_type = 'field'" in src
+        assert "fm.market_type" in src
+
+    def test_field_shape_still_guarded_by_single_winner_and_threshold(self):
+        # The extension does NOT loosen the safety guards: a field that is
+        # multi-winner or already ~1.0 is still left untouched by the predicate.
+        assert market_needs_mex_normalization(80, 1, 4.56) is True   # the target class
+        assert market_needs_mex_normalization(80, 2, 4.56) is False  # multi-winner field
+        assert market_needs_mex_normalization(80, 1, 1.0) is False   # coherent field
