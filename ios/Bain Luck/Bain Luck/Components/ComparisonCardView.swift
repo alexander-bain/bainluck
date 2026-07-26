@@ -86,6 +86,8 @@ struct ComparisonCardView: View {
                 Text("\(totalOutcomeCount) markets")
                     .font(.system(size: 11))
                     .foregroundStyle(DS.textMuted)
+                // #490: confidence signal (1-3 bars) — renders nothing when absent.
+                SignalBarsView(tier: data.confidenceTier)
             }
             .padding(.top, 12)
         }

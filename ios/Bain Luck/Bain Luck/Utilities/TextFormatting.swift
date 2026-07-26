@@ -60,6 +60,33 @@ nonisolated private func fixWord(_ word: String) -> String {
     return word
 }
 
+/// Fully title-cases a lowercase / underscore-delimited key while keeping known
+/// acronyms and brand tokens intact — the native mirror of
+/// `frontend/lib/titleCase.ts` `toTitleCaseAcronymSafe`. Use this for category /
+/// subcategory / tag keys that arrive lowercased (e.g. "pga_tour" -> "PGA Tour",
+/// "mma" -> "MMA", "occunet" -> "OccuNet").
+///
+/// Distinct from `properTitleCase`, which only *repairs* acronyms in an already
+/// cased display string and never lowercases unrecognised words. This one owns
+/// the "raw lowercase key -> title" job that inline `.capitalized` / per-word
+/// upper-casers used to do (and which garbled "pga" into "Pga"). It reuses the
+/// same `knownAcronyms` / `brandCasing` sets so both formatters stay in sync.
+nonisolated func toTitleCaseAcronymSafe(_ raw: String) -> String {
+    raw
+        .replacingOccurrences(of: "_", with: " ")
+        .split(separator: " ", omittingEmptySubsequences: true)
+        .map { word -> String in
+            let token = String(word)
+            let lower = token.lowercased()
+            // Brand first: OccuNet must beat the OCCUNET acronym entry.
+            if let brand = brandCasing[lower] { return brand }
+            let bare = token.uppercased().filter { $0.isLetter || $0.isNumber }
+            if !bare.isEmpty, knownAcronyms.contains(bare) { return bare }
+            return lower.prefix(1).uppercased() + lower.dropFirst()
+        }
+        .joined(separator: " ")
+}
+
 // MARK: - Date formatting
 
 nonisolated(unsafe) private let _isoFractional: ISO8601DateFormatter = {

@@ -81,15 +81,8 @@ struct FuturesCategoryOption: Identifiable, Hashable {
     }
 
     private static func title(for tag: String) -> String {
-        switch tag {
-        case "mma": return "MMA"
-        case "tech": return "Tech"
-        default:
-            return tag
-                .split(separator: "_")
-                .map { $0.capitalized }
-                .joined(separator: " ")
-        }
+        // Acronym-safe: "pga_tour" -> "PGA Tour", "mma" -> "MMA" (no more "Pga").
+        toTitleCaseAcronymSafe(tag)
     }
 
     private static func group(for tag: String) -> FuturesCategoryGroup {
@@ -210,7 +203,7 @@ struct FuturesBrowseMarketRow: View {
     private var category: FuturesCategoryOption {
         FuturesCategoryOption(
             tag: market.llmSportCategory ?? "",
-            title: market.llmSportCategory?.capitalized ?? "Futures",
+            title: market.llmSportCategory.map(toTitleCaseAcronymSafe) ?? "Futures",
             group: .other,
             count: nil
         )

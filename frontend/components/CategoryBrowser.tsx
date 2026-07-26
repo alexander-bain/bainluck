@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { fetchFuturesBrowse, fetchFuturesCategories, formatProbability } from "@/lib/api";
+import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import type { FuturesBrowseItem } from "@/lib/types";
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -50,21 +51,16 @@ const CATEGORY_EMOJI: Record<string, string> = {
   other: "📋",
 };
 
+// Overrides for labels the acronym-safe caser can't derive (single-token names
+// that should split into words). Acronyms (mma/epl/mlb/…) and underscore names
+// (horse_racing → "Horse Racing") are handled by toTitleCaseAcronymSafe.
 const CATEGORY_LABELS: Record<string, string> = {
-  mma: "MMA",
-  epl: "EPL",
-  mlb: "MLB",
-  nba: "NBA",
-  nfl: "NFL",
-  nhl: "NHL",
-  horse_racing: "Horse Racing",
-  auto_industry: "Auto Industry",
   aussierules: "Aussie Rules",
 };
 
 function formatCategoryName(s: string): string {
   if (CATEGORY_LABELS[s]) return CATEGORY_LABELS[s];
-  return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return toTitleCaseAcronymSafe(s);
 }
 
 export default function CategoryBrowser() {

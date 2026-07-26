@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { getCategoryByKey, SPORT_CATEGORIES } from "@/lib/sportCategories";
+import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
@@ -32,7 +33,7 @@ export default function CategoryPage({
 }) {
   const slug = params.slug;
   const category = getCategoryByKey(slug);
-  const categoryName = category?.name ?? slug.charAt(0).toUpperCase() + slug.slice(1).replace(/_/g, " ");
+  const categoryName = category?.name ?? toTitleCaseAcronymSafe(slug);
   const categoryEmoji = category?.emoji ?? "\uD83C\uDFC6";
 
   usePageTracking({ pageType: "category", pageTitle: `${categoryName} - Bain Luck` });

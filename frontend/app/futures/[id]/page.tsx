@@ -36,6 +36,7 @@ import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
+import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 
@@ -803,7 +804,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           excludeId={market.id}
           excludeType="futures"
           limit={4}
-          title={`More ${market.llm_sport_category.charAt(0).toUpperCase() + market.llm_sport_category.slice(1)}`}
+          title={`More ${toTitleCaseAcronymSafe(market.llm_sport_category)}`}
         />
       )}
 

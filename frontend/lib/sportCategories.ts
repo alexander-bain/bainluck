@@ -854,7 +854,8 @@ export function getEmojiForCategory(categoryKey: string): string {
 export function getNameForCategory(categoryKey: string): string {
   const cat = _CATEGORY_BY_KEY.get(categoryKey.toLowerCase());
   if (cat) return cat.name;
-  return categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1).replace(/_/g, " ");
+  // Acronym-safe fallback: "pga_tour" → "PGA Tour", not "Pga tour".
+  return toTitleCaseAcronymSafe(categoryKey);
 }
 
 /**

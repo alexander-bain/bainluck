@@ -95,8 +95,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           />
 
           {/* Summary footer — orphan-free: "All below 50%" is dropped (it read as
-              a context-less phrase); when nothing clears 50% we show only volume. */}
-          {(lastAbove50Label || volumeStr) && (
+              a context-less phrase); when nothing clears 50% we show only volume.
+              L2-183: the confidence glyph joins the right cluster so this
+              multi-candidate kernel matches its ComparisonCard sibling. */}
+          {(lastAbove50Label || volumeStr || data.confidence_tier) && (
             <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
               {lastAbove50Label && (
                 <>
@@ -104,7 +106,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                   <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
                 </>
               )}
-              {volumeStr && <span className="ml-auto text-[11px] text-text-muted">{volumeStr}</span>}
+              <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
+                {volumeStr && <span>{volumeStr}</span>}
+                {volumeStr && data.confidence_tier && <span>·</span>}
+                <SignalBars tier={data.confidence_tier} />
+              </span>
             </div>
           )}
 

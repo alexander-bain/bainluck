@@ -130,6 +130,8 @@ struct HeatMapCardView: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 Spacer()
+                // #490: confidence signal (1-3 bars) — renders nothing when absent.
+                SignalBarsView(tier: data.confidenceTier)
                 if let src = data.source {
                     Text(src.uppercased())
                         .font(.system(size: 9, weight: .heavy))

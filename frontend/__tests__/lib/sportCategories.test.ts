@@ -23,6 +23,7 @@ import {
   getLeagueDisplayWithEmoji,
   getEmojiForLeague,
   getCategoryName,
+  getNameForCategory,
   groupLeaguesByCategory,
   getActiveCategoriesFromLeagues,
   calculateExcitementScore,
@@ -357,6 +358,21 @@ describe('getCategoryName', () => {
 
   test('unknown returns Other', () => {
     expect(getCategoryName('unknown_sport')).toBe('Other');
+  });
+});
+
+// =============================================================================
+// getNameForCategory — L2-183: the unknown-key fallback must be acronym-safe
+// (was first-char-only, which produced "Pga tour" / "Wnba draft").
+// =============================================================================
+describe('getNameForCategory', () => {
+  test('acronym-safe fallback for unknown keys', () => {
+    expect(getNameForCategory('wnba_draft')).toBe('WNBA Draft');
+    expect(getNameForCategory('cpi_release')).toBe('CPI Release');
+  });
+
+  test('ordinary unknown keys still title-case', () => {
+    expect(getNameForCategory('horse_racing')).toBe('Horse Racing');
   });
 });
 

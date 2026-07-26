@@ -21,6 +21,19 @@ describe("toTitleCaseAcronymSafe", () => {
     expect(toTitleCaseAcronymSafe("best picture")).toBe("Best Picture");
   });
 
+  // L2-183 — lock the sibling acronyms the queue named, so wiring more callers
+  // through this formatter can't regress any of them into "Nba"/"Gdp"/"Ai".
+  it("preserves the full sibling acronym set (league / macro / tech)", () => {
+    expect(toTitleCaseAcronymSafe("nfl")).toBe("NFL");
+    expect(toTitleCaseAcronymSafe("mlb")).toBe("MLB");
+    expect(toTitleCaseAcronymSafe("nhl")).toBe("NHL");
+    expect(toTitleCaseAcronymSafe("ufc")).toBe("UFC");
+    expect(toTitleCaseAcronymSafe("wnba")).toBe("WNBA");
+    expect(toTitleCaseAcronymSafe("gdp forecast")).toBe("GDP Forecast");
+    expect(toTitleCaseAcronymSafe("cpi report")).toBe("CPI Report");
+    expect(toTitleCaseAcronymSafe("ai race")).toBe("AI Race");
+  });
+
   it("matches acronyms even with surrounding punctuation", () => {
     expect(toTitleCaseAcronymSafe("(mvp) odds")).toBe("(MVP) Odds");
   });
