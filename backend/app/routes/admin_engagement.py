@@ -28,7 +28,7 @@ from app.models.models import (
 
 from app.services import get_db, get_db_rw
 
-from app.routes.admin_utils import _check_admin_secret, _check_admin_auth
+from app.routes.admin_utils import _check_admin_secret, _check_admin_auth, _safe_send_task
 from app.utils.external_curator_ground_truth import (
     load_external_curator_ground_truth_report_from_env,
 )
@@ -306,7 +306,7 @@ async def trigger_discover_label_eval_snapshot(
 
     from app.tasks import celery_app
 
-    task = celery_app.send_task(
+    task = _safe_send_task(
         "app.tasks.snapshot_discover_label_eval_run",
         kwargs={
             "days": days,
@@ -354,7 +354,7 @@ def _enqueue_bug_fixed_email(report_id: int) -> None:
     try:
         from app.tasks import celery_app
 
-        celery_app.send_task(_BUG_FIXED_EMAIL_TASK_NAME, args=[report_id])
+        _safe_send_task(_BUG_FIXED_EMAIL_TASK_NAME, args=[report_id])
     except Exception as exc:
         logger.warning("Bug fix email enqueue failed for report %d: %s", report_id, exc)
 
@@ -416,7 +416,7 @@ async def trigger_hook_enrichment(
 
     from app.tasks import celery_app
 
-    task = celery_app.send_task("app.tasks.enrich_market_hooks", kwargs={"limit": limit})
+    task = _safe_send_task("app.tasks.enrich_market_hooks", kwargs={"limit": limit})
     return {
         "queued": True,
         "task_id": task.id,
@@ -881,7 +881,7 @@ async def trigger_discover_ground_truth_diagnostic_snapshot(
 
     from app.tasks import celery_app
 
-    task = celery_app.send_task(
+    task = _safe_send_task(
         "app.tasks.snapshot_discover_ground_truth_diagnostics",
         kwargs={"limit": limit},
     )
@@ -961,7 +961,7 @@ async def trigger_discover_external_curator_ground_truth_import(
 
     from app.tasks import celery_app
 
-    task = celery_app.send_task("app.tasks.import_external_curator_ground_truth")
+    task = _safe_send_task("app.tasks.import_external_curator_ground_truth")
     return {
         "queued": True,
         "task_id": task.id,

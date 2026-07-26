@@ -1254,6 +1254,16 @@ def generate_golf_live_commentary(prompt: str) -> Optional[str]:
     if not client:
         return None
 
+    # #1280: bound THIS call tightly. The shared client defaults to timeout=30s
+    # with 2 retries → up to ~90s worst case, which is exactly the task hard
+    # limit that SIGKILLed the background worker. The commentary box is a
+    # best-effort, live-only nicety: one short attempt with a single retry
+    # (~<16s worst case) is plenty, and it degrades to "no box" on any failure.
+    try:
+        client = client.with_options(timeout=8.0, max_retries=1)
+    except Exception:  # pragma: no cover - defensive (older SDKs)
+        pass
+
     system_prompt = (
         "You write a very short live update for a golf tournament tracker that "
         "shows probabilities, not betting odds. STRICT RULES:\n"

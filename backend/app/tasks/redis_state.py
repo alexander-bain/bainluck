@@ -175,6 +175,67 @@ def get_async_redis_client():
     return aioredis.from_url(REDIS_URL, **stability)
 
 
+# ---------------------------------------------------------------------------
+# Worker-generation liveness (#1280 Item 3).
+#
+# A poll's phase marker survives a SIGKILL by design (#995 diagnostics), so after
+# a DEPLOY restart a frozen ``upsert_loop@120s`` marker sat in Redis for its full
+# TTL and the phase-heartbeat watchdog read it as a live "event-loop block" (RED)
+# — a false worker-outage alarm. A frozen marker is externally identical whether
+# the owning process is WEDGED (real #995, still alive) or DEAD (deploy/restart).
+# The only signal that distinguishes them is whether the worker GENERATION that
+# wrote the marker is still alive.
+#
+# Each OS process gets a boot id at import time (prefork children inherit the
+# parent's, so it identifies a worker generation / dyno, not a single child). A
+# frequently-firing hook (``worker_heartbeat`` signal + every ``_tracked_run``)
+# refreshes ``bainluck:worker:alive:<boot_id>`` with a bounded TTL. The watchdog
+# stamps each marker with its writer's boot id and only treats a frozen marker as
+# a live stall when that boot id is still alive; otherwise it is a stale leftover
+# from a dead generation and is reconciled away instead of paging.
+# ---------------------------------------------------------------------------
+import uuid as _uuid
+
+_WORKER_BOOT_ID = _uuid.uuid4().hex
+WORKER_ALIVE_PREFIX = "bainluck:worker:alive:"
+# TTL must exceed the worker's heartbeat cadence so a healthy-but-briefly-idle
+# generation is never mis-read as dead. The Celery ``worker_heartbeat`` signal
+# fires every few seconds and ``_tracked_run`` refreshes on every task, so 300s
+# is comfortable headroom while still expiring within one deploy cycle.
+WORKER_LIVENESS_TTL = 300
+
+
+def get_worker_boot_id() -> str:
+    """Stable id for THIS worker generation (one per OS process tree)."""
+    return _WORKER_BOOT_ID
+
+
+def touch_worker_liveness(rc=None) -> None:
+    """Refresh this generation's liveness key (best-effort, bounded, never raises)."""
+    try:
+        rc = rc or get_redis_client()
+        rc.setex(WORKER_ALIVE_PREFIX + _WORKER_BOOT_ID, WORKER_LIVENESS_TTL, "1")
+    except Exception:
+        pass
+
+
+def worker_boot_alive(rc, boot_id: str | None) -> bool:
+    """True if ``boot_id`` names a worker generation whose liveness key is fresh.
+
+    Returns False for an empty/None boot id so a legacy marker with no recorded
+    owner is handled by the caller's own back-compat path, not silently treated
+    as alive."""
+    if not boot_id:
+        return False
+    try:
+        return bool(rc.get(WORKER_ALIVE_PREFIX + boot_id))
+    except Exception:
+        # A read hiccup must not let a stale marker masquerade as live — but also
+        # must not suppress a real stall. Degrade to "unknown" = not-alive; the
+        # watchdog's legacy back-compat path decides from there.
+        return False
+
+
 def compute_odds_hash(events_data: list) -> str:
     """Compute hash of odds data to detect changes."""
     # Extract just the odds-relevant data

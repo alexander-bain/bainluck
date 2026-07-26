@@ -409,8 +409,13 @@ async def _poll_kalshi_markets():
     # marker that survives the kill — the next run reads the phase that was live
     # when the worker died. Ship this WITH the fix so even a miss is diagnosable.
     _PHASE_KEY = "bainluck:poll_kalshi:phase"
+    _PHASE_OWNER_KEY = _PHASE_KEY + ":owner"  # #1280 Item 3
+    _phase_boot_id = ""
     try:
-        from app.tasks.redis_state import get_redis_client as _get_rc
+        from app.tasks.redis_state import (
+            get_redis_client as _get_rc,
+            get_worker_boot_id as _get_boot_id,
+        )
         # #995 attempt-9: BOUND the phase-marker client. This setex runs INSIDE
         # the asyncio fetch loop (via progress_cb) — an unbounded sync client on
         # a hanging Redis freezes the event loop, so no wait_for/deadline could
@@ -419,6 +424,7 @@ async def _poll_kalshi_markets():
         # owning the loop forever. A dropped marker is acceptable; a frozen poll
         # is not.
         _phase_rc = _get_rc(socket_timeout=2.0, socket_connect_timeout=2.0)
+        _phase_boot_id = _get_boot_id()
     except Exception:
         _phase_rc = None
 
@@ -428,6 +434,11 @@ async def _poll_kalshi_markets():
         try:
             elapsed = time.monotonic() - _task_started
             _phase_rc.setex(_PHASE_KEY, 7200, f"{phase}@{elapsed:.0f}s")
+            # #1280 Item 3: stamp the marker's owning worker generation so the
+            # watchdog can distinguish a live wedge (owner still alive → RED) from
+            # a marker orphaned by a deploy/restart (owner gone → reconcile, no
+            # false page). Same bounded client + best-effort as the marker itself.
+            _phase_rc.setex(_PHASE_OWNER_KEY, 7200, _phase_boot_id)
         except Exception:
             pass
 
@@ -2460,9 +2471,15 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
     import time as _ks_time
     _ks_started = _ks_time.monotonic()
     _KS_PHASE_KEY = "bainluck:kalshi_settled:phase"
+    _KS_PHASE_OWNER_KEY = _KS_PHASE_KEY + ":owner"  # #1280 Item 3
+    _ks_boot_id = ""
     try:
-        from app.tasks.redis_state import get_redis_client as _ks_get_rc
+        from app.tasks.redis_state import (
+            get_redis_client as _ks_get_rc,
+            get_worker_boot_id as _ks_get_boot_id,
+        )
         _ks_rc = _ks_get_rc()
+        _ks_boot_id = _ks_get_boot_id()
     except Exception:
         _ks_rc = None
 
@@ -2474,6 +2491,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                 _KS_PHASE_KEY, 7200,
                 f"{phase}@{_ks_time.monotonic() - _ks_started:.0f}s",
             )
+            # #1280 Item 3: stamp the owning worker generation (see poll_kalshi).
+            _ks_rc.setex(_KS_PHASE_OWNER_KEY, 7200, _ks_boot_id)
         except Exception:
             pass
 

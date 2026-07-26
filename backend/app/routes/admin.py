@@ -19,7 +19,7 @@ from app.services import get_db
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
-from app.routes.admin_utils import _check_admin_secret, _check_admin_auth  # noqa: F401 — re-exported for backward compat
+from app.routes.admin_utils import _check_admin_secret, _check_admin_auth, _safe_send_task  # noqa: F401 — re-exported for backward compat
 
 router = APIRouter()
 
@@ -664,7 +664,7 @@ async def trigger_calibration_sentinel(
 
     from app.tasks import celery_app
 
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.calibration_sentinel",
         kwargs={"file_issues": file_issues, "suppress_known": suppress_known},
     )
@@ -720,7 +720,7 @@ async def trigger_flow_sentinel(
 
     from app.tasks import celery_app
 
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.flow_sentinel",
         kwargs={"file_issues": file_issues, "canary": canary},
     )
@@ -788,7 +788,7 @@ async def trigger_grid_sentinel(
 
     from app.tasks import celery_app
 
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.grid_sentinel",
         kwargs={"file_issues": file_issues},
     )
@@ -839,7 +839,7 @@ async def trigger_horizon_sentinel(
 
     from app.tasks import celery_app
 
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.horizon_sentinel",
         kwargs={"file_issues": file_issues},
     )
@@ -1042,7 +1042,7 @@ async def trigger_settled_concept_sentinel(
 
     from app.tasks import celery_app
 
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.settled_concept_sentinel",
         kwargs={"file_issues": file_issues},
     )

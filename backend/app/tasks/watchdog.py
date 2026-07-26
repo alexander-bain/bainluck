@@ -274,7 +274,13 @@ async def _run_creation_freshness_watchdog():
 
 def _run_phase_heartbeat_watchdog():
     """Alert if a poll's phase marker is present but hasn't advanced within
-    PHASE_STUCK_SECONDS — a suspected event-loop block at that exact phase."""
+    PHASE_STUCK_SECONDS — a suspected event-loop block at that exact phase.
+
+    #1280 Item 3: a frozen marker whose owning worker generation is no longer
+    alive (deploy/restart) is reconciled away, not paged — only a stall owned by a
+    live generation reads RED."""
+    from app.tasks.redis_state import worker_boot_alive
+
     rc = _bounded_rc()
     now = datetime.now(timezone.utc)
     stuck = []
@@ -321,6 +327,29 @@ def _run_phase_heartbeat_watchdog():
                 first_seen = now
             stuck_seconds = (now - first_seen).total_seconds()
             if stuck_seconds > PHASE_STUCK_SECONDS:
+                # #1280 Item 3: a frozen marker is only a LIVE stall if the worker
+                # generation that wrote it is still alive. If the marker records an
+                # owner boot id but that generation is gone (a deploy/restart left
+                # the marker behind), this is a stale leftover, NOT an event-loop
+                # block — reconcile it away (clear marker + owner + tracking) and
+                # do not page. A marker with no recorded owner (legacy / owner
+                # write dropped) falls through to the original alert path so a real
+                # stall is never silently suppressed.
+                owner_key = phase_key + ":owner"
+                try:
+                    owner_raw = rc.get(owner_key)
+                except Exception:
+                    owner_raw = None
+                owner = (
+                    owner_raw.decode() if isinstance(owner_raw, bytes) else owner_raw
+                )
+                if owner and not worker_boot_alive(rc, owner):
+                    for _k in (phase_key, owner_key, seen_key):
+                        try:
+                            rc.delete(_k)
+                        except Exception:
+                            pass
+                    continue
                 msg = (
                     f"Suspected event-loop block: {task_label} phase "
                     f"'{marker}' has not advanced in {stuck_seconds:.0f}s "

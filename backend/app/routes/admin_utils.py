@@ -9,6 +9,31 @@ from sqlalchemy import select
 _logger = logging.getLogger(__name__)
 
 
+def _safe_send_task(task_name: str, *args, **kwargs):
+    """Enqueue a Celery task, converting a transient broker/transport failure
+    into a clean retryable 503 instead of an opaque 500.
+
+    Auth + validation happen at the call site before this runs, so a 503 here
+    means only "broker temporarily unavailable; retry". Forwards *args/**kwargs
+    (queue=, args=, kwargs=, countdown=, ...) verbatim to celery_app.send_task so
+    task name, queue routing, and payload are preserved. (Queue #256 Item 2 —
+    generalizes Queue #255's calibration-recompute-only fix to every admin enqueue.)
+    """
+    from fastapi import HTTPException
+    from app.tasks import celery_app
+    try:
+        return celery_app.send_task(task_name, *args, **kwargs)
+    except Exception as exc:  # kombu OperationalError + any broker/transport error
+        _logger.warning("Enqueue failed for %s: %s", task_name, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Task broker is temporarily unavailable; the job was not enqueued. "
+                "Please retry shortly."
+            ),
+        ) from exc
+
+
 def _check_admin_secret(secret: str | None = None, *, request: Request | None = None) -> bool:
     """Verify the admin token for protected endpoints.
 

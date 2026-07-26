@@ -21,39 +21,13 @@ from app.models.models import WinProbSnapshot
 
 from app.services import get_db, get_db_rw
 
-from app.routes.admin_utils import _check_admin_secret
+from app.routes.admin_utils import _check_admin_secret, _safe_send_task
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _safe_send_task(task_name: str, *, queue: str, **kwargs):
-    """Enqueue a Celery task, converting a broker failure into a clean 503.
-
-    Queue #255 Item 3: ``POST /api/admin/calibration/recompute`` returned an
-    opaque 500 "instead of enqueueing" when the Redis broker was briefly
-    unreachable — ``celery_app.send_task`` raises ``kombu.exceptions.OperationalError``
-    (a connection error), which FastAPI surfaced as an unhandled 500. That is a
-    transient infra condition, not a bug in the request, so the operational
-    contract is a retryable 503 with a clear message — never a bare 500. Auth and
-    validation still happen before this is called, so a 503 here means "broker
-    down, retry", nothing more.
-    """
-    from app.tasks import celery_app
-    try:
-        return celery_app.send_task(task_name, queue=queue, **kwargs)
-    except Exception as exc:  # kombu OperationalError + any broker/transport error
-        logger.warning("Enqueue failed for %s on queue=%s: %s", task_name, queue, exc)
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Task broker is temporarily unavailable; the job was not enqueued. "
-                "Please retry shortly."
-            ),
-        ) from exc
 
 
 @router.post("/snapshots/collapse")
@@ -1798,7 +1772,7 @@ async def trigger_backfill_winners(
     """Trigger the is_winner backfill task."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_winners",
         kwargs={"dry_run": dry_run, "limit": limit},
         queue="background",
@@ -1816,7 +1790,7 @@ async def trigger_backfill_kalshi_settled(
     stays under its 900s soft limit. Use to fast-loop verify, not the 6h cron."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_kalshi_settled",
         kwargs={"limit": limit},
         queue="background",
@@ -1907,7 +1881,7 @@ async def trigger_volume_backfill(request: Request, secret: str = Query(None)):
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
     # backfills stay on background (#224 — heavy is the calibration lane only).
-    result = celery_app.send_task("app.tasks.backfill_kalshi_volume", queue="background")
+    result = _safe_send_task("app.tasks.backfill_kalshi_volume", queue="background")
     return {"status": "queued", "task_id": result.id}
 
 
@@ -1919,7 +1893,7 @@ async def trigger_trade_history_backfill(
     """Backfill snapshots from Kalshi trade history for outcomes missing cal_prob."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_kalshi_trades",
         kwargs={"limit": limit},
         queue="background",
@@ -1935,7 +1909,7 @@ async def trigger_candlestick_backfill(
     """Backfill hourly snapshots from Kalshi candlestick API for sparse outcomes."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_kalshi_candlestick",
         kwargs={"limit": limit},
         queue="background",
@@ -2548,7 +2522,7 @@ async def trigger_backfill_box_scores(
     """Trigger ESPN box score backfill for events missing box_score_data."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_box_scores",
         kwargs={"limit": limit, "priority_calibration": priority},
         queue="background",
@@ -2884,7 +2858,7 @@ async def trigger_backfill_kalshi_settled(
     """Recover full price history from Kalshi settled events API."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.backfill_kalshi_settled", args=[limit])
+    result = _safe_send_task("app.tasks.backfill_kalshi_settled", args=[limit])
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 
@@ -2897,7 +2871,7 @@ async def trigger_precompute_category_pages(
     from returning the 47+ markets that already exist (Manus #943)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.precompute_category_pages")
+    result = _safe_send_task("app.tasks.precompute_category_pages")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -2910,7 +2884,7 @@ async def trigger_recover_datagolf_participation(
     the calibration curve using the historical full field."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.recover_datagolf_participation", args=[limit]
     )
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
@@ -2925,7 +2899,7 @@ async def trigger_regrade_polymarket_under_signflip(
     before this phase runs (stopped_before=calibration_prices)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.regrade_polymarket_under_signflip")
+    result = _safe_send_task("app.tasks.regrade_polymarket_under_signflip")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -2937,7 +2911,7 @@ async def trigger_unresolve_datagolf_premature(
     (dedicated because backfill_winners budget-guards out before it)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.unresolve_datagolf_premature")
+    result = _safe_send_task("app.tasks.unresolve_datagolf_premature")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -2949,7 +2923,7 @@ async def trigger_null_impossible_both_sides_openings(
     because backfill_winners budget-guards out before it)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.null_impossible_both_sides_openings")
+    result = _safe_send_task("app.tasks.null_impossible_both_sides_openings")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -2961,7 +2935,7 @@ async def trigger_correct_both_winner_guess_side(
     demand (dedicated because backfill_winners budget-guards out before it)."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.correct_both_winner_guess_side")
+    result = _safe_send_task("app.tasks.correct_both_winner_guess_side")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -3485,7 +3459,7 @@ async def backfill_winners_status(
     if bust:
         # Queue an immediate recompute on the background worker
         from app.tasks import celery_app
-        celery_app.send_task(
+        _safe_send_task(
             "app.tasks.precompute_backfill_winners_status",
             queue="background",
         )
@@ -3535,7 +3509,7 @@ async def backfill_progress(
 
     if bust:
         from app.tasks import celery_app
-        celery_app.send_task("app.tasks.precompute_backfill_progress", queue="background")
+        _safe_send_task("app.tasks.precompute_backfill_progress", queue="background")
 
     rc = None
     try:
@@ -3627,7 +3601,7 @@ async def calibration_mce_summary(
         # Queue an immediate recompute on the dedicated heavy-compute worker (#224)
         # — same lane the /calibration/recompute trigger and the hourly beat use.
         from app.tasks import celery_app
-        celery_app.send_task("app.tasks.precompute_calibration_main", queue="heavy")
+        _safe_send_task("app.tasks.precompute_calibration_main", queue="heavy")
 
     payload = None
     try:
@@ -4370,7 +4344,7 @@ async def trigger_calibration_prices(
     _check_admin_secret(secret, request=request)
 
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.compute_calibration_prices")
+    result = _safe_send_task("app.tasks.compute_calibration_prices")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -4697,7 +4671,7 @@ async def trigger_sync_polymarket_resolved(
     """Scan closed Polymarket events and update stuck market statuses to 'resolved'."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.sync_polymarket_resolved")
+    result = _safe_send_task("app.tasks.sync_polymarket_resolved")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -4713,7 +4687,7 @@ async def trigger_backfill_espn_win_prob(
     """
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task(
+    result = _safe_send_task(
         "app.tasks.backfill_espn_win_prob", args=[limit]
     )
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
@@ -4761,7 +4735,7 @@ async def trigger_coverage_snapshot(
     """Take a coverage metrics snapshot right now."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.snapshot_coverage_metrics")
+    result = _safe_send_task("app.tasks.snapshot_coverage_metrics")
     return {"status": "queued", "task_id": str(result.id)}
 
 
@@ -4947,7 +4921,7 @@ async def trigger_backfill_polymarket_winners(
     """Resolve Polymarket winners from Gamma API settlement data."""
     _check_admin_secret(secret, request=request)
     from app.tasks import celery_app
-    result = celery_app.send_task("app.tasks.backfill_polymarket_winners", args=[limit])
+    result = _safe_send_task("app.tasks.backfill_polymarket_winners", args=[limit])
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
 
 

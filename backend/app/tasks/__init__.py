@@ -50,7 +50,16 @@ logger = logging.getLogger(__name__)
 
 def _tracked_run(task_name: str, async_fn):
     """Run an async task and record success/failure metrics in Redis."""
-    from app.tasks.redis_state import record_task_success, record_task_failure
+    from app.tasks.redis_state import (
+        record_task_success,
+        record_task_failure,
+        touch_worker_liveness,
+    )
+    # #1280 Item 3: every task run refreshes this worker generation's liveness so
+    # the phase-heartbeat watchdog can tell a frozen marker owned by a live
+    # generation (real wedge → RED) from one left by a dead/restarted generation
+    # (stale → reconcile, no page). Best-effort; never blocks the task.
+    touch_worker_liveness()
     start = _time.monotonic()
     try:
         result = run_async(async_fn)
@@ -145,6 +154,27 @@ if broker_use_ssl:
     celery_config["redis_backend_use_ssl"] = broker_use_ssl
 
 celery_app.conf.update(**celery_config)
+
+# #1280 Item 3: refresh this worker generation's liveness on every Celery
+# heartbeat, independent of task execution. This keeps the liveness key fresh
+# even for a briefly-idle worker (so the phase-heartbeat watchdog never mis-reads
+# a healthy generation as dead), and — because the heartbeat is emitted by the
+# worker's main process, not the wedged task's event loop — it stays fresh during
+# a genuine event-loop wedge, so a real stall still reads RED. Wrapped
+# defensively: a signal-API change must never block worker startup.
+try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
+    from celery.signals import worker_heartbeat as _worker_heartbeat
+
+    @_worker_heartbeat.connect
+    def _refresh_worker_liveness(**_kwargs):
+        try:
+            from app.tasks.redis_state import touch_worker_liveness
+
+            touch_worker_liveness()
+        except Exception:
+            pass
+except Exception:  # pragma: no cover - defensive
+    pass
 
 # =============================================================================
 # Queue routing: realtime vs background vs heavy workers

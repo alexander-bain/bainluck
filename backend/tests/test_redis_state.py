@@ -472,3 +472,46 @@ class TestQuotaGuardDateIndependence:
         first = guard("poll_odds", sport_key="baseball_mlb")
         second = guard("poll_odds", sport_key="baseball_mlb")
         assert first == second == (True, "live_only_35000")
+
+
+class TestWorkerBootLiveness:
+    """#1280 Item 3: worker-generation liveness primitives that let the
+    phase-heartbeat watchdog tell a live wedge from a deploy-orphaned marker."""
+
+    class _FakeRedis:
+        def __init__(self, initial=None):
+            self.store = dict(initial or {})
+
+        def get(self, key):
+            v = self.store.get(key)
+            return v.encode() if isinstance(v, str) else v
+
+        def setex(self, key, _ttl, value):
+            self.store[key] = value
+
+    def test_boot_id_stable_and_hex(self):
+        a = redis_state.get_worker_boot_id()
+        b = redis_state.get_worker_boot_id()
+        assert a == b  # one id per process
+        assert a and all(c in "0123456789abcdef" for c in a)
+
+    def test_touch_then_alive_true(self):
+        rc = self._FakeRedis()
+        redis_state.touch_worker_liveness(rc)
+        assert redis_state.worker_boot_alive(
+            rc, redis_state.get_worker_boot_id()
+        ) is True
+
+    def test_alive_false_for_unknown_or_empty(self):
+        rc = self._FakeRedis()
+        assert redis_state.worker_boot_alive(rc, "never-registered") is False
+        assert redis_state.worker_boot_alive(rc, "") is False
+        assert redis_state.worker_boot_alive(rc, None) is False
+
+    def test_touch_never_raises_on_broken_client(self):
+        class _Boom:
+            def setex(self, *a, **k):
+                raise RuntimeError("redis down")
+
+        # Must be swallowed — a liveness refresh can never break a task.
+        redis_state.touch_worker_liveness(_Boom())

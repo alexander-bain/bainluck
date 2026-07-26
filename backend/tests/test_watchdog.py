@@ -288,6 +288,96 @@ class TestPhaseHeartbeat:
         # terminal phase clears tracking state
         assert seen_key not in fake.store
 
+    # ── #1280 Item 3: owner-generation reconciliation ─────────────────
+
+    def _stale_setup(self, owner_alive: bool):
+        """A frozen, past-threshold marker owned by a boot id that is (or isn't)
+        still a live worker generation."""
+        from app.tasks.redis_state import WORKER_ALIVE_PREFIX
+
+        marker = "upsert_loop@120s"
+        boot_id = "gen-deadbeef"
+        phase_key = watchdog.PHASE_MARKER_KEYS["poll_kalshi"]
+        owner_key = phase_key + ":owner"
+        seen_key = watchdog._PHASE_SEEN_PREFIX + "poll_kalshi"
+        old = (datetime.now(timezone.utc) - timedelta(seconds=900)).isoformat()
+        store = {
+            phase_key: marker,
+            owner_key: boot_id,
+            seen_key: json.dumps({"marker": marker, "first_seen": old}),
+        }
+        if owner_alive:
+            store[WORKER_ALIVE_PREFIX + boot_id] = "1"
+        return marker, phase_key, owner_key, seen_key, _FakeRedis(store)
+
+    def test_stale_marker_from_dead_generation_reconciled_not_red(self, monkeypatch):
+        marker, phase_key, owner_key, seen_key, fake = self._stale_setup(
+            owner_alive=False
+        )
+        monkeypatch.setattr(watchdog, "_bounded_rc", lambda: fake)
+        fired = []
+        monkeypatch.setattr(watchdog.sentry_sdk, "capture_message",
+                            lambda *a, **k: fired.append(a))
+        out = watchdog._run_phase_heartbeat_watchdog()
+        # A marker orphaned by a deploy/restart must NOT page as a live stall...
+        assert out["stuck"] == []
+        assert fired == []
+        # ...and must be reconciled away so it cannot linger as a false RED.
+        assert phase_key not in fake.store
+        assert owner_key not in fake.store
+        assert seen_key not in fake.store
+
+    def test_byte_identical_expired_marker_cannot_stay_red(self, monkeypatch):
+        # Guard: the SAME byte-identical marker across repeated runs never becomes
+        # a live-stall RED once its owning generation is gone.
+        marker, phase_key, owner_key, seen_key, fake = self._stale_setup(
+            owner_alive=False
+        )
+        monkeypatch.setattr(watchdog, "_bounded_rc", lambda: fake)
+        monkeypatch.setattr(watchdog.sentry_sdk, "capture_message", lambda *a, **k: None)
+        # First pass reconciles it away.
+        assert watchdog._run_phase_heartbeat_watchdog()["stuck"] == []
+        # Re-plant the identical marker (as a restarted-but-idle producer might if
+        # its old client flushed) and run again — still not RED.
+        fake.store[phase_key] = marker
+        fake.store[owner_key] = "gen-deadbeef"
+        assert watchdog._run_phase_heartbeat_watchdog()["stuck"] == []
+
+    def test_live_owner_still_alerts(self, monkeypatch):
+        marker, phase_key, owner_key, seen_key, fake = self._stale_setup(
+            owner_alive=True
+        )
+        monkeypatch.setattr(watchdog, "_bounded_rc", lambda: fake)
+        fired = []
+        monkeypatch.setattr(watchdog.sentry_sdk, "capture_message",
+                            lambda msg, level=None: fired.append((msg, level)))
+        out = watchdog._run_phase_heartbeat_watchdog()
+        # Owner generation still alive → a genuine event-loop wedge → RED.
+        assert len(out["stuck"]) == 1
+        assert out["stuck"][0]["phase"] == marker
+        assert fired and fired[0][1] == "error"
+        # The real stall is preserved, not reconciled away.
+        assert phase_key in fake.store
+
+    def test_legacy_marker_without_owner_still_alerts(self, monkeypatch):
+        # Back-compat: a marker with no recorded owner (pre-#1280 or a dropped
+        # owner write) must fall through to the original alert path.
+        marker = "upsert_loop@120s"
+        phase_key = watchdog.PHASE_MARKER_KEYS["poll_kalshi"]
+        seen_key = watchdog._PHASE_SEEN_PREFIX + "poll_kalshi"
+        old = (datetime.now(timezone.utc) - timedelta(seconds=900)).isoformat()
+        fake = _FakeRedis({
+            phase_key: marker,
+            seen_key: json.dumps({"marker": marker, "first_seen": old}),
+        })
+        monkeypatch.setattr(watchdog, "_bounded_rc", lambda: fake)
+        fired = []
+        monkeypatch.setattr(watchdog.sentry_sdk, "capture_message",
+                            lambda msg, level=None: fired.append((msg, level)))
+        out = watchdog._run_phase_heartbeat_watchdog()
+        assert len(out["stuck"]) == 1
+        assert fired and fired[0][1] == "error"
+
 
 # ── admin/health surface (#969 c) ─────────────────────────────────────
 
