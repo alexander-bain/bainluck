@@ -75,22 +75,26 @@ def test_curve_excludes_heuristic_and_nullsource_754_989():
     import inspect
     import app.tasks.precompute_calibration as pc
     src = inspect.getsource(pc)
-    # heuristic classes added to the NOT IN exclusion at every curve query site:
-    # main ranked_outcomes, time-horizon eligible_outcomes, void-count query,
-    # (#156 L2-79 Item 2) the golf_placeholder_markets CTE, (Queue #157 #1012)
-    # the mex_norm_markets CTE — each reuses the same eligibility predicate so its
-    # population matches the published curve. (Queue #195) the fair-fight futures
-    # query's OR-join was split into a UNION ALL of the group_id + canonical arms
-    # (2 exclusion copies). (Queue #197) profiling proved the group_id arm matches
-    # NOTHING (kalshi/polymarket group_id namespaces are disjoint), so the dead arm
-    # was dropped and the query collapsed to a single canonical arm — one exclusion
-    # copy again. The exclusion is still applied on the surviving arm (leaving it
-    # off would leak poisoned sources), so the count is back to 5.
-    assert src.count("'pass2_loser', 'all_losers',") == 5
-    # null-source now EXCLUDED from the curve (predicate flipped IS NULL OR -> IS NOT NULL AND)
-    assert src.count("fo.resolution_source IS NOT NULL\n") >= 3 or \
-        src.count("resolution_source IS NOT NULL") >= 3
+    # Queue #261 Item 1: the CANONICAL published population (the 3 CTE sites —
+    # golf_placeholder_markets, mex_norm_markets, ranked_outcomes) moved from the
+    # scattered heuristic NOT-IN DENYLIST to the resolution-authority
+    # calibration-truth ELIGIBILITY ALLOWLIST. Heuristic classes are now excluded
+    # by omission (never named) AND price-derived truth (clean_resolution /
+    # settlement_sync) is excluded too — a terminal price cannot grade its own
+    # forecast. The allowlist placeholder appears at each canonical site (+ the
+    # Item 3 truth-evidence census), so >= 3.
+    assert src.count("IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}") >= 3
+    # The single-source-of-truth contract is imported, not re-inlined.
+    assert "from app.utils.resolution_authority import (" in src
+    assert "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL" in src
+    # The old denylist literal now survives ONLY at the two secondary views not
+    # covered by _calibration_population_ctes (the time-horizon + fair-fight
+    # queries), which stay on the legacy denylist pending a follow-up migration.
+    assert src.count("'pass2_loser', 'all_losers',") == 2
+    # null-source stays EXCLUDED from the curve (the allowlist's IN can never match NULL)
+    assert "IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}" in src
     # the old "IS NULL OR ... NOT IN" curve inclusion must be gone
     assert "resolution_source IS NULL\n" not in src or "OR fo.resolution_source NOT IN" not in src
-    # transparency surface present
+    # transparency surfaces present (heuristic filter + the #261 truth-evidence census)
     assert "heuristic_filter" in src
+    assert "truth_evidence" in src

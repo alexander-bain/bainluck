@@ -17,6 +17,12 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.utils.resolution_authority import (
+    CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
+    CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
+    PRICE_DERIVED_SOURCES_SQL,
+)
+
 logger = logging.getLogger(__name__)
 
 # Redis cache TTL: 24 hours (results don't change quickly)
@@ -1138,11 +1144,13 @@ def _calibration_population_ctes() -> str:
                   AND COALESCE(fo.calibration_probability, fo.opening_probability) >= {GOLF_PLACEHOLDER_HIGH_BAND}
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                  AND (fo.resolution_source IS NOT NULL
-                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
+                  -- Queue #261 Item 1: calibration-truth eligibility (allowlist).
+                  -- Only sources whose winner is established INDEPENDENTLY of the
+                  -- market's own price may grade a published forecast; guess,
+                  -- structural-void, price-derived (clean_resolution /
+                  -- settlement_sync) and unknown sources fail closed. Single
+                  -- source of truth = resolution_authority.
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
                   AND COALESCE(fo.volume, -1) != 0
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 2
@@ -1178,11 +1186,10 @@ def _calibration_population_ctes() -> str:
                   AND mwc.win_count = 1
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                  AND (fo.resolution_source IS NOT NULL
-                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
+                  -- Queue #261 Item 1: calibration-truth eligibility (allowlist),
+                  -- identical to the ranked_outcomes / golf-placeholder scans so
+                  -- the normalization divisor matches the published population.
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
                   AND COALESCE(fo.volume, -1) != 0
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 3
@@ -1321,11 +1328,12 @@ def _calibration_population_ctes() -> str:
                 LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                  AND (fo.resolution_source IS NOT NULL
-                       AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
+                  -- Queue #261 Item 1: calibration-truth eligibility (allowlist).
+                  -- Replaces the scattered NOT-IN denylist with the single
+                  -- resolution_authority contract: price-derived (clean_resolution
+                  -- / settlement_sync) can no longer grade its own forecast, all
+                  -- guess-family is excluded, and unknown sources fail closed.
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
               AND COALESCE(fo.volume, -1) != 0
             ),
             -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
@@ -1943,6 +1951,41 @@ async def compute_calibration_payload(db) -> dict:
         soccer_2way_result = await db.execute(soccer_2way_sql)
         soccer_2way_excluded = int(soccer_2way_result.scalar() or 0)
 
+        # -----------------------------------------------------------
+        # Query 11: Queue #261 Item 3 — truth-evidence census. Over the SAME
+        # resolved + opening-in-(0,1) eligibility shape the population scans,
+        # classify every futures outcome by calibration-truth class so the
+        # population change (Item 1) is visible, never silent: how many rows are
+        # eligible (independent authority grades the forecast), how many are
+        # price-derived (now excluded — the leakage containment), and — the hard
+        # contract violation — how many carry an UNKNOWN source (must be 0).
+        # No source-bias interpretation; just the counts + the two RED invariants.
+        # -----------------------------------------------------------
+        truth_sql = text(f"""
+            SELECT
+                CASE
+                    WHEN fo.resolution_source IS NULL THEN 'missing'
+                    WHEN fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL} THEN 'eligible'
+                    WHEN fo.resolution_source IN {PRICE_DERIVED_SOURCES_SQL} THEN 'price_derived'
+                    WHEN fo.resolution_source IN {CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL} THEN 'ineligible_other'
+                    ELSE 'unknown'
+                END AS truth_class,
+                COUNT(*) AS outcomes,
+                COUNT(DISTINCT fo.market_id) AS markets
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND COALESCE(fo.volume, -1) != 0
+            GROUP BY 1
+        """)
+        truth_result = await db.execute(truth_sql)
+        truth_by_class = {
+            r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
+            for r in truth_result.all()
+        }
+
     # -----------------------------------------------------------
     # Post-processing (runs outside the DB session)
     # -----------------------------------------------------------
@@ -2328,10 +2371,72 @@ async def compute_calibration_payload(db) -> dict:
             ),
             "excluded_by_source": heuristic_excluded,
         },
+        "truth_evidence": _build_truth_evidence(
+            truth_by_class,
+            mex_normalized_markets=mex_normalized_markets,
+            mex_published_markets=mex_published_markets,
+            published_outcomes=published_outcomes,
+            published_questions=published_questions,
+        ),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     return response
+
+
+def _build_truth_evidence(
+    truth_by_class: dict,
+    *,
+    mex_normalized_markets: int,
+    mex_published_markets: int,
+    published_outcomes: int,
+    published_questions: int,
+) -> dict:
+    """Queue #261 Item 3: the calibration-truth regression-visibility artifact.
+
+    Reports the truth-evidence census (outcomes/markets by class over the
+    resolved eligibility shape), the price-derived rows now excluded (the
+    leakage containment), any unknown-source rows, and the two contract
+    invariants. ``contract_ok`` goes RED ONLY on a real contract violation —
+    an unknown resolution_source in the resolved population, or the Queue #259
+    candidate==published partition breaking — never on a source-mix ratio.
+    """
+    unknown = truth_by_class.get("unknown", {"outcomes": 0, "markets": 0})
+    price_derived = truth_by_class.get("price_derived", {"outcomes": 0, "markets": 0})
+    partition_ok = mex_normalized_markets == mex_published_markets
+    violations = []
+    if unknown["outcomes"] > 0:
+        violations.append(
+            f"unknown resolution_source in {unknown['outcomes']} resolved outcomes "
+            f"(fail-closed: excluded from the curve, but classify them in "
+            f"resolution_authority)"
+        )
+    if not partition_ok:
+        violations.append(
+            f"Queue #259 partition invariant broken: normalized "
+            f"{mex_normalized_markets} != published {mex_published_markets} markets "
+            f"(a post-normalization filter is dropping field members)"
+        )
+    return {
+        "rule": (
+            "A source may grade a published forecast only if its winner is "
+            "established INDEPENDENTLY of the market's own price (venue/API "
+            "settlement or deterministic public-data). Price-derived truth "
+            "(clean_resolution / settlement_sync) is excluded — Queue #261."
+        ),
+        "by_class": truth_by_class,
+        "price_derived_excluded": price_derived,
+        "unknown_sources": unknown,
+        "published_outcomes": published_outcomes,
+        "published_questions": published_questions,
+        "partition_invariant": {
+            "normalized_markets": mex_normalized_markets,
+            "published_markets": mex_published_markets,
+            "ok": partition_ok,
+        },
+        "contract_ok": not violations,
+        "contract_violations": violations,
+    }
 
 
 async def _precompute_calibration_main():

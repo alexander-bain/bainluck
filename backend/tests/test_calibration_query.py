@@ -131,15 +131,27 @@ async def test_public_calibration_uses_is_winner_for_resolution():
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_excludes_guessed_resolutions():
+async def test_public_calibration_excludes_guessed_and_price_derived_resolutions():
+    # Queue #261 Item 1: the population moved from a scattered NOT-IN denylist to
+    # the resolution-authority calibration-truth ELIGIBILITY allowlist. Guessed
+    # resolutions are excluded because they are not eligible (never named in the
+    # allowlist), and price-derived truth (clean_resolution / settlement_sync) is
+    # now excluded too — a terminal price cannot grade its own forecast.
     calibration._cache = {"data": None, "timestamp": 0}
     db = _FakeDB()
 
     await calibration.public_calibration(db=db, bust=1)
 
     futures_sql = str(db.statements[0])
-    assert "pass2_guess" in futures_sql
-    assert "pass3_threshold" in futures_sql
+    # The eligibility allowlist is present, keyed on independent authority.
+    assert "fo.resolution_source IN ('api_settlement'" in futures_sql or (
+        "resolution_source IN (" in futures_sql and "'api_settlement'" in futures_sql
+    )
+    # Guess-family and price-derived sources must NOT appear in the population
+    # filter (they are excluded by omission from the allowlist).
+    assert "'pass2_guess'" not in futures_sql
+    assert "'clean_resolution'" not in futures_sql
+    assert "'settlement_sync'" not in futures_sql
 
 
 @pytest.mark.asyncio

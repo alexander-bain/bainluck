@@ -111,10 +111,16 @@ async def test_composed_sql_is_the_full_published_population(monkeypatch):
 
     await load_from_session(_Sess())
     sql = captured["sql"]
-    # Canonical eligibility + resolution-authority exclusion.
+    # Canonical eligibility + resolution-authority calibration-truth allowlist.
     assert "fo.opening_probability > 0 AND fo.opening_probability < 1" in sql
     assert "COALESCE(fo.volume, -1) != 0" in sql
-    assert "pass2_guess" in sql and "pass2_loser" in sql
+    # Queue #261 Item 1: the population now uses the eligibility ALLOWLIST, so
+    # independent-authority sources are named IN, and guess-family / price-derived
+    # are excluded by omission (never named). The sweep stays row-identical to
+    # /api/calibration because both compose the same _calibration_population_ctes.
+    assert "resolution_source IN (" in sql and "'api_settlement'" in sql
+    assert "'pass2_guess'" not in sql
+    assert "'clean_resolution'" not in sql and "'settlement_sync'" not in sql
     # Every published exclusion (resolved from the shared predicate constants).
     assert "futures_odds_snapshots" in sql  # liquidity / poly-placeholder
     assert "is_kalshi_prop_threshold" in sql

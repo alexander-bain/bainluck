@@ -180,6 +180,98 @@ OVERWRITABLE_WINNER_SOURCES_SQL: str = _sql_in_list(OVERWRITABLE_WINNER_SOURCES)
 # non-guess resolution, including deterministic/soft ones).
 GUESS_FAMILY_SOURCES_SQL: str = _sql_in_list(GUESS_FAMILY_SOURCES)
 
+
+# ---------------------------------------------------------------------------
+# Calibration-truth eligibility (Queue #261) — ORTHOGONAL to overwrite authority.
+#
+# The tier ladder above answers "may this source's write STAND over another's?"
+# (overwrite authority). Calibration-truth eligibility answers a DIFFERENT
+# question: "may this source's resolved winner GRADE a published calibration
+# forecast?". The two axes deliberately diverge:
+#
+#   * settlement_sync is tier-3 AUTHORITATIVE (its write may stand) yet is
+#     price-derived (is_winner = current_probability >= 0.95), so it must NOT
+#     grade a forecast — a terminal price that both defines the winner AND
+#     grades the earlier/current price is self-grading leakage (C20/C21).
+#   * clean_resolution is tier-1 TERMINAL and likewise price-derived.
+#
+# A source is calibration-truth-eligible iff its winner is established
+# INDEPENDENTLY of the market's own price: external venue/API settlement, or
+# deterministic recomputation from cited public data (box score / game score /
+# leaderboard / clock). Guess-family (no cited authority), structural
+# no-winner/void (no real prediction to grade), and price-derived truth are all
+# ineligible. Unknown sources FAIL CLOSED (ineligible) — the completeness test
+# forces every classified source into exactly one bucket before it can ship.
+# ---------------------------------------------------------------------------
+
+# Price-derived resolution: the winner is inferred from the market's OWN
+# terminal/close price, not an independent authority. Operationally useful, but
+# never independent of the forecast it would grade — ineligible regardless of
+# overwrite tier (settlement_sync is tier 3; clean_resolution is tier 1).
+PRICE_DERIVED_SOURCES: frozenset[str] = frozenset({
+    "clean_resolution",
+    "settlement_sync",
+})
+
+# Sources whose winner is established INDEPENDENTLY of the market's own price:
+# venue/API settlement (minus the price-derived settlement_sync) + deterministic
+# public-data resolution + date_passed (deterministic-from-the-clock, real
+# winner). These — and only these — may grade a published calibration forecast.
+CALIBRATION_TRUTH_ELIGIBLE_SOURCES: frozenset[str] = (
+    (AUTHORITATIVE_SOURCES - PRICE_DERIVED_SOURCES)
+    | DETERMINISTIC_SOURCES
+    | frozenset({"date_passed"})
+)
+
+# The complement over KNOWN_SOURCES: guess-family, structural no-winner/void,
+# and price-derived truth. Ineligible to grade a published forecast.
+CALIBRATION_TRUTH_INELIGIBLE_SOURCES: frozenset[str] = (
+    KNOWN_SOURCES - CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+)
+
+
+def is_calibration_truth_eligible(source: str | None) -> bool:
+    """True iff `source` may grade a published calibration forecast.
+
+    Fail-closed: None/empty and any unclassified source return False (an unknown
+    winner-writer can never leak into the published curve). Orthogonal to
+    authority_tier — a tier-3 price-derived source (settlement_sync) is False."""
+    return source in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+
+
+def calibration_truth_class(source: str | None) -> str:
+    """Classify a resolution_source for calibration-truth reporting.
+
+    One of: ``authoritative_independent`` (venue/API settlement, non-price),
+    ``deterministic_independent`` (score/leaderboard/clock), ``price_derived``
+    (self-grading — ineligible), ``structural_void`` (no-winner/void),
+    ``guess`` (heuristic), ``missing`` (None/empty), or ``unknown``
+    (a non-empty source not in KNOWN_SOURCES — fail-closed, and the completeness
+    test fails)."""
+    if source is None or str(source).strip() == "":
+        return "missing"
+    if source in PRICE_DERIVED_SOURCES:
+        return "price_derived"
+    if source in GUESS_FAMILY_SOURCES:
+        return "guess"
+    if source in (AUTHORITATIVE_SOURCES - PRICE_DERIVED_SOURCES):
+        return "authoritative_independent"
+    if source in DETERMINISTIC_SOURCES or source == "date_passed":
+        return "deterministic_independent"
+    if source in TERMINAL_SOURCES:  # remaining terminal = structural no-winner/void
+        return "structural_void"
+    return "unknown"
+
+
+# SQL fragments (rendered from the frozensets above, sorted → deterministic).
+CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL: str = _sql_in_list(
+    CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+)
+CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL: str = _sql_in_list(
+    CALIBRATION_TRUTH_INELIGIBLE_SOURCES
+)
+PRICE_DERIVED_SOURCES_SQL: str = _sql_in_list(PRICE_DERIVED_SOURCES)
+
 # SQL fragment for the AUTHORITATIVE (tier-3) set. #845 batch 2: the phases that
 # write api_settlement previously guarded only `!= 'api_settlement'`, so they
 # could clobber a sibling authoritative source (clob_authoritative,

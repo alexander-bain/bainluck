@@ -14,17 +14,23 @@ import pytest
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES,
     AUTHORITATIVE_SOURCES_SQL,
+    CALIBRATION_TRUTH_ELIGIBLE_SOURCES,
+    CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
+    CALIBRATION_TRUTH_INELIGIBLE_SOURCES,
     DETERMINISTIC_SOURCES,
     GUESS_FAMILY_SOURCES,
     KNOWN_SOURCES,
     OVERWRITABLE_WINNER_SOURCES,
     OVERWRITABLE_WINNER_SOURCES_SQL,
+    PRICE_DERIVED_SOURCES,
     SINGLE_WINNER_GUESS_SOURCES,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
     TERMINAL_SOURCES,
     authority_tier,
+    calibration_truth_class,
     can_write_winner,
     is_authoritative,
+    is_calibration_truth_eligible,
     is_downgrade,
     is_guess_family,
 )
@@ -260,3 +266,68 @@ class TestBackfillSourceGuards:
             f"resolution_source(s) written but not classified in the authority "
             f"ladder: {sorted(unclassified)} — add them to resolution_authority.py"
         )
+
+
+class TestCalibrationTruthEligibility:
+    """Queue #261 Item 1: calibration-truth eligibility is ORTHOGONAL to the
+    overwrite-authority tier ladder — a source can be authoritative enough to
+    STAND (settlement_sync, tier 3) yet ineligible to GRADE a published forecast
+    because its winner is price-derived (self-grading leakage, C20/C21)."""
+
+    def test_every_known_source_is_classified_for_calibration_truth(self):
+        # Completeness (fail-closed): every known source is exactly eligible OR
+        # ineligible — no known source is silently neither, and no source is both.
+        assert (
+            CALIBRATION_TRUTH_ELIGIBLE_SOURCES | CALIBRATION_TRUTH_INELIGIBLE_SOURCES
+            == KNOWN_SOURCES
+        )
+        assert not (
+            CALIBRATION_TRUTH_ELIGIBLE_SOURCES & CALIBRATION_TRUTH_INELIGIBLE_SOURCES
+        )
+        for s in KNOWN_SOURCES:
+            assert calibration_truth_class(s) != "unknown", (
+                f"{s} is a known source but calibration_truth_class returned unknown"
+            )
+
+    def test_unknown_source_fails_closed(self):
+        assert is_calibration_truth_eligible("brand_new_writer") is False
+        assert calibration_truth_class("brand_new_writer") == "unknown"
+        assert is_calibration_truth_eligible(None) is False
+        assert calibration_truth_class(None) == "missing"
+
+    def test_independent_authority_and_deterministic_are_eligible(self):
+        assert is_calibration_truth_eligible("api_settlement")
+        assert is_calibration_truth_eligible("clob_authoritative")
+        assert is_calibration_truth_eligible("game_score")
+        assert is_calibration_truth_eligible("leaderboard")
+        assert calibration_truth_class("api_settlement") == "authoritative_independent"
+        assert calibration_truth_class("game_score") == "deterministic_independent"
+
+    def test_price_derived_are_ineligible_even_when_authoritative_tier(self):
+        # The crux: settlement_sync STANDS over other writes (tier 3) but must
+        # NOT grade a forecast — a 0.99 terminal price cannot both define the
+        # winner and grade its own earlier/current forecast.
+        assert is_authoritative("settlement_sync")  # overwrite authority: yes
+        assert is_calibration_truth_eligible("settlement_sync") is False  # truth: no
+        assert is_calibration_truth_eligible("clean_resolution") is False
+        assert calibration_truth_class("settlement_sync") == "price_derived"
+        assert calibration_truth_class("clean_resolution") == "price_derived"
+        assert PRICE_DERIVED_SOURCES == {"clean_resolution", "settlement_sync"}
+
+    def test_guess_and_void_are_ineligible(self):
+        for s in GUESS_FAMILY_SOURCES:
+            assert is_calibration_truth_eligible(s) is False
+            assert calibration_truth_class(s) == "guess"
+        for s in ("pass2_loser", "all_losers", "did_not_play", "withdrew",
+                  "no_pregame_trading"):
+            assert is_calibration_truth_eligible(s) is False
+            assert calibration_truth_class(s) == "structural_void"
+
+    def test_eligible_sql_renders_only_eligible_sources(self):
+        assert CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL.startswith("(")
+        assert CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL.endswith(")")
+        assert "'api_settlement'" in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+        # Price-derived must NEVER appear in the eligibility allowlist.
+        assert "'settlement_sync'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+        assert "'clean_resolution'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL
+        assert "'pass2_guess'" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL

@@ -17,6 +17,64 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
+    """Apply a Polymarket ``market_resolved`` settlement to the DB.
+
+    Queue #261 Item 2: sets ``status='resolved'`` on the market and ``is_winner``
+    on its outcomes, routed through the resolution-authority contract — and NEVER
+    writes ``calibration_probability``. A terminal price must not both define the
+    winner AND grade the earlier/current forecast (self-grading leakage, C20/C21);
+    the terminal price still reaches ``current_probability`` via the ordinary
+    buffered flush loop, and the published forecast is left to the timestamped
+    snapshot pipeline. An outcome already settled by an authoritative source
+    (tier 3) is left untouched — a bare websocket push must not downgrade it.
+
+    Module-level (not a closure) so the leakage contract is unit-testable.
+    Returns the number of outcome winner-writes applied.
+    """
+    from sqlalchemy import select, update
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.resolution_authority import is_authoritative
+
+    outcome_ids = [oid for oid, _ in outcomes]
+    existing_sources: dict = {}
+    if outcome_ids:
+        existing_sources = {
+            r.id: r.resolution_source
+            for r in (
+                await session.execute(
+                    select(
+                        FuturesOutcome.id, FuturesOutcome.resolution_source
+                    ).where(FuturesOutcome.id.in_(outcome_ids))
+                )
+            ).all()
+        }
+
+    await session.execute(
+        update(FuturesMarket)
+        .where(FuturesMarket.id == market_id)
+        .values(status="resolved")
+    )
+
+    written = 0
+    for oid, ext in outcomes:
+        if is_authoritative(existing_sources.get(oid)):
+            continue  # venue already settled authoritatively — leave it
+        is_winner = (
+            (winning_outcome.lower() == "yes" and ext.endswith("_yes"))
+            or (winning_outcome.lower() == "no" and ext.endswith("_no"))
+        )
+        # Deliberately NOT setting calibration_probability here (Queue #261).
+        await session.execute(
+            update(FuturesOutcome)
+            .where(FuturesOutcome.id == oid)
+            .values(is_winner=is_winner)
+        )
+        written += 1
+    return written
+
+
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
     from sqlalchemy import select, update, text, or_, and_
@@ -207,53 +265,35 @@ async def _run_polymarket_ws_consumer():
     async def handle_resolved(msg: dict):
         """Handle market_resolved event.
 
-        Sets status=resolved, is_winner on all outcomes, and captures
-        calibration_probability from the last buffered price.
+        Sets status=resolved and is_winner, routed through the resolution-authority
+        contract. Queue #261 Item 2: this path NEVER copies the last buffered
+        trade into ``calibration_probability`` — a terminal price must not both
+        define the winner AND grade the earlier/current forecast (self-grading
+        leakage, C20/C21). The terminal price still reaches ``current_probability``
+        through the ordinary buffered flush loop, and the published calibration
+        forecast is left to the timestamped snapshot pipeline (opening/closing
+        lines). An outcome already settled by an authoritative source (tier 3) is
+        left untouched — a bare websocket push must not downgrade it.
         """
         condition_id = msg.get("market", "")
         winning_outcome = msg.get("winning_outcome", "")
-        winning_asset = msg.get("winning_asset_id", "")
 
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
 
-        # Capture closing prices from buffer before they're flushed
         outcomes = outcomes_by_market.get(market_id, [])
-        closing_prices: dict[int, float] = {}
-        async with buffer_lock:
-            for oid, ext in outcomes:
-                if oid in price_buffer:
-                    closing_prices[oid] = price_buffer[oid]
 
         try:
             async with get_task_session() as session:
-                await session.execute(
-                    update(FuturesMarket)
-                    .where(FuturesMarket.id == market_id)
-                    .values(status="resolved")
+                written = await _apply_ws_resolution(
+                    session, market_id, outcomes, winning_outcome
                 )
-
-                for oid, ext in outcomes:
-                    is_winner = False
-                    if winning_outcome.lower() == "yes" and ext.endswith("_yes"):
-                        is_winner = True
-                    elif winning_outcome.lower() == "no" and ext.endswith("_no"):
-                        is_winner = True
-                    cal_prob = closing_prices.get(oid)
-                    await session.execute(
-                        update(FuturesOutcome)
-                        .where(FuturesOutcome.id == oid)
-                        .values(
-                            is_winner=is_winner,
-                            calibration_probability=cal_prob,
-                        )
-                    )
-
             stats["resolutions"] += 1
             logger.info(
-                "Polymarket WS: %s resolved (winner=%s, %d closing prices captured)",
-                condition_id[:20], winning_outcome, len(closing_prices),
+                "Polymarket WS: %s resolved (winner=%s, %d/%d outcomes written, "
+                "no calibration scalar captured)",
+                condition_id[:20], winning_outcome, written, len(outcomes),
             )
         except Exception:
             stats["errors"] += 1
