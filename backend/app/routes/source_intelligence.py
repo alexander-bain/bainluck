@@ -1298,9 +1298,46 @@ async def cleanup_oscillation(
     return results
 
 
+def _fair_fight_cache_is_current(payload) -> bool:
+    """Queue #263 Item 3 — legacy/malformed fair-fight cache containment.
+
+    A cached fair-fight payload may ONLY be served when it satisfies the current
+    population/schema contract established by the #262/#263 containment:
+
+      * it carries the CURRENT ``population_version`` (a q262-or-earlier payload
+        predates this contract and must be treated as stale until the task rewrites
+        the key),
+      * the top-level comparison is UNAVAILABLE (``comparison_available`` is exactly
+        ``False`` — the winner claim is withheld until the comparison is one-question-
+        to-one-question with the headline metric), and
+      * NO pair leaks winner grammar (``winner`` / ``advantage_pp`` / ``shared_markets``).
+
+    Any other shape — a legacy winner payload, a version mismatch, or corrupt data —
+    FAILS CLOSED (returns False) so the route degrades to "computing" rather than
+    serving a source ranking the containment deliberately removed. Read-only.
+    """
+    from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("population_version") != CALIBRATION_POPULATION_VERSION:
+        return False
+    if payload.get("comparison_available") is not False:
+        return False
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list):
+        return False
+    _banned = ("winner", "advantage_pp", "shared_markets")
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            return False
+        if any(key in pair for key in _banned):
+            return False
+    return True
+
+
 @router.get("/source-intelligence/fair-fight")
 async def fair_fight_comparison(
-    refresh: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Paired accuracy comparison controlling for market difficulty.
@@ -1309,21 +1346,34 @@ async def fair_fight_comparison(
     MCE on only those shared markets. This eliminates the selection bias
     where a source that only covers easy markets looks artificially accurate.
 
-    Precomputed by a Celery task every 6 hours; served from Redis cache.
+    Precomputed by a Celery task every 6 hours; served from Redis cache. The
+    winner claim is CONTAINED (Queue #262/#263 Item 3): the surface reports
+    diagnostic per-source MCE only and is comparison-unavailable at the top level
+    until a one-question-to-one-question rebuild with the headline metric lands.
+
+    Queue #263 Item 3: the served cache is validated against that contract before
+    it is returned. A legacy winner payload, a version mismatch, or malformed data
+    fails closed to "computing" — a stale source ranking can never be served. (The
+    previous ``refresh`` query param was a no-op — only the Celery task writes this
+    key — and has been removed rather than left misleading.)
     """
     import json as _json
 
-    # Serve from Redis cache (precomputed by compute_fair_fight_comparison task)
+    # Serve from Redis cache (precomputed by compute_fair_fight_comparison task),
+    # but ONLY when it satisfies the current containment contract.
     try:
         from app.tasks.redis_state import get_redis_client
         rc = get_redis_client()
         cached = rc.get("bainluck:calibration:fair_fight")
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            if _fair_fight_cache_is_current(payload):
+                return payload
     except Exception:
         pass
 
-    # Not yet computed — tell caller to check back
+    # Not yet computed, or a legacy/malformed cache failed the contract — tell the
+    # caller to check back once the task rewrites the key with the current shape.
     return {
         "status": "computing",
         "message": "Results being computed. Check back in 60 seconds.",

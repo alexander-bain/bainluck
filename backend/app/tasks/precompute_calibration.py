@@ -35,7 +35,7 @@ _MAIN_CACHE_TTL = 7200
 # population-derived surface (horizon diagnostics, /calibration/examples,
 # bucket-debug, snapshot-health) so a future population change is VISIBLE across
 # all consumers. Bump when _calibration_population_ctes changes materially.
-CALIBRATION_POPULATION_VERSION = "q262"
+CALIBRATION_POPULATION_VERSION = "q263"
 
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
@@ -801,6 +801,7 @@ def kalshi_prop_threshold_exclude_sql(
     category: str,
     calibration_probability: str,
     opening_probability: str,
+    curve_price: str | None = None,
 ) -> str:
     """Canonical SQL boolean for the Queue #186/#941 Kalshi prop-threshold exclusion.
 
@@ -816,16 +817,30 @@ def kalshi_prop_threshold_exclude_sql(
     to hardcode ``0.90``).
 
     Excluded when source='kalshi', ``name`` matches the 'Player: N+' OVER pattern,
-    and EITHER category='hockey' OR COALESCE(cp, opening) >= the degenerate band.
-    Read-side only (gotcha #21) — never mutates resolutions or probabilities.
+    and EITHER category='hockey' OR the price sits in the degenerate band.
+
+    Queue #263 Item 1 (horizon-honest band classification): the band decision is a
+    PRICE-STATE decision, so it must read the same price expression the surface is
+    finalized on. ``curve_price`` overrides the price expression used for BOTH the
+    hockey (>= 0.50) and general (>= 0.90) band comparisons; the headline path
+    leaves it None and falls back to ``COALESCE(cp, opening)`` (identical to the
+    old literal), while a horizon passes its snapshot price so each horizon
+    classifies a threshold outcome on ITS OWN price, not the terminal probability.
+    The hockey vs general split is preserved mechanically — only the price the two
+    bands read changes. Read-side only (gotcha #21) — never mutates resolutions.
     """
+    price_expr = (
+        curve_price
+        if curve_price is not None
+        else f"COALESCE({calibration_probability}, {opening_probability})"
+    )
     return (
         f"({source} = 'kalshi'\n"
         f"     AND {name} ~ '{KALSHI_PROP_THRESHOLD_NAME_RE}'\n"
         f"     AND (({category} = 'hockey'\n"
-        f"            AND COALESCE({calibration_probability}, {opening_probability})\n"
+        f"            AND {price_expr}\n"
         f"                >= {KALSHI_HOCKEY_HONEST_BAND_MAX})\n"
-        f"          OR COALESCE({calibration_probability}, {opening_probability})\n"
+        f"          OR {price_expr}\n"
         f"             >= {KALSHI_PROP_THRESHOLD_DEGENERATE_BAND}))"
     )
 
@@ -1086,15 +1101,20 @@ def _calibration_population_ctes(
       * ``leading_ctes``     — CTE(s) prepended to the WITH-body (the horizon-price
                                LATERAL lookup), WITH a trailing comma.
 
-    NORMALIZATION / FIELD-COMPLETENESS ARE HORIZON-HONEST: candidate detection is
-    structural (a market is a partition field regardless of horizon, so it is
-    detected on the TERMINAL price via ``mex_field_candidates`` with the full
-    terminal-eligible member count), while the divisor and completeness are
-    evaluated on the price expression — a field is published only when EVERY
-    terminal-eligible member is present at the horizon AND survives every exclusion
-    (survivor_n == terminal_eligible_n), else it is dropped WHOLE. On the headline
-    path present == terminal, so this reduces to the old single ``mex_norm_markets``
-    behavior exactly.
+    NORMALIZATION / FIELD-COMPLETENESS ARE HORIZON-HONEST (Queue #262 + #263 Item 1):
+    ROSTER IDENTITY is structural — a market is a partition field regardless of the
+    horizon, so ``mex_field_candidates`` detects it on the TERMINAL structure (mex/
+    field, single winner, >=3 eligible) and carries the full terminal-eligible member
+    count. EVERY PRICE-STATE decision is evaluated on the price expression: the
+    normalization divisor (``mex_field_divisor`` sum over ``{curve_price}``), the
+    field-sum > threshold qualification (moved out of candidate detection into the
+    ``normalized`` gate, keyed on ``mnm_cp_sum``), and the Kalshi prop-threshold band
+    (``{curve_price}`` passed to ``kalshi_prop_threshold_exclude_sql``). A field is
+    published only when EVERY terminal-eligible member is present at the horizon AND
+    survives every exclusion (survivor_n == terminal_eligible_n) AND its price-sum
+    clears the threshold, else it is dropped WHOLE. On the headline path present ==
+    terminal and ``{curve_price}`` == terminal cp, so this reduces to the old single
+    ``mex_norm_markets`` behavior exactly.
 
     Returns the WITH-body (``market_info`` ... ``deduped``, WITHOUT the leading
     ``WITH`` and WITHOUT a trailing comma) that BOTH serve/audit consumers build
@@ -1224,12 +1244,21 @@ def _calibration_population_ctes(
             -- completeness against the FULL terminal field.
             --
             -- mex_field_candidates: markets that are genuine partition FIELDS — a
-            -- structural property independent of the horizon — detected on the
-            -- TERMINAL price (mex/field, exactly one winner, >=3 terminal-eligible
-            -- outcomes, terminal cp sum over the threshold). Carries the full
+            -- STRUCTURAL roster identity independent of the horizon (mex/field,
+            -- exactly one winner, >=3 terminal-eligible outcomes). Carries the full
             -- terminal-eligible member count so horizon completeness can require
-            -- every member to be present. On the headline path this set + count
-            -- equal the old mex_norm_markets membership + COUNT exactly.
+            -- every member to be present.
+            --
+            -- Queue #263 Item 1: the cp-SUM > threshold gate is a PRICE-STATE
+            -- decision, not a roster identity, so it MUST be evaluated on the price
+            -- expression the surface finalizes on — NOT the terminal probability.
+            -- It moved out of candidate detection and into ``normalized`` below,
+            -- gated on ``mnm_cp_sum`` (the mex_field_divisor sum over {curve_price}).
+            -- This makes field qualification horizon-honest: a terminal-low/horizon-
+            -- high field qualifies at the horizon, a terminal-high/horizon-low field
+            -- does not. On the headline path {curve_price} == terminal cp, so
+            -- mnm_cp_sum == the old terminal SUM and the qualified set + count equal
+            -- the old mex_norm_markets membership + COUNT exactly.
             mex_field_candidates AS (
                 SELECT fo.market_id,
                     COUNT(*) AS terminal_eligible_n
@@ -1247,7 +1276,6 @@ def _calibration_population_ctes(
                   AND COALESCE(fo.volume, -1) != 0
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 3
-                   AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > {MEX_NORMALIZE_THRESHOLD}
             ),
             -- mex_field_divisor: per-market normalization divisor = sum of the
             -- CURVE PRICE over the eligible members PRESENT at this price
@@ -1371,9 +1399,12 @@ def _calibration_population_ctes(
                     -- threshold "<subject>: N+" OVER captures. EXCLUDED when
                     -- (A) category='hockey' (NHL goal-family is corrupt at every
                     -- price band — illiquid degenerate capture, resolution sane)
-                    -- or (B) the curve price (COALESCE(cp, opening)) is in the
-                    -- degenerate settlement-collapse band (>= 0.90), which
-                    -- resolves 0.11–0.48 across every series (gotcha #14/#21).
+                    -- or (B) the curve price is in the degenerate settlement-
+                    -- collapse band (>= 0.90), which resolves 0.11–0.48 across
+                    -- every series (gotcha #14/#21). Queue #263 Item 1: the band
+                    -- reads {curve_price} (terminal COALESCE(cp, opening) on the
+                    -- headline, the horizon snapshot on a horizon) so each horizon
+                    -- classifies on its OWN price, not the terminal probability.
                     -- The 2026-07-13 verify disproved #167's no-live-bid keep:
                     -- real-bid rows are corrupt too (scorer + non-scorer both cp
                     -- 0.995). Curve price, not bid, is the honest discriminator;
@@ -1385,6 +1416,7 @@ def _calibration_population_ctes(
                         category='cv.category',
                         calibration_probability='fo.calibration_probability',
                         opening_probability='fo.opening_probability',
+                        curve_price=curve_price,
                     )} AS is_kalshi_prop_threshold,
                     -- Queue #183 Item 4 (#182 twin): weather wide-spread fabricated
                     -- midpoint. A wide Kalshi weather book (ask-bid >= 0.50) with no
@@ -1455,17 +1487,30 @@ def _calibration_population_ctes(
             -- is_field_incomplete and dropped from the curve by ``deduped`` —
             -- never normalized over survivors. mnm.cp_sum equals the survivor sum
             -- exactly when complete, so cp / mnm_cp_sum normalizes to ~1.
+            -- Queue #263 Item 1: a market is a genuine normalization FIELD when it
+            -- is a structural partition candidate (mex_field_candidates) AND its
+            -- curve-price sum clears the field threshold ON THE PRICE EXPRESSION
+            -- (mnm_cp_sum = mex_field_divisor's SUM over {curve_price}: terminal cp
+            -- on the headline, the horizon snapshot on a horizon). Moving the sum
+            -- gate off terminal candidate detection makes qualification horizon-
+            -- honest. On the headline mnm_cp_sum == the old terminal SUM, so
+            -- ``is_field`` reduces to the old candidate membership exactly and a
+            -- structural-but-below-threshold market keeps flowing to the multi pool
+            -- (neither normalized nor dropped) exactly as before.
             normalized AS (
                 SELECT ro.*,
                     (ro.candidate_market_id IS NOT NULL
+                     AND ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
                      AND fc.survivor_n = fc.eligible_n
                      AND fc.survivor_win_n = 1
                      AND fc.survivor_n >= 3) AS is_mex_normalized,
                     (ro.candidate_market_id IS NOT NULL
+                     AND ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
                      AND NOT (fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3)) AS is_field_incomplete,
                     CASE WHEN ro.candidate_market_id IS NOT NULL
+                              AND ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
                               AND fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3
@@ -2586,6 +2631,65 @@ def _publish_time_horizon(rc, horizons_result: dict) -> None:
         logger.warning("time-horizon: main-key publish failed: %s", exc)
 
 
+def _load_time_horizon_wip(rc) -> dict:
+    """Load the resumable horizon WIP accumulator, rejecting stale populations.
+
+    Queue #263 Item 2: the WIP is version-wrapped
+    (``{"population_version": <v>, "horizons": {...}}``). A resume MUST discard:
+      * a LEGACY unwrapped accumulator (a bare ``{label: data}`` dict with no
+        wrapper — the pre-#263 shape),
+      * corrupt JSON, and
+      * any wrapper whose ``population_version`` != the current version,
+    so a horizon computed under an older population is never resumed (skipping its
+    recompute) nor republished under the new version. Returns ``{label: data}`` for
+    ONLY the current-version horizons, so the caller recomputes everything else.
+    """
+    wip_raw = rc.get(_TIME_HORIZON_WIP_KEY)
+    if not wip_raw:
+        return {}
+    try:
+        parsed = json.loads(wip_raw)
+    except (ValueError, TypeError):
+        return {}
+    if (
+        not isinstance(parsed, dict)
+        or parsed.get("population_version") != CALIBRATION_POPULATION_VERSION
+    ):
+        # Legacy unwrapped or version-mismatched accumulator — recompute from scratch.
+        return {}
+    horizons = parsed.get("horizons")
+    if not isinstance(horizons, dict):
+        return {}
+    valid_labels = {label for label, _ in _HORIZONS}
+    # Defense in depth: keep only current-version horizon entries. A mixed-version
+    # wrapper should be impossible (writes always stamp the current version on both
+    # the wrapper and every horizon's diag), but a stale horizon must never resume.
+    return {
+        k: v
+        for k, v in horizons.items()
+        if k in valid_labels
+        and isinstance(v, dict)
+        and v.get("population_version") == CALIBRATION_POPULATION_VERSION
+    }
+
+
+def _save_time_horizon_wip(rc, horizons_result: dict) -> None:
+    """Persist the horizon WIP accumulator wrapped with the current population
+    version (Queue #263 Item 2), so a later run can only resume horizons computed
+    under the SAME population. Best-effort, mirroring the publish helper."""
+    try:
+        rc.set(
+            _TIME_HORIZON_WIP_KEY,
+            json.dumps({
+                "population_version": CALIBRATION_POPULATION_VERSION,
+                "horizons": horizons_result,
+            }),
+            ex=_CACHE_TTL,
+        )
+    except Exception as exc:  # noqa: BLE001 — WIP persistence is best-effort
+        logger.warning("time-horizon: WIP persist failed: %s", exc)
+
+
 def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
     """Build the horizon calibration SQL for one horizon (Queue #262 Item 1).
 
@@ -2696,18 +2800,12 @@ async def _compute_time_horizon_calibration():
 
     rc = get_redis_client()
     start = time.monotonic()
-    valid_labels = {label for label, _ in _HORIZONS}
 
     # Resume from any WIP accumulator left by a prior (deadline-truncated) run.
-    horizons_result: dict = {}
-    wip_raw = rc.get(_TIME_HORIZON_WIP_KEY)
-    if wip_raw:
-        try:
-            horizons_result = {
-                k: v for k, v in json.loads(wip_raw).items() if k in valid_labels
-            }
-        except (ValueError, TypeError):
-            horizons_result = {}
+    # Queue #263 Item 2: the loader rejects legacy-unwrapped / corrupt / version-
+    # mismatched accumulators, so a horizon computed under an older population is
+    # recomputed rather than resumed or republished under the current version.
+    horizons_result: dict = _load_time_horizon_wip(rc)
 
     async with get_task_session() as db:
         for label, days in _HORIZONS:
@@ -2721,7 +2819,7 @@ async def _compute_time_horizon_calibration():
             # cleanly under the 600s soft limit.
             elapsed = time.monotonic() - start
             if elapsed + _HORIZON_STMT_TIMEOUT_S > _HORIZON_DEADLINE_S:
-                rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+                _save_time_horizon_wip(rc, horizons_result)
                 _publish_time_horizon(rc, horizons_result)  # serve partial now (#1171)
                 logger.info(
                     "time-horizon: deadline at %.0fs, %d/%d horizons done — "
@@ -2827,7 +2925,7 @@ async def _compute_time_horizon_calibration():
                     "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
                     **diag,
                 }
-                rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+                _save_time_horizon_wip(rc, horizons_result)
                 _publish_time_horizon(rc, horizons_result)  # serve partial (#1171)
                 continue
 
@@ -2911,7 +3009,7 @@ async def _compute_time_horizon_calibration():
             # guard firing next iteration) can never discard this one — and publish
             # the served main key NOW so the endpoint reflects each horizon as it
             # lands, never stranded on "computing" if a later horizon dies (#1171).
-            rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
+            _save_time_horizon_wip(rc, horizons_result)
             _publish_time_horizon(rc, horizons_result)
 
     # Publish whatever is computed. When all four are present this is the full
@@ -2919,7 +3017,17 @@ async def _compute_time_horizon_calibration():
     # (``complete: false``, ``missing: [...]``) that the endpoint still serves —
     # the missing horizon(s) retry next run (#1171: never publish nothing).
     _publish_time_horizon(rc, horizons_result)
-    complete = len(horizons_result) == len(_HORIZONS)
+    # Queue #263 Item 2: complete requires all four named horizons AND every one to
+    # carry the current population version — so a run that somehow still holds a
+    # stale-version horizon is reported partial (and its WIP is NOT cleared) rather
+    # than declared done. In practice the loader already drops off-version horizons,
+    # so this is a belt-and-braces invariant on the exit path.
+    complete = len(horizons_result) == len(_HORIZONS) and all(
+        isinstance(horizons_result.get(label), dict)
+        and horizons_result[label].get("population_version")
+        == CALIBRATION_POPULATION_VERSION
+        for label, _ in _HORIZONS
+    )
     if complete:
         rc.delete(_TIME_HORIZON_WIP_KEY)
     logger.info(
