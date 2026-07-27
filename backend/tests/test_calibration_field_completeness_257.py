@@ -94,7 +94,8 @@ class TestFieldCompletenessRuleText:
 # ---------------------------------------------------------------------------
 class TestSharedQueryEmbedsCompleteness:
     def test_query_embeds_field_completeness_gate(self):
-        src = inspect.getsource(compute_calibration_payload)
+        src = (inspect.getsource(compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # The completeness aggregation + the gated normalization CTE.
         assert "field_completeness AS (" in src
         assert "normalized AS (" in src
@@ -106,12 +107,14 @@ class TestSharedQueryEmbedsCompleteness:
         assert "ro.raw_cp / ro.mnm_cp_sum" in src
 
     def test_partial_fields_dropped_from_deduped(self):
-        src = inspect.getsource(compute_calibration_payload)
+        src = (inspect.getsource(compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # deduped excludes incomplete fields — never normalized over survivors.
         assert "AND NOT ro.is_field_incomplete" in src
 
     def test_candidate_vs_published_counts_surfaced(self):
-        src = inspect.getsource(compute_calibration_payload)
+        src = (inspect.getsource(compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         assert "mex_candidate_markets" in src
         assert "mex_normalized_markets" in src
         assert "field_incomplete_markets" in src
@@ -119,7 +122,8 @@ class TestSharedQueryEmbedsCompleteness:
         assert '"field_completeness"' in src
 
     def test_gate_is_read_side_only(self):
-        src = inspect.getsource(compute_calibration_payload).lower()
+        src = (inspect.getsource(compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes()).lower()
         assert "update futures_outcomes" not in src
         assert "update futures_markets" not in src
         assert "delete from futures_outcomes" not in src

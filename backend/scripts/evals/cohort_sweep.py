@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import math
+import random
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -24,6 +25,12 @@ MIN_COHORT_N = 30
 MIN_ANTI_N = 30
 HIGH_PRICE = 0.75
 
+# Queue #259 Item 3: question-clustered (cluster-bootstrap) uncertainty. Fixed
+# seed + iteration count keep every interval deterministic so the sweep's flags
+# are reproducible in tests and across runs.
+BOOTSTRAP_ITERS = 1000
+BOOTSTRAP_SEED = 20260727
+
 
 def load_json(path: str | Path) -> list[dict[str, Any]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -36,211 +43,52 @@ def load_json(path: str | Path) -> list[dict[str, Any]]:
 
 
 async def load_from_session(session: Any) -> list[dict[str, Any]]:
-    """Load the CANONICAL published calibration population from an AsyncSession (Queue #257 Item 2).
+    """Load the CANONICAL published calibration population from an AsyncSession.
 
-    Previously this loaded RAW ``calibration_probability IS NOT NULL`` rows — the
-    whole unfiltered corpus including guessed/void/heuristic resolutions, illiquid
-    placeholders, Kalshi prop-threshold settlement collapses, weather fabricated
-    midpoints, and raw one-sided-ask field prices. The sweep is supposed to measure
-    what the /calibration curve actually PUBLISHES, so it now consumes the same
-    canonical eligible + exclusion-filtered + field-normalized population as
-    ``app.tasks.precompute_calibration.compute_calibration_payload``, reusing that
-    module's exclusion PREDICATE constants so the two cannot silently drift.
+    Queue #259 Item 2 (C14 P1): the sweep now selects the FINAL published rows
+    from the ONE shared population producer,
+    ``app.tasks.precompute_calibration._calibration_population_ctes`` — the exact
+    ``deduped`` CTE that ``compute_calibration_payload`` aggregates into the curve.
+    Previously this module re-implemented the population and stopped after the
+    field-completeness gate: it had no production ``mode_prices``, no multi-outcome
+    ``>0.005 AND <0.98`` tail filter, and no ``rn = 1`` binary-side selection, so it
+    measured rows ``/api/calibration`` drops and double-counted both sides of a
+    binary. Building on the shared CTE makes serving/audit ROW-IDENTICAL by
+    construction (same outcome ids, probabilities, and question ids) — they cannot
+    silently drift.
 
-    It also carries a virtual-market / QUESTION identity (``question_id``) per row
-    so the sweep can report independent-question N (distinct questions) alongside
-    the correlated outcome N — a field of 100 candidate outcomes is ONE question,
-    not 100 independent samples, so Wilson / sample-size honesty must key off the
-    question count, not the outcome count.
+    Each row carries ``question_id = vm_id`` — the production virtual-market
+    identity WITH the source + >=3 group/event size gate (C14 P2), so a field of
+    100 candidate outcomes is ONE question, not 100 independent samples, and
+    unrelated same-event props / two-market groups are not collapsed. Sample-size
+    honesty (Item 3) keys off the distinct-question count, not the outcome count.
 
     Read-only (gotcha #21). The heavy CTE is Postgres-only; production re-runs
     execute it, CI exercises the JSON-fixture path + a mocked session.
     """
     from sqlalchemy import text
 
-    # Reuse the canonical exclusion predicates so the sweep population matches the
-    # published curve and cannot drift from it (the Queue #257 anti-duplication
-    # thesis). Only the market-grouping scaffolding is assembled here; every
-    # drift-prone predicate comes from the one shared module.
-    from app.tasks.precompute_calibration import (
-        GOLF_PLACEHOLDER_HIGH_BAND,
-        KALSHI_LIQUIDITY_EXISTS,
-        MEX_NORMALIZE_THRESHOLD,
-        POLY_PLACEHOLDER_EXCLUDE,
-        WEATHER_WIDE_SPREAD_MIN,
-        kalshi_prop_threshold_exclude_sql,
-    )
+    # The ONE shared canonical population — every drift-prone predicate, the
+    # field-completeness normalization, and the mode/tail/rn dedup come from this
+    # single module so the sweep cannot diverge from the published curve.
+    from app.tasks.precompute_calibration import _calibration_population_ctes
 
-    prop_excl = kalshi_prop_threshold_exclude_sql(
-        source="vm.source",
-        name="fo.name",
-        category="vm.category",
-        calibration_probability="fo.calibration_probability",
-        opening_probability="fo.opening_probability",
-    )
-    # Mirrors compute_calibration_payload's resolution-authority exclusion list
-    # (guessed / void / heuristic resolutions are never in the published curve).
-    resolution_exclusion = (
-        "('pass2_guess', 'pass3_threshold', 'pass2_loser', 'all_losers', "
-        "'did_not_play', 'withdrew', 'no_pregame_trading')"
-    )
-
-    sql = text(f"""
-        WITH market_info AS (
-            SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
-                COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                fm.llm_league, fm.mutually_exclusive, fm.market_type
-            FROM futures_markets fm
-            WHERE fm.status = 'resolved'
-              AND NOT COALESCE(
-                  (fm.market_metadata->>'datagolf_recovery_residual')::boolean, false)
-        ),
-        malformed_binaries AS (
-            SELECT fo.market_id
-            FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
-            WHERE mi.mutually_exclusive = true
-            GROUP BY fo.market_id
-            HAVING COUNT(*) = 2
-               AND COUNT(*) FILTER (WHERE fo.is_winner = true) <> 1
-        ),
-        esports_multi_bundles AS (
-            SELECT fo.market_id
-            FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
-            WHERE mi.category = 'esports'
-            GROUP BY fo.market_id
-            HAVING COUNT(*) >= 3
-               AND COUNT(*) FILTER (WHERE fo.is_winner = true) >= 2
-        ),
-        golf_placeholder_markets AS (
-            SELECT fo.market_id
-            FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
-            WHERE mi.category = 'golf'
-              AND mi.mutually_exclusive = true
-              AND mi.event_id IS NULL
-              AND COALESCE(fo.calibration_probability, fo.opening_probability) >= {GOLF_PLACEHOLDER_HIGH_BAND}
-              AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NOT NULL
-                   AND fo.resolution_source NOT IN {resolution_exclusion})
-              AND COALESCE(fo.volume, -1) != 0
-            GROUP BY fo.market_id
-            HAVING COUNT(*) >= 2
-        ),
-        mex_win_counts AS (
-            SELECT fo.market_id,
-                COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count
-            FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
-            WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
-            GROUP BY fo.market_id
-        ),
-        mex_norm_markets AS (
-            SELECT fo.market_id,
-                SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS cp_sum
-            FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
-            JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
-            WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
-              AND mwc.win_count = 1
-              AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NOT NULL
-                   AND fo.resolution_source NOT IN {resolution_exclusion})
-              AND COALESCE(fo.volume, -1) != 0
-            GROUP BY fo.market_id
-            HAVING COUNT(*) >= 3
-               AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > {MEX_NORMALIZE_THRESHOLD}
-        ),
-        base AS (
-            SELECT
-                fo.id AS outcome_id, fo.market_id, fo.name AS outcome_name,
-                fo.is_winner,
-                vm.source, vm.llm_league,
-                vm.category AS llm_sport_category, vm.market_type,
-                COALESCE('g:' || vm.group_id,
-                         'e:' || vm.event_id::text,
-                         'm:' || vm.market_id::text) AS question_id,
-                COALESCE(fo.calibration_probability, fo.opening_probability) AS raw_cp,
-                mnm.market_id AS mnm_market_id,
-                mnm.cp_sum AS mnm_cp_sum,
-                (mb.market_id IS NOT NULL) AS is_malformed_binary,
-                (emb.market_id IS NOT NULL) AS is_esports_bundle,
-                (gpm.market_id IS NOT NULL
-                 AND COALESCE(fo.calibration_probability, fo.opening_probability)
-                     >= {GOLF_PLACEHOLDER_HIGH_BAND}) AS is_golf_placeholder,
-                {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
-                {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
-                ({prop_excl}) AS is_kalshi_prop_threshold,
-                (vm.source = 'kalshi' AND vm.category = 'weather'
-                 AND fo.current_yes_bid IS NOT NULL AND fo.current_yes_ask IS NOT NULL
-                 AND (fo.current_yes_ask - fo.current_yes_bid) >= {WEATHER_WIDE_SPREAD_MIN}
-                 AND NOT EXISTS (
-                    SELECT 1 FROM futures_odds_snapshots fos
-                    WHERE fos.outcome_id = fo.id AND fos.last_price > 0)
-                ) AS is_weather_wide_spread
-            FROM futures_outcomes fo
-            JOIN market_info vm ON vm.market_id = fo.market_id
-            LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
-            LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
-            LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
-            LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
-            WHERE fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NOT NULL
-                   AND fo.resolution_source NOT IN {resolution_exclusion})
-              AND COALESCE(fo.volume, -1) != 0
-        ),
-        -- Queue #257 Item 1 field-completeness (mirrors the payload gate): a
-        -- candidate field is normalized only if every eligible member survived
-        -- every exclusion and the winner survived; a partial field is dropped.
-        field_completeness AS (
-            SELECT b.market_id,
-                COUNT(*) AS eligible_n,
-                COUNT(*) FILTER (
-                    WHERE b.is_liquid AND NOT b.is_poly_placeholder
-                      AND NOT b.is_malformed_binary AND NOT b.is_esports_bundle
-                      AND NOT b.is_golf_placeholder AND NOT b.is_kalshi_prop_threshold
-                      AND NOT b.is_weather_wide_spread
-                ) AS survivor_n,
-                COUNT(*) FILTER (
-                    WHERE b.is_winner
-                      AND b.is_liquid AND NOT b.is_poly_placeholder
-                      AND NOT b.is_malformed_binary AND NOT b.is_esports_bundle
-                      AND NOT b.is_golf_placeholder AND NOT b.is_kalshi_prop_threshold
-                      AND NOT b.is_weather_wide_spread
-                ) AS survivor_win_n
-            FROM base b
-            WHERE b.mnm_market_id IS NOT NULL
-            GROUP BY b.market_id
-        )
+    sql = text(
+        "WITH "
+        + _calibration_population_ctes()
+        + """
         SELECT
-            b.outcome_id, b.market_id, b.outcome_name, b.is_winner,
-            b.source, b.llm_league, b.llm_sport_category, b.market_type,
-            b.question_id,
-            CASE WHEN b.mnm_market_id IS NOT NULL
-                      AND fc.survivor_n = fc.eligible_n
-                      AND fc.survivor_win_n = 1
-                      AND fc.survivor_n >= 3
-                 THEN b.raw_cp / b.mnm_cp_sum
-                 ELSE b.raw_cp
-            END AS probability
-        FROM base b
-        LEFT JOIN field_completeness fc ON fc.market_id = b.market_id
-        WHERE b.is_liquid AND NOT b.is_poly_placeholder
-          AND NOT b.is_malformed_binary
-          AND NOT b.is_esports_bundle
-          AND NOT b.is_golf_placeholder
-          AND NOT b.is_kalshi_prop_threshold
-          AND NOT b.is_weather_wide_spread
-          -- Partial candidate fields are excluded, never normalized over survivors.
-          AND NOT (b.mnm_market_id IS NOT NULL
-                   AND NOT (fc.survivor_n = fc.eligible_n
-                            AND fc.survivor_win_n = 1
-                            AND fc.survivor_n >= 3))
-    """)
+            outcome_id, market_id, outcome_name, is_winner,
+            source, llm_league,
+            category AS llm_sport_category, market_type,
+            -- vm_id is the size-gated production virtual-question identity.
+            vm_id AS question_id,
+            -- adj_opening_probability is the final published (normalized where a
+            -- complete field, raw otherwise) curve price.
+            adj_opening_probability AS probability
+        FROM deduped
+        """
+    )
     result = await session.execute(sql)
     return [dict(row._mapping) for row in result.all()]
 
@@ -301,6 +149,13 @@ def normalize_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def wilson_interval(successes: int, n: int, z: float = 1.959964) -> tuple[float, float] | None:
+    """Binomial Wilson interval over INDEPENDENT trials.
+
+    Kept for genuine independent-question use (each question is one Bernoulli
+    sample). Queue #259 Item 3 stopped feeding it correlated outcome counts —
+    ``analyze_cohort`` now uses ``_cluster_ratio_ci`` so a many-outcome field does
+    not masquerade as many independent samples.
+    """
     if n <= 0:
         return None
     phat = successes / n
@@ -308,6 +163,70 @@ def wilson_interval(successes: int, n: int, z: float = 1.959964) -> tuple[float,
     center = (phat + z * z / (2 * n)) / denom
     margin = z * math.sqrt((phat * (1 - phat) + z * z / (4 * n)) / n) / denom
     return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def _cluster_ratio_ci(
+    pairs: list[tuple[float, float]],
+    alpha: float = 0.05,
+    iters: int = BOOTSTRAP_ITERS,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    """95% cluster (question-level) bootstrap CI for a ratio numerator/denominator.
+
+    Queue #259 Item 3 (C14 P1): calibration outcomes within one field/question are
+    NOT independent — one event decides them all. Wilson over the outcome count
+    therefore understates uncertainty (a 100-runner field would look like 100
+    samples). This resamples whole QUESTIONS with replacement (each ``pair`` is one
+    question's ``(numerator, denominator)``) and recomputes the pooled ratio, so the
+    interval width reflects the number of independent questions:
+
+      * a single correlated field (one pair) -> a degenerate point interval, never
+        a narrow multi-sample CI, so it cannot manufacture a systematic-bias call;
+      * K genuinely independent questions -> an interval that tightens with K.
+
+    Deterministic (fixed seed + iteration count). Returns ``None`` when there are no
+    questions or no denominator mass.
+    """
+    m = len(pairs)
+    if m == 0:
+        return None
+    if sum(d for _, d in pairs) <= 0:
+        return None
+    rng = random.Random(seed)
+    randrange = rng.randrange
+    stats: list[float] = []
+    for _ in range(iters):
+        num = 0.0
+        den = 0.0
+        for _ in range(m):
+            n_, d_ = pairs[randrange(m)]
+            num += n_
+            den += d_
+        if den > 0:
+            stats.append(num / den)
+    if not stats:
+        return None
+    stats.sort()
+    lo = stats[int((alpha / 2) * len(stats))]
+    hi = stats[min(len(stats) - 1, int((1 - alpha / 2) * len(stats)))]
+    return (lo, hi)
+
+
+def _question_pairs(
+    rows: list[dict[str, Any]], numerator: object
+) -> list[tuple[float, float]]:
+    """Per-question ``(sum(numerator), count)`` pairs — one per distinct question.
+
+    ``numerator`` is the row key summed into the numerator ("actual" for winners,
+    or a precomputed "loser" flag); the denominator is the question's outcome count
+    in this (sub-)cohort. Used as the cluster unit for ``_cluster_ratio_ci``.
+    """
+    agg: dict[Any, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    for row in rows:
+        cell = agg[row.get("question_id", row["outcome_id"])]
+        cell[0] += float(row[numerator])
+        cell[1] += 1.0
+    return [(num, den) for num, den in agg.values()]
 
 
 def expected_calibration_error(rows: list[dict[str, Any]], bins: int = 10) -> float:
@@ -346,16 +265,26 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
     predicted = _mean(row["probability"] for row in rows)
     winners = sum(row["actual"] for row in rows)
     actual = winners / n
-    actual_ci = wilson_interval(winners, n)
+    # Queue #259 Item 3: question-clustered CI — resamples whole questions, so the
+    # interval reflects independent_questions, not the correlated outcome count.
+    actual_ci = _cluster_ratio_ci(_question_pairs(rows, "actual"))
     signed_error = predicted - actual
     high = [row for row in rows if row["probability"] >= HIGH_PRICE]
+    # Distinct high-price QUESTIONS — the honest anti-calibration sample size. A
+    # single field that happens to carry many high-price candidate outcomes is ONE
+    # question, so it can no longer trip the >=30 anti-calibration gate by itself.
+    high_questions = len({row.get("question_id", row["outcome_id"]) for row in high})
     high_losers = sum(1 - row["actual"] for row in high)
     high_expected_loser_rate = _mean((1 - row["probability"] for row in high)) if high else None
-    high_ci = wilson_interval(high_losers, len(high))
+    high_loser_pairs = [
+        (den - num, den)  # losers = outcomes - winners, per high-price question
+        for num, den in _question_pairs(high, "actual")
+    ]
+    high_ci = _cluster_ratio_ci(high_loser_pairs)
     sufficient = independent_questions >= MIN_COHORT_N
     anti_flag = bool(
         sufficient
-        and len(high) >= MIN_ANTI_N
+        and high_questions >= MIN_ANTI_N
         and high_ci
         and high_expected_loser_rate is not None
         and high_ci[0] > high_expected_loser_rate
@@ -378,9 +307,14 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
         # sufficiency and severity key off this, not the correlated outcome n.
         "independent_questions": independent_questions,
         "sufficient": sufficient,
+        # predicted_rate / actual_rate / ece stay outcome-weighted DESCRIPTIVE
+        # summaries; only the CIs and gates are question-clustered (Item 3).
         "predicted_rate": round(predicted, 6),
         "actual_rate": round(actual, 6),
+        # Question-clustered (cluster-bootstrap) 95% interval — reflects the number
+        # of independent questions, not the correlated outcome count.
         "actual_rate_ci95": _rounded_interval(actual_ci),
+        "actual_rate_ci95_method": "question_cluster_bootstrap",
         "signed_error": round(signed_error, 6),
         "direction": direction,
         "ece": round(expected_calibration_error(rows), 6),
@@ -388,10 +322,13 @@ def analyze_cohort(key: tuple[str, str, str], rows: list[dict[str, Any]]) -> dic
         "anti_calibration": {
             "flag": anti_flag,
             "high_price_n": len(high),
+            # Distinct high-price QUESTIONS — the gate keys off this, not high_price_n.
+            "high_price_questions": high_questions,
             "losers": high_losers,
             "loser_rate": round(high_losers / len(high), 6) if high else None,
             "expected_loser_rate": _round_optional(high_expected_loser_rate),
             "loser_rate_ci95": _rounded_interval(high_ci),
+            "loser_rate_ci95_method": "question_cluster_bootstrap",
         },
         # Severity weights by the honest (independent-question) sample size so a
         # single big correlated field can't masquerade as high-significance.

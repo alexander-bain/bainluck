@@ -86,7 +86,8 @@ class TestRuleText:
 
 class TestPrecomputeQueryEmbedsExclusions:
     def test_main_query_embeds_malformed_binary_exclusion(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # The CTE that identifies malformed binaries.
         assert "malformed_binaries" in src
         assert "HAVING COUNT(*) = 2" in src
@@ -98,7 +99,8 @@ class TestPrecomputeQueryEmbedsExclusions:
         assert '"malformed_binary_filter"' in src
 
     def test_main_query_embeds_golf_placeholder_exclusion(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # The CTE that identifies over-subscribed golf placeholder markets.
         assert "golf_placeholder_markets" in src
         assert "HAVING COUNT(*) >= 2" in src
@@ -112,7 +114,8 @@ class TestPrecomputeQueryEmbedsExclusions:
         # Guardrail (gotcha #21): the exclusions must never mutate resolutions.
         # The precompute task is a SELECT-only read path — assert it issues no
         # UPDATE/DELETE against futures_outcomes / futures_markets.
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         lowered = src.lower()
         assert "update futures_outcomes" not in lowered
         assert "update futures_markets" not in lowered

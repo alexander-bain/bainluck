@@ -494,6 +494,58 @@ def field_is_complete_for_normalization(
     )
 
 
+# Queue #259 Item 1 — the sum-to-1 INVARIANT for a published normalized field.
+#
+# field_is_complete_for_normalization decides a candidate field is complete enough
+# to normalize (cp / per-market sum). But the ``deduped`` CTE then applies two MORE
+# filters to every ``is_multi`` row: an extreme-tail cut (adj > 0.005 AND adj < 0.98)
+# and a mode-price cut (drop a price shared by > max(eligible*0.5, 2) members). A
+# complete normalized field IS ``is_multi`` (>=3 eligible), so before this fix those
+# filters ran AFTER normalization and could delete a member the completeness gate
+# had already counted — publishing < 1.0 (C14's 0.99/0.20/0.001 -> tail dropped ->
+# ~99.9%; a uniform field -> its modal price wipes every member). The tail/mode cuts
+# are placeholder heuristics for the NON-partition multi pool, so the fix EXEMPTS
+# ``is_mex_normalized`` rows: a complete field publishes ALL its members and the
+# partition still sums to ~1.0. This is the executable mirror of that ``deduped``
+# decision. Read-side only (gotcha #21).
+def published_normalized_field_probabilities(
+    raw_cps: list[float], *, apply_tail_mode_filters: bool = False
+) -> list[float]:
+    """Published normalized probabilities for a COMPLETE single-winner field (Queue #259).
+
+    ``raw_cps`` are the raw curve prices of the field's members (already confirmed a
+    complete normalization candidate by ``market_needs_mex_normalization`` +
+    ``field_is_complete_for_normalization``). Returns each member's PUBLISHED
+    probability = ``cp / sum(cp)``.
+
+    With ``apply_tail_mode_filters=False`` (the shipped ``deduped`` behavior after the
+    Queue #259 invariant fix) EVERY member is published, so the returned list sums to
+    ~1.0. ``apply_tail_mode_filters=True`` reproduces the OLD pre-fix behavior — the
+    extreme-tail (>0.005 AND <0.98) and mode-price cuts run after normalization and
+    can drop members, so the sum falls below 1.0. Tests assert the fixed path holds
+    the invariant and the old path violates it (the counterexamples).
+    """
+    cp_sum = sum(raw_cps)
+    if cp_sum <= 0:
+        return []
+    normalized = [cp / cp_sum for cp in raw_cps]
+    if not apply_tail_mode_filters:
+        # Queue #259 invariant fix: a complete partition is published whole.
+        return normalized
+    # Legacy (buggy) behavior kept for contrast: drop extreme tails + modal prices.
+    from collections import Counter
+
+    counts = Counter(normalized)
+    eligible = len(normalized)
+    mode_threshold = max(eligible * 0.5, 2)
+    mode_prices = {p for p, c in counts.items() if c > mode_threshold}
+    return [
+        p
+        for p in normalized
+        if 0.005 < p < 0.98 and p not in mode_prices
+    ]
+
+
 # #762: void-resolution filter (mostly DataGolf "Make the Cut" markets).
 #
 # A resolved outcome whose resolution_source is did_not_play / withdrew is a
@@ -990,47 +1042,42 @@ def _compute_horizon_mce(buckets: list[dict], weighted: bool = True) -> float | 
     return round(total_abs_err / total_w * 100, 2)
 
 
-async def compute_calibration_payload(db) -> dict:
-    """The single canonical /api/calibration payload computation (Queue #257 Item 1).
+def _calibration_population_ctes() -> str:
+    """The ONE canonical eligible -> final-published-row CTE chain (Queue #259 Item 1/2).
 
-    ONE eligible population + ONE normalization divisor, shared by BOTH serve
-    paths so a cold-cache fallback can never diverge from the precomputed serve:
-      * the scheduled ``precompute_calibration_main`` task (writes Redis), and
-      * ``routes/calibration.public_calibration``'s in-request fallback.
+    Returns the WITH-body (``market_info`` ... ``deduped``, WITHOUT the leading
+    ``WITH`` and WITHOUT a trailing comma) that BOTH serve/audit consumers build
+    on, so their populations cannot silently drift (the C14 finding: the cohort
+    sweep measured rows the curve drops because it re-implemented the population):
 
-    Previously each site carried its own copy of the CTE chain + Python
-    post-processing and they had drifted in ~11 material ways — the route's
-    cold-cache path was missing the liquidity / poly-placeholder / malformed-
-    binary / golf-placeholder exclusions and the DataGolf-residual guard, used a
-    looser resolution-source filter (kept ``pass2_loser`` / ``all_losers`` and
-    NULL-source rows), and computed equal-weighted MCE where the task used
-    n-weighted — so a cold serve showed a materially different curve. This
-    function is that ONE population, imported by both.
+      * ``compute_calibration_payload`` appends ``liq_summary`` / ``published_summary``
+        / ``bucketed`` and aggregates ``deduped`` into curve buckets, and
+      * ``scripts/evals/cohort_sweep.load_from_session`` selects the ``deduped``
+        rows verbatim (same outcome ids, probabilities, question ids, source).
 
-    ``db`` is a live session supplied by the caller (task session or request
-    session); all reads run on it and the response dict is returned WITHOUT
-    writing Redis (the caching wrapper does that). Read-side only — never mutates
-    is_winner / calibration_probability (gotcha #21).
+    ``deduped`` IS the final published population: eligible -> per-outcome
+    exclusions -> field-completeness normalization -> mode/tail dedup -> rn=1
+    binary side. Queue #259 Item 1 fix: a COMPLETE normalized field
+    (``is_mex_normalized``) is EXEMPT from the mode-price and extreme-tail
+    (``>0.005 AND <0.98``) filters — those are placeholder heuristics for the
+    NON-partition multi pool, and applying them after normalization would drop a
+    member (a tiny normalized tail, or a uniform field's modal price) and break
+    the sum-to-1 invariant the completeness gate guarantees. Read-side only
+    (gotcha #21) — never mutates is_winner / calibration_probability.
+
+    Carries every column both consumers need (``outcome_id`` / ``outcome_name`` /
+    ``market_type`` / ``llm_league`` for the sweep's cohort keys; ``vm_id`` is the
+    production virtual-question identity WITH the source + >=3 group/event size
+    gate, so the sweep can no longer collapse unrelated same-event props or split
+    a two-market group).
     """
-    from sqlalchemy import func, select
-
-    from app.models import FuturesMarket
-    from app.tasks.redis_state import get_redis_client
-
-    # nullcontext preserves the historical block structure (the queries below
-    # keep their original indentation) while running on the caller-provided
-    # session instead of opening its own — so both serve paths share one body.
-    with contextlib.nullcontext():
-        # -----------------------------------------------------------
-        # Query 1: Main futures calibration buckets
-        # -----------------------------------------------------------
-        main_sql = text(f"""
-            WITH market_info AS (
+    return f"""market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
                     COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                     fm.mutually_exclusive,
-                    fm.market_type
+                    fm.market_type,
+                    fm.llm_league
                 FROM futures_markets fm
                 WHERE fm.status = 'resolved'
                   -- #994 symmetric exclusion: DataGolf markets whose full field
@@ -1164,7 +1211,9 @@ async def compute_calibration_payload(db) -> dict:
                     END AS vm_id,
                     COALESCE(gs.group_size >= 3, false)
                       OR COALESCE(es.event_size >= 3, false) AS is_grouped,
-                    mi.mutually_exclusive
+                    mi.mutually_exclusive,
+                    mi.market_type,
+                    mi.llm_league
                 FROM market_info mi
                 LEFT JOIN group_sizes gs
                   ON gs.group_id = mi.group_id AND gs.source = mi.source
@@ -1204,6 +1253,13 @@ async def compute_calibration_payload(db) -> dict:
                     mnm.market_id AS mnm_market_id,
                     mnm.cp_sum AS mnm_cp_sum,
                     fo.market_id AS market_id,
+                    -- Queue #259 Item 2: carry outcome identity + per-market shape
+                    -- so the cohort sweep selects the SAME final rows (row identity)
+                    -- with its cohort keys, instead of re-deriving the population.
+                    fo.id AS outcome_id,
+                    fo.name AS outcome_name,
+                    vm.market_type AS market_type,
+                    vm.llm_league AS llm_league,
                     fo.is_winner AS is_winner,
                     (fo.calibration_probability IS NOT NULL
                      AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
@@ -1331,10 +1387,17 @@ async def compute_calibration_payload(db) -> dict:
                 FROM ranked_outcomes ro
                 LEFT JOIN field_completeness fc ON fc.market_id = ro.market_id
             ),
+            -- Queue #259 Item 1: mode-price detection is a PLACEHOLDER heuristic
+            -- for the non-partition multi pool; a COMPLETE normalized field
+            -- (is_mex_normalized) is a genuine partition summing to ~1.0, so its
+            -- prices must NOT drive (nor be removed by) mode detection — else a
+            -- uniform field (10 members @ 0.10) would be wiped. Incomplete fields
+            -- are dropped anyway; exclude both so only publishable rows vote.
             mode_prices AS (
                 SELECT vm_id, adj_opening_probability AS mode_price
                 FROM normalized
                 WHERE is_multi AND eligible >= 3 AND is_liquid
+                  AND NOT is_mex_normalized AND NOT is_field_incomplete
                 GROUP BY vm_id, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
@@ -1351,13 +1414,67 @@ async def compute_calibration_payload(db) -> dict:
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
+                        -- Queue #259 Item 1 INVARIANT FIX: a COMPLETE normalized
+                        -- field is a partition that sums to ~1.0 over EXACTLY its
+                        -- survivor members (field_completeness proved every eligible
+                        -- member survived every per-outcome exclusion). The mode /
+                        -- extreme-tail filters below are placeholder heuristics for
+                        -- the NON-partition multi pool; applying them here would drop
+                        -- a member (a 0.001-normalized tail, or a uniform field's
+                        -- modal price) and publish <1.0 — the exact defect C14 found
+                        -- (0.99/0.20/0.001 -> tail dropped -> ~99.9%). Publish every
+                        -- member of a complete field so the partition still sums to 1.
+                        WHEN ro.is_mex_normalized THEN true
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
                              AND ro.adj_opening_probability < 0.98
                              AND mp.vm_id IS NULL
                         ELSE ro.rn = 1
                     END
-            ),
+            )"""
+
+
+async def compute_calibration_payload(db) -> dict:
+    """The single canonical /api/calibration payload computation (Queue #257 Item 1).
+
+    ONE eligible population + ONE normalization divisor, shared by BOTH serve
+    paths so a cold-cache fallback can never diverge from the precomputed serve:
+      * the scheduled ``precompute_calibration_main`` task (writes Redis), and
+      * ``routes/calibration.public_calibration``'s in-request fallback.
+
+    Previously each site carried its own copy of the CTE chain + Python
+    post-processing and they had drifted in ~11 material ways — the route's
+    cold-cache path was missing the liquidity / poly-placeholder / malformed-
+    binary / golf-placeholder exclusions and the DataGolf-residual guard, used a
+    looser resolution-source filter (kept ``pass2_loser`` / ``all_losers`` and
+    NULL-source rows), and computed equal-weighted MCE where the task used
+    n-weighted — so a cold serve showed a materially different curve. This
+    function is that ONE population, imported by both.
+
+    ``db`` is a live session supplied by the caller (task session or request
+    session); all reads run on it and the response dict is returned WITHOUT
+    writing Redis (the caching wrapper does that). Read-side only — never mutates
+    is_winner / calibration_probability (gotcha #21).
+    """
+    from sqlalchemy import func, select
+
+    from app.models import FuturesMarket
+    from app.tasks.redis_state import get_redis_client
+
+    # nullcontext preserves the historical block structure (the queries below
+    # keep their original indentation) while running on the caller-provided
+    # session instead of opening its own — so both serve paths share one body.
+    with contextlib.nullcontext():
+        # -----------------------------------------------------------
+        # Query 1: Main futures calibration buckets
+        # -----------------------------------------------------------
+        main_sql = text(
+            "WITH "
+            + _calibration_population_ctes()
+            # deduped is the LAST shared population CTE; liq_summary /
+            # published_summary / bucketed + the bucket aggregation are
+            # payload-only (the sweep selects deduped rows verbatim).
+            + """,
             -- #940 phase-1 transparency: how many Kalshi outcomes the liquidity
             -- filter keeps vs drops (computed once from the materialized CTE).
             liq_summary AS (
@@ -1402,6 +1519,21 @@ async def compute_calibration_payload(db) -> dict:
                     COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded
                 FROM normalized
             ),
+            -- Queue #259 Item 1 (C14 P2): PUBLISHED counts from ``deduped`` (the
+            -- rows that actually reach the curve), distinct from ``liq_summary``'s
+            -- CANDIDATE counts over ``normalized`` (pre-dedup). Before the invariant
+            -- fix a normalized field could be counted as published in liq_summary
+            -- yet lose a member in deduped; reporting both makes the population
+            -- change honest. With the fix these two normalized-market counts are
+            -- equal (every complete field publishes intact) — a regression guard.
+            published_summary AS (
+                SELECT
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_published_markets,
+                    COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_published_outcomes,
+                    COUNT(*) AS published_outcomes,
+                    COUNT(DISTINCT vm_id) AS published_questions
+                FROM deduped
+            ),
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
                 FROM deduped
@@ -1428,9 +1560,15 @@ async def compute_calibration_payload(db) -> dict:
                 MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
                 MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
-                MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded
+                MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded,
+                -- Queue #259 Item 1 (C14 P2): published (post-dedup) counts.
+                MAX(ps.mex_published_markets) AS mex_published_markets,
+                MAX(ps.mex_published_outcomes) AS mex_published_outcomes,
+                MAX(ps.published_outcomes) AS published_outcomes,
+                MAX(ps.published_questions) AS published_questions
             FROM bucketed
             CROSS JOIN liq_summary ls
+            CROSS JOIN published_summary ps
             GROUP BY bucket_idx, source, category, price_moved
             ORDER BY bucket_idx, source, category, price_moved
         """)
@@ -1510,6 +1648,16 @@ async def compute_calibration_payload(db) -> dict:
         mex_normalized_markets = _int0("mex_normalized_markets")
         field_incomplete_markets = _int0("field_incomplete_markets")
         field_incomplete_outcomes = _int0("field_incomplete_outcomes")
+        # Queue #259 Item 1 (C14 P2): PUBLISHED (post-dedup) normalized markets —
+        # the ones that actually reach the curve, vs the candidate/normalized
+        # counts above which are computed pre-dedup over ``normalized``. With the
+        # invariant fix these equal mex_normalized_markets (a complete field
+        # publishes intact); a divergence means a post-normalization filter is
+        # silently dropping members again.
+        mex_published_markets = _int0("mex_published_markets")
+        mex_published_outcomes = _int0("mex_published_outcomes")
+        published_outcomes = _int0("published_outcomes")
+        published_questions = _int0("published_questions")
 
         # Queue #159 (#1010): esports match-bundle exclusion transparency count.
         esports_bundle_excluded = (
@@ -2127,7 +2275,15 @@ async def compute_calibration_payload(db) -> dict:
             "field_completeness": {
                 "rule": FIELD_COMPLETENESS_RULE_TEXT,
                 "candidate_markets": mex_candidate_markets,
+                # Queue #257 pre-dedup normalized-candidate count (over ``normalized``).
                 "published_normalized_markets": mex_normalized_markets,
+                # Queue #259 Item 1 (C14 P2): the counts computed over ``deduped`` —
+                # markets/outcomes that actually reach the published curve. Equal to
+                # the normalized-candidate count above once the sum-to-1 invariant
+                # holds (a complete field publishes every member); reported so the
+                # candidate -> published split is never silent.
+                "published_normalized_markets_post_dedup": mex_published_markets,
+                "published_normalized_outcomes_post_dedup": mex_published_outcomes,
                 "field_incomplete_excluded_markets": field_incomplete_markets,
                 "field_incomplete_excluded_outcomes": field_incomplete_outcomes,
             },

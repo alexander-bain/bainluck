@@ -90,8 +90,9 @@ class TestCorrectionsLog:
 
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_esports_bundles(self):
-        src = inspect.getsource(
-            precompute_calibration.compute_calibration_payload
+        src = (
+            inspect.getsource(precompute_calibration.compute_calibration_payload)
+            + precompute_calibration._calibration_population_ctes()
         )
         # The CTE that identifies the >=3-outcome/>=2-winner esports markets.
         assert "esports_multi_bundles AS (" in src

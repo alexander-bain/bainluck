@@ -72,7 +72,8 @@ class TestRuleText:
 
 class TestPrecomputeQueryEmbedsNormalization:
     def test_main_query_embeds_mex_normalization(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # The support CTEs.
         assert "mex_win_counts" in src
         assert "mex_norm_markets" in src
@@ -94,7 +95,8 @@ class TestPrecomputeQueryEmbedsNormalization:
 
     def test_normalization_is_read_side_only(self):
         # Guardrail (gotcha #21): normalization must never mutate resolutions.
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         lowered = src.lower()
         assert "update futures_outcomes" not in lowered
         assert "update futures_markets" not in lowered
@@ -120,7 +122,8 @@ class TestFieldShapeGate254:
     curve raw. Both synced query sites must embed the extended gate."""
 
     def test_precompute_gate_includes_field_shape(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         assert "mi.market_type = 'field'" in src
         # market_info must expose market_type for the gate to reference it.
         assert "fm.market_type" in src

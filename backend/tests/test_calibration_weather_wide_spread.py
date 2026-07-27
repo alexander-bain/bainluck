@@ -86,7 +86,8 @@ class TestRuleText:
 
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_weather_wide_spread(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         assert "is_weather_wide_spread" in src
         assert "NOT ro.is_weather_wide_spread" in src
         # Transparency count + payload surface.

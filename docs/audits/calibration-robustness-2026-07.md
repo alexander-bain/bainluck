@@ -7,6 +7,20 @@ The deliverable is findings for Fable to read *before* any backfill/recalibratio
 
 ---
 
+## Queue #259 — C14 mechanical-correctness fixes (FIX APPLIED, 2026-07-27)
+
+The 2026-07-27 C14 review found three residual mechanical defects that survived Queue #257's serve-path unification. All three are now closed (issue #1448); read-side only (gotcha #21), no stored probability/winner mutated.
+
+1. **Sum-to-1 invariant (C14 P1).** `field_completeness` counted survivors *before* the `deduped` mode-price + extreme-tail (`>0.005 AND <0.98`) filters, so a COMPLETE normalized field could lose a member after normalization and publish `<1.0` (the `0.99/0.20/0.001` field → its `0.00084` normalized tail dropped → ~99.9%; a uniform field → its modal price wiped every member). Fix: `deduped` now **exempts complete normalized fields (`is_mex_normalized`) from the tail/mode cuts** (they are placeholder heuristics for the non-partition multi pool), and `mode_prices` no longer lets normalized/incomplete rows vote — so a published partition sums to ~1.0 by construction.
+2. **One shared population (C14 P1/P2).** The payload and the cohort sweep now build on ONE producer, `precompute_calibration._calibration_population_ctes()` — the exact `deduped` CTE. The sweep previously re-implemented the population and lacked the production `mode_prices` / tail filter / `rn=1` binary-side selection, so it measured rows the curve drops and double-counted binary sides. Row identity is now structural (same outcome ids, probabilities, and size-gated `vm_id` question identity).
+3. **Question-clustered inference (C14 P1).** `cohort_sweep.analyze_cohort` replaced outcome-count Wilson intervals with a **question-clustered bootstrap** and gates the anti-calibration flag on **distinct high-price questions** (not outcome count). A single 100-runner field can no longer manufacture a narrow interval or trip the ≥30 anti-calibration gate; outcome-weighted `predicted_rate`/`actual_rate`/`ece` stay as labeled descriptive summaries.
+
+**Published `/api/calibration` contract change:** `mex_normalization.field_completeness` now also reports `published_normalized_markets_post_dedup` / `published_normalized_outcomes_post_dedup` (counts computed over `deduped`, distinct from the pre-dedup candidate counts) so the candidate→published split is never silent. The cohort sweep drill-down gains `anti_calibration.high_price_questions` and `*_ci95_method: "question_cluster_bootstrap"`.
+
+**Whether any surviving cohort is genuinely biased remains ⚠️ NEEDS ALEX RULING** after re-measurement — Queue #259 fixed the machinery, not the interpretation.
+
+---
+
 ## Queue #254 — field normalization (FIX APPLIED, from this audit's #1 finding)
 
 The audit's #1 finding — the population over-prediction is a **field normalization artifact** — was actioned in Queue #254. Key correction the fix hinges on: the audit's cohort_sweep reads **raw** `calibration_probability`, but the live `/api/calibration` curve already normalizes single-winner mutually-exclusive fields (Queue #157's `mex_norm_markets`). The real gap was that **65,219 `field`-shape markets carry `mutually_exclusive=false`** and therefore escaped that gate, entering the curve raw (avg sum ~3.45–4.56).

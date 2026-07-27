@@ -180,8 +180,12 @@ class TestCanonicalExcludeSql:
 
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_kalshi_prop_thresholds(self):
-        src = inspect.getsource(
-            precompute_calibration.compute_calibration_payload
+        src = (
+            inspect.getsource(precompute_calibration.compute_calibration_payload)
+            # builder SOURCE (carries the helper-call + constant names) + its
+            # rendered OUTPUT (the resolved SQL) so both are asserted.
+            + inspect.getsource(precompute_calibration._calibration_population_ctes)
+            + precompute_calibration._calibration_population_ctes()
         )
         # The structural flag on the "<subject>: N+" kalshi outcome.
         assert "is_kalshi_prop_threshold" in src

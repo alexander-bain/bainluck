@@ -102,5 +102,6 @@ class TestRetagLeavesRecoveredAlone:
 
 class TestPrecomputeSymmetricExclusion:
     def test_main_query_excludes_residual_markets(self):
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         assert "datagolf_recovery_residual" in src

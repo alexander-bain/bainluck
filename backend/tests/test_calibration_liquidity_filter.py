@@ -58,7 +58,8 @@ class TestLiquiditySQL:
     def test_main_precompute_query_embeds_filter_and_counts(self):
         import inspect
 
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # Filter applied as a materialized per-outcome flag, excluded from buckets.
         assert "ranked_outcomes AS MATERIALIZED" in src
         assert "is_liquid" in src
@@ -99,7 +100,8 @@ class TestExclusionSymmetryCensus:
     def test_main_query_censuses_cohort_and_payload_surfaces_it(self):
         import inspect
 
-        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        src = (inspect.getsource(precompute_calibration.compute_calibration_payload)
+               + precompute_calibration._calibration_population_ctes())
         # Census flag + counts in the query.
         assert "is_poly_never_traded" in src
         assert "poly_never_traded_total" in src
