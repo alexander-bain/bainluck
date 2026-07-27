@@ -7,6 +7,8 @@ import {
   isKidSafeText,
   isKidSafeCategory,
   isKidSafeItem,
+  isFreshForPlay,
+  isPlayEligible,
   collectKidVisibleText,
   filterKidSafe,
 } from "@/lib/play/kidSafe";
@@ -15,6 +17,8 @@ import type {
   FeedEventData,
   FeedFuturesData,
   FeedFuturesOutcome,
+  FeedConceptData,
+  FeedTournamentData,
 } from "@/lib/types";
 
 // The exact blocklist the queue named must always be rejected.
@@ -149,6 +153,10 @@ function futuresItem(
     llm_sport_category: category,
     sport_name: category,
     sport: category,
+    // Fresh by default (status "open", no resolution date) so the SAFETY tests
+    // below exercise content safety, not freshness — freshness has its own suite.
+    status: "open",
+    resolution_date: null,
     top_outcomes: [{ id: 1, name: "Yes", probability: 0.5, rank: 1, movement: null }],
   };
   return {
@@ -178,6 +186,8 @@ function futuresItemWithOutcomes(
     llm_sport_category: category,
     sport_name: category,
     sport: category,
+    status: "open",
+    resolution_date: null,
     top_outcomes,
   };
   return {
@@ -295,14 +305,239 @@ describe("collectKidVisibleText", () => {
 describe("filterKidSafe", () => {
   it("keeps only the safe items", () => {
     const items = [
-      eventItem("basketball_nba", "Warriors", "Lakers"), // safe
+      eventItem("basketball_nba", "Warriors", "Lakers"), // safe + fresh (scheduled)
       futuresItem("2028 election winner", "politics"), // blocked category + term
-      futuresItem("Best Picture winner", "entertainment"), // safe
+      futuresItem("Best Picture winner", "entertainment"), // safe + fresh (open)
       futuresItem("Fed rate decision", "economics"), // blocked category
-      futuresItem("Tornado warning count", "weather"), // safe category, safe text
+      futuresItem("Tornado warning count", "weather"), // safe category, safe text, fresh
     ];
     const safe = filterKidSafe(items);
     expect(safe).toHaveLength(3);
     expect(safe.map((i) => i.type)).toEqual(["event", "futures", "futures"]);
+  });
+});
+
+// ===========================================================================
+// L2-187 — FRESHNESS gate. /play must never surface a completed/closed/settled/
+// resolved card as a fresh swipe (REPORT-2.md: 19/78 deck cards were finished
+// games rendering a live-looking % on a done game). The gate is FAIL-CLOSED and
+// judged per card type, independent of content safety.
+// ===========================================================================
+
+const NOW = Date.parse("2026-07-27T12:00:00Z");
+const PAST = "2026-07-20T00:00:00Z"; // a week before NOW
+const FUTURE = "2026-09-01T00:00:00Z"; // well after NOW
+
+function eventItemStatus(status: string): FeedItem {
+  const data: Partial<FeedEventData> = {
+    id: 2,
+    external_id: "x",
+    sport: "baseball_mlb",
+    sport_name: "baseball",
+    home_team: "Astros",
+    away_team: "White Sox",
+    commence_time: PAST,
+    status: status as FeedEventData["status"],
+    home_score: 12,
+    away_score: 3,
+    current_odds: { home_probability: 0.97, away_probability: 0.03 },
+  };
+  return { type: "event", score: 50, reason: "", headline: null, data: data as FeedEventData };
+}
+
+function futuresFresh(overrides: Partial<FeedFuturesData>): FeedItem {
+  const data: Partial<FeedFuturesData> = {
+    id: 1,
+    name: "MLB World Series Winner",
+    llm_sport_category: "baseball",
+    sport_name: "baseball",
+    sport: "baseball",
+    status: "open",
+    resolution_date: null,
+    top_outcomes: [{ id: 1, name: "Dodgers", probability: 0.3, rank: 1, movement: null }],
+    ...overrides,
+  };
+  return { type: "futures", score: 50, reason: "", headline: null, data: data as FeedFuturesData };
+}
+
+function conceptItem(overrides: Partial<FeedConceptData>): FeedItem {
+  const data: Partial<FeedConceptData> = {
+    key: "event:cycling:tour-de-france-2026",
+    name: "Tour de France 2026",
+    domain: "cycling",
+    status: "live",
+    is_major: true,
+    fight_count: 0,
+    ...overrides,
+  };
+  return { type: "concept", score: 50, reason: "", headline: null, data: data as FeedConceptData };
+}
+
+function tournamentItem(overrides: Partial<FeedTournamentData>): FeedItem {
+  const data: Partial<FeedTournamentData> = {
+    key: "golf-aig-womens-open",
+    name: "AIG Women's Open",
+    is_major: true,
+    schedule_status: null,
+    start_date: null,
+    end_date: null,
+    commence_time: null,
+    resolution_date: FUTURE,
+    golfers: [{ name: "Nelly Korda", probability: 0.2, rank: 1, movement_24h: null }],
+    market_ids: [1],
+    source_count: 1,
+    ...overrides,
+  };
+  return { type: "tournament", score: 50, reason: "", headline: null, data: data as FeedTournamentData };
+}
+
+describe("isFreshForPlay — events (the measured 19/78 defect class)", () => {
+  it("rejects completed and closed events (stale games shown with a live %)", () => {
+    expect(isFreshForPlay(eventItemStatus("completed"), NOW)).toBe(false);
+    expect(isFreshForPlay(eventItemStatus("closed"), NOW)).toBe(false);
+  });
+
+  it("keeps scheduled and live events", () => {
+    expect(isFreshForPlay(eventItemStatus("scheduled"), NOW)).toBe(true);
+    expect(isFreshForPlay(eventItemStatus("live"), NOW)).toBe(true);
+  });
+
+  it("fail-closed: rejects an event with a missing/unknown status", () => {
+    expect(isFreshForPlay(eventItemStatus(""), NOW)).toBe(false);
+    expect(isFreshForPlay(eventItemStatus("settled"), NOW)).toBe(false);
+    expect(isFreshForPlay(eventItemStatus("resolved"), NOW)).toBe(false);
+  });
+});
+
+describe("isFreshForPlay — futures", () => {
+  it("keeps a genuinely open market (no resolution date, or future one)", () => {
+    expect(isFreshForPlay(futuresFresh({}), NOW)).toBe(true);
+    expect(isFreshForPlay(futuresFresh({ resolution_date: FUTURE }), NOW)).toBe(true);
+  });
+
+  it("rejects resolved/closed markets", () => {
+    expect(isFreshForPlay(futuresFresh({ status: "resolved" }), NOW)).toBe(false);
+    expect(isFreshForPlay(futuresFresh({ status: "closed" }), NOW)).toBe(false);
+  });
+
+  it("rejects a market surfaced result-first even if status stays 'open' (gotcha #33)", () => {
+    expect(isFreshForPlay(futuresFresh({ status: "open", resolved: true }), NOW)).toBe(false);
+    expect(isFreshForPlay(futuresFresh({ status: "open", winner: "Dodgers" }), NOW)).toBe(false);
+  });
+
+  it("rejects an 'open' market whose resolution time is already past", () => {
+    expect(isFreshForPlay(futuresFresh({ status: "open", resolution_date: PAST }), NOW)).toBe(false);
+  });
+
+  it("fail-closed: rejects a market with an unknown status", () => {
+    expect(isFreshForPlay(futuresFresh({ status: "" }), NOW)).toBe(false);
+    expect(isFreshForPlay(futuresFresh({ status: "settled" }), NOW)).toBe(false);
+  });
+});
+
+describe("isFreshForPlay — concept (explicit, not inferred from safety)", () => {
+  it("keeps an upcoming or live concept", () => {
+    expect(isFreshForPlay(conceptItem({ status: "live" }), NOW)).toBe(true);
+    expect(isFreshForPlay(conceptItem({ status: "upcoming" }), NOW)).toBe(true);
+  });
+
+  it("rejects a settled concept", () => {
+    expect(isFreshForPlay(conceptItem({ status: "settled" }), NOW)).toBe(false);
+  });
+
+  it("rejects a post-settlement WHAT-HIT concept (marquee_whathit / named champion)", () => {
+    expect(isFreshForPlay(conceptItem({ status: "live", marquee_whathit: true }), NOW)).toBe(false);
+    expect(isFreshForPlay(conceptItem({ status: "upcoming", winner: "Tadej Pogačar" }), NOW)).toBe(false);
+  });
+
+  it("fail-closed: rejects a concept with an unknown/empty status", () => {
+    expect(isFreshForPlay(conceptItem({ status: "" }), NOW)).toBe(false);
+    expect(isFreshForPlay(conceptItem({ status: "completed" }), NOW)).toBe(false);
+  });
+});
+
+describe("isFreshForPlay — tournament (explicit, not inferred from safety)", () => {
+  it("keeps a tournament with a future resolution window", () => {
+    expect(isFreshForPlay(tournamentItem({ resolution_date: FUTURE }), NOW)).toBe(true);
+    expect(isFreshForPlay(tournamentItem({ schedule_status: "upcoming" }), NOW)).toBe(true);
+  });
+
+  it("keeps a live tournament ('in-progress' hyphen form normalized)", () => {
+    expect(isFreshForPlay(tournamentItem({ schedule_status: "in-progress" }), NOW)).toBe(true);
+  });
+
+  it("rejects a completed tournament schedule_status", () => {
+    expect(isFreshForPlay(tournamentItem({ schedule_status: "completed", resolution_date: PAST }), NOW)).toBe(false);
+  });
+
+  it("rejects a tournament whose resolution/end date has passed", () => {
+    expect(isFreshForPlay(tournamentItem({ resolution_date: PAST }), NOW)).toBe(false);
+    expect(isFreshForPlay(tournamentItem({ resolution_date: null, end_date: PAST }), NOW)).toBe(false);
+  });
+
+  it("rejects a post-settlement WHAT-HIT tournament", () => {
+    expect(isFreshForPlay(tournamentItem({ marquee_whathit: true, resolution_date: FUTURE }), NOW)).toBe(false);
+  });
+
+  it("fail-closed: rejects a tournament with no status and no date signal", () => {
+    expect(
+      isFreshForPlay(
+        tournamentItem({ schedule_status: null, start_date: null, end_date: null, resolution_date: null }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isFreshForPlay — bundle / unknown", () => {
+  it("rejects bundle cards (cannot be freshness-vetted)", () => {
+    const bundle = { type: "bundle", score: 50, reason: "", headline: null, data: {} } as unknown as FeedItem;
+    expect(isFreshForPlay(bundle, NOW)).toBe(false);
+  });
+});
+
+describe("isPlayEligible — safety AND freshness (independent gates)", () => {
+  it("requires BOTH: a safe-but-stale card is rejected", () => {
+    // Clean sports content, but the game is over → rejected by freshness alone.
+    expect(isKidSafeItem(eventItemStatus("completed"))).toBe(true);
+    expect(isPlayEligible(eventItemStatus("completed"), NOW)).toBe(false);
+  });
+
+  it("requires BOTH: a fresh-but-unsafe card is rejected", () => {
+    const unsafe = futuresFresh({ name: "Who wins the 2028 election?", llm_sport_category: "politics" });
+    expect(isFreshForPlay(unsafe, NOW)).toBe(true); // it IS fresh...
+    expect(isPlayEligible(unsafe, NOW)).toBe(false); // ...but not kid-safe
+  });
+
+  it("admits a card that is both safe and fresh", () => {
+    expect(isPlayEligible(eventItemStatus("live"), NOW)).toBe(true);
+    expect(isPlayEligible(futuresFresh({ name: "Best Picture winner", llm_sport_category: "entertainment" }), NOW)).toBe(true);
+  });
+});
+
+describe("filterKidSafe — no bypass via pagination merge or affinity reorder", () => {
+  // The /play deck is filterKidSafe(feed) → dedup-merge → seedByAffinity. Since
+  // the freshness gate lives in filterKidSafe (the single admission point BEFORE
+  // both the merge and the affinity reorder), a stale card can never enter either
+  // game regardless of ordering. This asserts the pool-level guarantee.
+  it("drops every completed/closed event alongside safe/fresh cards", () => {
+    const items = [
+      eventItemStatus("completed"), // 🔴 stale — REPORT-2.md class
+      eventItemStatus("closed"), // 🔴 stale
+      eventItem("basketball_nba", "Warriors", "Lakers"), // scheduled → keep
+      futuresFresh({ name: "Best Picture winner", llm_sport_category: "entertainment" }), // keep
+      futuresFresh({ name: "Old award", llm_sport_category: "entertainment", status: "resolved" }), // stale → drop
+      conceptItem({ status: "settled" }), // stale → drop
+      conceptItem({ status: "live" }), // keep
+    ];
+    const safe = filterKidSafe(items);
+    expect(safe).toHaveLength(3);
+    expect(safe.map((i) => i.type)).toEqual(["event", "futures", "concept"]);
+    // None of the survivors is a completed/closed event.
+    for (const it of safe) {
+      if (it.type === "event") {
+        expect(["scheduled", "live"]).toContain((it.data as FeedEventData).status);
+      }
+    }
   });
 });

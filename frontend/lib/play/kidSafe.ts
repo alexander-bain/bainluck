@@ -1,16 +1,29 @@
-// L2-176 — THE PLAY PAGE kid-safe content filter.
+// L2-176 / L2-187 — THE PLAY PAGE admission filter (content safety + freshness).
 //
-// The raters are an 8-year-old and a 12-year-old. This is the SAFETY guard for
-// the /play card pool: a card only renders to a kid if BOTH
-//   (1) its category is in the allowlist (sports / entertainment / weather only), and
-//   (2) none of its visible text hits the term blocklist.
+// The raters are an 8-year-old and a 12-year-old. A card only renders to a kid if
+// it is BOTH kid-safe AND fresh (see isPlayEligible, the single gate filterKidSafe
+// applies):
+//   SAFE (L2-176/177/178):
+//     (1) its category is in the allowlist (sports / entertainment / weather /
+//         culture), and
+//     (2) none of its visible text hits the term blocklist.
+//   FRESH (L2-187):
+//     (3) its status/date prove it is still upcoming, live, or a genuinely open
+//         market — completed/closed/settled/resolved cards are rejected so /play
+//         never shows a live-looking % on a game that is already over.
 // "Err broad" per the queue — a false negative (a fine card hidden) is fine; a
-// false positive (a war/death/election card shown to an 8yo) is not.
+// false positive (a war card, or a settled game shown as fresh) is not.
 //
 // Pure module (no window / no fetch) so it is unit-tested in the node jest env.
 
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedFuturesData, FeedEventData } from "@/lib/types";
+import type {
+  FeedItem,
+  FeedFuturesData,
+  FeedEventData,
+  FeedConceptData,
+  FeedTournamentData,
+} from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Category allowlist
@@ -211,11 +224,12 @@ export function collectKidVisibleText(item: FeedItem): string {
 }
 
 /**
- * The single gate a feed card must pass to render in /play.
+ * The CONTENT-SAFETY half of the /play admission gate (freshness is the other
+ * half — see isFreshForPlay / isPlayEligible).
  * Rejects: disallowed categories, blocklist text (over ALL rendered strings —
  * see collectKidVisibleText), and bundle cards (which fold multiple un-vetted
  * markets and can't be safely categorized here). The affinity-seeded deck is a
- * reordering of this already-filtered pool (see /play page loadPool →
+ * reordering of the already-filtered pool (see /play page loadPool →
  * seedByAffinity), so it passes through the same gate — no separate path.
  */
 export function isKidSafeItem(item: FeedItem): boolean {
@@ -225,6 +239,123 @@ export function isKidSafeItem(item: FeedItem): boolean {
   return isKidSafeText(collectKidVisibleText(item));
 }
 
+// ---------------------------------------------------------------------------
+// Freshness (L2-187)
+// ---------------------------------------------------------------------------
+// A /play card must ALSO be fresh, not just kid-safe. /play renders a
+// live-looking probability with no score/"FINAL" framing, so a completed /
+// closed / settled / resolved card shows a stale % on a game that is already
+// over — the exact defect measured in REPORT-2.md (19/78 deck cards were
+// finished games rendering misleading odds: "Astros vs White Sox" ended 12-3
+// but the card showed "97% chance"). That violates the standing "settled means
+// settled" ruling. This predicate is FAIL-CLOSED: a card passes ONLY when its
+// own status/date positively establish that it is still upcoming, live, or a
+// genuinely open future market. When freshness cannot be established, the card
+// is rejected. Freshness is judged PER CARD TYPE — it is NEVER inferred from
+// content safety (a war-free headline says nothing about whether the game is
+// over), and vice-versa. The two gates are independent by design.
+
+// Event statuses that positively mean "not yet finished". `completed`/`closed`
+// (and anything else) are stale.
+const FRESH_EVENT_STATUSES = new Set(["scheduled", "live"]);
+
+// Concept statuses that positively mean "still to come or underway". The concept
+// adapter emits upcoming/live/settled (app/utils/event_concept.py `_golf_status`
+// and the UFC/cycling adapters); a `settled` concept only reaches the feed to
+// hold its post-settlement WHAT-HIT pin, which `marquee_whathit` catches too.
+const FRESH_CONCEPT_STATUSES = new Set(["upcoming", "scheduled", "live"]);
+
+// Raw golf `schedule_status` values (hyphen→underscore normalized) that mean the
+// tournament is over. Mirrors event_concept._golf_status's terminal set.
+const SETTLED_SCHEDULE_STATUSES = new Set([
+  "completed",
+  "closed",
+  "resolved",
+  "final",
+  "settled",
+]);
+const LIVE_SCHEDULE_STATUSES = new Set([
+  "in_progress",
+  "live",
+  "active",
+  "upcoming",
+  "scheduled",
+]);
+
+/** True only when `iso` parses to a moment strictly before `now`. A missing or
+ *  unparseable date is NOT "known past" — freshness is then decided by the
+ *  card's status signals (or fail-closed if there are none). */
+function isPastDate(iso: string | null | undefined, now: number): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return false;
+  return t < now;
+}
+
+/**
+ * Fail-closed freshness gate for a /play card. Returns true ONLY when the card's
+ * own status/date fields prove it is still upcoming, live, or genuinely open.
+ * Unknown card types (e.g. bundle) and cards that cannot establish freshness are
+ * rejected. `now` is injectable for deterministic tests.
+ */
+export function isFreshForPlay(item: FeedItem, now: number = Date.now()): boolean {
+  if (!item) return false;
+  switch (item.type) {
+    case "event": {
+      const d = item.data as FeedEventData;
+      // completed/closed (and any other value) → stale. Only scheduled/live play.
+      return FRESH_EVENT_STATUSES.has((d.status || "").toLowerCase());
+    }
+    case "futures": {
+      const d = item.data as FeedFuturesData;
+      // A market surfaced result-first is settled even when the DB status stays
+      // 'open' (gotcha #33: settled Kalshi markets keep status='open', flagged
+      // via `resolved`/`winner`).
+      if (d.resolved === true || d.winner) return false;
+      if ((d.status || "").toLowerCase() !== "open") return false; // resolved/closed/unknown
+      // An "open" market whose resolution time has already passed is stale.
+      if (isPastDate(d.resolution_date, now)) return false;
+      return true;
+    }
+    case "concept": {
+      const d = item.data as FeedConceptData;
+      // Post-settlement WHAT-HIT pin, or a named champion, = a result card.
+      if (d.marquee_whathit === true || d.winner) return false;
+      return FRESH_CONCEPT_STATUSES.has((d.status || "").toLowerCase());
+    }
+    case "tournament": {
+      const d = item.data as FeedTournamentData;
+      // Post-settlement WHAT-HIT pin = a result card.
+      if (d.marquee_whathit === true) return false;
+      const sched = (d.schedule_status || "").toLowerCase().replace(/-/g, "_");
+      if (SETTLED_SCHEDULE_STATUSES.has(sched)) return false;
+      // A passed resolution/end date means the tournament is over regardless of a
+      // stale schedule_status (gotcha #14: resolution_date can be a future Kalshi
+      // close-time artifact, so a PAST one is a reliable "done" signal).
+      if (isPastDate(d.resolution_date, now)) return false;
+      if (isPastDate(d.end_date, now)) return false;
+      // Positive freshness: an explicit live/upcoming schedule_status, OR a
+      // future date window. Fail closed when neither is present.
+      if (LIVE_SCHEDULE_STATUSES.has(sched)) return true;
+      if (d.end_date && !isPastDate(d.end_date, now)) return true;
+      if (d.resolution_date && !isPastDate(d.resolution_date, now)) return true;
+      if (d.start_date && !isPastDate(d.start_date, now)) return true;
+      return false;
+    }
+    default:
+      // bundle / unknown types cannot be freshness-vetted here.
+      return false;
+  }
+}
+
+/**
+ * The full /play admission gate: kid-safe (content) AND fresh (not settled).
+ * Both are required and independent — see isKidSafeItem and isFreshForPlay.
+ */
+export function isPlayEligible(item: FeedItem, now: number = Date.now()): boolean {
+  return isKidSafeItem(item) && isFreshForPlay(item, now);
+}
+
 export function filterKidSafe(items: FeedItem[]): FeedItem[] {
-  return (items || []).filter(isKidSafeItem);
+  return (items || []).filter((it) => isPlayEligible(it));
 }
