@@ -1,6 +1,19 @@
 import Combine
 import Foundation
 
+/// Narrow feed-fetch seam so `DiscoverViewModel` pagination can be exercised by
+/// a deterministic fake client in tests (L2-192 Item 2). `APIClient` (an actor)
+/// conforms via the extension at the bottom of this file; the default init arg
+/// keeps production wiring unchanged.
+protocol DiscoverFeedProviding: Sendable {
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse
+}
+
 final class DiscoverViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = []
     @Published private(set) var loading = true
@@ -12,6 +25,17 @@ final class DiscoverViewModel: ObservableObject {
     @Published private(set) var hasMore = true
 
     private var nextOffset = 0
+    private let client: DiscoverFeedProviding
+
+    /// Upper bound on how many consecutive duplicate-only / ineligible server
+    /// pages a single loadMore pass will scan before surfacing a retryable
+    /// error instead of spinning forever (L2-192 Item 2). Each page is up to
+    /// `limit` rows, so this is a wide-but-finite forward window.
+    private static let maxPageScans = 6
+
+    init(client: DiscoverFeedProviding = APIClient.shared) {
+        self.client = client
+    }
 
     private static let sportsCategories: Set<String> = [
         "basketball", "football", "baseball", "hockey", "soccer",
@@ -27,11 +51,11 @@ final class DiscoverViewModel: ObservableObject {
         }
         for attempt in 1...3 {
             do {
-                let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
+                let response = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: 0.15, cacheTTL: nil)
                 let renderable = response.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
 
                 if renderable.count < 10 {
-                    let fallback = try await APIClient.shared.fetchFeed(limit: 200, cacheTTL: nil)
+                    let fallback = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: nil, cacheTTL: nil)
                     let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
                     items = Self.interleave(fallbackRenderable)
                     hasMore = fallback.hasMore
@@ -64,40 +88,81 @@ final class DiscoverViewModel: ObservableObject {
         loading = false
     }
 
+    /// Advance pagination toward fresh content, always terminating in one of
+    /// three honest states: new cards appended, honest exhaustion (`hasMore =
+    /// false`), or a retryable `error`. Never spins on a duplicate-only or
+    /// decoded-empty page (C26 P2): the offset advances by the server's page
+    /// boundary even when a page yields no new IDs, so the loop can never refetch
+    /// the same page forever, and a bounded scan surfaces a retry rather than an
+    /// indefinite "Finding fresh markets…" spinner.
     @MainActor
     func loadMoreIfNeeded() async {
         guard hasMore, !loading, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false }
 
-        do {
-            let loadedIds = Set(items.map(Self.itemKey))
-            let offsets = Array(Set([0, nextOffset])).sorted()
-            var sawMore = false
+        var scans = 0
+        while hasMore, scans < Self.maxPageScans {
+            scans += 1
 
-            for offset in offsets {
-                let response = try await APIClient.shared.fetchFeed(
+            let response: FeedResponse
+            do {
+                response = try await client.fetchDiscoverFeed(
                     limit: 200,
-                    offset: offset,
+                    offset: nextOffset,
                     eventPct: 0.15,
                     cacheTTL: nil
                 )
-                sawMore = sawMore || response.hasMore
-                let fresh = response.items.filter { !loadedIds.contains(Self.itemKey($0)) }
-                if fresh.isEmpty { continue }
+            } catch is CancellationError {
+                return
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                return
+            } catch {
+                // Surface a retryable error instead of swallowing it into a
+                // permanent progress state (C26 P2). The view offers a retry
+                // control that calls back into loadMoreIfNeeded.
+                print("DiscoverView loadMore error: \(error)")
+                self.error = "Couldn't load more markets"
+                return
+            }
 
+            // Advance by the server page boundary FIRST so a page that adds no
+            // new renderable IDs can never be refetched at the same offset.
+            let pageEnd = response.offset + response.items.count
+            let advanced = pageEnd > nextOffset
+            nextOffset = max(nextOffset, pageEnd)
+
+            let loadedIds = Set(items.map(Self.itemKey))
+            let fresh = response.items.filter { !loadedIds.contains(Self.itemKey($0)) }
+
+            if !fresh.isEmpty {
+                // Real new content (may be lifecycle-stale — the view's stale
+                // gate filters it and, if the whole page was rot, re-triggers
+                // this method because items.count changed). Either way this is a
+                // terminating, honest step forward.
                 items = Self.interleave(items + fresh)
-                nextOffset = max(nextOffset, response.offset + response.items.count)
                 hasMore = response.hasMore
                 error = nil
                 return
             }
 
-            if !sawMore {
+            // No new IDs this page. If the server has nothing more, or the page
+            // was decoded-empty (offset couldn't advance), stop honestly.
+            if !response.hasMore || !advanced {
                 hasMore = false
+                error = nil
+                return
             }
-        } catch {
-            print("DiscoverView loadMore error: \(error)")
+
+            // Duplicate-only page but the offset advanced and the server claims
+            // more — keep scanning forward, bounded by maxPageScans.
+            hasMore = response.hasMore
+        }
+
+        // Exhausted the scan budget while the server still claims more but keeps
+        // returning nothing new: surface a retry instead of spinning forever.
+        if hasMore {
+            self.error = "Couldn't find fresh markets"
         }
     }
 
@@ -144,5 +209,21 @@ final class DiscoverViewModel: ObservableObject {
         if let event = item.event { return "event-\(event.id)" }
         if let futures = item.futures { return "futures-\(futures.id)" }
         return item.id
+    }
+}
+
+// MARK: - Production feed-fetch conformance
+
+extension APIClient: DiscoverFeedProviding {
+    /// Thin adapter mapping the narrow Discover pagination seam onto the full
+    /// `fetchFeed` surface (L2-192). Keeps production behavior identical while
+    /// letting tests inject a deterministic fake.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
     }
 }

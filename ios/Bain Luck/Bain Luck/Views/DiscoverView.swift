@@ -243,6 +243,17 @@ struct DiscoverView: View {
         items.filter { !isStaleItem($0, now: now) }
     }
 
+    /// Recursively apply the same lifecycle stale gate to an API bundle's
+    /// children (C26 P1). A bundle FeedItem is itself always "eligible" — it
+    /// carries no event/futures/date of its own — so without this its children
+    /// bypass `isStaleItem` and a resolved/closed/past-resolution/extreme child
+    /// can still render as a live probability inside `NativeGroupCard`. Returns
+    /// only eligible children; an all-stale bundle yields `[]` so `groupedItems`
+    /// drops it entirely ("settled means settled", no restoration path).
+    static func eligibleBundleItems(_ bundle: FeedBundle, now: Date = Date()) -> [FeedItem] {
+        eligibleItems(bundle.items, now: now)
+    }
+
     private func itemId(_ item: FeedItem) -> String {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
@@ -472,9 +483,15 @@ struct DiscoverView: View {
 
         for item in mixedItems {
             if item.type == "bundle", let bundle = item.bundle {
+                // Recursively admit bundle children through the stale gate (C26
+                // P1): drop settled/closed/past/extreme children before the card
+                // ever sees them, and drop the whole bundle if nothing eligible
+                // remains rather than rendering a stale comparison.
+                let eligibleChildren = Self.eligibleBundleItems(bundle)
+                if eligibleChildren.isEmpty { continue }
                 result.append(.group(
                     title: bundle.title,
-                    items: bundle.items,
+                    items: eligibleChildren,
                     kind: bundle.kind,
                     theme: bundle.comparisonTheme
                 ))
@@ -934,8 +951,31 @@ struct DiscoverView: View {
                 // exist, keep fetching for fresh content (the card grid can't
                 // drive pagination when it renders zero rows); otherwise show
                 // the quiet, VoiceOver-labeled caught-up state with a refresh.
-                if grouped.isEmpty, !vm.items.isEmpty, vm.error == nil {
-                    if vm.hasMore {
+                if grouped.isEmpty, !vm.items.isEmpty {
+                    if vm.error != nil {
+                        // Pagination stalled or failed while cards exist but none
+                        // are eligible (C26 P2): offer an explicit retry rather
+                        // than an indefinite "Finding fresh markets…" spinner.
+                        VStack(spacing: 16) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            Text("Couldn't find fresh markets")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                            Button("Retry") {
+                                Task { await vm.loadMoreIfNeeded() }
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.blue)
+                            .frame(minHeight: 44)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Couldn't find fresh markets")
+                        .accessibilityHint("Double-tap to retry")
+                    } else if vm.hasMore {
                         VStack(spacing: 12) {
                             ProgressView()
                             Text("Finding fresh markets…")

@@ -181,4 +181,103 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
     func testEmptyInputStaysEmpty() throws {
         XCTAssertTrue(DiscoverView.eligibleItems([], now: now).isEmpty)
     }
+
+    // MARK: - Bundles: recursive lifecycle admission (L2-192 Item 1 / C26 P1)
+
+    /// Raw JSON for a single futures child, so bundle fixtures can embed a
+    /// mixed set of eligible/stale children (a bundle FeedItem has no top-level
+    /// event/futures, so `isStaleItem` alone never inspects its children).
+    private func futuresChildJSON(
+        id: Int,
+        status: String = "open",
+        probability: Double? = 0.55,
+        movement: String = "0.02",
+        resolutionDate: String = "null"
+    ) -> String {
+        let outcomes: String
+        if let probability {
+            outcomes = """
+            "top_outcomes": [{"id": \(id * 10), "name": "Team A", "probability": \(probability), "rank": 1, "movement": \(movement)}],
+            """
+        } else {
+            outcomes = "\"top_outcomes\": [],"
+        }
+        return """
+        {
+          "type": "futures",
+          "score": 90,
+          "data": {
+            "id": \(id),
+            "name": "Who wins market \(id)?",
+            "llm_sport_category": "economics",
+            "source": "kalshi",
+            "status": "\(status)",
+            "resolution_date": \(resolutionDate),
+            \(outcomes)
+            "outcome_count": 1
+          }
+        }
+        """
+    }
+
+    private func bundle(
+        id: String = "b1",
+        title: String = "Compare IPOs",
+        kind: String = "comparison",
+        theme: String = "ipo_valuation",
+        children: [String]
+    ) throws -> FeedBundle {
+        let item = try item("""
+        {
+          "type": "bundle",
+          "score": 95,
+          "bundle": {
+            "id": "\(id)",
+            "title": "\(title)",
+            "kind": "\(kind)",
+            "comparison_theme": "\(theme)",
+            "items": [\(children.joined(separator: ","))]
+          }
+        }
+        """)
+        return try XCTUnwrap(item.bundle)
+    }
+
+    func testBundleKeepsOnlyEligibleChildren() throws {
+        let b = try bundle(children: [
+            futuresChildJSON(id: 1),                                        // fresh
+            futuresChildJSON(id: 2, status: "resolved"),                    // drop
+            futuresChildJSON(id: 3, resolutionDate: "\"2026-07-01T00:00:00Z\""), // drop (past)
+            futuresChildJSON(id: 4, probability: 0.99),                     // drop (extreme)
+            futuresChildJSON(id: 5),                                        // fresh
+        ])
+        let kept = DiscoverView.eligibleBundleItems(b, now: now)
+        XCTAssertEqual(kept.map(\.id), ["futures-1", "futures-5"])
+    }
+
+    func testAllStaleBundleCollapsesToEmpty() throws {
+        let b = try bundle(children: [
+            futuresChildJSON(id: 1, status: "resolved"),
+            futuresChildJSON(id: 2, status: "closed"),
+            futuresChildJSON(id: 3, probability: 0.01),
+        ])
+        // An all-stale bundle yields [] so groupedItems drops the whole card —
+        // no stale comparison renders ("settled means settled").
+        XCTAssertTrue(DiscoverView.eligibleBundleItems(b, now: now).isEmpty)
+    }
+
+    func testAllEligibleBundleIsUnchanged() throws {
+        let b = try bundle(children: [
+            futuresChildJSON(id: 1),
+            futuresChildJSON(id: 2, probability: 0.60),
+            futuresChildJSON(id: 3, resolutionDate: "\"2026-12-01T00:00:00Z\""),
+        ])
+        let kept = DiscoverView.eligibleBundleItems(b, now: now)
+        XCTAssertEqual(kept.map(\.id), ["futures-1", "futures-2", "futures-3"])
+    }
+
+    func testEmptyBundleStaysEmpty() throws {
+        let b = try bundle(children: [])
+        XCTAssertTrue(DiscoverView.eligibleBundleItems(b, now: now).isEmpty)
+    }
 }
