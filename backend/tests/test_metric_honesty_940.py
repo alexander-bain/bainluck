@@ -87,10 +87,11 @@ def test_curve_excludes_heuristic_and_nullsource_754_989():
     # The single-source-of-truth contract is imported, not re-inlined.
     assert "from app.utils.resolution_authority import (" in src
     assert "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL" in src
-    # The old denylist literal now survives ONLY at the two secondary views not
-    # covered by _calibration_population_ctes (the time-horizon + fair-fight
-    # queries), which stay on the legacy denylist pending a follow-up migration.
-    assert src.count("'pass2_loser', 'all_losers',") == 2
+    # Queue #262: the two secondary views (time-horizon + futures fair-fight) that
+    # used to keep the legacy denylist are now BOTH migrated to the independent-
+    # truth allowlist (Item 1 horizon + Item 3 fair-fight), so the legacy denylist
+    # literal no longer appears anywhere in this module.
+    assert src.count("'pass2_loser', 'all_losers',") == 0
     # null-source stays EXCLUDED from the curve (the allowlist's IN can never match NULL)
     assert "IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}" in src
     # the old "IS NULL OR ... NOT IN" curve inclusion must be gone

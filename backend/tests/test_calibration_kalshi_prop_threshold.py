@@ -245,22 +245,23 @@ class TestSourceIntelligenceHonorsExclusion:
     straight into Kalshi's MCE. It must still honour the exclusion so the fair
     fight is not poisoned.
 
-    Queue #197/#198: the canonical impl now lives in the precompute task
-    (`_query_futures_fair_fight_impl`); the dead route-level duplicate that
-    predated #195 (and hung 240s+) was removed. The #197 profile rewrite swapped
-    the `kalshi_prop_threshold_exclude_sql` helper for an inlined
-    `resolution_source NOT IN (...)` guard-list + `volume != 0` predicate, so
-    these assertions track the impl's actual exclusion mechanism."""
+    Queue #262 Item 3: the fair fight now uses the independent-truth ALLOWLIST
+    (``CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL``) instead of a NOT-IN denylist. The
+    allowlist is strictly MORE conservative — the guess/threshold families
+    (pass2_guess / pass3_threshold, #754/#941/#186) are excluded by OMISSION, and
+    price-derived (clean_resolution / settlement_sync) + unknown sources are
+    excluded too — so nothing they poisoned can leak into the fair fight."""
 
     def test_fair_fight_applies_shared_exclusion(self):
         from app.tasks.precompute_calibration import _query_futures_fair_fight_impl
+        from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 
         src = inspect.getsource(_query_futures_fair_fight_impl)
-        # Excludes the guess/threshold resolution families that poisoned the
-        # Kalshi curve (#754/#941/#186) so they cannot leak into the fair fight.
-        assert "resolution_source NOT IN" in src
-        assert "pass3_threshold" in src  # the prop-threshold class (#186)
-        assert "pass2_guess" in src      # the guess family (#754)
+        # The independent-truth allowlist gates the fair-fight population.
+        assert "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL" in src
+        # The guess/threshold families are NOT eligible → excluded by omission.
+        assert "pass3_threshold" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+        assert "pass2_guess" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
         # And drops zero-volume placeholder rows (illiquid one-sided capture).
         assert "COALESCE(fo.volume, -1) != 0" in src
 

@@ -31,6 +31,12 @@ _CACHE_TTL = 86400
 # Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
 _MAIN_CACHE_TTL = 7200
 
+# Queue #262: canonical calibration-population fingerprint. Surfaced on every
+# population-derived surface (horizon diagnostics, /calibration/examples,
+# bucket-debug, snapshot-health) so a future population change is VISIBLE across
+# all consumers. Bump when _calibration_population_ctes changes materially.
+CALIBRATION_POPULATION_VERSION = "q262"
+
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
 # record; each entry is a real, dated data-quality fix. When a new class is fixed,
@@ -1048,8 +1054,47 @@ def _compute_horizon_mce(buckets: list[dict], weighted: bool = True) -> float | 
     return round(total_abs_err / total_w * 100, 2)
 
 
-def _calibration_population_ctes() -> str:
+def _calibration_population_ctes(
+    *,
+    curve_price: str = "COALESCE(fo.calibration_probability, fo.opening_probability)",
+    curve_price_join: str = "",
+    rn_order: str = "ABS(fo.opening_probability - 0.5)",
+    market_info_extra: str = "",
+    leading_ctes: str = "",
+) -> str:
     """The ONE canonical eligible -> final-published-row CTE chain (Queue #259 Item 1/2).
+
+    Queue #262 Item 1: the finalizer is PARAMETERIZED by the "curve price" so the
+    time-horizon surface can reuse the SAME resolved-question identity, independent-
+    truth allowlist, and artifact exclusions while finalizing on a horizon snapshot
+    instead of the terminal price. The defaults reproduce the headline population
+    semantically (curve_price = terminal ``calibration_probability`` fallback,
+    no extra joins), so the serve/cohort-sweep row parity (#259) and partition-sum
+    invariant are preserved; existing tests pin that behavior.
+
+      * ``curve_price``      — SQL expression for the bucketed/normalized price.
+                               Headline: terminal cp. Horizon: the snapshot value.
+      * ``curve_price_join`` — extra INNER JOIN injected into the price-bearing CTEs
+                               (``ranked_outcomes`` + ``mex_field_divisor``); for a
+                               horizon this joins ``horizon_price`` so ONLY outcomes
+                               with a snapshot at the horizon cutoff survive.
+      * ``rn_order``         — representative-side ORDER BY for the single-market
+                               binary branch (headline: opening; horizon: snapshot).
+      * ``market_info_extra``— extra WHERE on ``market_info`` (horizon scopes to
+                               non-event, resolution-date-bearing markets so the
+                               whole chain runs on the small horizon universe).
+      * ``leading_ctes``     — CTE(s) prepended to the WITH-body (the horizon-price
+                               LATERAL lookup), WITH a trailing comma.
+
+    NORMALIZATION / FIELD-COMPLETENESS ARE HORIZON-HONEST: candidate detection is
+    structural (a market is a partition field regardless of horizon, so it is
+    detected on the TERMINAL price via ``mex_field_candidates`` with the full
+    terminal-eligible member count), while the divisor and completeness are
+    evaluated on the price expression — a field is published only when EVERY
+    terminal-eligible member is present at the horizon AND survives every exclusion
+    (survivor_n == terminal_eligible_n), else it is dropped WHOLE. On the headline
+    path present == terminal, so this reduces to the old single ``mex_norm_markets``
+    behavior exactly.
 
     Returns the WITH-body (``market_info`` ... ``deduped``, WITHOUT the leading
     ``WITH`` and WITHOUT a trailing comma) that BOTH serve/audit consumers build
@@ -1077,7 +1122,7 @@ def _calibration_population_ctes() -> str:
     gate, so the sweep can no longer collapse unrelated same-event props or split
     a two-market group).
     """
-    return f"""market_info AS (
+    return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
                     COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
@@ -1086,6 +1131,7 @@ def _calibration_population_ctes() -> str:
                     fm.llm_league
                 FROM futures_markets fm
                 WHERE fm.status = 'resolved'
+                  {market_info_extra}
                   -- #994 symmetric exclusion: DataGolf markets whose full field
                   -- the historical API genuinely can't return (event not found)
                   -- are dropped ENTIRELY — winners AND losers — so participation
@@ -1172,13 +1218,21 @@ def _calibration_population_ctes() -> str:
                 WHERE (mi.mutually_exclusive = true OR mi.market_type = 'field')
                 GROUP BY fo.market_id
             ),
-            -- mex_norm_markets: per-market divisor (eligible cp sum) for markets
-            -- that qualify — mex/field, exactly one winner, >=3 eligible outcomes,
-            -- and an eligible cp sum over the threshold. Same eligibility predicate
-            -- as the main outcome scan so the divisor matches the curve population.
-            mex_norm_markets AS (
+            -- Queue #262 Item 1: split the old single mex_norm_markets into a
+            -- structural CANDIDATE detection (terminal price) + a price-expression
+            -- DIVISOR, so a horizon can normalize on its snapshot yet still measure
+            -- completeness against the FULL terminal field.
+            --
+            -- mex_field_candidates: markets that are genuine partition FIELDS — a
+            -- structural property independent of the horizon — detected on the
+            -- TERMINAL price (mex/field, exactly one winner, >=3 terminal-eligible
+            -- outcomes, terminal cp sum over the threshold). Carries the full
+            -- terminal-eligible member count so horizon completeness can require
+            -- every member to be present. On the headline path this set + count
+            -- equal the old mex_norm_markets membership + COUNT exactly.
+            mex_field_candidates AS (
                 SELECT fo.market_id,
-                    SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) AS cp_sum
+                    COUNT(*) AS terminal_eligible_n
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
                 JOIN mex_win_counts mwc ON mwc.market_id = fo.market_id
@@ -1188,12 +1242,30 @@ def _calibration_population_ctes() -> str:
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist),
                   -- identical to the ranked_outcomes / golf-placeholder scans so
-                  -- the normalization divisor matches the published population.
+                  -- candidate detection matches the published population.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
                   AND COALESCE(fo.volume, -1) != 0
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 3
                    AND SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > {MEX_NORMALIZE_THRESHOLD}
+            ),
+            -- mex_field_divisor: per-market normalization divisor = sum of the
+            -- CURVE PRICE over the eligible members PRESENT at this price
+            -- expression (all terminal members on the headline; only members with
+            -- a horizon snapshot when curve_price_join joins horizon_price). On the
+            -- headline path cp_sum equals the old mex_norm_markets cp_sum exactly.
+            mex_field_divisor AS (
+                SELECT fo.market_id,
+                    SUM({curve_price}) AS cp_sum,
+                    COUNT(*) AS present_eligible_n
+                FROM futures_outcomes fo
+                JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
+                {curve_price_join}
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  AND COALESCE(fo.volume, -1) != 0
+                GROUP BY fo.market_id
             ),
             group_sizes AS (
                 SELECT group_id, source, COUNT(*) AS group_size
@@ -1256,9 +1328,13 @@ def _calibration_population_ctes() -> str:
                     -- 1) which can only be aggregated once these per-outcome
                     -- exclusion flags exist. Carry market_id so completeness can
                     -- be computed per market.
-                    COALESCE(fo.calibration_probability, fo.opening_probability) AS raw_cp,
-                    mnm.market_id AS mnm_market_id,
-                    mnm.cp_sum AS mnm_cp_sum,
+                    {curve_price} AS raw_cp,
+                    -- Queue #262 Item 1: candidate membership (structural, terminal)
+                    -- vs divisor (price-expression). is_mex_normalized keys on the
+                    -- candidate so an incomplete horizon field is dropped WHOLE even
+                    -- when <3 members are present at the snapshot.
+                    mfc.market_id AS candidate_market_id,
+                    mfd.cp_sum AS mnm_cp_sum,
                     fo.market_id AS market_id,
                     -- Queue #259 Item 2: carry outcome identity + per-market shape
                     -- so the cohort sweep selects the SAME final rows (row identity)
@@ -1317,15 +1393,17 @@ def _calibration_population_ctes() -> str:
                     {WEATHER_WIDE_SPREAD_EXCLUDE} AS is_weather_wide_spread,
                     ROW_NUMBER() OVER (
                         PARTITION BY cv.vm_id
-                        ORDER BY ABS(fo.opening_probability - 0.5)
+                        ORDER BY {rn_order}
                     ) AS rn
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
                 JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+                {curve_price_join}
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
-                LEFT JOIN mex_norm_markets mnm ON mnm.market_id = fo.market_id
+                LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
+                LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist).
@@ -1337,16 +1415,18 @@ def _calibration_population_ctes() -> str:
               AND COALESCE(fo.volume, -1) != 0
             ),
             -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
-            -- normalization CANDIDATE market (in mex_norm_markets: mex/field,
-            -- single winner over all outcomes, >=3 eligible, sum > threshold),
-            -- count eligible members, survivors (those passing EVERY per-outcome
-            -- published exclusion), and whether the winner survived. All eligible
-            -- outcomes of a candidate appear in ranked_outcomes (its vm is in
-            -- clean_vms), so COUNT(*) here IS the eligible member count and the
-            -- survivor cp sum equals mnm.cp_sum iff nothing was excluded.
+            -- normalization CANDIDATE market (mex/field, single winner over all
+            -- outcomes, >=3 eligible, sum > threshold), count eligible members,
+            -- survivors (those passing EVERY per-outcome published exclusion), and
+            -- whether the winner survived. Queue #262 Item 1: eligible_n is the FULL
+            -- terminal-eligible member count (mfc.terminal_eligible_n), NOT the
+            -- present-outcome COUNT — so a horizon field with a member missing at
+            -- the snapshot (present < terminal) is INCOMPLETE and dropped whole. On
+            -- the headline path present == terminal, so eligible_n equals the old
+            -- COUNT(*) over ranked_outcomes exactly and behavior is unchanged.
             field_completeness AS (
                 SELECT ro.market_id,
-                    COUNT(*) AS eligible_n,
+                    MAX(mfc.terminal_eligible_n) AS eligible_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                           AND NOT ro.is_malformed_binary
@@ -1365,7 +1445,7 @@ def _calibration_population_ctes() -> str:
                           AND NOT ro.is_weather_wide_spread
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
-                JOIN mex_norm_markets mnm ON mnm.market_id = ro.market_id
+                JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
                 GROUP BY ro.market_id
             ),
             -- Queue #257 Item 1: apply normalization ONLY to COMPLETE candidate
@@ -1377,15 +1457,15 @@ def _calibration_population_ctes() -> str:
             -- exactly when complete, so cp / mnm_cp_sum normalizes to ~1.
             normalized AS (
                 SELECT ro.*,
-                    (ro.mnm_market_id IS NOT NULL
+                    (ro.candidate_market_id IS NOT NULL
                      AND fc.survivor_n = fc.eligible_n
                      AND fc.survivor_win_n = 1
                      AND fc.survivor_n >= 3) AS is_mex_normalized,
-                    (ro.mnm_market_id IS NOT NULL
+                    (ro.candidate_market_id IS NOT NULL
                      AND NOT (fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3)) AS is_field_incomplete,
-                    CASE WHEN ro.mnm_market_id IS NOT NULL
+                    CASE WHEN ro.candidate_market_id IS NOT NULL
                               AND fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3
@@ -2506,6 +2586,97 @@ def _publish_time_horizon(rc, horizons_result: dict) -> None:
         logger.warning("time-horizon: main-key publish failed: %s", exc)
 
 
+def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
+    """Build the horizon calibration SQL for one horizon (Queue #262 Item 1).
+
+    Pure string builder (no DB) so it is unit-testable. The horizon population
+    REUSES the canonical ``_calibration_population_ctes`` resolved-question
+    identity + independent-truth allowlist + artifact exclusions, finalized on the
+    horizon SNAPSHOT as the curve price — NOT the terminal ``deduped`` scalar.
+    Normalization, field completeness, mode/tail, and bucket assignment are all
+    evaluated on this horizon's price. ``market_info`` is scoped to the non-event,
+    resolution-date universe so the whole chain runs on the small horizon set;
+    ``horizon_price`` is a leading LATERAL selecting each outcome's last snapshot
+    at/under the cutoff, INNER-joined into the price-bearing CTEs so ONLY outcomes
+    actually priced at this horizon survive. Returns ``(sql, params)``.
+    """
+    cutoff_expr = (
+        "fm.resolution_date"
+        if days == 0
+        else "fm.resolution_date - make_interval(days => :days)"
+    )
+    horizon_price_cte = f"""horizon_price AS (
+                    SELECT fo.id AS outcome_id, horizon.probability AS horizon_prob
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    LEFT JOIN LATERAL (
+                        SELECT fos.probability
+                        FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = fo.id
+                          AND fos.captured_at <= {cutoff_expr}
+                          AND fos.probability > 0 AND fos.probability < 1
+                        ORDER BY fos.captured_at DESC
+                        LIMIT 1
+                    ) horizon ON true
+                    WHERE fm.status = 'resolved'
+                      AND fm.event_id IS NULL
+                      AND fm.resolution_date IS NOT NULL
+                      AND horizon.probability IS NOT NULL
+                ),
+            """
+    population = _calibration_population_ctes(
+        curve_price="hp.horizon_prob",
+        curve_price_join="JOIN horizon_price hp ON hp.outcome_id = fo.id",
+        rn_order="ABS(hp.horizon_prob - 0.5)",
+        market_info_extra=(
+            "AND fm.event_id IS NULL AND fm.resolution_date IS NOT NULL"
+        ),
+        leading_ctes=horizon_price_cte,
+    )
+    sql = (
+        "WITH " + population + """,
+                h_diag AS (
+                    SELECT
+                        (SELECT COUNT(*) FROM ranked_outcomes) AS candidate_n,
+                        (SELECT COUNT(*) FROM deduped) AS final_n,
+                        (SELECT COUNT(DISTINCT vm_id) FROM deduped) AS distinct_questions,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE NOT is_liquid) AS excl_illiquid,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_poly_placeholder) AS excl_poly_placeholder,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_malformed_binary) AS excl_malformed_binary,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_esports_bundle) AS excl_esports_bundle,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_golf_placeholder) AS excl_golf_placeholder,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_kalshi_prop_threshold) AS excl_kalshi_prop_threshold,
+                        (SELECT COUNT(*) FROM ranked_outcomes WHERE is_weather_wide_spread) AS excl_weather_wide_spread,
+                        (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete
+                ),
+                h_buckets AS (
+                    SELECT
+                        LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx,
+                        source, category,
+                        COUNT(*) AS n,
+                        SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
+                        AVG(adj_opening_probability) AS avg_prob,
+                        SUM(adj_opening_probability::float) AS sum_prob,
+                        SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+                    FROM deduped
+                    GROUP BY 1, 2, 3
+                )
+                SELECT b.bucket_idx, b.source, b.category, b.n, b.winners,
+                    b.avg_prob, b.sum_prob, b.sum_sq_err,
+                    d.candidate_n, d.final_n, d.distinct_questions,
+                    d.excl_illiquid, d.excl_poly_placeholder, d.excl_malformed_binary,
+                    d.excl_esports_bundle, d.excl_golf_placeholder,
+                    d.excl_kalshi_prop_threshold, d.excl_weather_wide_spread,
+                    d.excl_field_incomplete
+                FROM h_diag d
+                LEFT JOIN h_buckets b ON true
+                ORDER BY b.bucket_idx, b.source, b.category
+            """
+    )
+    params: dict = {"days": days} if days > 0 else {}
+    return sql, params
+
+
 async def _compute_time_horizon_calibration():
     """Compute time-horizon calibration and store in Redis.
 
@@ -2576,70 +2747,8 @@ async def _compute_time_horizon_calibration():
             except Exception:
                 pass
 
-            if days == 0:
-                cutoff_expr = "eo.resolution_date"
-            else:
-                cutoff_expr = "eo.resolution_date - make_interval(days => :days)"
-
-            horizon_sql = text(f"""
-                WITH eligible_outcomes AS (
-                    SELECT fo.id AS outcome_id,
-                           fo.is_winner,
-                           fm.resolution_date,
-                           fm.source,
-                           COALESCE(fm.llm_sport_category, 'uncategorized') AS category
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fm.id = fo.market_id
-                    WHERE fm.status = 'resolved'
-                      AND fm.event_id IS NULL
-                      AND fm.resolution_date IS NOT NULL
-                      AND fo.opening_probability IS NOT NULL
-                      AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                      AND (fo.resolution_source IS NOT NULL
-                           AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
-              AND COALESCE(fo.volume, -1) != 0
-                ),
-                horizon_snap AS (
-                    SELECT
-                        eo.outcome_id,
-                        eo.is_winner,
-                        eo.source,
-                        eo.category,
-                        horizon.probability AS horizon_prob
-                    FROM eligible_outcomes eo
-                    LEFT JOIN LATERAL (
-                        SELECT fos.probability
-                        FROM futures_odds_snapshots fos
-                        WHERE fos.outcome_id = eo.outcome_id
-                          AND fos.captured_at <= {cutoff_expr}
-                          AND fos.probability > 0 AND fos.probability < 1
-                        ORDER BY fos.captured_at DESC
-                        LIMIT 1
-                    ) horizon ON true
-                    WHERE horizon.probability IS NOT NULL
-                ),
-                bucketed AS (
-                    SELECT *,
-                        LEAST(FLOOR(horizon_prob * 10)::int, 9) AS bucket_idx
-                    FROM horizon_snap
-                )
-                SELECT bucket_idx, source, category,
-                    COUNT(*) AS n,
-                    SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
-                    AVG(horizon_prob) AS avg_prob,
-                    SUM(horizon_prob::float) AS sum_prob,
-                    SUM((horizon_prob::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
-                FROM bucketed
-                GROUP BY bucket_idx, source, category
-                ORDER BY bucket_idx, source, category
-            """)
-
-            params: dict = {}
-            if days > 0:
-                params["days"] = days
+            horizon_sql_str, params = _build_time_horizon_sql(days)
+            horizon_sql = text(horizon_sql_str)
 
             # ISOLATE the one risky op (#1171): the LATERAL probe is what hits the
             # per-horizon statement_timeout — a QueryCanceledError here was
@@ -2663,8 +2772,32 @@ async def _compute_time_horizon_calibration():
                     pass
                 continue
 
+            # Queue #262 Item 1: every row carries the same horizon diagnostics
+            # (candidate/final/distinct-question counts + per-reason exclusion
+            # counts) via a CROSS-shaped LEFT JOIN, and a diag-only row (bucket_idx
+            # NULL) is always present even when no rows survive to a bucket.
             bucket_dicts = []
+            diag: dict = {}
             for r in rows:
+                if not diag:
+                    diag = {
+                        "population_version": CALIBRATION_POPULATION_VERSION,
+                        "candidate_outcomes": int(r.candidate_n or 0),
+                        "final_outcomes": int(r.final_n or 0),
+                        "distinct_questions": int(r.distinct_questions or 0),
+                        "excluded": {
+                            "illiquid": int(r.excl_illiquid or 0),
+                            "poly_placeholder": int(r.excl_poly_placeholder or 0),
+                            "malformed_binary": int(r.excl_malformed_binary or 0),
+                            "esports_bundle": int(r.excl_esports_bundle or 0),
+                            "golf_placeholder": int(r.excl_golf_placeholder or 0),
+                            "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
+                            "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
+                            "field_incomplete": int(r.excl_field_incomplete or 0),
+                        },
+                    }
+                if r.bucket_idx is None:
+                    continue  # diag-only row — no surviving buckets this horizon
                 ci_lo, ci_hi = _wilson_ci(r.winners, r.n)
                 bucket_dicts.append({
                     "bucket_idx": r.bucket_idx,
@@ -2692,6 +2825,7 @@ async def _compute_time_horizon_calibration():
                     "mce_ci_upper": None,
                     "skipped": True,
                     "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
+                    **diag,
                 }
                 rc.set(_TIME_HORIZON_WIP_KEY, json.dumps(horizons_result), ex=_CACHE_TTL)
                 _publish_time_horizon(rc, horizons_result)  # serve partial (#1171)
@@ -2771,6 +2905,7 @@ async def _compute_time_horizon_calibration():
                 "mce_ci_upper": round(mce_ci_hi * 100, 2),
                 "mce_by_source": mce_by_source,
                 "mce_by_category": mce_by_category,
+                **diag,
             }
             # Persist immediately so a later horizon's slowness (or the deadline
             # guard firing next iteration) can never discard this one — and publish
@@ -2919,11 +3054,12 @@ async def _query_futures_fair_fight_impl(db):
               AND fm.source IN ('kalshi', 'polymarket')
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND (fo.resolution_source IS NOT NULL
-                   AND fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold',
-                                                    'pass2_loser', 'all_losers',
-                                                    'did_not_play', 'withdrew',
-                                                    'no_pregame_trading'))
+              -- Queue #262 Item 3: replace the legacy NOT-IN denylist with the
+              -- single independent-truth allowlist (resolution_authority) so a
+              -- price-derived (clean_resolution / settlement_sync), guess, void, or
+              -- unknown winner can never grade a fair-fight row either. Read-side
+              -- only (gotcha #21).
+              AND fo.resolution_source IN """ + CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL + """
               AND COALESCE(fo.volume, -1) != 0
         )
         SELECT source, category, prob, is_winner
@@ -2977,20 +3113,30 @@ async def _query_futures_fair_fight_impl(db):
             })
 
     pairs = []
-    total_shared = min(len(all_kalshi_probs), len(all_poly_probs))
-    if total_shared >= _MIN_SHARED:
+    # Queue #262 Item 3: min(row counts) is NOT a matched-market count, and the
+    # canonical keys are dominated by generic category buckets (not one-question-
+    # to-one-question), so NO winner/advantage is emitted — that claim would reflect
+    # population + weighting, not source skill. The per-source MCEs stay as clearly-
+    # labeled diagnostics with an explicit unavailable reason. min-count still gates
+    # whether there is enough data to bother reporting the diagnostic.
+    total_pooled = min(len(all_kalshi_probs), len(all_poly_probs))
+    if total_pooled >= _MIN_SHARED:
         mce_k = _compute_mce(all_kalshi_probs, all_kalshi_outcomes)
         mce_p = _compute_mce(all_poly_probs, all_poly_outcomes)
         if mce_k is not None and mce_p is not None:
-            winner = "kalshi" if mce_k < mce_p else "polymarket" if mce_p < mce_k else "tie"
             pairs.append({
                 "source_a": "kalshi",
                 "source_b": "polymarket",
-                "shared_markets": total_shared,
+                "comparison_available": False,
+                "reason": (
+                    "canonical keys are generic category buckets, not "
+                    "one-question-to-one-question matches; winner withheld"
+                ),
+                # honest per-source pooled counts — NOT a matched-market count.
+                "kalshi_rows": len(all_kalshi_probs),
+                "polymarket_rows": len(all_poly_probs),
                 "mce_a": mce_k,
                 "mce_b": mce_p,
-                "winner": winner,
-                "advantage_pp": round(abs(mce_k - mce_p), 2),
                 "by_category": [c for c in by_category if c["kalshi_n"] >= 20],
             })
     return pairs
@@ -3080,15 +3226,23 @@ async def _query_sports_fair_fight_impl(db):
             mce_pm = _compute_mce(all_pm_probs, all_pm_outcomes)
             mce_odds = _compute_mce(all_odds_probs, all_odds_outcomes)
             if mce_pm is not None and mce_odds is not None:
-                winner = pm_source if mce_pm < mce_odds else "odds_api" if mce_odds < mce_pm else "tie"
+                # Queue #262 Item 3: these ARE per-event matched questions (same
+                # game), so matched_questions is honest — but the MCE here is
+                # equal-per-bucket, NOT the outcome-weighted headline metric, so a
+                # winner would use a metric different from the headline definition.
+                # Winner withheld until the comparison reuses the headline metric
+                # (deliberately NOT rebuilt in this containment queue).
                 pairs.append({
                     "source_a": pm_source,
                     "source_b": "odds_api",
-                    "shared_markets": total,
+                    "comparison_available": False,
+                    "reason": (
+                        "MCE is equal-per-bucket, not the outcome-weighted headline "
+                        "metric; winner withheld"
+                    ),
+                    "matched_questions": total,
                     "mce_a": mce_pm,
                     "mce_b": mce_odds,
-                    "winner": winner,
-                    "advantage_pp": round(abs(mce_pm - mce_odds), 2),
                     "by_category": [s for s in by_sport if s.get(f"{pm_source}_n", 0) >= 20],
                 })
     return pairs
@@ -3120,10 +3274,25 @@ async def _compute_fair_fight_comparison():
 
     response = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        # Queue #262 Item 3: the winner claim is CONTAINED. A source winner is only
+        # meaningful when both sources are scored on the SAME one-question-to-one-
+        # question set with the headline metric. The futures pairing is generic
+        # canonical-key buckets (not question-paired) and both paths use a
+        # non-headline equal-per-bucket MCE, so no winner/advantage is emitted —
+        # only clearly-labeled diagnostic MCEs. Callers must treat this surface as
+        # comparison-unavailable until an exact matched-question rebuild lands.
+        "comparison_available": False,
+        "unavailable_reason": (
+            "Source winner withheld: fair-fight is not yet one-question-to-one-"
+            "question with the headline metric (Queue #262 Item 3 containment)."
+        ),
+        "population_version": CALIBRATION_POPULATION_VERSION,
         "methodology": (
-            "Paired MCE comparison: for each source pair, only markets/events "
-            "covered by BOTH sources are evaluated. This controls for difficulty "
-            "— a source covering only easy markets cannot look artificially accurate."
+            "Diagnostic per-source MCE only. Winner/advantage are intentionally "
+            "absent: the futures pairing groups generic canonical-key buckets (not "
+            "matched questions), and the MCE is equal-per-bucket, not the outcome-"
+            "weighted headline metric. Do not present these numbers as a source "
+            "ranking."
         ),
         "min_shared_threshold": _MIN_SHARED,
         "pairs": futures_pairs + sports_pairs,

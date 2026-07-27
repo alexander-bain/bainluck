@@ -74,42 +74,52 @@ async def calibration_bucket_debug(
     source: str = Query("kalshi"),
     bucket: int = Query(1),
 ):
-    """Show specific outcomes in a calibration bucket for debugging."""
+    """Show specific outcomes in a calibration bucket for debugging.
+
+    Queue #262 Item 2: samples from the CANONICAL published population (``deduped``)
+    and reports the truth as ``is_winner`` — never terminal ``current_probability``.
+    Every returned outcome is a row the published curve actually buckets, so the
+    debug view matches what the point is built from (no eligibility drift).
+    """
     _check_admin_secret(secret, request=request)
 
-    result = await db.execute(text("""
-        SELECT fo.name AS outcome_name, fm.name AS market_name,
-            fo.opening_probability, fo.calibration_probability,
-            fo.current_probability,
+    from app.tasks.precompute_calibration import (
+        CALIBRATION_POPULATION_VERSION,
+        _calibration_population_ctes,
+    )
+
+    rows = (await db.execute(
+        text("WITH " + _calibration_population_ctes() + """
+        SELECT d.outcome_name, fm.name AS market_name,
+            d.raw_cp AS opening,
+            d.adj_opening_probability AS used_prob,
+            d.is_winner AS is_winner,
             fm.external_id AS market_ext_id,
             fm.group_id, fm.commence_time,
-            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
-            COALESCE(fo.calibration_probability, fo.opening_probability) AS used_prob
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE fm.source = :source
-          AND fm.status = 'resolved'
-          AND COALESCE(fm.llm_sport_category, 'uncategorized') = :category
-          AND fo.opening_probability IS NOT NULL
-          AND fo.opening_probability > 0 AND fo.opening_probability < 1
-          AND fo.current_probability IS NOT NULL
-          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
-          AND LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) = :bucket
+            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = d.outcome_id) AS snap_count
+        FROM deduped d
+        JOIN futures_markets fm ON fm.id = d.market_id
+        WHERE d.source = :source
+          AND d.category = :category
+          AND LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) = :bucket
         ORDER BY RANDOM()
         LIMIT 25
-    """), {"source": source, "category": category, "bucket": bucket})
+    """), {"source": source, "category": category, "bucket": bucket})).all()
 
-    return [
-        {"outcome": r.outcome_name, "market": r.market_name[:80],
-         "opening": float(r.opening_probability),
-         "calibration": float(r.calibration_probability) if r.calibration_probability else None,
-         "used_prob": float(r.used_prob),
-         "resolved": "winner" if r.current_probability >= 0.95 else "loser",
-         "market_ext_id": r.market_ext_id, "group_id": r.group_id,
-         "snap_count": r.snap_count,
-         "commence_time": str(r.commence_time) if r.commence_time else None}
-        for r in result
-    ]
+    return {
+        "population_version": CALIBRATION_POPULATION_VERSION,
+        "source": source, "category": category, "bucket_idx": bucket,
+        "outcomes": [
+            {"outcome": r.outcome_name, "market": (r.market_name or "")[:80],
+             "raw_price": float(r.opening) if r.opening is not None else None,
+             "used_prob": float(r.used_prob) if r.used_prob is not None else None,
+             "resolved": "winner" if r.is_winner else "loser",
+             "market_ext_id": r.market_ext_id, "group_id": r.group_id,
+             "snap_count": r.snap_count,
+             "commence_time": str(r.commence_time) if r.commence_time else None}
+            for r in rows
+        ],
+    }
 
 
 @router.get("/calibration/snapshot-health")
@@ -118,26 +128,32 @@ async def calibration_snapshot_health(
     db: AsyncSession = Depends(get_db),
     secret: str = Query(""),
 ):
-    """How many calibration-eligible outcomes have 0 snapshots?"""
+    """How many calibration-eligible outcomes have 0 snapshots?
+
+    Queue #262 Item 2: the "calibration-eligible" population is the CANONICAL
+    published set (``deduped``) — not a terminal ``current_probability`` band proxy
+    — so snapshot coverage is measured over the outcomes the curve is actually
+    built from.
+    """
     _check_admin_secret(secret, request=request)
 
-    result = await db.execute(text("""
-        SELECT fm.source,
-            COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+    from app.tasks.precompute_calibration import (
+        CALIBRATION_POPULATION_VERSION,
+        _calibration_population_ctes,
+    )
+
+    result = await db.execute(text("WITH " + _calibration_population_ctes() + """
+        SELECT d.source,
+            d.category AS cat,
             COUNT(*) AS total,
-            COUNT(CASE WHEN NOT EXISTS (
-                SELECT 1 FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
-            ) THEN 1 END) AS zero_snap,
-            COUNT(CASE WHEN fo.calibration_probability IS NOT NULL
-                AND fo.calibration_probability = fo.opening_probability THEN 1 END) AS price_stuck
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fm.id = fo.market_id
-        WHERE fm.status = 'resolved'
-          AND fo.opening_probability IS NOT NULL
-          AND fo.opening_probability > 0 AND fo.opening_probability < 1
-          AND fo.current_probability IS NOT NULL
-          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
-        GROUP BY fm.source, cat
+            COUNT(*) FILTER (WHERE NOT EXISTS (
+                SELECT 1 FROM futures_odds_snapshots fos WHERE fos.outcome_id = d.outcome_id
+            )) AS zero_snap,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NOT NULL
+                AND fo.calibration_probability = fo.opening_probability) AS price_stuck
+        FROM deduped d
+        JOIN futures_outcomes fo ON fo.id = d.outcome_id
+        GROUP BY d.source, d.category
         HAVING COUNT(*) >= 50
         ORDER BY COUNT(*) DESC
     """))
@@ -155,6 +171,7 @@ async def calibration_snapshot_health(
     total_stuck = sum(r["price_stuck"] for r in out)
 
     return {
+        "population_version": CALIBRATION_POPULATION_VERSION,
         "total_outcomes": total_all,
         "zero_snapshots": total_zero,
         "pct_zero": round(total_zero * 100.0 / max(total_all, 1), 1),
@@ -835,37 +852,31 @@ async def calibration_examples(
         return dt.isoformat() if dt is not None else None
 
     if source in _FUTURES_EXAMPLE_SOURCES:
+        # Queue #262 Item 2: sample DIRECTLY from the canonical published population
+        # (``deduped`` from _calibration_population_ctes) instead of re-implementing
+        # eligibility. This guarantees every returned example is ACTUALLY in the
+        # requested published bucket (bucketed on the SAME adj_opening_probability +
+        # is_winner the curve uses), and that NULL/price-derived truth + every
+        # artifact exclusion (liquidity, poly/golf placeholder, malformed binary,
+        # esports bundle, prop threshold, weather wide spread, incomplete field) are
+        # absent BY CONSTRUCTION — not a hand-maintained subset that drifts. Read-
+        # only (gotcha #21). Heavy CTE, but the endpoint is cached 1h in-process.
+        from app.tasks.precompute_calibration import _calibration_population_ctes
+
         # Well-traded cohort for futures = the price actually moved off its open
-        # (matches the page's price_moved !== false default).
-        wt_clause = (
-            "AND fo.calibration_probability IS NOT NULL "
-            "AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability"
-        ) if wt else ""
-        # Exclude the degenerate Kalshi player-prop threshold captures (gotcha
-        # #17/#21) exactly as the published curve does.
-        kalshi_prop_clause = (
-            "AND NOT (fo.name ~ '^.+:[[:space:]]*[0-9]+[+][[:space:]]*$' "
-            "AND (fo.current_yes_bid IS NULL OR fo.current_yes_bid = 0))"
-        ) if source == "kalshi" else ""
-        sql = text(f"""
-            SELECT fm.name AS market_name, fo.name AS outcome_name,
-                COALESCE(fo.calibration_probability, fo.opening_probability) AS price,
-                fo.is_winner AS is_winner,
+        # (matches the page's price_moved !== false default) — the canonical flag.
+        wt_clause = "AND d.price_moved = true" if wt else ""
+        sql = text(
+            "WITH " + _calibration_population_ctes() + f"""
+            SELECT fm.name AS market_name, d.outcome_name AS outcome_name,
+                d.adj_opening_probability AS price,
+                d.is_winner AS is_winner,
                 COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at) AS settle_date
-            FROM futures_outcomes fo
-            JOIN futures_markets fm ON fm.id = fo.market_id
-            WHERE fm.source = :source
-              AND fm.status = 'resolved'
-              AND fo.is_winner IS NOT NULL
-              AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) = :bucket
-              AND (fo.resolution_source IS NULL
-                   OR fo.resolution_source NOT IN ('pass2_guess','pass3_threshold',
-                                                   'did_not_play','withdrew','no_pregame_trading'))
-              AND COALESCE(fo.volume, -1) != 0
+            FROM deduped d
+            JOIN futures_markets fm ON fm.id = d.market_id
+            WHERE d.source = :source
+              AND LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) = :bucket
               {wt_clause}
-              {kalshi_prop_clause}
             ORDER BY RANDOM()
             LIMIT :limit
         """)
@@ -1002,7 +1013,17 @@ async def calibration_examples(
     if not examples and note is None:
         note = "No examples matched this bucket for the current view."
 
-    result = {"source": source, "bucket_idx": bucket, "examples": examples, "note": note}
+    from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+    result = {
+        "source": source,
+        "bucket_idx": bucket,
+        "examples": examples,
+        "note": note,
+        # Queue #262 Item 2: name the population so future drift is visible. For
+        # futures sources the examples are sampled from this exact population.
+        "population_version": CALIBRATION_POPULATION_VERSION,
+    }
     _examples_cache[cache_key] = (result, now)
     return result
 
