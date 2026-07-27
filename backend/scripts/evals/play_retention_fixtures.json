@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "description": "Static /play admission and retention scenarios pinned to the committed TypeScript contract.",
+  "scenarios": [
+    {
+      "id": "scheduled_safe_event",
+      "type": "event",
+      "category": "baseball",
+      "visible_text": ["Dodgers at Giants", "Dodgers", "Giants"],
+      "status": "scheduled",
+      "expected_safe": true,
+      "expected_fresh": true,
+      "expected_eligible": true
+    },
+    {
+      "id": "completed_event",
+      "type": "event",
+      "category": "baseball",
+      "visible_text": ["Dodgers at Giants"],
+      "status": "completed",
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "open_future_date",
+      "type": "futures",
+      "category": "entertainment",
+      "visible_text": ["Best picture", "Film A"],
+      "status": "open",
+      "resolution_date": "2027-03-01T00:00:00Z",
+      "expected_safe": true,
+      "expected_fresh": true,
+      "expected_eligible": true
+    },
+    {
+      "id": "past_open_future",
+      "type": "futures",
+      "category": "entertainment",
+      "visible_text": ["Best picture", "Film A"],
+      "status": "open",
+      "resolution_date": "2025-03-01T00:00:00Z",
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "resolved_flag_on_open_future",
+      "type": "futures",
+      "category": "sports",
+      "visible_text": ["Champion", "Team A"],
+      "status": "open",
+      "resolved": true,
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "winner_on_open_future",
+      "type": "futures",
+      "category": "sports",
+      "visible_text": ["Champion", "Team A"],
+      "status": "open",
+      "winner": "Team A",
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "blocked_outcome_label",
+      "type": "futures",
+      "category": "culture",
+      "visible_text": ["Album of the year", "Artist pregnancy announcement"],
+      "status": "open",
+      "resolution_date": "2027-01-01T00:00:00Z",
+      "expected_safe": false,
+      "expected_fresh": true,
+      "expected_eligible": false
+    },
+    {
+      "id": "settled_concept",
+      "type": "concept",
+      "category": "golf",
+      "visible_text": ["The Open"],
+      "status": "settled",
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "marquee_what_hit",
+      "type": "concept",
+      "category": "cycling",
+      "visible_text": ["Tour result"],
+      "status": "live",
+      "marquee_whathit": true,
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "terminal_tournament",
+      "type": "tournament",
+      "category": "golf",
+      "visible_text": ["Major championship"],
+      "schedule_status": "final",
+      "expected_safe": true,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "unknown_card_type",
+      "type": "bundle",
+      "category": "sports",
+      "visible_text": ["Mixed bundle"],
+      "expected_safe": false,
+      "expected_fresh": false,
+      "expected_eligible": false
+    },
+    {
+      "id": "editorial_recall_no_bypass",
+      "type": "futures",
+      "category": "politics",
+      "visible_text": ["Election winner"],
+      "status": "open",
+      "is_editorial_recall": true,
+      "expected_safe": false,
+      "expected_fresh": true,
+      "expected_eligible": false
+    },
+    {
+      "id": "open_extreme_probability",
+      "type": "futures",
+      "category": "sports",
+      "visible_text": ["Team A champion", "Team A"],
+      "status": "open",
+      "resolution_date": "2027-01-01T00:00:00Z",
+      "probability": 0.995,
+      "expected_safe": true,
+      "expected_fresh": true,
+      "expected_eligible": true,
+      "retention_note": "Current admission permits it; Higher/Lower becomes nearly deterministic and needs a separate playability policy ruling."
+    }
+  ],
+  "empty_states": [
+    {
+      "id": "safe_page_events_only",
+      "feed_items": 120,
+      "play_eligible_items": 20,
+      "higher_lower_questions": 0,
+      "has_more": true,
+      "current_ui": "Loading questions forever",
+      "expected_terminal_state": "request next page or show an explicit retry/end choice"
+    },
+    {
+      "id": "feed_request_failed",
+      "feed_items": 0,
+      "play_eligible_items": 0,
+      "higher_lower_questions": 0,
+      "has_more": null,
+      "current_ui": "empty/rated-all state without error provenance",
+      "expected_terminal_state": "explicit retryable error"
+    }
+  ]
+}
