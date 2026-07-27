@@ -113,7 +113,11 @@ async def test_composed_sql_is_the_full_published_population(monkeypatch):
     sql = captured["sql"]
     # Canonical eligibility + resolution-authority calibration-truth allowlist.
     assert "fo.opening_probability > 0 AND fo.opening_probability < 1" in sql
-    assert "COALESCE(fo.volume, -1) != 0" in sql
+    # Queue #267 (C44 #1): the crude volume=0 eligibility gate is retired; Kalshi
+    # liquidity is decided by the bid/trade evidence predicate (is_liquid) so a
+    # bid-bearing zero-volume row reaches the same population the sweep loads.
+    assert "COALESCE(fo.volume, -1) != 0" not in sql
+    assert "mi.source <> 'kalshi'" in sql  # source-aware evidence predicate
     # Queue #261 Item 1: the population now uses the eligibility ALLOWLIST, so
     # independent-authority sources are named IN, and guess-family / price-derived
     # are excluded by omission (never named). The sweep stays row-identical to
