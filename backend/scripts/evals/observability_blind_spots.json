@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "description": "Synthetic and repository-incident shapes that should produce a detection RED but can currently remain GREEN. This is a detection contract, not a ranking or repair policy.",
+  "blind_spots": [
+    {
+      "id": "flow_upstream_read_failure_becomes_empty_green",
+      "severity": "P1",
+      "owner": "flow",
+      "synthetic_input": {
+        "endpoint": "/api/events?status=live&limit=200",
+        "response": "timeout"
+      },
+      "current_result": "GREEN with checked=0 for duplicate_events, event_completeness, and resolved_state because _sample_events returns []",
+      "expected_result": "UNKNOWN or RED; never GREEN",
+      "repo_evidence": "backend/app/tasks/flow_sentinel.py:585-605,610-638,692-732",
+      "user_surface": "all event-backed web/native flows",
+      "detection_only_fix": "Return a typed sample result with readable/error/empty states and make every dependent flow fail UNKNOWN on unreadable input.",
+      "kill_switch": "flow:sentinel_sample_truth_enabled"
+    },
+    {
+      "id": "resolved_state_offender_outside_sample",
+      "severity": "P1",
+      "owner": "flow",
+      "synthetic_input": {
+        "events_returned": 201,
+        "events_examined": 200,
+        "offender": {
+          "id": 15175872,
+          "status": "completed",
+          "completed_at_before_commence_time": true,
+          "position": 201
+        }
+      },
+      "current_result": "GREEN because the offender is outside the bounded endpoint sample",
+      "expected_result": "RED with the exact event id and invariant violation",
+      "repo_evidence": ".claude/handoff/OPS-REPORT.md:7039 and backend/app/tasks/flow_sentinel.py:692-732",
+      "user_surface": "settled event hero, chart, My Stuff date",
+      "detection_only_fix": "Use an invariant-count endpoint or exhaustive paginated scan; report UNKNOWN on incomplete pagination.",
+      "kill_switch": "flow:sentinel_lifecycle_invariants_enabled"
+    },
+    {
+      "id": "open_future_with_winner_or_resolved_marker",
+      "severity": "P1",
+      "owner": "flow",
+      "synthetic_input": {
+        "futures_market": {
+          "status": "open",
+          "market_metadata.resolved": true,
+          "winner": "Team A"
+        }
+      },
+      "current_result": "GREEN because resolved_state scans events only",
+      "expected_result": "RED for contradictory lifecycle state",
+      "repo_evidence": "backend/app/tasks/flow_sentinel.py:692-732 and frontend/lib/play/kidSafe.ts:309-318",
+      "user_surface": "Discover, futures detail, Play",
+      "detection_only_fix": "Add a futures lifecycle invariant census for open rows carrying authoritative resolution or winner evidence.",
+      "kill_switch": "flow:sentinel_futures_lifecycle_enabled"
+    },
+    {
+      "id": "resolved_to_open_resurrection",
+      "severity": "P1",
+      "owner": "flow",
+      "synthetic_input": {
+        "futures_market": {
+          "previous_status": "resolved",
+          "current_status": "open",
+          "is_winner_count": 1
+        }
+      },
+      "current_result": "GREEN because no sentinel compares lifecycle authority or transition history for futures rows",
+      "expected_result": "RED unless an explicit dispute/correction record authorizes the transition",
+      "repo_evidence": ".claude/handoff/audit_C21_lifecycle_state_machine.md and backend/app/tasks/flow_sentinel.py:692-732",
+      "user_surface": "Discover and futures result state",
+      "detection_only_fix": "Detect resolved-to-open transitions from persisted lifecycle provenance; the sentinel must not mutate rows.",
+      "kill_switch": "flow:sentinel_lifecycle_resurrection_enabled"
+    },
+    {
+      "id": "title_implied_stale_hidden_by_feed_filter",
+      "severity": "P2",
+      "owner": "flow",
+      "synthetic_input": {
+        "futures_market": {
+          "name": "Eurovision 2026 winner",
+          "status": "open",
+          "now": "2026-06-03T00:00:00Z"
+        }
+      },
+      "current_result": "GREEN because the feed excludes the row before category_discover inspects returned cards",
+      "expected_result": "RED for source-state rot even when the read-side filter protects Discover",
+      "repo_evidence": "backend/app/utils/market_staleness.py:43-54,117-129 and backend/app/tasks/flow_sentinel.py:778-821",
+      "user_surface": "futures detail, search, and any surface not sharing the feed filter",
+      "detection_only_fix": "Add a bounded census of open title-implied-past markets and file the offender ids separately from feed-quality checks.",
+      "kill_switch": "flow:sentinel_title_staleness_enabled"
+    },
+    {
+      "id": "all_zero_open_market_hidden_by_feed_filter",
+      "severity": "P2",
+      "owner": "flow",
+      "synthetic_input": {
+        "futures_market": {
+          "status": "open",
+          "outcome_probabilities": [0.0, 0.0, 0.0]
+        }
+      },
+      "current_result": "GREEN because _suppress_zero_probability_cards removes the evidence before Flow sees the feed",
+      "expected_result": "RED when the underlying open-market count is nonzero or growing",
+      "repo_evidence": "backend/app/routes/feed.py:807-839 and backend/app/tasks/flow_sentinel.py:797-821",
+      "user_surface": "Discover is protected; detail/search and corpus health remain at risk",
+      "detection_only_fix": "Expose a suppression-debt count and sample ids to Flow; keep the read-side suppression unchanged.",
+      "kill_switch": "flow:sentinel_suppression_debt_enabled"
+    },
+    {
+      "id": "completed_duplicate_outside_flow_statuses",
+      "severity": "P2",
+      "owner": "flow",
+      "synthetic_input": {
+        "events": [
+          {"id": 10, "status": "completed", "external_id": null, "home_team": "A", "away_team": "B", "commence_time": "2026-07-20T20:00:00Z"},
+          {"id": 11, "status": "completed", "external_id": null, "home_team": "A", "away_team": "B", "commence_time": "2026-07-20T20:00:00Z"}
+        ]
+      },
+      "current_result": "GREEN because duplicate_events scans live and scheduled statuses only",
+      "expected_result": "RED while both completed rows remain user-findable",
+      "repo_evidence": "backend/app/tasks/flow_sentinel.py:594-607",
+      "user_surface": "search results and event history",
+      "detection_only_fix": "Scan the same user-findable status horizon as search, using pagination and the existing duplicate key.",
+      "kill_switch": "flow:sentinel_completed_duplicates_enabled"
+    },
+    {
+      "id": "native_concept_decode_contract_regression",
+      "severity": "P2",
+      "owner": "flow",
+      "synthetic_input": {
+        "feed_item": {
+          "type": "concept",
+          "data": {"key": "event:soccer:world-cup-2026", "name": "2026 FIFA World Cup"}
+        },
+        "native_decode_result": "discarded"
+      },
+      "current_result": "GREEN because Flow validates API payloads but never decodes the native model",
+      "expected_result": "RED in a per-form-factor contract check",
+      "repo_evidence": "ios/Bain Luck/Bain Luck/Models/FeedModels.swift:168-193 and docs/execution-plan-2026-07-13.md:76-83",
+      "user_surface": "iPhone/iPad/macOS Discover",
+      "detection_only_fix": "Run frozen feed payloads through native decoding in CI and surface the result in a form-factor sentinel tile.",
+      "kill_switch": "flow:sentinel_native_contract_enabled"
+    },
+    {
+      "id": "post_settlement_calibration_snapshot",
+      "severity": "P1",
+      "owner": "calibration",
+      "synthetic_input": {
+        "outcome": {
+          "settlement_timestamp": "2026-07-20T20:00:00Z",
+          "calibration_snapshot_captured_at": "2026-07-20T20:05:00Z",
+          "calibration_probability": 1.0
+        }
+      },
+      "current_result": "GREEN because Calibration Sentinel mines probability error cohorts without a forecast-cutoff/settlement ordering invariant",
+      "expected_result": "RED for time-travel leakage regardless of aggregate MCE",
+      "repo_evidence": "backend/app/tasks/calibration_sentinel.py:252-298 and .claude/handoff/issue_draft_resolution_provenance_contract.md",
+      "user_surface": "public calibration confidence",
+      "detection_only_fix": "Once C22 provenance fields exist, add an invariant counter requiring forecast_cutoff_at before settlement evidence; UNKNOWN while timestamps are absent.",
+      "kill_switch": "calibration:sentinel_temporal_integrity_enabled"
+    }
+  ],
+  "covered_or_fixed_controls": [
+    {
+      "id": "search_world_cup_top1",
+      "verdict": "covered",
+      "evidence": "backend/app/tasks/flow_sentinel.py:127-136"
+    },
+    {
+      "id": "play_outcome_label_safety",
+      "verdict": "fixed",
+      "evidence": "frontend/lib/play/kidSafe.ts:207-239"
+    },
+    {
+      "id": "native_concept_decode",
+      "verdict": "fixed_but_not_runtime_observed",
+      "evidence": "ios/Bain Luck/Bain Luck/Models/FeedModels.swift:178-193"
+    },
+    {
+      "id": "grid_source_disagreement",
+      "verdict": "covered_as_watch_not_red",
+      "evidence": "backend/app/tasks/grid_sentinel.py:331-426"
+    },
+    {
+      "id": "board_routing_truth",
+      "verdict": "in_flight_queue_265",
+      "evidence": ".claude/handoff/QUEUE.md"
+    }
+  ]
+}
