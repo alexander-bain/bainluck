@@ -7,7 +7,10 @@ private let logger = Logger(subsystem: "com.bainluck", category: "oddsChart")
 
 // MARK: - Chart Data Point
 
-private struct ChartDataPoint: Identifiable {
+/// One observed probability point for the win-probability chart.
+/// Internal (not private) so the pure `OddsChartView.chartPoints(from:)` transform
+/// can be unit-tested — SwiftUI bodies aren't rendered in tests (see BainLuckTests).
+struct ChartDataPoint: Identifiable {
     let id = UUID()
     let date: Date
     let probability: Double
@@ -188,8 +191,11 @@ struct OddsChartView: View {
                 if showPicker {
                     timeRangePicker
                 }
-                // Refresh countdown ring
-                if status == "live" || status == "scheduled" {
+                // Refresh countdown ring — only when an actual auto-refresh request
+                // is scheduled, which the event VM installs for LIVE events only.
+                // Scheduled/completed pages perform no periodic reload, so a cycling
+                // countdown there would imply freshness work that never happens (C43 P2).
+                if status == "live" {
                     refreshCountdownRing
                 }
                 Button {
@@ -346,7 +352,7 @@ struct OddsChartView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                if status == "live" || status == "scheduled" {
+                if status == "live" {
                     ToolbarItem(placement: .cancellationAction) {
                         refreshCountdownRing
                     }
@@ -633,7 +639,11 @@ struct OddsChartView: View {
                 )
                 .foregroundStyle(color)
                 .lineStyle(stroke)
-                .interpolationMethod(.monotone)
+                // Observed journey only — connect real snapshots with straight
+                // segments. Monotone/curve interpolation invented probability
+                // movement between sparse samples that was never captured, violating
+                // the settled no-smoothing ruling (C43 P1).
+                .interpolationMethod(.linear)
             }
         }
 
@@ -755,69 +765,57 @@ struct OddsChartView: View {
     // MARK: - Data Transformation
 
     private func buildDataPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
+        Self.chartPoints(from: history)
+    }
+
+    /// Pure transform: decoded event history → observed chart points.
+    ///
+    /// Three C43 truth guarantees live here (unit-tested in `OddsChartPointsTests`):
+    /// 1. **No client aggregation.** The only "aggregate" (Bain Luck blend) source
+    ///    is the backend's canonical weighted, staleness-aware `aggregateLine`. When
+    ///    it is absent we fail closed — the chart falls back to the sportsbook
+    ///    "consensus" as primary rather than relabelling a locally reconstructed
+    ///    arithmetic mean as the blend ("the blend is the product").
+    /// 2. **No shape guessing.** Every backend-valid probability is retained; we do
+    ///    not delete near-50% observations, which erased legitimate 50/50 crossings.
+    /// 3. Rendering connects these observed points with straight segments (see the
+    ///    `.linear` interpolation in `chartContent`) — no invented curve.
+    static func chartPoints(from history: EventHistoryResponse) -> [ChartDataPoint] {
         var points: [ChartDataPoint] = []
-        let multiSource = isMultiSource(history)
+        let multiSource = !(history.winProbHistory?.isEmpty ?? true)
 
-        if multiSource {
-            // Multi-source mode:
-            // - "aggregate" = Bain Luck combined line (bold primary)
-            // - "consensus" = sportsbook mean (shown at reduced opacity)
-            // - other sources: ESPN, Kalshi, Polymarket, model, etc.
+        // Sportsbook consensus (backend-computed) — always present as a real line.
+        for h in history.history {
+            guard let date = h.timestamp.asDate,
+                  let prob = h.homeProbability else { continue }
+            points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
+        }
 
-            // Sportsbook consensus
-            for h in history.history {
-                guard let date = h.timestamp.asDate,
-                      let prob = h.homeProbability else { continue }
-                points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
+        guard multiSource else {
+            // Sportsbooks-only mode: "consensus" is the sole aggregation.
+            return points
+        }
+
+        // Other win-probability sources (ESPN, Kalshi, Polymarket, model, …).
+        // Retain every backend-valid observation: the consumer cannot tell an
+        // upstream placeholder from a real swing using two probabilities alone, and
+        // the old near-50% deletion dropped genuine even-game crossings (C43 P1).
+        for (sourceKey, sourcePoints) in history.winProbHistory ?? [:] {
+            for wp in sourcePoints {
+                guard let date = wp.timestamp.asDate,
+                      let prob = wp.homeProbability else { continue }
+                points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
             }
+        }
 
-            // Other win probability sources (with outlier filtering)
-            for (sourceKey, sourcePoints) in history.winProbHistory ?? [:] {
-                var prevProb: Double?
-                for wp in sourcePoints {
-                    guard let date = wp.timestamp.asDate,
-                          let prob = wp.homeProbability else { continue }
-                    // Skip stale 50% default readings from prediction markets:
-                    // if probability jumps to ~50% from >20% away, it's likely a gap
-                    if let prev = prevProb, abs(prob - 0.5) < 0.02, abs(prev - 0.5) > 0.15 {
-                        continue
-                    }
-                    prevProb = prob
-                    points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
-                }
-            }
-
-            // Prefer backend aggregate line (weighted median with staleness decay);
-            // fall back to naive client-side averaging (matches web behavior).
-            if let aggregateLine = history.aggregateLine, !aggregateLine.isEmpty {
-                for p in aggregateLine {
-                    guard let date = p.timestamp.asDate else { continue }
-                    points.append(ChartDataPoint(date: date, probability: p.homeProbability, source: "aggregate"))
-                }
-            } else {
-                // Fallback: average all available source values at each minute bucket
-                let nonAggPoints = points // all points added so far (consensus + other sources)
-                var buckets: [Int: [Double]] = [:] // minute-bucket → probabilities
-                var bucketDates: [Int: Date] = [:]
-                for p in nonAggPoints {
-                    let bucket = Int(p.date.timeIntervalSince1970 / 60)
-                    buckets[bucket, default: []].append(p.probability)
-                    if bucketDates[bucket] == nil { bucketDates[bucket] = p.date }
-                }
-                for (bucket, values) in buckets {
-                    let avg = values.reduce(0, +) / Double(values.count)
-                    if let date = bucketDates[bucket] {
-                        points.append(ChartDataPoint(date: date, probability: avg, source: "aggregate"))
-                    }
-                }
-            }
-        } else {
-            // Sportsbooks-only mode:
-            // - "consensus" = sportsbook mean (bold primary, the only aggregation)
-            for h in history.history {
-                guard let date = h.timestamp.asDate,
-                      let prob = h.homeProbability else { continue }
-                points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
+        // The ONLY Bain Luck aggregate is the backend canonical line. If it is
+        // missing we do NOT synthesize a client arithmetic mean labelled
+        // "aggregate": that would show a *different* Bain Luck number precisely when
+        // backend aggregation failed. Fail closed — consensus stays primary (C43 P1).
+        if let aggregateLine = history.aggregateLine, !aggregateLine.isEmpty {
+            for p in aggregateLine {
+                guard let date = p.timestamp.asDate else { continue }
+                points.append(ChartDataPoint(date: date, probability: p.homeProbability, source: "aggregate"))
             }
         }
 

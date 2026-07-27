@@ -364,24 +364,57 @@ struct PlayerPropsCardView: View {
 
     private func lookupActualValue(player: String, stat: String) -> Double? {
         guard let box = boxScore else { return nil }
-        let playerKey = player.lowercased()
-        for (key, stats) in box {
-            if key.lowercased() == playerKey || key.lowercased().contains(playerKey.split(separator: " ").last ?? "") {
-                let statKey = stat.lowercased()
-                if let val = stats[statKey] { return val }
-                let mapping: [String: [String]] = [
-                    "points": ["points", "pts"],
-                    "rebounds": ["rebounds", "reb", "totalRebounds"],
-                    "assists": ["assists", "ast"],
-                    "steals": ["steals", "stl"],
-                    "three pointers": ["threePointersMade", "3pm", "threePointers"],
-                ]
-                for (statName, aliases) in mapping {
-                    if statKey.contains(statName) || statName.contains(statKey) {
-                        for alias in aliases {
-                            if let val = stats[alias] { return val }
-                        }
-                    }
+        return Self.actualStatValue(player: player, stat: stat, box: box)
+    }
+
+    // MARK: - Prop Attribution (pure, fail-closed)
+
+    /// Grade a prop against the box score by EXACT normalized full-name identity.
+    ///
+    /// The old logic matched on last-name substring containment and returned the
+    /// first dictionary hit, so duplicate surnames, suffixes ("Jr."), and substrings
+    /// could attribute another player's line — and dictionary iteration made the
+    /// wrong grade unstable (C43 P1). Until stable player IDs exist we fail closed:
+    /// grade only when EXACTLY ONE box-score row normalizes to the prop's player
+    /// name; zero or multiple matches return nil (ungraded), never a guess.
+    static func actualStatValue(player: String, stat: String, box: [String: [String: Double]]) -> Double? {
+        let target = normalizedPlayerName(player)
+        guard !target.isEmpty else { return nil }
+        let matches = box.keys.filter { normalizedPlayerName($0) == target }
+        // Exactly one identity, or no grade.
+        guard matches.count == 1, let key = matches.first, let stats = box[key] else { return nil }
+        return statValue(stat: stat, in: stats)
+    }
+
+    /// Normalize a player name for identity comparison: lowercase, strip periods and
+    /// commas (so "A.J." == "AJ"), collapse whitespace. Suffixes ("Jr.", "III") are
+    /// deliberately kept as distinct tokens — "Michael Porter" and "Michael Porter Jr."
+    /// are different people, so they must NOT collide into one match.
+    static func normalizedPlayerName(_ raw: String) -> String {
+        raw.lowercased()
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Resolve a stat value once a unique player identity is established. Direct key,
+    /// then a small alias map (matches the prior behavior; only reached after identity).
+    static func statValue(stat: String, in stats: [String: Double]) -> Double? {
+        let statKey = stat.lowercased()
+        if let val = stats[statKey] { return val }
+        let mapping: [String: [String]] = [
+            "points": ["points", "pts"],
+            "rebounds": ["rebounds", "reb", "totalRebounds"],
+            "assists": ["assists", "ast"],
+            "steals": ["steals", "stl"],
+            "three pointers": ["threePointersMade", "3pm", "threePointers"],
+        ]
+        for (statName, aliases) in mapping {
+            if statKey.contains(statName) || statName.contains(statKey) {
+                for alias in aliases {
+                    if let val = stats[alias] { return val }
                 }
             }
         }

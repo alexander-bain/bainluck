@@ -11,7 +11,6 @@ struct EventDetailView: View {
     @State private var showSources = false
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
-    @State private var lastRefreshDate: Date = Date()
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
               let commenceTime = event.commenceTime,
@@ -106,9 +105,12 @@ struct EventDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                if isLive || isScheduled {
+                // Manual-refresh ring only when a real auto-refresh is running
+                // (live). vm.load() stamps lastLoadedAt, so the countdown resets
+                // honestly on completion.
+                if isLive {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button { Task { await vm.load(); lastRefreshDate = Date() } } label: {
+                        Button { Task { await vm.load() } } label: {
                             refreshRing
                         }
                     }
@@ -125,14 +127,12 @@ struct EventDetailView: View {
             }
             .task {
                 await vm.load()
-                lastRefreshDate = Date()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
                 startCountdownTimer()
                 startRefreshCountdown()
             }
             .refreshable {
                 await vm.load()
-                lastRefreshDate = Date()
             }
             .onDisappear {
                 vm.stopRefresh()
@@ -930,21 +930,35 @@ struct EventDetailView: View {
         .frame(width: 22, height: 22)
     }
 
-    /// Refresh interval in seconds (matches ViewModel's 30s for live, 120s for scheduled)
-    private var refreshInterval: Int {
-        isLive ? 30 : 120
+    /// Auto-refresh cadence in seconds. Only live events poll (the VM installs a
+    /// 30s request timer for `status == "live"` only), so this is the live cadence.
+    private var refreshInterval: Int { 30 }
+
+    /// A refresh countdown is honest ONLY when an actual auto-refresh request is
+    /// scheduled — which the VM installs for live events only. Scheduled/completed
+    /// pages perform no periodic reload, so they must not show a cycling countdown
+    /// that implies freshness work that never happens (C43 P2).
+    static func showsRefreshCountdown(status: String?) -> Bool { status == "live" }
+
+    /// Seconds until the next scheduled auto-refresh, derived from the LAST ACTUAL
+    /// load completion (`vm.lastLoadedAt`) — never a self-resetting timer that fakes
+    /// a refresh. `nil` last-load (not loaded yet) shows the full interval.
+    static func refreshRemaining(lastLoadedAt: Date?, interval: Int, now: Date) -> Int {
+        guard let last = lastLoadedAt else { return interval }
+        let elapsed = now.timeIntervalSince(last)
+        return Int(ceil(max(0, Double(interval) - elapsed)))
     }
 
     private func startRefreshCountdown() {
         refreshCountdownTimer?.invalidate()
+        // Only live pages have a scheduled refresh to count down to.
+        guard Self.showsRefreshCountdown(status: vm.event?.status) else {
+            refreshCountdown = 0
+            return
+        }
         refreshCountdownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            let elapsed = Date().timeIntervalSince(lastRefreshDate)
-            let remaining = max(0, Double(refreshInterval) - elapsed)
-            refreshCountdown = Int(ceil(remaining))
-            // Reset when auto-refresh fires
-            if remaining <= 0 {
-                lastRefreshDate = Date()
-            }
+            refreshCountdown = Self.refreshRemaining(
+                lastLoadedAt: vm.lastLoadedAt, interval: refreshInterval, now: Date())
         }
     }
 

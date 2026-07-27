@@ -13,9 +13,17 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var teamProgression: TeamProgressionResponse?
     @Published private(set) var gameMarkets: GameMarketsResponse?
     @Published private(set) var lineMovement: LineMovementResponse?
+    /// When the last `load()` actually completed. Drives the refresh-countdown
+    /// chrome from real request completion instead of a self-resetting timer that
+    /// fakes a refresh cycle no request performs (C43 P2). `nil` until first load.
+    @Published private(set) var lastLoadedAt: Date?
 
     private var refreshTimer: Timer?
     let eventId: Int
+
+    /// Whether a periodic auto-refresh request is currently installed. Only live
+    /// events poll; scheduled/completed pages do not, so their UI must not imply it.
+    var isAutoRefreshing: Bool { refreshTimer != nil }
 
     init(eventId: Int) {
         self.eventId = eventId
@@ -87,6 +95,10 @@ final class EventDetailViewModel: ObservableObject {
         if let movement = await lineMovementTask.value {
             lineMovement = movement
         }
+
+        // Stamp the honest "last updated" moment — this load has completed. The
+        // refresh countdown counts down from here to the next scheduled auto-refresh.
+        lastLoadedAt = Date()
     }
 
     private func configureAutoRefresh() {
