@@ -302,6 +302,10 @@ HEAVY_TASKS = {
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
+    # Queue #258: the Board Sentinel keeps the board itself honest (duplicate
+    # fingerprints, stale Inbox, template-P1 share, blocked-in-Inbox, missing
+    # area labels). Cheap + daily like its siblings; heavy queue for a free slot.
+    "app.tasks.board_sentinel",
     # #1201/#1193/#1202: daily MLB schedule self-heal + coverage. Cheap and daily
     # like the sentinels, and it must fire promptly at 07:05 so the standing
     # inverted rows are healed before the 07:10 flow sentinel reads resolved_state.
@@ -1806,6 +1810,25 @@ def settled_concept_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.board_sentinel")
+def board_sentinel(self, file_issues=True):
+    """Board Sentinel (Queue #258): keep GitHub `Ready` a trustworthy execution
+    source by keeping the BOARD itself honest. Daily checks — duplicate sentinel
+    fingerprints among open alert-intake (the r252 dupe class), untriaged Inbox
+    cards >48h, template-P1 share above the documented cap, blocked/parked cards in
+    Inbox, and alert-intake issues missing every area:* label. Classifies REAL vs
+    UNKNOWN (API/auth inability is never GREEN, never a cleanup accusation); files
+    ONE deduped board-cleanup issue on RED and closes it on GREEN via the shared
+    filing rail. Read-only against GitHub — never bulk-mutates the board (Ops owns
+    the one-time cleanup). The 840s soft limit (under the 900s hard limit) plus the
+    run's 120s inner deadline keep it from SIGKILLing untracked (#966)."""
+    from app.tasks.board_sentinel import _run_board_sentinel
+    return _tracked_run(
+        "board_sentinel",
+        _run_board_sentinel(file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.sentry_snapshot")
 def sentry_snapshot(self):
     """#237 Item 1: cache the top Sentry issues by 24h volume to Redis
@@ -2559,6 +2582,17 @@ celery_app.conf.beat_schedule = {
         # sentinel). heavy queue (#233).
         "task": "app.tasks.settled_concept_sentinel",
         "schedule": crontab(minute=45, hour=7),  # Daily 07:45 UTC
+        "options": {"queue": "heavy"},
+    },
+    "board-sentinel-daily": {
+        # Queue #258: keep the BOARD honest so GitHub `Ready` stays a trustworthy
+        # execution source — duplicate sentinel fingerprints, stale Inbox cards,
+        # template-P1 share, blocked-in-Inbox, missing area labels. Classifies REAL
+        # vs UNKNOWN so RED means real; files one deduped cleanup issue and closes
+        # it on green via the shared filing rail. Daily (07:50 UTC, after the other
+        # sentinels so it observes a settled board). heavy queue (#233).
+        "task": "app.tasks.board_sentinel",
+        "schedule": crontab(minute=50, hour=7),  # Daily 07:50 UTC
         "options": {"queue": "heavy"},
     },
     "recategorize-other-daily": {

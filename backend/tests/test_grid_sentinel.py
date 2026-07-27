@@ -280,3 +280,56 @@ class TestFilingHelpers:
     def test_title_reports_counts(self):
         title = gs.build_grid_issue_title("nba", [{"severity": "critical"}, {"severity": "warning"}])
         assert "NBA" in title and "2 real" in title
+
+
+class TestGridFilingLifecycle:
+    """Queue #258: the Grid Sentinel now files via the shared rail (REST-list
+    dedup, not the flaky /search index that let #1443/#1251/#1125 through) and
+    closes its own league issue on GREEN."""
+
+    def test_green_closes_existing_issue(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        closed = {}
+        monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.update(n=n))
+        fp = gs.grid_fingerprint("mlb")
+        existing = [{"number": 1251, "title": "x",
+                     "body": f"`grid-sentinel-fingerprint:{fp}`",
+                     "labels": [{"name": "alert-intake"}]}]
+        classified = {"league": "mlb", "real": [], "explained": [], "watch": []}
+        res = gs.file_grid_issue(classified, open_issues=existing)
+        assert res["action"] == "resolved"
+        assert closed["n"] == 1251
+
+    def test_green_no_issue_is_noop(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        monkeypatch.setattr(gh, "close_issue",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("nothing to close")))
+        classified = {"league": "mlb", "real": [], "explained": [], "watch": []}
+        res = gs.file_grid_issue(classified, open_issues=[])
+        assert res["action"] == "green_no_issue"
+
+    def test_red_dedups_to_lowest_open_issue(self, monkeypatch):
+        # The confirmed dupe class: three open MLB grid issues sharing one
+        # fingerprint. The rail comments the lowest, never files a fourth.
+        import app.tasks.bug_report_github as gh
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        commented = {}
+        monkeypatch.setattr(gh, "comment_on_issue", lambda n, b: commented.update(n=n))
+        monkeypatch.setattr(gh, "create_github_issue",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not file a dupe")))
+        fp = gs.grid_fingerprint("mlb")
+        dupes = [{"number": n, "title": "x",
+                  "body": f"`grid-sentinel-fingerprint:{fp}`",
+                  "labels": [{"name": "alert-intake"}]}
+                 for n in (1443, 1251, 1125)]
+        classified = {"league": "mlb", "phase": "in_season",
+                      "real": [{"severity": "critical", "detail": "monotonicity"}],
+                      "explained": [], "watch": []}
+        res = gs.file_grid_issue(classified, open_issues=dupes)
+        assert res["action"] == "commented"
+        assert commented["n"] == 1125  # lowest canonical wins

@@ -277,6 +277,7 @@ class TestBeatScheduleCompleteness:
         "grid-sentinel-daily",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
+        "board-sentinel-daily",
         "sentry-snapshot-15min",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",
@@ -382,7 +383,7 @@ class TestHeavyQueueRouting:
         assert not unregistered, f"HEAVY_TASKS references unregistered tasks: {unregistered}"
 
     def test_sentinels_route_to_heavy(self):
-        """#233: the 5 sentinels moved off the congested 2-slot `background`
+        """#233: the sentinels moved off the congested 2-slot `background`
         queue (their morning 07:10-07:45 UTC fires were dying as no_run_cached)
         onto `heavy`, which guarantees a free slot. Guard BOTH task_routes and
         beat options so a future edit can't silently re-starve the alarms."""
@@ -393,6 +394,7 @@ class TestHeavyQueueRouting:
             "app.tasks.horizon_sentinel",
             "app.tasks.settled_concept_sentinel",
             "app.tasks.calibration_sentinel",
+            "app.tasks.board_sentinel",
         }
         assert sentinels <= HEAVY_TASKS, (
             f"sentinels missing from HEAVY_TASKS: {sentinels - HEAVY_TASKS}"

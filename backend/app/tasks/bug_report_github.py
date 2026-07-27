@@ -209,6 +209,33 @@ def comment_on_issue(issue_number: int, body: str) -> None:
     resp.raise_for_status()
 
 
+def close_issue(issue_number: int, comment: str | None = None) -> None:
+    """Close an OPEN GitHub issue, optionally leaving a recovery comment first.
+
+    Used by the shared sentinel filing rail (app/tasks/sentinel_filing.py) for the
+    RED→GREEN lifecycle: when a sentinel re-checks GREEN, its canonical open issue
+    is commented + closed so the board self-heals. The comment is posted before the
+    close so the audit trail (why it closed) survives on the issue timeline. A
+    comment failure is non-fatal — the close still proceeds (a closed issue with no
+    recovery note is still the correct terminal state)."""
+    if comment:
+        try:
+            comment_on_issue(issue_number, comment)
+        except Exception as exc:  # pragma: no cover - defensive, close still runs
+            logger.warning("close_issue: recovery comment failed on #%d: %s", issue_number, exc)
+    resp = httpx.patch(
+        f"https://api.github.com/repos/{REPO}/issues/{issue_number}",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"state": "closed", "state_reason": "completed"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
 def format_digest_body(reports: list[dict], week_label: str) -> str:
     """#975: roll up the past week's external feature-requests into one issue.
 

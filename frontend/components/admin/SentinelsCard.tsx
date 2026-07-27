@@ -23,7 +23,7 @@ import { adminFetchJSON } from "@/lib/adminFetch";
 export const SILENCE_MULTIPLIER = 1.5;
 
 export interface SentinelSpec {
-  key: "flow" | "grid" | "settled";
+  key: "flow" | "grid" | "settled" | "board";
   label: string;
   endpoint: string;
   beatLabel: string; // human-readable beat, e.g. "daily 07:10Z"
@@ -31,7 +31,7 @@ export interface SentinelSpec {
 }
 
 // Beat intervals from CLAUDE.md / the task schedules: flow 07:10Z, grid 07:25Z,
-// settled-concept 07:45Z — all daily (24h).
+// settled-concept 07:45Z, board 07:50Z — all daily (24h).
 export const SENTINELS: SentinelSpec[] = [
   {
     key: "flow",
@@ -52,6 +52,13 @@ export const SENTINELS: SentinelSpec[] = [
     label: "Settled-Concept Sentinel",
     endpoint: "/api/admin/settled-concept-sentinel/last",
     beatLabel: "daily 07:45Z",
+    beatIntervalHours: 24,
+  },
+  {
+    key: "board",
+    label: "Board Sentinel",
+    endpoint: "/api/admin/board-sentinel/last",
+    beatLabel: "daily 07:50Z",
     beatIntervalHours: 24,
   },
 ];
@@ -98,7 +105,7 @@ function humanizeAge(ms: number): string {
 function extractVerdict(
   key: SentinelSpec["key"],
   p: Record<string, unknown>,
-): { red: boolean; detail: string } {
+): { red: boolean; detail: string; amber?: boolean } {
   if (key === "flow") {
     const sc = (p["scorecard"] as Record<string, unknown>) ?? {};
     const total = Number(sc["flows_total"] ?? 0);
@@ -133,6 +140,32 @@ function extractVerdict(
       };
     }
     return { red: false, detail: `${green}/${total} leagues green` };
+  }
+
+  if (key === "board") {
+    // Queue #258: verdict ∈ {red, green, unknown}. UNKNOWN (couldn't fully
+    // measure — e.g. the board column read failed) reads AMBER, never GREEN and
+    // never a false RED.
+    const verdict = String(p["verdict"] ?? "");
+    const real = (p["real"] as Array<Record<string, unknown>>) ?? [];
+    const counts = (p["counts"] as Record<string, unknown>) ?? {};
+    const scanned = Number(counts["open_alert_intake"] ?? 0);
+    if (verdict === "red" || real.length > 0) {
+      const kinds = [...new Set(real.map((f) => String(f["check"])))];
+      return {
+        red: true,
+        detail: `${real.length} board-hygiene defect(s)${kinds.length ? `: ${kinds.join(", ")}` : ""}`,
+      };
+    }
+    if (verdict === "unknown") {
+      const unk = (p["unknown"] as unknown[]) ?? [];
+      return {
+        red: false,
+        amber: true,
+        detail: `could not fully measure the board (${unk.length} unknown) — not asserting clean`,
+      };
+    }
+    return { red: false, detail: `board clean · ${scanned} alert-intake scanned` };
   }
 
   // settled-concept
@@ -189,7 +222,7 @@ export function evaluateSentinel(
   const ageMs = ranMs != null ? nowMs - ranMs : null;
   const silenceThresholdMs = spec.beatIntervalHours * SILENCE_MULTIPLIER * 3_600_000;
 
-  const { red, detail } = extractVerdict(spec.key, payload);
+  const { red, detail, amber } = extractVerdict(spec.key, payload);
 
   // A run older than 1.5× its beat can't be trusted — override to silent-RED.
   if (ageMs != null && ageMs > silenceThresholdMs) {
@@ -201,11 +234,15 @@ export function evaluateSentinel(
     };
   }
 
-  // Post-#232 all three carry generated_at, so ageMs is normally set; the
-  // "age unknown" fallback only shows during the deploy-transition window.
+  // Post-#232 all carry generated_at, so ageMs is normally set; the "age unknown"
+  // fallback only shows during the deploy-transition window.
   const ageText = ageMs != null ? humanizeAge(ageMs) : "age unknown";
   if (red) {
     return { status: "red", headline: "RED", detail, ageText };
+  }
+  // Board Sentinel UNKNOWN (couldn't fully measure) → AMBER, distinct from GREEN.
+  if (amber) {
+    return { status: "amber", headline: "UNKNOWN", detail, ageText };
   }
   return { status: "green", headline: "GREEN", detail, ageText };
 }
@@ -276,8 +313,8 @@ function SentinelRowView({ spec }: { spec: SentinelSpec }) {
 }
 
 /**
- * The Sentinels card — one row per sentinel (Flow / Grid / Settled-Concept),
- * each showing verdict chip, last-run age, and a one-line detail. A silent
+ * The Sentinels card — one row per sentinel (Flow / Grid / Settled-Concept /
+ * Board), each showing verdict chip, last-run age, and a one-line detail. A silent
  * sentinel reads RED so the guard-of-the-guards can't itself go dark unnoticed.
  */
 export default function SentinelsCard() {

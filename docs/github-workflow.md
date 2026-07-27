@@ -67,13 +67,27 @@ Do not create separate projects for Discover, native, latency, or admin. Use lab
 A growing share of issues are **filed by automation, not by hand**. Several backend systems open evidence-packed issues through the shared `bug_report_github` client, each with fingerprint dedup (a recurring problem updates its existing issue instead of spawning duplicates):
 
 - **Flow Sentinel** (daily) — one issue per failing user-facing flow (search, duplicate events, event completeness, resolved-state, chart density, category/Discover). First real catch was #1085.
+- **Grid Sentinel** (daily) — one issue per championship grid (MLB/NBA/NHL) with REAL defects.
 - **Calibration Sentinel** (weekly) — one issue per broken calibration cohort.
+- **Board Sentinel** (daily) — keeps the BOARD itself honest (Queue #258): one deduped board-cleanup issue when board hygiene is RED.
 - **Rage-shake bug reports** — user shake / `Cmd+Shift+F` reports that get auto-diagnosed (severity, root cause, category, Claude Code prompt).
 - **CI / Sentry alert intake** — GitHub Actions failures and Sentry issues (Sentry intake needs a scoped token: `project:read`, `event:read`, `org:read`).
 
+### Alert lifecycle (Queue #258 — one fingerprint, RED and GREEN)
+
+All sentinels file through the **shared filing rail** (`backend/app/tasks/sentinel_filing.py`), which gives every fingerprint one durable lifecycle so GitHub `Ready` stays a trustworthy execution source:
+
+- **Inbox is temporary intake, not a human backlog.** `alert-intake` cards land in Inbox for triage; they are not owned work until moved to `Ready`.
+- **P2 is the default filing priority.** A sentinel escalates to P1/P0 only with threshold evidence embedded in the issue body and an explicit severity reason. The rail **never edits the labels of an existing issue** — a human-prioritized issue is never silently downgraded by a later P2-default re-observation (it is only commented on).
+- **Fingerprint dedup on RED.** Each issue body carries a `<sentinel>-fingerprint:<hash>` marker. Before filing, the rail matches the fingerprint against **open `alert-intake` issues via the strongly-consistent REST list** (never the eventually-consistent `/search` index that let 5 dupes through — r252). A recurrence comments the lowest-numbered canonical issue instead of filing a duplicate.
+- **Auto-close on GREEN.** When a sentinel re-checks GREEN, the rail comments a recovery note and **closes exactly that fingerprint's canonical open issue** (matched by body marker only, so a human-filed lookalike is never auto-closed). GREEN with no open issue is a no-op. A later recurrence opens a fresh episode cleanly.
+- **UNKNOWN is never GREEN.** An API / rate-limit / auth inability is classified UNKNOWN — it neither files a cleanup accusation nor falsely resolves an open issue.
+- **48h triage bar.** An `alert-intake` card left untriaged in Inbox beyond 48h is a Board Sentinel RED.
+- **Board Sentinel thresholds** (`backend/app/tasks/board_sentinel.py`, Redis-tunable): duplicate open-`alert-intake` fingerprints → target 0; untriaged Inbox age → 48h; default/template P1 share among open `alert-intake` → cap 35% (past a 6-issue floor); blocked/parked cards in Inbox → target 0; open `alert-intake` missing every `area:*` label → target 0. Admin: `POST /api/admin/board-sentinel/run`, `GET /api/admin/board-sentinel/last`.
+
 Conventions for these:
 - They carry the **`alert-intake`** label (plus `area:*`/`type:*`/`priority:*`), and land in **Inbox** for triage — treat Inbox as the automation firehose, not a human backlog.
-- They may be **closed without backlog edits** when stale, superseded, or purely operational — leave a closing comment with the reason (see Maintenance Rules).
+- They may be **closed without backlog edits** when stale, superseded, or purely operational — leave a closing comment with the reason (see Maintenance Rules). Sentinels also auto-close their own issues on recovery (above).
 - **Hard dependency:** backend issue-filing silently no-ops if `GITHUB_TOKEN` is unset on Heroku. If auto-filing "stops working," check that rail FIRST before debugging filing logic (memory `project_github_token_unset`).
 - Full system detail (files, beats, endpoints, thresholds) lives in `docs/architecture-reference.md` → "Reliability Machinery"; the quality-loop framing is in `docs/quality-audit.md` → "Automated Sentinels".
 

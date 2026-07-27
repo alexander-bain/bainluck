@@ -455,3 +455,60 @@ class TestTeamIdentityDupesFlow:
         client = self._client({"pairs_remaining": 9}, awaiting=99)
         res = await fs._run_team_identity_dupes(client)
         assert res["passed"] is True and res["skipped"] is True
+
+
+class TestFlowFilingLifecycle:
+    """Queue #258: the Flow Sentinel files via the shared rail and closes a flow's
+    issue when that flow re-checks GREEN."""
+
+    def test_resolve_flow_closes_existing(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+        from app.tasks.flow_sentinel import resolve_flow_issue
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        closed = {}
+        monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.update(n=n))
+        fp = flow_fingerprint("chart_density")
+        existing = [{"number": 1147, "title": "x",
+                     "body": f"`flow-sentinel-fingerprint:{fp}`",
+                     "labels": [{"name": "alert-intake"}]}]
+        res = resolve_flow_issue(
+            {"flow": "chart_density", "checked": 1, "passed": True, "failures": []},
+            open_issues=existing,
+        )
+        assert res["action"] == "resolved"
+        assert closed["n"] == 1147
+
+    def test_resolve_flow_green_no_issue_noop(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+        from app.tasks.flow_sentinel import resolve_flow_issue
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        monkeypatch.setattr(gh, "close_issue",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("nothing to close")))
+        res = resolve_flow_issue(
+            {"flow": "chart_density", "checked": 1, "passed": True, "failures": []},
+            open_issues=[],
+        )
+        assert res["action"] == "green_no_issue"
+
+    def test_file_flow_comments_existing(self, monkeypatch):
+        import app.tasks.bug_report_github as gh
+        from app.tasks.flow_sentinel import file_flow_issue
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        commented = {}
+        monkeypatch.setattr(gh, "comment_on_issue", lambda n, b: commented.update(n=n))
+        monkeypatch.setattr(gh, "create_github_issue",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not file a dupe")))
+        fp = flow_fingerprint("chart_density")
+        existing = [{"number": 1147, "title": "x",
+                     "body": f"`flow-sentinel-fingerprint:{fp}`",
+                     "labels": [{"name": "alert-intake"}]}]
+        res = file_flow_issue(
+            {"flow": "chart_density", "checked": 1, "passed": False,
+             "failures": [{"detail": "dark"}], "evidence": {}},
+            open_issues=existing,
+        )
+        assert res["action"] == "commented"
+        assert commented["n"] == 1147

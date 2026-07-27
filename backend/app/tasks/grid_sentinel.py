@@ -496,75 +496,67 @@ def build_grid_issue_body(classified: dict) -> str:
     return "\n".join(parts)
 
 
-def _find_open_issue_by_fingerprint(fingerprint: str) -> int | None:
-    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
-
-    if not GITHUB_TOKEN:
-        return None
-    q = f'repo:{REPO} in:body "grid-sentinel-fingerprint:{fingerprint}" state:open'
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params={"q": q},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return items[0]["number"] if items else None
-    except Exception as exc:
-        logger.warning("Grid sentinel dedup search failed for %s: %s", fingerprint, exc)
-        return None
+_GRID_MARKER = "grid-sentinel-fingerprint"
 
 
-def file_grid_issue(classified: dict) -> dict:
-    """File OR update one issue for a league's grid fingerprint (only when REAL
-    defects survive the registry)."""
-    from app.tasks.bug_report_github import (
-        GITHUB_TOKEN,
-        add_to_project_board,
-        comment_on_issue,
-        create_github_issue,
-    )
+def _grid_title_prefix(league: str) -> str:
+    """Title-prefix dedup fallback — 1:1 with the league fingerprint (the count in
+    ``[Grid Sentinel] MLB grid has N real defect(s)`` varies, so we match only the
+    stable prefix through ``has ``)."""
+    return f"[Grid Sentinel] {league.upper()} grid has "
+
+
+def file_grid_issue(classified: dict, open_issues: list[dict] | None = None) -> dict:
+    """RED/GREEN lifecycle for a league's grid fingerprint, via the shared rail
+    (Queue #258).
+
+    * REAL defects survive → file OR comment the canonical open issue (dedup via
+      the strongly-consistent REST list, NOT the flaky /search index that let 5
+      dupes through — r252 / the confirmed #1443/#1251/#1125 dupes).
+    * No REAL defects → RED→GREEN recovery: close the league's canonical open
+      issue with a recovery comment (or no-op if none open).
+    ``open_issues`` may be injected so a whole run reuses one REST-list snapshot."""
+    from app.tasks.sentinel_filing import reconcile_issue
 
     league = classified["league"]
     fp = grid_fingerprint(league)
     real = classified["real"]
-    if not real:
-        return {"league": league, "fingerprint": fp, "action": "green_no_file"}
-    if not GITHUB_TOKEN:
-        return {"league": league, "fingerprint": fp, "action": "skipped_no_token"}
 
-    existing = _find_open_issue_by_fingerprint(fp)
-    if existing:
-        try:
-            comment_on_issue(
-                existing,
-                f"Grid Sentinel re-observed {len(real)} real defect(s) on the "
-                f"{league.upper()} grid (fingerprint `{fp}`). Still open.",
-            )
-        except Exception as exc:
-            logger.warning("Grid sentinel comment failed on #%d: %s", existing, exc)
-        return {"league": league, "fingerprint": fp, "action": "commented", "issue": existing}
+    if not real:
+        res = reconcile_issue(
+            red=False,
+            fingerprint=fp,
+            marker_key=_GRID_MARKER,
+            green_comment=(
+                f"Grid Sentinel re-checked GREEN — the {league.upper()} grid has 0 "
+                f"real defects (fingerprint `{fp}`). Auto-closing; a future "
+                f"recurrence opens a fresh episode."
+            ),
+            open_issues=open_issues,
+        )
+        res["league"] = league
+        return res
 
     severity = severity_for_grid(real)
     labels = ["alert-intake", "needs-agent", "area:event-details", f"priority:{severity.lower()}"]
-    title = build_grid_issue_title(league, real)
-    body = build_grid_issue_body(classified)
-    try:
-        number, node_id = create_github_issue(title, body, labels)
-    except Exception as exc:
-        logger.error("Grid sentinel issue creation failed (%s): %s", fp, exc)
-        return {"league": league, "fingerprint": fp, "action": "error", "error": str(exc)[:200]}
-    try:
-        add_to_project_board(node_id)
-    except Exception:
-        logger.warning("Grid sentinel: add issue #%d to board failed (non-fatal)", number, exc_info=True)
-    return {"league": league, "fingerprint": fp, "action": "filed", "issue": number, "severity": severity}
+    res = reconcile_issue(
+        red=True,
+        fingerprint=fp,
+        marker_key=_GRID_MARKER,
+        labels=labels,
+        title=build_grid_issue_title(league, real),
+        body=build_grid_issue_body(classified),
+        title_prefix=_grid_title_prefix(league),
+        red_comment=(
+            f"Grid Sentinel re-observed {len(real)} real defect(s) on the "
+            f"{league.upper()} grid (fingerprint `{fp}`). Still open."
+        ),
+        open_issues=open_issues,
+    )
+    res["league"] = league
+    if res.get("action") == "filed":
+        res["severity"] = severity
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -767,10 +759,28 @@ async def _run_grid_sentinel(
         ],
     }
 
-    # --- Filing (one deduped issue per RED league) ---
+    # --- Filing + recovery (one deduped issue per RED league; close-on-green for
+    # a league whose grid is now clean). One strongly-consistent REST-list snapshot
+    # is reused for the whole run so dedup/close never race the flaky search index
+    # — the fix for the confirmed #1443/#1251/#1125 dupes (Queue #258). ---
     if file_issues:
+        from app.tasks.sentinel_filing import list_open_alert_issues
+
+        open_issues = list_open_alert_issues()
         for lg in red:
-            stats["filed"].append(file_grid_issue(lg["classified"]))
+            stats["filed"].append(file_grid_issue(lg["classified"], open_issues=open_issues))
+        green_leagues = [
+            lg for lg in stats["leagues"]
+            if lg["verdict"] == "green" and lg.get("grid_ok")
+        ]
+        stats["resolved"] = [
+            r
+            for r in (
+                file_grid_issue(lg["classified"], open_issues=open_issues)
+                for lg in green_leagues
+            )
+            if r.get("action") in ("resolved", "close_failed")
+        ]
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     # #232: L2-153's cockpit card needs a wall-clock stamp to render precise

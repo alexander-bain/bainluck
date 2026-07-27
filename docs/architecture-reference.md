@@ -250,7 +250,9 @@ Authority tiers (higher = stronger; never let a weaker source overwrite a strong
 
 ## Reliability Machinery: Sentinels, Cockpit, Backfill Progress
 
-The reliability program (Priority #1) is guarded by two automated detectors that file evidence-packed GitHub issues, an ops cockpit that surfaces status, and warm-cache precompute beats.
+The reliability program (Priority #1) is guarded by automated detectors that file evidence-packed GitHub issues, an ops cockpit that surfaces status, and warm-cache precompute beats.
+
+**Shared filing rail (Queue #258):** every sentinel files through `backend/app/tasks/sentinel_filing.py`, which owns one fingerprint lifecycle for RED and GREEN — dedup on RED against the strongly-consistent REST list of open `alert-intake` issues (never the flaky `/search` index that let 5 dupes through, r252 / the confirmed #1443/#1251/#1125 Grid dupes), and **close-on-GREEN** of exactly that fingerprint's canonical issue (marker-only match, so a human lookalike is never auto-closed). Filing defaults to P2; the rail never edits an existing issue's labels (no silent downgrade). `bug_report_github.close_issue()` is the low-level PATCH-to-closed helper.
 
 ### Flow Sentinel — LIVE (daily)
 
@@ -264,6 +266,13 @@ The reliability program (Priority #1) is guarded by two automated detectors that
 - **File:** `backend/app/tasks/calibration_sentinel.py`; wrapper `app.tasks.calibration_sentinel`. **Beat:** `calibration-sentinel-weekly`, `crontab(minute=20, hour=6, day_of_week=1)` = **weekly Monday 06:20 UTC**, background queue.
 - **Endpoints:** `POST /api/admin/calibration-sentinel/run`, `GET /api/admin/calibration-sentinel/last` (Redis `bainluck:calibration_sentinel:last` / `...:last_backtest`).
 - **What it mines:** resolved-outcome cohorts across `category × source × series-family × structure × table-provenance`, computing n-weighted **MCE** on the RAW un-excluded population. Thresholds `SENTINEL_MCE_THRESHOLD=5.0pp`, new-format tier `SENTINEL_NEW_MCE_THRESHOLD=3.0pp` (series first-seen <30d). Files one issue per broken cohort; **never writes market data** (gotcha #21). Two modes: live (suppress known/shipped-exclusion classes) vs backtest (report every flag with its known-class mapping). See memory `project_calibration_sentinel`.
+
+### Board Sentinel — LIVE (daily)
+
+- **File:** `backend/app/tasks/board_sentinel.py`; wrapper `app.tasks.board_sentinel` (`soft_time_limit=840`). **Beat:** `board-sentinel-daily`, `crontab(minute=50, hour=7)` = **daily 07:50 UTC**, heavy queue (after the other sentinels, so it observes a settled board).
+- **Endpoints:** `POST /api/admin/board-sentinel/run` (params `file_issues`, `inline`), `GET /api/admin/board-sentinel/last` (Redis `bainluck:board_sentinel:last`, 14d TTL).
+- **Keeps the BOARD honest** (Queue #258) so GitHub `Ready` stays a trustworthy execution source. Daily checks (Redis-tunable): duplicate sentinel fingerprints among open `alert-intake` (the r252 dupe class); untriaged Inbox cards >48h; template-P1 share above the 35% cap (past a 6-issue floor); blocked/parked cards in Inbox; open `alert-intake` missing every `area:*` label. Reads issues via REST + Project columns via GraphQL.
+- **Verdict grammar:** REAL (objective, agent-fixable violation) vs **UNKNOWN** (API/rate-limit/auth inability — never GREEN, never a cleanup accusation). Files ONE deduped board-cleanup issue on RED and closes it on GREEN via the shared filing rail. Read-only against GitHub — never bulk-mutates the board (Ops owns the one-time cleanup).
 
 ### Admin Cockpit — LIVE (admin-only)
 

@@ -17,20 +17,80 @@ const HOUR = 3_600_000;
 const flow = SENTINELS.find((s) => s.key === "flow")!;
 const grid = SENTINELS.find((s) => s.key === "grid")!;
 const settled = SENTINELS.find((s) => s.key === "settled")!;
+const board = SENTINELS.find((s) => s.key === "board")!;
 
 function iso(msAgo: number): string {
   return new Date(NOW - msAgo).toISOString();
 }
 
 describe("SentinelsCard specs", () => {
-  it("covers the three sentinels with daily beats", () => {
-    expect(SENTINELS).toHaveLength(3);
-    expect(SENTINELS.map((s) => s.key).sort()).toEqual(["flow", "grid", "settled"]);
+  it("covers the four sentinels with daily beats", () => {
+    expect(SENTINELS).toHaveLength(4);
+    expect(SENTINELS.map((s) => s.key).sort()).toEqual([
+      "board",
+      "flow",
+      "grid",
+      "settled",
+    ]);
     for (const s of SENTINELS) {
       expect(s.beatIntervalHours).toBe(24);
       expect(s.endpoint).toMatch(/\/api\/admin\/.*-sentinel\/last$/);
     }
     expect(SILENCE_MULTIPLIER).toBe(1.5);
+  });
+});
+
+describe("evaluateSentinel — board sentinel (Queue #258)", () => {
+  it("board: clean run reads GREEN", () => {
+    const payload = {
+      generated_at: iso(1 * HOUR),
+      verdict: "green",
+      real: [],
+      unknown: [],
+      counts: { open_alert_intake: 12 },
+    };
+    const v = evaluateSentinel(board, payload, false, NOW);
+    expect(v.status).toBe("green");
+    expect(v.headline).toBe("GREEN");
+    expect(v.detail).toContain("12 alert-intake scanned");
+  });
+
+  it("board: real defects read RED and name the check kinds", () => {
+    const payload = {
+      generated_at: iso(1 * HOUR),
+      verdict: "red",
+      real: [
+        { check: "duplicate_fingerprint", detail: "x" },
+        { check: "stale_inbox", detail: "y" },
+      ],
+      unknown: [],
+      counts: { open_alert_intake: 12 },
+    };
+    const v = evaluateSentinel(board, payload, false, NOW);
+    expect(v.status).toBe("red");
+    expect(v.headline).toBe("RED");
+    expect(v.detail).toContain("duplicate_fingerprint");
+    expect(v.detail).toContain("stale_inbox");
+  });
+
+  it("board: UNKNOWN verdict reads AMBER, never GREEN", () => {
+    const payload = {
+      generated_at: iso(1 * HOUR),
+      verdict: "unknown",
+      real: [],
+      unknown: [{ check: "inbox_column_checks", detail: "z" }],
+      counts: { open_alert_intake: 12 },
+    };
+    const v = evaluateSentinel(board, payload, false, NOW);
+    expect(v.status).toBe("amber");
+    expect(v.headline).toBe("UNKNOWN");
+    expect(v.detail).toContain("not asserting clean");
+  });
+
+  it("board: no_run_cached still reads SILENT-RED (guard-of-the-guards)", () => {
+    const v = evaluateSentinel(board, { status: "no_run_cached" }, false, NOW);
+    expect(v.status).toBe("red");
+    expect(v.headline).toBe("SILENT");
   });
 });
 

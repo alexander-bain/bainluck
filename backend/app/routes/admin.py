@@ -815,6 +815,55 @@ async def get_grid_sentinel_last(
     return json.loads(raw)
 
 
+@router.post("/board-sentinel/run")
+async def trigger_board_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File/close GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the verdict (default: enqueue on worker)"),
+):
+    """Queue #258: on-demand run of the Board Sentinel.
+
+    Enqueues the daily board-hygiene task, or (inline=True) runs it in-request and
+    returns the verdict scorecard — handy for verification
+    (?inline=true&file_issues=false). Classifies board-hygiene findings as REAL vs
+    UNKNOWN (API/auth inability is never GREEN); files ONE deduped board-cleanup
+    issue on RED and closes it on GREEN via the shared filing rail. Read-only
+    against GitHub — never bulk-mutates the board (Ops owns the one-time cleanup)."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.board_sentinel import _run_board_sentinel
+
+        return await _run_board_sentinel(file_issues=file_issues)
+
+    result = _safe_send_task(
+        "app.tasks.board_sentinel",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/board-sentinel/last")
+async def get_board_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue #258: read the last cached Board Sentinel run (verdict + counts +
+    offenders). Lets an enqueued worker run be inspected without re-running, and is
+    the persisted verdict the cockpit board tile consumes."""
+    _check_admin_secret(secret, request=request)
+
+    import json
+
+    from app.tasks.redis_state import get_redis_client
+
+    raw = get_redis_client().get("bainluck:board_sentinel:last")
+    if not raw:
+        return {"status": "no_run_cached", "key": "bainluck:board_sentinel:last"}
+    return json.loads(raw)
+
+
 @router.post("/horizon-sentinel/run")
 async def trigger_horizon_sentinel(
     request: Request,

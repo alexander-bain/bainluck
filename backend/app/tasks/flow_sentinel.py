@@ -1218,150 +1218,46 @@ def build_flow_issue_body(flow_result: dict) -> str:
 # Filing + dedup (reuses the bug_report_github httpx client, per calibration
 # sentinel — the GITHUB_TOKEN rail is live and proven)
 # ---------------------------------------------------------------------------
+_FLOW_MARKER = "flow-sentinel-fingerprint"
+
+
+def _flow_title_prefix(flow: str) -> str:
+    """The title-prefix fallback for this flow's dedup — 1:1 with the fingerprint
+    (flow name ↔ flow ↔ fingerprint), so it still de-dups an issue whose body
+    marker was edited away."""
+    return f"[Flow Sentinel] {_FLOW_TITLES.get(flow, flow)} ("
+
+
 def issue_matches_flow(issue: dict, flow: str, fingerprint: str) -> bool:
     """True when an OPEN issue is the sentinel's issue for this flow/fingerprint.
+    Thin wrapper over the shared rail (Queue #258) so all sentinels share one
+    matcher — body marker (primary) or ``[Flow Sentinel] {name} (`` title prefix
+    (fallback). Pure (unit-tested)."""
+    from app.tasks.sentinel_filing import issue_matches
 
-    Two match paths (pure, so both are unit-tested):
-      * **body marker** — the ``flow-sentinel-fingerprint:{fp}`` dedupe key is in
-        the body (the primary key; matched as a plain substring so backticks /
-        the colon can't break it, unlike a GitHub quoted-phrase search).
-      * **title** — ``[Flow Sentinel] {flow name} (`` prefix. This is the
-        fingerprint-equivalent fallback (title name ↔ flow ↔ fingerprint are 1:1)
-        that catches an issue whose body marker was edited away.
-    """
-    if not isinstance(issue, dict):
-        return False
-    body = issue.get("body") or ""
-    if f"flow-sentinel-fingerprint:{fingerprint}" in body:
-        return True
-    title = issue.get("title") or ""
-    name = _FLOW_TITLES.get(flow, flow)
-    return title.startswith(f"[Flow Sentinel] {name} (")
+    return issue_matches(issue, fingerprint, _FLOW_MARKER, title_prefix=_flow_title_prefix(flow))
 
 
 def find_matching_open_issue(
     open_issues: list[dict], flow: str, fingerprint: str
 ) -> int | None:
-    """Pure dedup lookup over a list of open issues → matching issue number.
+    """Pure dedup lookup over a list of open issues → the LOWEST matching issue
+    number (stable canonical wins). Thin wrapper over the shared rail."""
+    from app.tasks.sentinel_filing import find_matching_issue
 
-    Returns the LOWEST matching issue number so a stable canonical issue wins
-    when duplicates already exist (the r252 cleanup: comment the oldest, not a
-    later dupe)."""
-    matches = [
-        i["number"]
-        for i in (open_issues or [])
-        if isinstance(i, dict)
-        and i.get("number") is not None
-        and issue_matches_flow(i, flow, fingerprint)
-    ]
-    return min(matches) if matches else None
-
-
-def _list_open_sentinel_issues() -> list[dict]:
-    """Fetch OPEN alert-intake issues via the REST list API (strongly consistent,
-    unlike the eventually-consistent /search index that let 5 dupes through —
-    r252). Returns [] on any error so filing degrades safely."""
-    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
-
-    if not GITHUB_TOKEN:
-        return []
-    issues: list[dict] = []
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    try:
-        for page in range(1, 4):  # up to 300 open alert-intake issues — ample
-            resp = httpx.get(
-                f"https://api.github.com/repos/{REPO}/issues",
-                headers=headers,
-                params={
-                    "state": "open",
-                    "labels": "alert-intake",
-                    "per_page": 100,
-                    "page": page,
-                },
-                timeout=30,
-            )
-            resp.raise_for_status()
-            batch = resp.json()
-            if not isinstance(batch, list) or not batch:
-                break
-            # Drop PRs (the issues endpoint includes them).
-            issues.extend(i for i in batch if "pull_request" not in i)
-            if len(batch) < 100:
-                break
-    except Exception as exc:
-        logger.warning("Flow sentinel open-issue list failed: %s", exc)
-        return []
-    return issues
-
-
-def _find_open_issue_by_fingerprint(fingerprint: str, flow: str) -> int | None:
-    """Reliable dedup: match the fingerprint against the REST-listed OPEN
-    alert-intake issues (body marker or title). Falls back to the /search index
-    only if the REST list came back empty (e.g. transient error)."""
-    open_issues = _list_open_sentinel_issues()
-    match = find_matching_open_issue(open_issues, flow, fingerprint)
-    if match is not None:
-        return match
-    if open_issues:
-        # REST list succeeded and genuinely has no match → do not file a phantom
-        # dupe via the flaky search index; there is no open issue for this flow.
-        return None
-
-    # REST list failed (empty) — last-resort search index (kept for safety).
-    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
-
-    if not GITHUB_TOKEN:
-        return None
-    q = f'repo:{REPO} in:body "flow-sentinel-fingerprint:{fingerprint}" state:open'
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params={"q": q},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return items[0]["number"] if items else None
-    except Exception as exc:
-        logger.warning("Flow sentinel dedup search failed for %s: %s", fingerprint, exc)
-        return None
-
-
-def file_flow_issue(flow_result: dict) -> dict:
-    """File OR update one issue for a failing flow's fingerprint."""
-    from app.tasks.bug_report_github import (
-        GITHUB_TOKEN,
-        add_to_project_board,
-        comment_on_issue,
-        create_github_issue,
+    return find_matching_issue(
+        open_issues, fingerprint, _FLOW_MARKER, title_prefix=_flow_title_prefix(flow)
     )
+
+
+def file_flow_issue(flow_result: dict, open_issues: list[dict] | None = None) -> dict:
+    """File OR comment ONE issue for a failing flow's fingerprint, via the shared
+    rail (Queue #258). ``open_issues`` may be injected so a whole run reuses one
+    strongly-consistent REST-list snapshot."""
+    from app.tasks.sentinel_filing import reconcile_issue
 
     flow = flow_result["flow"]
     fp = flow_fingerprint(flow)
-    if not GITHUB_TOKEN:
-        return {"flow": flow, "fingerprint": fp, "action": "skipped_no_token"}
-
-    existing = _find_open_issue_by_fingerprint(fp, flow)
-    if existing:
-        try:
-            comment_on_issue(
-                existing,
-                f"Flow Sentinel re-observed this failure: {len(flow_result['failures'])} "
-                f"failing of {flow_result['checked']} checked (fingerprint `{fp}`). Still open.",
-            )
-        except Exception as exc:
-            logger.warning("Flow sentinel comment failed on #%d: %s", existing, exc)
-        return {"flow": flow, "fingerprint": fp, "action": "commented", "issue": existing}
-
     severity = severity_for_flow(flow, len(flow_result["failures"]), flow_result["checked"])
     labels = [
         "alert-intake",
@@ -1369,18 +1265,48 @@ def file_flow_issue(flow_result: dict) -> dict:
         _FLOW_AREA_LABELS.get(flow, "area:infra"),
         f"priority:{severity.lower()}",
     ]
-    title = build_flow_issue_title(flow_result)
-    body = build_flow_issue_body(flow_result)
-    try:
-        number, node_id = create_github_issue(title, body, labels)
-    except Exception as exc:
-        logger.error("Flow sentinel issue creation failed (%s): %s", fp, exc)
-        return {"flow": flow, "fingerprint": fp, "action": "error", "error": str(exc)[:200]}
-    try:
-        add_to_project_board(node_id)
-    except Exception:
-        logger.warning("Flow sentinel: add issue #%d to board failed (non-fatal)", number, exc_info=True)
-    return {"flow": flow, "fingerprint": fp, "action": "filed", "issue": number, "severity": severity}
+    res = reconcile_issue(
+        red=True,
+        fingerprint=fp,
+        marker_key=_FLOW_MARKER,
+        labels=labels,
+        title=build_flow_issue_title(flow_result),
+        body=build_flow_issue_body(flow_result),
+        title_prefix=_flow_title_prefix(flow),
+        red_comment=(
+            f"Flow Sentinel re-observed this failure: {len(flow_result['failures'])} "
+            f"failing of {flow_result['checked']} checked (fingerprint `{fp}`). Still open."
+        ),
+        open_issues=open_issues,
+    )
+    res["flow"] = flow
+    if res.get("action") == "filed":
+        res["severity"] = severity
+    return res
+
+
+def resolve_flow_issue(flow_result: dict, open_issues: list[dict] | None = None) -> dict:
+    """RED→GREEN: when a flow re-checks GREEN, close its canonical open issue with
+    a recovery comment (Queue #258). A GREEN flow with no open issue is a no-op.
+    SKIPPED flows must never resolve (a skip means we couldn't measure, not that
+    the failure is fixed) — the caller filters those out before calling here."""
+    from app.tasks.sentinel_filing import reconcile_issue
+
+    flow = flow_result["flow"]
+    fp = flow_fingerprint(flow)
+    res = reconcile_issue(
+        red=False,
+        fingerprint=fp,
+        marker_key=_FLOW_MARKER,
+        green_comment=(
+            f"Flow Sentinel re-checked GREEN — `{flow}` now passes "
+            f"({flow_result['checked']} checked, 0 failing; fingerprint `{fp}`). "
+            f"Auto-closing; a future recurrence opens a fresh episode."
+        ),
+        open_issues=open_issues,
+    )
+    res["flow"] = flow
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -1457,10 +1383,25 @@ async def _run_flow_sentinel(
         ],
     }
 
-    # --- Filing (one deduped issue per failing flow) ---
+    # --- Filing + recovery (one deduped issue per failing flow; close-on-green
+    # for a flow that now passes). One strongly-consistent REST-list snapshot is
+    # reused for the whole run so dedup/close never race the flaky search index
+    # (Queue #258). A SKIPPED flow is neither filed nor resolved — a skip means we
+    # could not measure, not that the failure is fixed. ---
     if file_issues:
+        from app.tasks.sentinel_filing import list_open_alert_issues
+
+        open_issues = list_open_alert_issues()
         for f in failing:
-            stats["filed"].append(file_flow_issue(f))
+            stats["filed"].append(file_flow_issue(f, open_issues=open_issues))
+        recovered = [
+            f for f in stats["flows"] if f["passed"] and not f.get("skipped")
+        ]
+        stats["resolved"] = [
+            r
+            for r in (resolve_flow_issue(f, open_issues=open_issues) for f in recovered)
+            if r.get("action") in ("resolved", "close_failed")
+        ]
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     # #232: L2-153's cockpit card needs a wall-clock stamp to render precise

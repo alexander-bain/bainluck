@@ -109,14 +109,16 @@ Related admin surfaces:
 
 ## Automated Sentinels (the always-on arm of the ratchet)
 
-The scripts above are run-on-demand. Two Celery **sentinels** now run the same "define a problem once, catch it forever" loop automatically and **auto-file evidence-packed GitHub issues** when they regress. Full architecture (files, beats, endpoints, thresholds) is in `docs/architecture-reference.md` → "Reliability Machinery"; the operating contract for the issues they file is in `docs/github-workflow.md` → "Automated issue intake". Summary:
+The scripts above are run-on-demand. Several Celery **sentinels** now run the same "define a problem once, catch it forever" loop automatically and **auto-file evidence-packed GitHub issues** when they regress — and, since Queue #258, **auto-close their own issue on recovery** through the shared filing rail (`tasks/sentinel_filing.py`: fingerprint dedup on RED via the strongly-consistent REST list, close-on-GREEN, P2 default). Full architecture (files, beats, endpoints, thresholds) is in `docs/architecture-reference.md` → "Reliability Machinery"; the operating contract for the issues they file (fingerprint lifecycle, 48h triage bar, thresholds) is in `docs/github-workflow.md` → "Automated Issue Intake". Summary:
 
 | Sentinel | Cadence | Guards | Files issues as |
 |----------|---------|--------|-----------------|
 | **Flow Sentinel** (`tasks/flow_sentinel.py`) | daily 07:10 UTC | the user-facing half of the matching table + Alex's six failure classes (search gold set, duplicate events, event completeness, resolved-state, chart density, category/Discover) | one deduped, fingerprinted issue per failing flow, `alert-intake` + `needs-agent`, P1/P2 |
+| **Grid Sentinel** (`tasks/grid_sentinel.py`) | daily 07:25 UTC | championship grid reliability (MLB/NBA/NHL) — REAL vs EXPLAINED/WATCH verdict | one deduped issue per league with REAL defects |
 | **Calibration Sentinel** (`tasks/calibration_sentinel.py`) | weekly Mon 06:20 UTC | calibration accuracy — MCE across `category × source × series-family × structure × provenance` cohorts on the RAW population | one issue per broken cohort (never writes market data, gotcha #21) |
+| **Board Sentinel** (`tasks/board_sentinel.py`) | daily 07:50 UTC | the BOARD itself (Queue #258) — duplicate fingerprints, stale Inbox >48h, template-P1 share, blocked-in-Inbox, missing `area:*` labels; REAL vs UNKNOWN | one deduped board-cleanup issue on RED, auto-closed on GREEN |
 
-Run them on demand: `POST /api/admin/flow-sentinel/run` (params `file_issues`, `canary`, `inline`) and `POST /api/admin/calibration-sentinel/run`; last-run results at `GET /api/admin/{flow-sentinel,calibration-sentinel}/last`. The **admin cockpit** (`GET /api/cockpit`, rendered in `/admin`) surfaces the Flow Sentinel scorecard plus green/amber/red autopilot tiles.
+Run them on demand: `POST /api/admin/{flow,grid,board}-sentinel/run` (params `file_issues`, `inline`; flow also `canary`) and `POST /api/admin/calibration-sentinel/run`; last-run results at `GET /api/admin/{flow,grid,board,calibration}-sentinel/last`. The **admin cockpit** (`GET /api/cockpit`, rendered in `/admin`) surfaces the Flow Sentinel scorecard plus the Sentinels card (a row per sentinel — silent/red/amber/green), plus green/amber/red autopilot tiles.
 
 Two operating notes that gate trust in the sentinels:
 - **`GITHUB_TOKEN` must be set on Heroku** or backend issue-filing silently no-ops — check this FIRST before debugging filing logic (memory `project_github_token_unset`).
