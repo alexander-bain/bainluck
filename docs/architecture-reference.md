@@ -63,6 +63,48 @@ The system MUST work when any single source goes dark. This was validated during
 
 ---
 
+## HTTP Cache Isolation Policy (`utils/http_cache_policy.py`)
+
+**One rule: authentication and identity ALWAYS win over latency caching.** The
+`request_timing` middleware (`main.py`) delegates every successful-GET
+`Cache-Control` decision to `apply_cache_policy()` so the middleware and the
+two-principal contract tests (`tests/test_http_cache_isolation.py`) share one
+decision function.
+
+Endpoint cache classes:
+
+| Class | Trigger | Directive |
+|-------|---------|-----------|
+| **route-owned** | Route already set `Cache-Control` (e.g. completed event-history's `public, max-age=3600`, `events.py:6321`) | left untouched — ownership is singular; middleware never overwrites it |
+| **protected / personalized / identity-bearing** | `/admin` path, any `/api/feed` response, or a request carrying `Authorization`, `x-session-id`, or a `session_id` cookie | `private, no-store` — never storable, never shared |
+| **public anonymous** | A `CACHE_RULES` prefix with no identity signal | its existing short TTL (`public, max-age=N, stale-while-revalidate=60`) so anonymous read latency is preserved |
+
+Why this shape (C30 / Queue #264, issue #1457): the old middleware
+unconditionally rewrote any `CACHE_RULES`-prefix GET to `public`, without
+inspecting the caller or the route. That marked two Bearer-protected surfaces —
+`GET /api/feed?debug=true` (admin feed diagnostics) and `GET /api/sports/available`
+(quota-burning Odds-API discovery) — and every personalized `/api/feed` response
+as publicly reusable, so a standards-compliant shared cache could replay one
+principal's authorized body to a different, unauthenticated principal (the C25
+cross-user feed leak is the same policy class).
+
+Design notes:
+- Protection is **not** `Vary`-based. A `no-store` response is never stored, so
+  it can never be replayed regardless of how a shared cache keys entries — this
+  is why `Vary: Authorization, Cookie, x-session-id` alone was rejected as the
+  fix. The middleware leaves `Vary` alone, so CORS's `Vary: Origin` stays intact.
+- No CDN/edge rewrite or `s-maxage` is enabled. That work is unblocked only now
+  that origin directives are identity-safe.
+- Admin auth is Bearer-header-only (Queue #252), so the Authorization check
+  covers every protected endpoint; there is no `?secret=` query path to miss.
+- **Deployment-layer uncertainty:** no active shared/CDN cache for these API
+  responses was *observed* in the repo (frontend calls `api.bainluck.com`
+  directly; the only Next proxy already uses `no-store`). This fix closes the
+  origin-directive hole so the boundary holds if such an intermediary is ever
+  introduced — a confirmed production exploit was not demonstrated.
+
+---
+
 ## Chart Architecture (Event Detail Page)
 
 ### OddsChart (`components/OddsChart.tsx`)

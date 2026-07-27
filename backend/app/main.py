@@ -126,18 +126,11 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LatencyMiddleware)
 
 
-CACHE_RULES: list[tuple[str, int]] = [
-    ("/api/events", 10),
-    ("/api/feed", 10),
-    ("/api/playoffs/", 300),
-    ("/api/sports", 120),
-    ("/api/golf", 300),
-    ("/api/weather", 300),
-    ("/api/economics", 120),
-    ("/api/politics", 120),
-    ("/api/entertainment", 120),
-    ("/api/categories", 120),
-]
+# C30 / Queue #264: cache-isolation policy (CACHE_RULES + the identity-aware
+# rewrite) lives in app.utils.http_cache_policy so the middleware and the
+# two-principal contract tests share one decision. Re-exported here for any
+# caller/test that imports it from app.main.
+from app.utils.http_cache_policy import CACHE_RULES, apply_cache_policy  # noqa: E402,F401
 
 
 @app.middleware("http")
@@ -154,16 +147,10 @@ async def request_timing(request: Request, call_next):
     elif duration_ms > 500 and "/admin" not in request.url.path:
         logger.info("MODERATE %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
 
-    if request.method == "GET" and response.status_code == 200:
-        path = request.url.path
-        if "/admin" not in path:
-            for prefix, max_age in CACHE_RULES:
-                if path.startswith(prefix):
-                    response.headers["Cache-Control"] = f"public, max-age={max_age}, stale-while-revalidate=60"
-                    break
-            # Event detail: longer cache for completed events
-            if path.startswith("/api/events/") and "/history" in path:
-                response.headers["Cache-Control"] = "public, max-age=30"
+    # Authentication and identity ALWAYS win over latency caching. Protected /
+    # personalized / identity-bearing responses become private+no-store; route
+    # directives are preserved; anonymous public routes keep their TTLs.
+    apply_cache_policy(request, response)
     return response
 
 
