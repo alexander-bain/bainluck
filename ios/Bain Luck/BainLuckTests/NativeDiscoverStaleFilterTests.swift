@@ -192,7 +192,8 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
         status: String = "open",
         probability: Double? = 0.55,
         movement: String = "0.02",
-        resolutionDate: String = "null"
+        resolutionDate: String = "null",
+        category: String = "economics"
     ) -> String {
         let outcomes: String
         if let probability {
@@ -209,7 +210,7 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
           "data": {
             "id": \(id),
             "name": "Who wins market \(id)?",
-            "llm_sport_category": "economics",
+            "llm_sport_category": "\(category)",
             "source": "kalshi",
             "status": "\(status)",
             "resolution_date": \(resolutionDate),
@@ -218,6 +219,53 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
           }
         }
         """
+    }
+
+    /// Raw JSON for a single event child (used to embed a stale sports game
+    /// inside a mixed bundle for the C29 composition tests).
+    private func eventChildJSON(
+        id: Int,
+        sport: String,
+        status: String,
+        commenceTime: String
+    ) -> String {
+        """
+        {
+          "type": "event",
+          "score": 90,
+          "data": {
+            "id": \(id),
+            "sport": "\(sport)",
+            "home_team": "Home",
+            "away_team": "Away",
+            "status": "\(status)",
+            "commence_time": \(commenceTime)
+          }
+        }
+        """
+    }
+
+    /// A full bundle FeedItem wrapping the given raw child JSON strings.
+    private func bundleItem(
+        id: String = "b1",
+        title: String = "Compare IPOs",
+        kind: String = "comparison",
+        theme: String = "ipo_valuation",
+        children: [String]
+    ) throws -> FeedItem {
+        try item("""
+        {
+          "type": "bundle",
+          "score": 95,
+          "bundle": {
+            "id": "\(id)",
+            "title": "\(title)",
+            "kind": "\(kind)",
+            "comparison_theme": "\(theme)",
+            "items": [\(children.joined(separator: ","))]
+          }
+        }
+        """)
     }
 
     private func bundle(
@@ -279,5 +327,71 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
     func testEmptyBundleStaysEmpty() throws {
         let b = try bundle(children: [])
         XCTAssertTrue(DiscoverView.eligibleBundleItems(b, now: now).isEmpty)
+    }
+
+    // MARK: - Bundle sanitization BEFORE composition (C29 P2)
+
+    /// `sanitizedFeedItems` is the carry-through representation `filteredItems`
+    /// consumes BEFORE category derivation, cooldown, dismiss, interleave, and
+    /// grouping — so these are composition-boundary assertions, not just
+    /// helper-output ones: whatever the bundle looks like here is exactly what
+    /// every downstream consumer sees.
+    func testSanitizedBundleLeadsWithFirstEligibleChildCategory() throws {
+        // Stale sports FIRST, eligible politics SECOND. Before C29, category /
+        // cooldown / interleave read the raw first child (basketball) and could
+        // suppress or mis-slot the card. After sanitization the bundle's first
+        // child is the eligible politics market, so its derived category is
+        // "politics".
+        let b = try bundleItem(children: [
+            // completed game commenced >8h ago → stale
+            eventChildJSON(id: 100, sport: "basketball", status: "completed", commenceTime: "\"2026-07-27T00:00:00Z\""),
+            futuresChildJSON(id: 5, category: "politics"),
+        ])
+        let sanitized = DiscoverView.sanitizedFeedItems([b], now: now)
+        XCTAssertEqual(sanitized.count, 1, "bundle survives — it has an eligible child")
+        let bundle = try XCTUnwrap(sanitized.first?.bundle)
+        XCTAssertEqual(bundle.items.map(\.id), ["futures-5"], "stale sports dropped; eligible politics leads")
+        XCTAssertEqual(bundle.items.first?.futures?.llmSportCategory, "politics",
+                       "category derives from the first ELIGIBLE child, not stale basketball")
+    }
+
+    func testAllIneligibleBundleDroppedBeforeComposition() throws {
+        // An all-stale bundle disappears in sanitization, before any category /
+        // cooldown step — so it can never suppress or displace a neighbor card.
+        let deadBundle = try bundleItem(id: "dead", children: [
+            futuresChildJSON(id: 1, status: "resolved"),
+            futuresChildJSON(id: 2, status: "closed"),
+        ])
+        let liveNeighbor = try futures(id: 9)  // ordinary fresh futures
+        let sanitized = DiscoverView.sanitizedFeedItems([deadBundle, liveNeighbor], now: now)
+        XCTAssertEqual(sanitized.count, 1, "dead bundle removed")
+        XCTAssertEqual(sanitized.first?.futures?.id, 9, "neighbor survives untouched")
+    }
+
+    func testSanitizedBundlePreservesMetadataAndChildOrder() throws {
+        let b = try bundleItem(id: "b1", title: "Compare IPOs", kind: "comparison", theme: "ipo_valuation", children: [
+            futuresChildJSON(id: 1),
+            futuresChildJSON(id: 2, status: "resolved"),   // drop
+            futuresChildJSON(id: 3),
+        ])
+        let sanitized = DiscoverView.sanitizedFeedItems([b], now: now)
+        let bundle = try XCTUnwrap(sanitized.first?.bundle)
+        XCTAssertEqual(bundle.id, "b1")
+        XCTAssertEqual(bundle.title, "Compare IPOs")
+        XCTAssertEqual(bundle.kind, "comparison")
+        XCTAssertEqual(bundle.comparisonTheme, "ipo_valuation")
+        XCTAssertEqual(bundle.items.map(\.id), ["futures-1", "futures-3"],
+                       "eligible child order preserved, stale removed")
+    }
+
+    func testSanitizationLeavesOrdinaryItemsToTheLaterStaleGate() throws {
+        // sanitizedFeedItems admits only BUNDLE children; ordinary items (even
+        // stale) pass through untouched and are gated later by eligibleItems in
+        // filteredItems. This keeps bundle admission a pure, orthogonal step.
+        let staleOrdinary = try futures(id: 7, status: "resolved")
+        let sanitized = DiscoverView.sanitizedFeedItems([staleOrdinary], now: now)
+        XCTAssertEqual(sanitized.map(\.id), ["futures-7"], "ordinary items pass through this step")
+        XCTAssertTrue(DiscoverView.eligibleItems(sanitized, now: now).isEmpty,
+                      "the later gate still removes the stale ordinary item")
     }
 }

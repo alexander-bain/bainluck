@@ -198,8 +198,14 @@ struct DiscoverView: View {
         if item.type == "futures", let f = item.futures {
             return f.llmSportCategory ?? "other"
         }
-        if item.type == "bundle", let bundle = item.bundle, let first = bundle.items.first {
-            return itemCategory(first)
+        if item.type == "bundle", let bundle = item.bundle {
+            // Derive category from the first ELIGIBLE child, never a stale raw
+            // first child (C29 P2). `filteredItems` sanitizes bundles up front, so
+            // this is normally already the first child; the explicit admit keeps
+            // the derivation correct for any caller that passes a raw bundle.
+            if let first = Self.eligibleBundleItems(bundle).first ?? bundle.items.first {
+                return itemCategory(first)
+            }
         }
         if item.type == "concept", let c = item.concept {
             return c.domain?.lowercased() ?? "other"
@@ -252,6 +258,25 @@ struct DiscoverView: View {
     /// drops it entirely ("settled means settled", no restoration path).
     static func eligibleBundleItems(_ bundle: FeedBundle, now: Date = Date()) -> [FeedItem] {
         eligibleItems(bundle.items, now: now)
+    }
+
+    /// Recursively admit bundle children through the lifecycle stale gate BEFORE
+    /// any category derivation, cooldown, dismissal, personalization, interleave,
+    /// or grouping step (C29 P2). Each bundle FeedItem is rebuilt to carry ONLY
+    /// its eligible children — so every downstream consumer (category/cooldown/
+    /// interleave/grouping/rendering/analytics) reads the first ELIGIBLE child,
+    /// never a stale raw first child that could mis-categorize the bundle or steer
+    /// a neighbor's cooldown/interleave slot. An all-ineligible bundle is dropped
+    /// entirely here ("settled means settled" — no restoration path), so it can
+    /// never suppress an adjacent card. Ordinary (non-bundle) items pass through
+    /// untouched; their own stale gate runs later in `filteredItems`.
+    static func sanitizedFeedItems(_ items: [FeedItem], now: Date = Date()) -> [FeedItem] {
+        items.compactMap { item in
+            guard item.type == "bundle", let bundle = item.bundle else { return item }
+            let eligibleChildren = eligibleItems(bundle.items, now: now)
+            if eligibleChildren.isEmpty { return nil }
+            return item.withBundle(bundle.withItems(eligibleChildren))
+        }
     }
 
     private func itemId(_ item: FeedItem) -> String {
@@ -434,13 +459,21 @@ struct DiscoverView: View {
         // does NOT — "settled means settled" (L2-191): an all-stale payload must
         // collapse to an honest end state, never restore resolved markets.
 
+        // 0. Sanitize bundles FIRST (C29 P2): recursively admit each bundle's
+        // children through the stale gate and rebuild the bundle so every step
+        // below — category derivation, dismiss, cooldown, interleave — sees only
+        // eligible children and derives category from the first ELIGIBLE child.
+        // All-ineligible bundles disappear here, before they can steer a
+        // neighbor's cooldown/interleave slot.
+        let sanitized = Self.sanitizedFeedItems(vm.items)
+
         // 1. Drop settled/FINAL rot (resolved futures, completed games, past
         // resolution dates) so a near-coin-flip season-series or a finished game
         // never leads the feed (Queue #238). No all-stale restoration path: if
         // every card is stale, filteredItems empties and the view renders the
         // graceful end state (L2-191 Item 2) instead of resurrecting settled
         // cards or minting a guess slot from them.
-        let staleBase = Self.eligibleItems(vm.items)
+        let staleBase = Self.eligibleItems(sanitized)
 
         // 2. Soft, decaying dismiss (#1221): filter dismissed ids, but if that
         // would shrink the feed below `feedFloor` while more cards exist,

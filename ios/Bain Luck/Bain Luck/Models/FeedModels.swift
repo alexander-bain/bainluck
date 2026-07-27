@@ -79,6 +79,26 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
         comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
     }
+
+    /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
+    /// admitted child list while preserving identity, title, kind, and comparison
+    /// theme (C29 P2 — see `withItems`).
+    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?) {
+        self.id = id
+        self.title = title
+        self.items = items
+        self.kind = kind
+        self.comparisonTheme = comparisonTheme
+    }
+
+    /// Rebuild the bundle with a new child list, preserving all other metadata
+    /// (C29 P2). Used to carry ONLY lifecycle-eligible children through category
+    /// derivation, cooldown, interleaving, grouping, rendering, and analytics so
+    /// every consumer derives its primary/category from the first ELIGIBLE child,
+    /// never a stale raw first child.
+    func withItems(_ newItems: [FeedItem]) -> FeedBundle {
+        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme)
+    }
 }
 
 nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
@@ -171,6 +191,63 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             tournament = nil
             concept = nil
         }
+    }
+
+    /// Memberwise init supporting `withBundle` (C29 P2). All fields are copied
+    /// verbatim; only bundle sanitization uses it today.
+    init(
+        type: String,
+        score: Int,
+        reason: String?,
+        headline: String?,
+        contextSummary: String?,
+        event: FeedEventData?,
+        futures: FeedFuturesData?,
+        tournament: FeedTournamentData?,
+        concept: FeedConceptData?,
+        bundle: FeedBundle?,
+        personalized: Bool?,
+        baseScore: Int?,
+        multiplier: Double?,
+        personalizationReasons: [String]?
+    ) {
+        self.type = type
+        self.score = score
+        self.reason = reason
+        self.headline = headline
+        self.contextSummary = contextSummary
+        self.event = event
+        self.futures = futures
+        self.tournament = tournament
+        self.concept = concept
+        self.bundle = bundle
+        self.personalized = personalized
+        self.baseScore = baseScore
+        self.multiplier = multiplier
+        self.personalizationReasons = personalizationReasons
+    }
+
+    /// Return a copy of this feed item carrying a sanitized bundle (C29 P2). Only
+    /// the bundle child list changes; type/score/headline/personalization and the
+    /// bundle's own identity/title/kind/theme are preserved so grouping, rendering,
+    /// and analytics stay stable.
+    func withBundle(_ newBundle: FeedBundle) -> FeedItem {
+        FeedItem(
+            type: type,
+            score: score,
+            reason: reason,
+            headline: headline,
+            contextSummary: contextSummary,
+            event: event,
+            futures: futures,
+            tournament: tournament,
+            concept: concept,
+            bundle: newBundle,
+            personalized: personalized,
+            baseScore: baseScore,
+            multiplier: multiplier,
+            personalizationReasons: personalizationReasons
+        )
     }
 }
 

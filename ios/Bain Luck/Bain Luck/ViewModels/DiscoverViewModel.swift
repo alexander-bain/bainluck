@@ -59,11 +59,14 @@ final class DiscoverViewModel: ObservableObject {
                     let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
                     items = Self.interleave(fallbackRenderable)
                     hasMore = fallback.hasMore
-                    nextOffset = fallback.offset + fallback.items.count
+                    // Advance by the SERVER page boundary (offset + limit), not the
+                    // decoded item count — the tolerant decoder drops malformed rows,
+                    // so initial and incremental loads must share one contract (C29).
+                    nextOffset = Self.pageBoundary(fallback, from: 0)
                 } else {
                     items = Self.interleave(renderable)
                     hasMore = response.hasMore
-                    nextOffset = response.offset + response.items.count
+                    nextOffset = Self.pageBoundary(response, from: 0)
                 }
 
                 error = nil
@@ -126,11 +129,20 @@ final class DiscoverViewModel: ObservableObject {
                 return
             }
 
-            // Advance by the server page boundary FIRST so a page that adds no
-            // new renderable IDs can never be refetched at the same offset.
-            let pageEnd = response.offset + response.items.count
+            // Advance by the SERVER page boundary FIRST, not the decoded item
+            // count. The tolerant FeedResponse decoder silently drops malformed
+            // rows (FeedModels), so `items.count` is NOT the number of server
+            // slots consumed (C29 P1) — the backend paginates
+            // `feed_items[offset : offset + limit]` with
+            // `has_more = (offset + limit) < total`, so the next page always
+            // begins at `offset + limit`. Advancing by decoded count would
+            // overlap the prior server page on a partially-malformed page
+            // (burning the scan budget on duplicates) or, on a
+            // fully-malformed/decoded-empty page, fail to advance and falsely
+            // declare exhaustion while later pages still exist.
+            let pageEnd = Self.pageBoundary(response, from: nextOffset)
             let advanced = pageEnd > nextOffset
-            nextOffset = max(nextOffset, pageEnd)
+            nextOffset = pageEnd
 
             let loadedIds = Set(items.map(Self.itemKey))
             let fresh = response.items.filter { !loadedIds.contains(Self.itemKey($0)) }
@@ -146,16 +158,27 @@ final class DiscoverViewModel: ObservableObject {
                 return
             }
 
-            // No new IDs this page. If the server has nothing more, or the page
-            // was decoded-empty (offset couldn't advance), stop honestly.
-            if !response.hasMore || !advanced {
+            // No new IDs this page (duplicate-only, decoded-empty, or fully
+            // malformed). Only the SERVER's own signal ends the feed.
+            if !response.hasMore {
                 hasMore = false
                 error = nil
                 return
             }
 
-            // Duplicate-only page but the offset advanced and the server claims
-            // more — keep scanning forward, bounded by maxPageScans.
+            // Defensive: the server claims more but the offset could not advance
+            // (a misbehaving `limit <= 0` AND a decoded-empty page). Stop rather
+            // than refetch the same page forever; treat as caught-up.
+            if !advanced {
+                hasMore = false
+                error = nil
+                return
+            }
+
+            // The server claims more and the offset advanced past this page —
+            // even a fully-malformed/decoded-empty page. Keep scanning FORWARD
+            // (bounded by maxPageScans) toward the next server page instead of
+            // falsely ending the feed on decode loss (C29 P1).
             hasMore = response.hasMore
         }
 
@@ -164,6 +187,19 @@ final class DiscoverViewModel: ObservableObject {
         if hasMore {
             self.error = "Couldn't find fresh markets"
         }
+    }
+
+    /// The offset the NEXT server page begins at, given a decoded response and
+    /// the current monotonic offset floor (C29 P1). The server page boundary is
+    /// `response.offset + response.limit` — the contract the backend paginates on
+    /// (`feed_items[offset : offset + limit]`). Decoded item count is used only
+    /// as a floor so a misbehaving server that under-reports `limit` still can't
+    /// stall behind a nonempty decoded page, and the result never regresses below
+    /// the current offset (monotonic guarantee).
+    private static func pageBoundary(_ response: FeedResponse, from currentOffset: Int) -> Int {
+        let serverPageEnd = response.offset + response.limit
+        let decodedPageEnd = response.offset + response.items.count
+        return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
