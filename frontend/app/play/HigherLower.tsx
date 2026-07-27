@@ -5,12 +5,14 @@
 // (user_predictions keys on session_id) — under the kid session id. Score / streak
 // / best-streak are the reward; nothing here is "wrong-answer" punishing.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { generateThreshold } from "@/components/discover/utils";
 import { getCat } from "@/components/discover/constants";
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { recordBestStreak, sendKidPrediction } from "@/lib/play/session";
+import { decidePlayView, type PlayPoolStatus } from "@/lib/play/poolState";
+import PlayStateScreen from "./PlayStateScreen";
 import s from "./play.module.css";
 
 // A best-streak celebration only fires for a genuine run (not the first correct
@@ -18,13 +20,21 @@ import s from "./play.module.css";
 const RECORD_CELEBRATION_MIN = 3;
 const RECORD_CELEBRATION_MS = 2600;
 
+// How many events-only server pages we will scan looking for a page that carries
+// a usable Higher/Lower question before showing an honest caught-up state. This
+// is the usable-question bound; it's separate from the pool's page-boundary scan.
+const MAX_QUESTION_SCAN = 6;
+
 interface HigherLowerProps {
   deck: FeedItem[];
   playerName: string;
   playerEmoji: string;
   initialBestStreak: number;
+  poolStatus: PlayPoolStatus;
+  hasMore: boolean;
   onExit: () => void;
   onNeedMore: () => void;
+  onRetry: () => void;
 }
 
 interface Question {
@@ -63,8 +73,11 @@ export default function HigherLower({
   playerName,
   playerEmoji,
   initialBestStreak,
+  poolStatus,
+  hasMore,
   onExit,
   onNeedMore,
+  onRetry,
 }: HigherLowerProps) {
   const [pos, setPos] = useState(0);
   const [guess, setGuess] = useState<"higher" | "lower" | null>(null);
@@ -97,6 +110,37 @@ export default function HigherLower({
   }, [deck]);
 
   const q = questions[pos];
+  const remaining = questions.length - pos;
+
+  // Bounded scan for a page that actually carries a usable question. A safe
+  // page can be events-only (no futures with a positive leader); rather than
+  // showing "Loading questions..." forever, resolve to a real view and, while
+  // work remains, request the next server page — capped by MAX_QUESTION_SCAN.
+  const scanRef = useRef(0);
+  const view = decidePlayView({
+    usableCount: Math.max(0, remaining),
+    status: poolStatus,
+    hasMore,
+    scanAttempts: scanRef.current,
+    maxScan: MAX_QUESTION_SCAN,
+  });
+
+  useEffect(() => {
+    if (remaining > 0) scanRef.current = 0;
+  }, [remaining]);
+
+  useEffect(() => {
+    if (view === "scan") {
+      scanRef.current += 1;
+      onNeedMore();
+    }
+  }, [view, onNeedMore]);
+
+  const handleRetry = useCallback(() => {
+    scanRef.current = 0;
+    onRetry();
+  }, [onRetry]);
+
   const actualPct = q ? Math.round(q.prob * 100) : 0;
   const correct = q && guess ? (guess === "higher" ? actualPct > q.threshold : actualPct < q.threshold) : false;
 
@@ -146,16 +190,17 @@ export default function HigherLower({
     if (questions.length - pos <= 3) onNeedMore();
   }, [questions.length, pos, onNeedMore]);
 
-  if (!q) {
+  // No current question: render the honest terminal — loading only while a
+  // request is actually in flight, otherwise a retryable error or caught-up.
+  // ("scan" briefly shows loading while the effect above requests the next page.)
+  if (view !== "play") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-6 gap-4">
-        <div className="text-6xl">🎯</div>
-        <h2 className="text-2xl font-black text-text-primary">Loading questions…</h2>
-        <p className="text-text-secondary">Best streak: {best} 🔥</p>
-        <button onClick={onExit} className="mt-2 rounded-2xl bg-accent-brand px-6 py-3 text-white font-bold text-lg">
-          Back to menu
-        </button>
-      </div>
+      <PlayStateScreen
+        variant={view === "error" ? "error" : view === "caught_up" ? "caught_up" : "loading"}
+        bestStreakLabel={`Best streak: ${best} 🔥`}
+        onRetry={handleRetry}
+        onExit={onExit}
+      />
     );
   }
 

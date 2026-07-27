@@ -14,15 +14,24 @@ import type {
   FeedEventData,
 } from "@/lib/types";
 import { bumpRated, sendKidInteraction } from "@/lib/play/session";
+import { decidePlayView, type PlayPoolStatus } from "@/lib/play/poolState";
+import PlayStateScreen from "./PlayStateScreen";
 import s from "./play.module.css";
+
+// Bound on scanning subsequent pages when the current deck is drained but the
+// server may still have more — mirrors Higher/Lower's usable-card scan bound.
+const MAX_CARD_SCAN = 6;
 
 interface CoolOrBoringProps {
   deck: FeedItem[];
   playerName: string;
   playerEmoji: string;
   initialRated: number;
+  poolStatus: PlayPoolStatus;
+  hasMore: boolean;
   onRatedChange: (total: number) => void;
   onNeedMore: () => void;
+  onRetry: () => void;
   onExit: () => void;
 }
 
@@ -58,8 +67,11 @@ export default function CoolOrBoring({
   playerName,
   playerEmoji,
   initialRated,
+  poolStatus,
+  hasMore,
   onRatedChange,
   onNeedMore,
+  onRetry,
   onExit,
 }: CoolOrBoringProps) {
   const [index, setIndex] = useState(0);
@@ -70,11 +82,40 @@ export default function CoolOrBoring({
   const burstId = useRef(0);
 
   const item = deck[index];
+  const remaining = deck.length - index;
 
-  // Ask the parent for more cards when the deck runs low.
+  // Ask the parent for more cards when the deck runs low (existing prefetch).
   useEffect(() => {
-    if (deck.length - index <= 3) onNeedMore();
-  }, [deck.length, index, onNeedMore]);
+    if (remaining <= 3) onNeedMore();
+  }, [remaining, onNeedMore]);
+
+  // Same honest terminal truth as Higher/Lower: a drained deck resolves to
+  // loading (while a request is in flight), a retryable error, or caught-up —
+  // never a silent "you rated them all" that hides a failed feed request.
+  const scanRef = useRef(0);
+  const view = decidePlayView({
+    usableCount: Math.max(0, remaining),
+    status: poolStatus,
+    hasMore,
+    scanAttempts: scanRef.current,
+    maxScan: MAX_CARD_SCAN,
+  });
+
+  useEffect(() => {
+    if (remaining > 0) scanRef.current = 0;
+  }, [remaining]);
+
+  useEffect(() => {
+    if (view === "scan") {
+      scanRef.current += 1;
+      onNeedMore();
+    }
+  }, [view, onNeedMore]);
+
+  const handleRetry = useCallback(() => {
+    scanRef.current = 0;
+    onRetry();
+  }, [onRetry]);
 
   const fireBurst = useCallback((total: number) => {
     if (total > 0 && total % 10 === 0) {
@@ -120,19 +161,16 @@ export default function CoolOrBoring({
   const prob = item ? cardProbability(item) : null;
   const leader = item ? probLeader(item) : null;
 
-  if (!item) {
+  // No current card: honest terminal (loading only while a request is actually
+  // in flight; "scan" briefly shows loading while the effect requests more).
+  if (view !== "play" || !item) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-6 gap-4">
-        <div className="text-6xl">🍿</div>
-        <h2 className="text-2xl font-black text-text-primary">Whew — you rated them all!</h2>
-        <p className="text-text-secondary">You rated {rated} things. Come back later for more!</p>
-        <button
-          onClick={onExit}
-          className="mt-2 rounded-2xl bg-accent-brand px-6 py-3 text-white font-bold text-lg"
-        >
-          Back to menu
-        </button>
-      </div>
+      <PlayStateScreen
+        variant={view === "error" ? "error" : view === "caught_up" ? "caught_up" : "loading"}
+        bestStreakLabel={`You rated ${rated}`}
+        onRetry={handleRetry}
+        onExit={onExit}
+      />
     );
   }
 

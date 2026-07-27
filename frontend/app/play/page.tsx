@@ -7,12 +7,11 @@
 //   • Game 2: "Higher or Lower?" (Today's Challenge mechanic under the kid id)
 //   • Two-player leaderboard (rating COUNT + best streak = the score)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
-import { fetchFeed } from "@/lib/api";
-import type { FeedItem } from "@/lib/types";
-import { filterKidSafe } from "@/lib/play/kidSafe";
+import { usePlayPool } from "@/lib/play/usePlayPool";
+import type { PlayPoolStatus } from "@/lib/play/poolState";
 import {
   LOVE_CHIPS,
   getPlayers,
@@ -29,7 +28,6 @@ import CoolOrBoring from "./CoolOrBoring";
 import HigherLower from "./HigherLower";
 
 const AVATARS = ["🦖", "🦄", "🐯", "🦊", "🐸", "🐙", "🦩", "🐳", "🦁", "🐼", "👾", "🤖"];
-const PAGE_SIZE = 120;
 
 type Mode = "menu" | "cool" | "higher";
 
@@ -41,9 +39,6 @@ export default function PlayPage() {
   const [players, setPlayers] = useState<KidPlayer[]>([]);
   const [active, setActive] = useState<KidPlayer | null>(null);
   const [mode, setMode] = useState<Mode>("menu");
-  const [pool, setPool] = useState<FeedItem[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [statsVersion, setStatsVersion] = useState(0);
 
   // signup form state
@@ -51,7 +46,10 @@ export default function PlayPage() {
   const [newAvatar, setNewAvatar] = useState(AVATARS[0]);
   const [newLoves, setNewLoves] = useState<string[]>([]);
 
-  const loadingMore = useRef(false);
+  // Explicit card-pool state machine (L2-194). It owns loading/ready/error/
+  // exhausted, carries the server page boundary separately from usable-card
+  // count, and hands both games a single honest terminal.
+  const { pool, status: poolStatus, hasMore, loadMore, retry } = usePlayPool();
 
   // Load stored players + active player on mount.
   useEffect(() => {
@@ -61,51 +59,6 @@ export default function PlayPage() {
     const found = activeName ? stored.find((p) => kidSlug(p.name) === kidSlug(activeName)) : null;
     if (found) setActive(found);
   }, []);
-
-  // Fetch + kid-safe-filter the card pool.
-  const loadPool = useCallback(async (nextOffset: number, replace: boolean) => {
-    if (loadingMore.current) return;
-    loadingMore.current = true;
-    try {
-      const res = await fetchFeed({
-        limit: PAGE_SIZE,
-        offset: nextOffset,
-        event_pct: 0.3,
-        include_futures: true,
-        include_events: true,
-      });
-      const safe = filterKidSafe(res.items || []);
-      setPool((prev) => {
-        const base = replace ? [] : prev;
-        const seen = new Set(
-          base.map((it) => `${it.type}:${JSON.stringify((it.data as { id?: unknown; key?: unknown }).id ?? (it.data as { key?: unknown }).key)}`)
-        );
-        const merged = [...base];
-        for (const it of safe) {
-          const k = `${it.type}:${JSON.stringify((it.data as { id?: unknown; key?: unknown }).id ?? (it.data as { key?: unknown }).key)}`;
-          if (!seen.has(k)) {
-            seen.add(k);
-            merged.push(it);
-          }
-        }
-        return merged;
-      });
-      setOffset(nextOffset + PAGE_SIZE);
-    } catch {
-      /* offline / API down — the game shows its empty state */
-    } finally {
-      loadingMore.current = false;
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadPool(0, true);
-  }, [loadPool]);
-
-  const onNeedMore = useCallback(() => {
-    void loadPool(offset, false);
-  }, [loadPool, offset]);
 
   // Deck for the active player: kid-safe pool, biased toward their loves.
   const deck = useMemo(
@@ -236,8 +189,11 @@ export default function PlayPage() {
             playerName={active.name}
             playerEmoji={active.emoji}
             initialRated={getStats(active.name).rated}
+            poolStatus={poolStatus}
+            hasMore={hasMore}
             onRatedChange={onStatsChange}
-            onNeedMore={onNeedMore}
+            onNeedMore={loadMore}
+            onRetry={retry}
             onExit={() => {
               onStatsChange();
               setMode("menu");
@@ -257,7 +213,10 @@ export default function PlayPage() {
             playerName={active.name}
             playerEmoji={active.emoji}
             initialBestStreak={getStats(active.name).bestStreak}
-            onNeedMore={onNeedMore}
+            poolStatus={poolStatus}
+            hasMore={hasMore}
+            onNeedMore={loadMore}
+            onRetry={retry}
             onExit={() => {
               onStatsChange();
               setMode("menu");
@@ -276,7 +235,8 @@ export default function PlayPage() {
         players={players}
         statsVersion={statsVersion}
         poolCount={deck.length}
-        loading={loading}
+        poolStatus={poolStatus}
+        onRetry={retry}
         onPlay={setMode}
         onSwitchPlayer={() => {
           setActivePlayerName(null);
@@ -292,7 +252,8 @@ function Menu({
   players,
   statsVersion,
   poolCount,
-  loading,
+  poolStatus,
+  onRetry,
   onPlay,
   onSwitchPlayer,
 }: {
@@ -300,7 +261,8 @@ function Menu({
   players: KidPlayer[];
   statsVersion: number;
   poolCount: number;
-  loading: boolean;
+  poolStatus: PlayPoolStatus;
+  onRetry: () => void;
   onPlay: (m: Mode) => void;
   onSwitchPlayer: () => void;
 }) {
@@ -323,14 +285,31 @@ function Menu({
             <span className="text-4xl">{active.emoji}</span>
             <div>
               <div className="text-xl font-black text-text-primary">Hi, {active.name}!</div>
-              <div className="text-xs text-text-muted">
-                {loading ? "Loading cards…" : `${poolCount} cards ready`}
+              <div className="text-xs text-text-muted" role="status" aria-live="polite">
+                {poolStatus === "loading" && poolCount === 0
+                  ? "Loading cards…"
+                  : poolStatus === "error" && poolCount === 0
+                    ? "Couldn't load cards"
+                    : `${poolCount} cards ready`}
               </div>
             </div>
           </div>
-          <button onClick={onSwitchPlayer} className="text-sm font-bold text-accent-brand px-2 py-2">
-            Switch
-          </button>
+          {poolStatus === "error" && poolCount === 0 ? (
+            <button
+              onClick={onRetry}
+              className="text-sm font-bold text-accent-brand px-2 py-2"
+              aria-label="Retry loading cards"
+            >
+              Retry
+            </button>
+          ) : (
+            <button
+              onClick={onSwitchPlayer}
+              className="text-sm font-bold text-accent-brand px-2 py-2"
+            >
+              Switch
+            </button>
+          )}
         </div>
 
         <div className="grid gap-4">
