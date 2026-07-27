@@ -12,6 +12,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { usePlayPool } from "@/lib/play/usePlayPool";
 import type { PlayPoolStatus } from "@/lib/play/poolState";
+import { useStableDeck } from "@/lib/play/stableDeck";
 import {
   LOVE_CHIPS,
   getPlayers,
@@ -21,7 +22,6 @@ import {
   getAllStats,
   getStats,
   kidSlug,
-  seedByAffinity,
   type KidPlayer,
 } from "@/lib/play/session";
 import CoolOrBoring from "./CoolOrBoring";
@@ -49,7 +49,7 @@ export default function PlayPage() {
   // Explicit card-pool state machine (L2-194). It owns loading/ready/error/
   // exhausted, carries the server page boundary separately from usable-card
   // count, and hands both games a single honest terminal.
-  const { pool, status: poolStatus, hasMore, loadMore, retry } = usePlayPool();
+  const { pool, status: poolStatus, hasMore, loadMore, retry, refresh } = usePlayPool();
 
   // Load stored players + active player on mount.
   useEffect(() => {
@@ -60,11 +60,13 @@ export default function PlayPage() {
     if (found) setActive(found);
   }, []);
 
-  // Deck for the active player: kid-safe pool, biased toward their loves.
-  const deck = useMemo(
-    () => (active ? seedByAffinity(pool, active.loves) : pool),
-    [pool, active]
-  );
+  // Deck for the active player: a prefix-STABLE, per-round ordered queue built
+  // from the kid-safe pool and biased toward their loves. Appending a page never
+  // reorders the visible prefix or the card/question under the child (L2-195);
+  // switching player starts a fresh round.
+  const roundKey = active ? kidSlug(active.name) : "__none__";
+  const loves = useMemo(() => active?.loves ?? [], [active]);
+  const deck = useStableDeck(pool, loves, roundKey);
 
   const choosePlayer = useCallback((p: KidPlayer) => {
     setActive(p);
@@ -194,6 +196,7 @@ export default function PlayPage() {
             onRatedChange={onStatsChange}
             onNeedMore={loadMore}
             onRetry={retry}
+            onRefresh={refresh}
             onExit={() => {
               onStatsChange();
               setMode("menu");
@@ -217,6 +220,7 @@ export default function PlayPage() {
             hasMore={hasMore}
             onNeedMore={loadMore}
             onRetry={retry}
+            onRefresh={refresh}
             onExit={() => {
               onStatsChange();
               setMode("menu");

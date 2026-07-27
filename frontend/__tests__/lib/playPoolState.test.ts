@@ -5,11 +5,13 @@
 
 import {
   MAX_EMPTY_SCAN,
+  PlayPageContractError,
   decidePlayView,
   initialPoolState,
   itemKey,
   pendingFetch,
   reducePool,
+  validatePage,
   type PlayPoolAction,
   type PlayPoolState,
 } from "@/lib/play/poolState";
@@ -196,8 +198,12 @@ describe("decidePlayView — the single honest terminal", () => {
     expect(decidePlayView({ ...base, usableCount: 0 })).toBe("scan");
   });
 
-  it("scan stops at the cap → caught_up (no infinite scan)", () => {
-    expect(decidePlayView({ ...base, usableCount: 0, scanAttempts: 6 })).toBe("caught_up");
+  it("scan stops at the cap → scan_paused, NEVER caught_up while has_more=true", () => {
+    // C39 P2: reaching the client scan bound must not lie "all caught up" while
+    // the server still reports more pages.
+    const v = decidePlayView({ ...base, usableCount: 0, scanAttempts: 6 });
+    expect(v).toBe("scan_paused");
+    expect(v).not.toBe("caught_up");
   });
 
   it("zero usable questions with has_more=false → caught_up", () => {
@@ -206,6 +212,82 @@ describe("decidePlayView — the single honest terminal", () => {
 
   it("exhausted pool → caught_up", () => {
     expect(decidePlayView({ ...base, usableCount: 0, status: "exhausted", hasMore: false })).toBe("caught_up");
+  });
+});
+
+describe("itemKey — malformed identity is rejected, never collapsed (C39 P2)", () => {
+  it("returns null for a card with no id/key instead of a shared sentinel", () => {
+    const noId = { type: "futures", score: 1, reason: "", headline: null, data: {} } as unknown as FeedItem;
+    const alsoNoId = { type: "futures", score: 1, reason: "", headline: null, data: { id: null } } as unknown as FeedItem;
+    expect(itemKey(noId)).toBeNull();
+    expect(itemKey(alsoNoId)).toBeNull();
+  });
+
+  it("keeps numeric and string ids distinct", () => {
+    const numId = fut(7);
+    const strId = { type: "futures", score: 1, reason: "", headline: null, data: { id: "7" } } as unknown as FeedItem;
+    expect(itemKey(numId)).not.toBe(itemKey(strId));
+  });
+
+  it("PAGE_OK counts malformed cards observably and admits only identified ones", () => {
+    const bad = { type: "futures", score: 1, reason: "", headline: null, data: {} } as unknown as FeedItem;
+    const s = fetchPage(initialPoolState(), [fut(1), bad, ev(2), bad], true);
+    expect(s.items).toHaveLength(2); // only fut(1) + ev(2)
+    expect(s.malformed).toBe(2); // both id-less cards surfaced, not silently deduped
+  });
+});
+
+describe("reducePool — REFRESH restarts at page zero without replaying consumed cards", () => {
+  it("resets offset/emptyScan, bumps generation, keeps seen", () => {
+    const ready = fetchPage(initialPoolState(), [fut(1), ev(2)], true);
+    expect(ready.offset).toBe(PAGE);
+    const refreshed = reducePool(ready, { type: "REFRESH" });
+    expect(refreshed.offset).toBe(0);
+    expect(refreshed.status).toBe("loading");
+    expect(refreshed.inFlight).toBe(true);
+    expect(refreshed.gen).toBe(ready.gen + 1);
+    expect(refreshed.seen.size).toBe(2); // consumed identities preserved
+    expect(refreshed.items).toHaveLength(2); // last-good deck preserved
+  });
+
+  it("a refresh page re-serving old cards adds nothing; a NEW first-page card lands", () => {
+    let s = fetchPage(initialPoolState(), [fut(1), ev(2)], false); // exhausted
+    expect(s.status).toBe("exhausted");
+    s = reducePool(s, { type: "REFRESH" });
+    // Newest-first: a brand-new card appears before the consumed ones on page 0.
+    s = reducePool(s, { type: "PAGE_OK", gen: s.gen, items: [fut(9), fut(1), ev(2)], hasMore: false, pageSize: PAGE });
+    expect(s.items.map((it) => itemKey(it))).toEqual([
+      itemKey(fut(1)),
+      itemKey(ev(2)),
+      itemKey(fut(9)), // only the genuinely new card was appended
+    ]);
+  });
+
+  it("REFRESH is ignored while a page is in flight", () => {
+    const loading = reducePool(initialPoolState(), { type: "START_LOAD" });
+    expect(reducePool(loading, { type: "REFRESH" })).toBe(loading);
+  });
+});
+
+describe("validatePage — pagination contract is typed, not truthiness-coerced (C39 P2)", () => {
+  it("accepts a well-formed page", () => {
+    const p = validatePage({ items: [fut(1)], has_more: true });
+    expect(p.items).toHaveLength(1);
+    expect(p.hasMore).toBe(true);
+  });
+
+  it("rejects a missing/null has_more instead of faking exhaustion", () => {
+    expect(() => validatePage({ items: [] })).toThrow(PlayPageContractError);
+    expect(() => validatePage({ items: [], has_more: null })).toThrow(PlayPageContractError);
+  });
+
+  it("rejects a string has_more instead of scanning past the end", () => {
+    expect(() => validatePage({ items: [], has_more: "false" })).toThrow(PlayPageContractError);
+  });
+
+  it("rejects a non-array items payload", () => {
+    expect(() => validatePage({ items: null, has_more: true })).toThrow(PlayPageContractError);
+    expect(() => validatePage({ has_more: true })).toThrow(PlayPageContractError);
   });
 });
 

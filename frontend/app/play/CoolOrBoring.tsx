@@ -32,6 +32,7 @@ interface CoolOrBoringProps {
   onRatedChange: (total: number) => void;
   onNeedMore: () => void;
   onRetry: () => void;
+  onRefresh: () => void;
   onExit: () => void;
 }
 
@@ -72,6 +73,7 @@ export default function CoolOrBoring({
   onRatedChange,
   onNeedMore,
   onRetry,
+  onRefresh,
   onExit,
 }: CoolOrBoringProps) {
   const [index, setIndex] = useState(0);
@@ -116,6 +118,18 @@ export default function CoolOrBoring({
     scanRef.current = 0;
     onRetry();
   }, [onRetry]);
+
+  // "Keep looking" from a paused scan resumes the bounded scan from zero attempts.
+  const handleContinue = useCallback(() => {
+    scanRef.current = 0;
+    onNeedMore();
+  }, [onNeedMore]);
+
+  // "Check for more" from genuine exhaustion is a freshness refresh (page zero).
+  const handleRefresh = useCallback(() => {
+    scanRef.current = 0;
+    onRefresh();
+  }, [onRefresh]);
 
   const fireBurst = useCallback((total: number) => {
     if (total > 0 && total % 10 === 0) {
@@ -164,11 +178,21 @@ export default function CoolOrBoring({
   // No current card: honest terminal (loading only while a request is actually
   // in flight; "scan" briefly shows loading while the effect requests more).
   if (view !== "play" || !item) {
+    const variant =
+      view === "error"
+        ? "error"
+        : view === "caught_up"
+          ? "caught_up"
+          : view === "scan_paused"
+            ? "scan_paused"
+            : "loading"; // "scan" briefly shows loading while the effect requests more
     return (
       <PlayStateScreen
-        variant={view === "error" ? "error" : view === "caught_up" ? "caught_up" : "loading"}
+        variant={variant}
         bestStreakLabel={`You rated ${rated}`}
         onRetry={handleRetry}
+        onRefresh={handleRefresh}
+        onContinue={handleContinue}
         onExit={onExit}
       />
     );

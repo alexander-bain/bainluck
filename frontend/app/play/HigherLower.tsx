@@ -6,11 +6,11 @@
 // / best-streak are the reward; nothing here is "wrong-answer" punishing.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { generateThreshold } from "@/components/discover/utils";
 import { getCat } from "@/components/discover/constants";
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
-import { recordBestStreak, sendKidPrediction } from "@/lib/play/session";
+import { kidSessionId, recordBestStreak, sendKidPrediction } from "@/lib/play/session";
+import { deterministicThreshold } from "@/lib/play/threshold";
 import { decidePlayView, type PlayPoolStatus } from "@/lib/play/poolState";
 import PlayStateScreen from "./PlayStateScreen";
 import s from "./play.module.css";
@@ -35,6 +35,7 @@ interface HigherLowerProps {
   onExit: () => void;
   onNeedMore: () => void;
   onRetry: () => void;
+  onRefresh: () => void;
 }
 
 interface Question {
@@ -78,6 +79,7 @@ export default function HigherLower({
   onExit,
   onNeedMore,
   onRetry,
+  onRefresh,
 }: HigherLowerProps) {
   const [pos, setPos] = useState(0);
   const [guess, setGuess] = useState<"higher" | "lower" | null>(null);
@@ -89,9 +91,14 @@ export default function HigherLower({
   // so the very first correct answer doesn't fire an anticlimactic "record".
   const [recordStreak, setRecordStreak] = useState<number | null>(null);
 
-  // Only cards with a real probability can be questions.
+  // Only cards with a real probability can be questions. The threshold is a PURE
+  // function of (probability, player+market identity), so rebuilding this list on
+  // a background page append yields the IDENTICAL threshold for every existing
+  // question — an append/render/retry/Strict-Mode replay can never change the
+  // displayed comparison or the correctness already recorded for it (L2-195 P1).
   const questions = useMemo<Question[]>(() => {
     const out: Question[] = [];
+    const sid = kidSessionId(playerName);
     for (const item of deck) {
       const u = usableProb(item);
       if (!u) continue;
@@ -103,11 +110,11 @@ export default function HigherLower({
         subject: u.subject,
         category: a.category,
         prob: u.prob,
-        threshold: generateThreshold(u.prob),
+        threshold: deterministicThreshold(u.prob, `${sid}:${u.marketId}`),
       });
     }
     return out;
-  }, [deck]);
+  }, [deck, playerName]);
 
   const q = questions[pos];
   const remaining = questions.length - pos;
@@ -140,6 +147,18 @@ export default function HigherLower({
     scanRef.current = 0;
     onRetry();
   }, [onRetry]);
+
+  // "Keep looking" from a paused scan resumes the bounded scan from zero attempts.
+  const handleContinue = useCallback(() => {
+    scanRef.current = 0;
+    onNeedMore();
+  }, [onNeedMore]);
+
+  // "Check for more" from genuine exhaustion is a freshness refresh (page zero).
+  const handleRefresh = useCallback(() => {
+    scanRef.current = 0;
+    onRefresh();
+  }, [onRefresh]);
 
   const actualPct = q ? Math.round(q.prob * 100) : 0;
   const correct = q && guess ? (guess === "higher" ? actualPct > q.threshold : actualPct < q.threshold) : false;
@@ -194,11 +213,21 @@ export default function HigherLower({
   // request is actually in flight, otherwise a retryable error or caught-up.
   // ("scan" briefly shows loading while the effect above requests the next page.)
   if (view !== "play") {
+    const variant =
+      view === "error"
+        ? "error"
+        : view === "caught_up"
+          ? "caught_up"
+          : view === "scan_paused"
+            ? "scan_paused"
+            : "loading"; // "scan" briefly shows loading while the effect requests more
     return (
       <PlayStateScreen
-        variant={view === "error" ? "error" : view === "caught_up" ? "caught_up" : "loading"}
+        variant={variant}
         bestStreakLabel={`Best streak: ${best} 🔥`}
         onRetry={handleRetry}
+        onRefresh={handleRefresh}
+        onContinue={handleContinue}
         onExit={onExit}
       />
     );
