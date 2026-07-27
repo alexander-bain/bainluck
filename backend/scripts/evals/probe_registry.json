@@ -1,0 +1,91 @@
+{
+  "metadata": {
+    "schema_version": "probe-registry/v1",
+    "description": "Synthetic representative probes. Oracle fields are never presentation fields.",
+    "c48_adapter": "filter task_type=search_entity by an explicit split; require expected_entity_id",
+    "c49_adapter": "filter task_type=semantic_matching by an explicit split; group on real_world_group_key"
+  },
+  "probes": [
+    {
+      "identity": {"probe_key": "contract-same-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "semantic_eval", "task_type": "cross_source_contract", "item_type": "market_pair", "question_id": "synthetic:q:rain-la", "entity_ids": ["synthetic:city:la"]},
+      "evidence": {"fixture_hash": "1111111111111111111111111111111111111111111111111111111111111111", "source": "synthetic", "provenance": "hand-authored contract counterpair", "captured_at": "2026-07-27T00:00:00Z", "valid_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "contract_equivalence/v1", "label_schema_version": 1, "answer": "same_contract", "allowed_alternatives": [], "abstain_allowed": false, "authority": "contract identity and numeric terms", "evidence": "same city, cutoff, threshold, and direction", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "semantic-evals", "difficulty": "baseline", "failure_family": "false-negative", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "train", "real_world_group_key": "story:synthetic-rain-la", "contamination_lineage": ["lineage:rain-la"], "prompt_version": null, "model_version": null, "scorer_version": "contract/v1"},
+      "presentation": {"prompt": "Do these two markets ask the identical question?", "items": ["Rain in LA above 0.1 inch Friday?", "Will Los Angeles record more than 0.1 inch Friday?"]}
+    },
+    {
+      "identity": {"probe_key": "contract-direction-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "semantic_eval", "task_type": "cross_source_contract", "item_type": "market_pair", "question_id": "synthetic:q:cpi-direction", "entity_ids": ["synthetic:series:cpi"]},
+      "evidence": {"fixture_hash": "2222222222222222222222222222222222222222222222222222222222222222", "source": "synthetic", "provenance": "hand-authored numeric/direction counterclass", "valid_at": "2026-08-01T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "contract_equivalence/v1", "label_schema_version": 1, "answer": "distinct_contract", "allowed_alternatives": [], "abstain_allowed": false, "authority": "contract numeric and direction terms", "evidence": "above 3.0 and below 3.5 differ", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "semantic-evals", "difficulty": "adversarial", "failure_family": "numeric-direction-merge", "issue_gotcha": null, "known_failure_status": "fixed"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "story:synthetic-cpi", "contamination_lineage": ["lineage:cpi-direction"], "prompt_version": null, "model_version": null, "scorer_version": "contract/v1"},
+      "presentation": {"prompt": "Compare the numeric terms and direction.", "items": ["CPI above 3.0%?", "CPI below 3.5%?"]}
+    },
+    {
+      "identity": {"probe_key": "event-link-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "matching_eval", "task_type": "event_link", "item_type": "market_event", "subject_id": "synthetic:game:alpha-beta-1"},
+      "evidence": {"fixture_hash": "3333333333333333333333333333333333333333333333333333333333333333", "source": "synthetic", "provenance": "doubleheader fixture", "valid_at": "2026-07-27T20:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "known_answer", "label_schema": "event_link/v1", "label_schema_version": 1, "answer": "link_game_1", "allowed_alternatives": [], "abstain_allowed": false, "authority": "scheduled instance identity", "evidence": "teams, league, timestamp, and game number", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "matching-evals", "difficulty": "adversarial", "failure_family": "doubleheader", "issue_gotcha": "#89", "known_failure_status": "xfail"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "canary", "real_world_group_key": "event:synthetic-alpha-beta-day", "contamination_lineage": ["lineage:doubleheader-alpha-beta"], "prompt_version": null, "model_version": null, "scorer_version": "event-link/v1"},
+      "presentation": {"prompt": "Select the matching scheduled event.", "candidate_ids": ["synthetic:game:alpha-beta-1", "synthetic:game:alpha-beta-2"]}
+    },
+    {
+      "identity": {"probe_key": "shape-ladder-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "shape_eval", "task_type": "market_shape", "item_type": "market_group", "subject_id": "synthetic:group:temperature-ladder"},
+      "evidence": {"fixture_hash": "4444444444444444444444444444444444444444444444444444444444444444", "source": "synthetic", "provenance": "threshold ladder fixture", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "market_shape/v1", "label_schema_version": 1, "answer": "ladder", "allowed_alternatives": [], "abstain_allowed": false, "authority": "nested threshold semantics", "evidence": "same subject with ordered cumulative thresholds", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "shape-evals", "difficulty": "baseline", "failure_family": "field-ladder-conflation", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "tune", "real_world_group_key": "market:synthetic-temperature", "contamination_lineage": ["lineage:temperature-ladder"], "prompt_version": null, "model_version": null, "scorer_version": "shape/v1"},
+      "presentation": {"prompt": "Classify the relationship among these thresholds.", "thresholds": [70, 75, 80]}
+    },
+    {
+      "identity": {"probe_key": "resolution-stale-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "lifecycle_eval", "task_type": "resolution_lifecycle", "item_type": "market_timeline", "subject_id": "synthetic:market:resolved-reopen"},
+      "evidence": {"fixture_hash": "5555555555555555555555555555555555555555555555555555555555555555", "source": "synthetic", "provenance": "resolved-to-open replay", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "known_answer", "label_schema": "resolution_state/v1", "label_schema_version": 1, "answer": "reject_reopen", "allowed_alternatives": [], "abstain_allowed": false, "authority": "settlement lifecycle invariant", "evidence": "authoritative settled state precedes stale open replay", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "resolution-evals", "difficulty": "regression", "failure_family": "resolved-reopen", "issue_gotcha": "settled-means-settled", "known_failure_status": "fixed"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "market:synthetic-resolved-reopen", "contamination_lineage": ["lineage:resolved-reopen"], "prompt_version": null, "model_version": null, "scorer_version": "lifecycle/v1"},
+      "presentation": {"prompt": "Evaluate the final lifecycle transition.", "states": ["open", "resolved", "open"]}
+    },
+    {
+      "identity": {"probe_key": "discover-taste-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "discover", "task_type": "discover_tapworthiness", "item_type": "card", "subject_id": "synthetic:card:space-mission"},
+      "evidence": {"fixture_hash": "6666666666666666666666666666666666666666666666666666666666666666", "source": "synthetic", "provenance": "redacted judgment card", "valid_at": "2026-08-01T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "judgment", "label_schema": "tapworthiness_judgment/v1", "label_schema_version": 1, "answer": null, "allowed_alternatives": ["tap", "skip", "need_more_context"], "abstain_allowed": true, "authority": "adult product reviewer panel", "evidence": "individual judgments retained; no known truth", "known_truth": false, "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "discover-evals", "difficulty": "subjective", "failure_family": "boring-card", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "adult_product_reviewer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "tune", "real_world_group_key": "story:synthetic-space-mission", "contamination_lineage": ["lineage:space-mission"], "prompt_version": "discover-card/v1", "model_version": null, "scorer_version": null},
+      "presentation": {"prompt": "Would you open this card to learn more?", "headline": "A launch window is approaching"}
+    },
+    {
+      "identity": {"probe_key": "kid-curiosity-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "play", "task_type": "kid_curiosity", "item_type": "card", "subject_id": "synthetic:card:robot-race"},
+      "evidence": {"fixture_hash": "7777777777777777777777777777777777777777777777777777777777777777", "source": "synthetic", "provenance": "anonymous age-band judgment fixture", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "judgment", "label_schema": "kid_curiosity_judgment/v1", "label_schema_version": 1, "answer": null, "allowed_alternatives": ["fun", "not_fun", "want_more_information"], "abstain_allowed": true, "authority": "anonymous kid taste panel", "authority_role": "kid_taste_reviewer", "evidence": "taste only; explicitly not a safety oracle", "known_truth": false, "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "play-evals", "difficulty": "subjective", "failure_family": "low-curiosity", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "anonymous_age_band", "kid_facing": true, "guardian_safety_authority": "separate adult safety registry", "privacy_sensitivity": "age_band_only"},
+      "isolation": {"split": "train", "real_world_group_key": "story:synthetic-robot-race", "contamination_lineage": ["lineage:robot-race"], "prompt_version": "play-card/v1", "model_version": null, "scorer_version": null},
+      "presentation": {"prompt": "Does this make you curious?", "headline": "Which robot finishes first?"}
+    },
+    {
+      "identity": {"probe_key": "kid-safety-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "play", "task_type": "kid_safety", "item_type": "card", "subject_id": "synthetic:card:robot-race-safety"},
+      "evidence": {"fixture_hash": "8888888888888888888888888888888888888888888888888888888888888888", "source": "synthetic", "provenance": "adult safety review fixture", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "adjudicated", "label_schema": "guardian_safety/v1", "label_schema_version": 1, "answer": "approved", "allowed_alternatives": [], "abstain_allowed": false, "authority": "adult guardian safety review", "authority_role": "guardian_safety_reviewer", "evidence": "reviewed text and image provenance", "adjudication_history": [{"at": "2026-07-27T00:00:00Z", "authority": "guardian-safety-panel", "decision": "approved"}]},
+      "lifecycle": {"state": "active", "owner": "play-safety-evals", "difficulty": "baseline", "failure_family": "unsafe-content", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "adult_guardian", "kid_facing": true, "guardian_safety_authority": "guardian-safety-panel", "privacy_sensitivity": "none"},
+      "isolation": {"split": "train", "real_world_group_key": "safety:synthetic-robot-race", "contamination_lineage": ["lineage:robot-race-safety"], "prompt_version": "play-card/v1", "model_version": null, "scorer_version": "safety/v1"},
+      "presentation": {"prompt": "Review this fictional race card for age-appropriate presentation.", "headline": "Robot race"}
+    },
+    {
+      "identity": {"probe_key": "enrichment-entity-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "enrichment_eval", "task_type": "enrichment_entity_match", "item_type": "entity_asset", "entity_ids": ["synthetic:person:alex-river"]},
+      "evidence": {"fixture_hash": "9999999999999999999999999999999999999999999999999999999999999999", "source": "synthetic", "provenance": "homonym fixture", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "entity_match/v1", "label_schema_version": 1, "answer": "reject_homonym", "allowed_alternatives": [], "abstain_allowed": false, "authority": "stable entity identifiers", "evidence": "profession and source IDs conflict", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "enrichment-evals", "difficulty": "adversarial", "failure_family": "first-result-wins", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "canary", "real_world_group_key": "entity:synthetic-alex-river", "contamination_lineage": ["lineage:alex-river-homonym"], "prompt_version": null, "model_version": null, "scorer_version": "entity/v1"},
+      "presentation": {"prompt": "Does this asset belong to the requested fictional entity?", "candidate": "Alex River, musician"}
+    }
+  ]
+}
