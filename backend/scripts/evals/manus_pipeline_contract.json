@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "purpose": "Offline acceptance contract for fresh, deduplicated Manus evidence",
+  "defaults": {
+    "alert_priority": "priority:p2",
+    "product_finding_route": "alex_ruling",
+    "ground_truth_authority_before_review": "none"
+  },
+  "runs": [
+    {
+      "id": "fresh_success",
+      "run_id": "2026-07-27T140000Z-feed-a1b2c3d",
+      "task_id": "task-fresh-1",
+      "status": "stopped",
+      "report": "## Feed\n### Missing result context\nCard omits the named subject.",
+      "started_at": "2026-07-27T14:00:00Z",
+      "completed_at": "2026-07-27T14:04:00Z",
+      "target_build": "a1b2c3d",
+      "prompt_hash": "sha256:prompt-1",
+      "report_hash": "sha256:report-1",
+      "credits": 12,
+      "expected_state": "eligible_for_intake"
+    },
+    {
+      "id": "stale_replay",
+      "run_id": "2026-07-27T180000Z-feed-a1b2c3d",
+      "task_id": "task-replay-2",
+      "status": "stopped",
+      "report": "## Feed\n### Missing result context\nCard omits the named subject.",
+      "started_at": "2026-07-27T18:00:00Z",
+      "completed_at": "2026-07-27T18:01:00Z",
+      "target_build": "a1b2c3d",
+      "prompt_hash": "sha256:prompt-1",
+      "report_hash": "sha256:report-1",
+      "credits": 0,
+      "prior_run_id": "2026-07-27T140000Z-feed-a1b2c3d",
+      "expected_state": "rejected_stale_replay"
+    },
+    {
+      "id": "zero_credit_ambiguous",
+      "run_id": "2026-07-27T220000Z-search-a1b2c3d",
+      "task_id": "task-zero-3",
+      "status": "stopped",
+      "report": "## Search\n### Result mismatch\nA query returned a different entity.",
+      "started_at": "2026-07-27T22:00:00Z",
+      "completed_at": "2026-07-27T22:02:00Z",
+      "target_build": "a1b2c3d",
+      "prompt_hash": "sha256:prompt-2",
+      "report_hash": "sha256:report-2",
+      "credits": 0,
+      "expected_state": "complete_untrusted_needs_evidence"
+    },
+    {
+      "id": "timeout",
+      "run_id": "2026-07-27T230000Z-chart-a1b2c3d",
+      "task_id": "task-timeout-4",
+      "status": "timeout",
+      "report": "",
+      "started_at": "2026-07-27T23:00:00Z",
+      "completed_at": "2026-07-27T23:30:00Z",
+      "target_build": "a1b2c3d",
+      "prompt_hash": "sha256:prompt-3",
+      "report_hash": null,
+      "credits": 0,
+      "expected_state": "rejected_incomplete"
+    }
+  ],
+  "findings": [
+    {
+      "id": "negated_severity",
+      "surface": "https://bainluck.com/discover",
+      "entity": "discover-feed",
+      "text": "The page is not broken and no 500 error occurred; the card subtitle is unclear.",
+      "expected_priority": "priority:p2",
+      "expected_route": "needs-triage"
+    },
+    {
+      "id": "entity_alpha",
+      "surface": "https://bainluck.com/events/alpha",
+      "entity": "event-alpha",
+      "text": "Result card is missing context",
+      "expected_fingerprint_group": "missing-context:event-alpha"
+    },
+    {
+      "id": "entity_beta",
+      "surface": "https://bainluck.com/events/beta",
+      "entity": "event-beta",
+      "text": "Result card is missing context",
+      "expected_fingerprint_group": "missing-context:event-beta"
+    },
+    {
+      "id": "wording_original",
+      "surface": "https://bainluck.com/events/alpha",
+      "entity": "event-alpha",
+      "text": "Result card is missing context",
+      "expected_fingerprint_group": "missing-context:event-alpha"
+    },
+    {
+      "id": "wording_rephrased",
+      "surface": "https://bainluck.com/events/alpha",
+      "entity": "event-alpha",
+      "text": "The result card lacks enough context",
+      "expected_fingerprint_group": "missing-context:event-alpha"
+    },
+    {
+      "id": "quoted_fingerprint",
+      "surface": "rolling-digest-comment",
+      "entity": "digest",
+      "text": "Prior note quoted fingerprint manus:deadbeef for reference.",
+      "fingerprint_location": "comment_quote",
+      "expected_canonical_owner": false
+    },
+    {
+      "id": "product_taste",
+      "surface": "https://bainluck.com/play",
+      "entity": "play-card",
+      "text": "This card would be more fun with a reveal animation.",
+      "expected_priority": "priority:p2",
+      "expected_route": "alex_ruling"
+    }
+  ],
+  "verifications": [
+    {
+      "id": "wrong_build",
+      "requested_build": "a1b2c3d",
+      "observed_build": "deadbee",
+      "collection_status": "complete",
+      "verdict": "pass",
+      "expected_state": "rejected_wrong_build"
+    },
+    {
+      "id": "collection_failure",
+      "requested_build": "a1b2c3d",
+      "observed_build": "a1b2c3d",
+      "collection_status": "failed",
+      "verdict": "",
+      "expected_state": "error"
+    },
+    {
+      "id": "matching_build_pass",
+      "requested_build": "a1b2c3d",
+      "observed_build": "a1b2c3d",
+      "collection_status": "complete",
+      "verdict": "pass",
+      "expected_state": "eligible_closure_evidence"
+    }
+  ],
+  "ground_truth": [
+    {
+      "id": "unreviewed_observation",
+      "review_status": "",
+      "provenance": {"run_id": "run-1", "observed_at": "2026-07-27T14:04:00Z"},
+      "expected_authority": "none",
+      "expected_import": "rejected"
+    },
+    {
+      "id": "reviewed_accepted_observation",
+      "review_status": "accepted",
+      "provenance": {"run_id": "run-1", "observed_at": "2026-07-27T14:04:00Z"},
+      "expected_authority": "advisory",
+      "expected_import": "accepted"
+    },
+    {
+      "id": "reviewed_rejected_observation",
+      "review_status": "rejected",
+      "provenance": {"run_id": "run-1", "observed_at": "2026-07-27T14:04:00Z"},
+      "expected_authority": "none",
+      "expected_import": "rejected"
+    }
+  ]
+}
