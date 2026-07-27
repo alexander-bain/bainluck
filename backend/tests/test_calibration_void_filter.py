@@ -53,7 +53,7 @@ class TestVoidSQL:
     def test_main_precompute_query_embeds_exclusion_and_count(self):
         import inspect
 
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         # The exclusion is applied in the main bucket query's WHERE clause.
         assert "'did_not_play', 'withdrew'" in src
         # The transparency count query + payload surface.
@@ -95,14 +95,21 @@ class _FakeDB:
         ]
 
     async def execute(self, statement):
+        # Queue #257 Item 1: route delegates to the shared
+        # compute_calibration_payload (more queries than the old route path);
+        # tolerate the extra reads with an empty result.
+        if not self._results:
+            return _FakeResult()
         return self._results.pop(0)
 
 
 @pytest.mark.asyncio
 async def test_route_fallback_includes_void_filter_key():
-    # Cold-cache fallback serves void_filter=None for shape consistency; the
-    # authoritative count comes from the precompute->Redis path.
+    # Queue #257 Item 1: the cold-cache fallback now delegates to the ONE shared
+    # compute_calibration_payload, so it serves the FULL void-filter transparency
+    # dict (not the old degraded None) — the cold serve matches the Redis serve.
     calibration._cache = {"data": None, "timestamp": 0}
     resp = await calibration.public_calibration(db=_FakeDB(), bust=1)
     assert "void_filter" in resp
-    assert resp["void_filter"] is None
+    assert resp["void_filter"] is not None
+    assert resp["void_filter"]["applies_to"] == "datagolf"

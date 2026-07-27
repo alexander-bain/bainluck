@@ -91,7 +91,7 @@ class TestCorrectionsLog:
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_esports_bundles(self):
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         )
         # The CTE that identifies the >=3-outcome/>=2-winner esports markets.
         assert "esports_multi_bundles AS (" in src
@@ -104,20 +104,19 @@ class TestPrecomputeQueryEmbedsExclusion:
     def test_exclusion_is_read_side_only(self):
         # Guardrail (gotcha #21): the exclusion must never mutate is_winner/cp.
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         ).lower()
         assert "update futures_outcomes" not in src
         assert "update futures_markets" not in src
         assert "delete from futures_outcomes" not in src
 
 
-class TestRouteFallbackEmbedsExclusion:
-    def test_route_fallback_mirrors_exclusion(self):
-        # The cold-cache fallback in routes/calibration.py must stay in sync so a
-        # cache miss is not silently esports-inflated.
+class TestRouteFallbackDelegatesToSharedPath:
+    def test_route_fallback_delegates_to_shared_payload(self):
+        # Queue #257 Item 1: the cold-cache fallback delegates to the ONE shared
+        # compute_calibration_payload, so it inherits the esports match-bundle
+        # exclusion by construction — a cache miss can never be esports-inflated.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "esports_multi_bundles AS (" in src
-        assert "NOT ro.is_esports_bundle" in src
-        assert "esports_multi_bundle_filter" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src

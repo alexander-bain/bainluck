@@ -181,7 +181,7 @@ class TestCanonicalExcludeSql:
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_kalshi_prop_thresholds(self):
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         )
         # The structural flag on the "<subject>: N+" kalshi outcome.
         assert "is_kalshi_prop_threshold" in src
@@ -198,7 +198,7 @@ class TestPrecomputeQueryEmbedsExclusion:
     def test_exclusion_is_read_side_only(self):
         # Guardrail (gotcha #21): the exclusion must never mutate is_winner/cp.
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         ).lower()
         assert "update futures_outcomes" not in src
         assert "update futures_markets" not in src
@@ -222,18 +222,16 @@ class TestWriterSideCaptureGuard:
         assert "WHEN nc.is_threshold THEN NULL" in src
 
 
-class TestRouteFallbackEmbedsExclusion:
-    def test_route_fallback_mirrors_exclusion(self):
-        # The cold-cache fallback in routes/calibration.py must stay in sync so a
-        # cache miss is not silently prop-inflated.
+class TestRouteFallbackDelegatesToSharedPath:
+    def test_route_fallback_delegates_to_shared_payload(self):
+        # Queue #257 Item 1: the cold-cache fallback delegates to the ONE shared
+        # compute_calibration_payload, so it inherits the Kalshi prop-threshold
+        # exclusion by construction — a cache miss can never be prop-inflated and
+        # the band/regex cannot drift between serve paths.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "is_kalshi_prop_threshold" in src
-        assert "NOT ro.is_kalshi_prop_threshold" in src
-        # Queue #188 Item 3: the route no longer hardcodes the band/regex — it
-        # renders the predicate from the shared helper, so it cannot drift.
-        assert "kalshi_prop_threshold_exclude_sql" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src
 
 
 class TestSourceIntelligenceHonorsExclusion:

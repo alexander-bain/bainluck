@@ -76,7 +76,7 @@ class TestCorrectionsLog:
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_soccer_leagues(self):
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         )
         # The events-curve moneyline query league-scopes the exclusion.
         assert "s.key NOT LIKE 'soccer_%'" in src
@@ -89,7 +89,7 @@ class TestPrecomputeQueryEmbedsExclusion:
         # draw-omission bug and dominates the soccer_* lines — it must be
         # filtered on the consumption side too, else the D5 win is lost.
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         )
         assert "bookmaker_soccer_excluded" in src
         # The consumption filter uses the canonical predicate.
@@ -98,19 +98,20 @@ class TestPrecomputeQueryEmbedsExclusion:
     def test_exclusion_is_read_side_only(self):
         # Guardrail (gotcha #21): the exclusion must never mutate scores/probs.
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         ).lower()
         assert "update events" not in src
         assert "update futures_outcomes" not in src
         assert "delete from events" not in src
 
 
-class TestRouteFallbackEmbedsExclusion:
-    def test_route_fallback_mirrors_exclusion(self):
-        # The cold-cache fallback in routes/calibration.py must stay in sync so a
-        # cache miss is not silently soccer-inflated.
+class TestRouteFallbackDelegatesToSharedPath:
+    def test_route_fallback_delegates_to_shared_payload(self):
+        # Queue #257 Item 1: the cold-cache fallback no longer carries its own
+        # copy of the CTE chain — it delegates to the ONE shared
+        # compute_calibration_payload, so it inherits the soccer 2-way exclusion
+        # (and every other) by construction. A cache miss can never diverge.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "s.key NOT LIKE 'soccer_%'" in src
-        assert "soccer_2way_filter" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src

@@ -75,7 +75,7 @@ class TestPrecomputeGateWiring:
     lived on the frontend would not be inherited by native (the whole point)."""
 
     def _src(self):
-        return inspect.getsource(precompute_calibration._precompute_calibration_main)
+        return inspect.getsource(precompute_calibration.compute_calibration_payload)
 
     def test_gate_applied_to_by_category(self):
         src = self._src()

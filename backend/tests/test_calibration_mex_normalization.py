@@ -72,37 +72,45 @@ class TestRuleText:
 
 class TestPrecomputeQueryEmbedsNormalization:
     def test_main_query_embeds_mex_normalization(self):
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         # The support CTEs.
         assert "mex_win_counts" in src
         assert "mex_norm_markets" in src
         # Winner-count structure gate (genuine single-winner partition).
         assert "win_count = 1" in src
-        # Applied as the divisor in ranked_outcomes.
-        assert "/ mnm.cp_sum" in src
+        # Applied as the divisor in the completeness-gated ``normalized`` CTE
+        # (Queue #257 Item 1 moved the division out of ranked_outcomes so it can
+        # be gated on field completeness).
+        assert "ro.raw_cp / ro.mnm_cp_sum" in src
         assert "is_mex_normalized" in src
-        # Transparency count + payload surface.
+        # Queue #257 Item 1: normalization is gated on field completeness — a
+        # partial field is excluded, never normalized over survivors.
+        assert "field_completeness" in src
+        assert "is_field_incomplete" in src
+        # Transparency count + payload surface (candidate vs published split).
         assert "mex_normalized_outcomes" in src
         assert '"mex_normalization"' in src
+        assert "candidate_markets" in src
 
     def test_normalization_is_read_side_only(self):
         # Guardrail (gotcha #21): normalization must never mutate resolutions.
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         lowered = src.lower()
         assert "update futures_outcomes" not in lowered
         assert "update futures_markets" not in lowered
         assert "delete from futures_outcomes" not in lowered
 
 
-class TestRouteFallbackEmbedsNormalization:
-    def test_route_fallback_mirrors_normalization(self):
-        # The cold-cache fallback in routes/calibration.py must stay in sync so a
-        # cache miss is not wildly over-confident on mex markets.
+class TestRouteFallbackDelegatesToSharedPath:
+    def test_route_fallback_delegates_to_shared_payload(self):
+        # Queue #257 Item 1: the cold-cache fallback delegates to the ONE shared
+        # compute_calibration_payload, so it inherits the multi-candidate
+        # normalization by construction — a cache miss can never be
+        # over-confident on mex/field markets.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "mex_norm_markets" in src
-        assert "/ mnm.cp_sum" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src
 
 
 class TestFieldShapeGate254:
@@ -112,17 +120,18 @@ class TestFieldShapeGate254:
     curve raw. Both synced query sites must embed the extended gate."""
 
     def test_precompute_gate_includes_field_shape(self):
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         assert "mi.market_type = 'field'" in src
         # market_info must expose market_type for the gate to reference it.
         assert "fm.market_type" in src
 
     def test_route_fallback_gate_includes_field_shape(self):
+        # Queue #257 Item 1: the field-shape gate lives once in the shared
+        # compute_calibration_payload; the route inherits it by delegating.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "mi.market_type = 'field'" in src
-        assert "fm.market_type" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src
 
     def test_field_shape_still_guarded_by_single_winner_and_threshold(self):
         # The extension does NOT loosen the safety guards: a field that is

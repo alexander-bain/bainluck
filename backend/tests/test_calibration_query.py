@@ -3,6 +3,18 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes import calibration
+from app.tasks import precompute_calibration
+
+
+@pytest.fixture(autouse=True)
+def _disable_sample_gate(monkeypatch):
+    # Queue #257 Item 1: the route delegates to the shared
+    # compute_calibration_payload, which applies the #997 min-sample gate to
+    # by_sport/by_category. These fake-DB shape tests use small synthetic N, so
+    # disable the gate (it is covered by test_calibration_min_sample_gate.py).
+    monkeypatch.setattr(
+        precompute_calibration, "_get_min_category_outcomes", lambda *_a, **_k: 0
+    )
 
 
 class _FakeResult:
@@ -42,6 +54,13 @@ class _FakeDB:
 
     async def execute(self, statement):
         self.statements.append(statement)
+        # Queue #257 Item 1: the route now delegates to the shared
+        # compute_calibration_payload, which runs more queries than the old
+        # route path (void / heuristic / soccer-2way / date_range). Tolerate
+        # the extra reads with an empty result so these fake-DB tests exercise
+        # the shared payload without hand-seeding every query.
+        if not self._results:
+            return _FakeResult()
         return self._results.pop(0)
 
 
@@ -67,6 +86,23 @@ def _bucket_row(
         avg_prob=avg_prob,
         sum_prob=sum_prob,
         sum_sq_err=sum_sq_err,
+        # Queue #257 Item 1: the shared compute_calibration_payload reads the
+        # per-run transparency counts off the first futures row (CROSS JOIN
+        # liq_summary). Real rows always carry them; seed 0 so a fake futures
+        # row exercises the full shared path instead of AttributeError-ing.
+        kalshi_included=0,
+        kalshi_excluded=0,
+        poly_placeholder_excluded=0,
+        poly_included=0,
+        poly_never_traded_total=0,
+        poly_never_traded_in_curve=0,
+        both_false_excluded=0,
+        both_winner_excluded=0,
+        golf_placeholder_excluded=0,
+        mex_normalized_outcomes=0,
+        esports_bundle_excluded=0,
+        kalshi_prop_threshold_excluded=0,
+        weather_wide_spread_excluded=0,
     )
 
 
@@ -120,7 +156,10 @@ async def test_public_calibration_classifies_only_non_null_changed_prices_as_clo
     # in the ELSE branch and the alias follows the END.
     assert "COALESCE(fo.calibration_probability, fo.opening_probability)" in futures_sql
     assert "END AS adj_opening_probability" in futures_sql
-    assert "/ mnm.cp_sum" in futures_sql  # the normalization divisor
+    # Queue #257 Item 1: the normalization divisor moved from ranked_outcomes into
+    # the completeness-gated ``normalized`` CTE (cp / per-market sum only for
+    # COMPLETE fields), so the division now reads off the carried raw_cp/mnm_cp_sum.
+    assert "ro.raw_cp / ro.mnm_cp_sum" in futures_sql  # the normalization divisor
     # price_moved still keys off the raw cal_prob vs opening comparison, NOT the
     # normalized value — the closing-line classification is unchanged.
     assert "fo.calibration_probability IS NOT NULL" in futures_sql

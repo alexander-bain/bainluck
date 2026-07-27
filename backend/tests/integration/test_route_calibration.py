@@ -29,6 +29,19 @@ def clear_calibration_cache():
     calibration._examples_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _disable_sample_gate(monkeypatch):
+    # Queue #257 Item 1: the route delegates to the shared
+    # compute_calibration_payload, which applies the #997 min-sample gate to
+    # by_category/by_source/by_sport. These contract tests use small synthetic N,
+    # so disable the gate (it is covered by test_calibration_min_sample_gate.py).
+    from app.tasks import precompute_calibration
+
+    monkeypatch.setattr(
+        precompute_calibration, "_get_min_category_outcomes", lambda *_a, **_k: 0
+    )
+
+
 def _mock_result(*, rows=(), scalar=None, one=None):
     result = MagicMock()
     result.all.return_value = list(rows)
@@ -60,6 +73,22 @@ def _bucket_row(
         avg_prob=avg_prob,
         sum_prob=sum_prob,
         sum_sq_err=sum_sq_err,
+        # Queue #257 Item 1: the shared compute_calibration_payload reads the
+        # per-run transparency counts off the first futures row (CROSS JOIN
+        # liq_summary). Seed 0 so a fake futures row exercises the full path.
+        kalshi_included=0,
+        kalshi_excluded=0,
+        poly_placeholder_excluded=0,
+        poly_included=0,
+        poly_never_traded_total=0,
+        poly_never_traded_in_curve=0,
+        both_false_excluded=0,
+        both_winner_excluded=0,
+        golf_placeholder_excluded=0,
+        mex_normalized_outcomes=0,
+        esports_bundle_excluded=0,
+        kalshi_prop_threshold_excluded=0,
+        weather_wide_spread_excluded=0,
     )
 
 
@@ -110,6 +139,13 @@ def _set_public_calibration_results(
         _mock_result(rows=totals_rows),
         _mock_result(scalar=total_markets),
         _mock_result(one=closing_row or _closing_row(has_closing=0, needs_closing=0, total=0)),
+        # Queue #257 Item 1: the route now delegates to the shared
+        # compute_calibration_payload, which additionally runs the void /
+        # heuristic / soccer-2way transparency counts and the date_range span.
+        _mock_result(scalar=0),                      # void_sql
+        _mock_result(rows=[]),                       # heur_sql
+        _mock_result(scalar=0),                      # soccer_2way_sql
+        _mock_result(one=SimpleNamespace(lo=None, hi=None)),  # date_range
     ]
 
 
@@ -187,11 +223,17 @@ class TestCalibrationPublicEndpoint:
         assert resp.status_code == 200
         body = resp.json()
 
+        # Queue #257 Item 1: the cold-cache fallback delegates to the ONE shared
+        # compute_calibration_payload, so it now returns the FULL key set (every
+        # filter/transparency block + the sample-gate fields) — identical to the
+        # precompute->Redis serve, not the old degraded subset.
         assert set(body) == {
             "closing_line_coverage",
             "buckets",
             "by_category",
             "by_source",
+            "min_category_outcomes",  # #997 sample gate (shipped in payload)
+            "small_sample_categories",  # #997 gated-out list (transparency)
             "spreads_summary",
             "totals_summary",
             "total_markets",
@@ -202,9 +244,17 @@ class TestCalibrationPublicEndpoint:
             "mce_closing_line",
             "mce_opening_price",
             "liquidity_filter",
+            "poly_placeholder_filter",  # L2-76 (#151/#997)
+            "exclusion_symmetry",  # Queue #220/221 Item 3
+            "malformed_binary_filter",  # L2-79 Item 1 (#997/#1010)
+            "golf_placeholder_filter",  # L2-79 Item 2 (#940/#762)
+            "mex_normalization",  # Queue #157 (#1012)
+            "esports_multi_bundle_filter",  # Queue #159 (#1010)
+            "kalshi_prop_threshold_filter",  # Queue #186 (#941)
+            "weather_wide_spread_filter",  # Queue #183 Item 4 (#182 twin)
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
-            "esports_multi_bundle_filter",  # Queue #159 (#1010): esports bundle exclusion
+            "heuristic_filter",  # #754 heuristic-exclusion transparency
             "corrections",  # L2-73 §E
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",

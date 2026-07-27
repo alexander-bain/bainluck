@@ -58,7 +58,7 @@ class TestLiquiditySQL:
     def test_main_precompute_query_embeds_filter_and_counts(self):
         import inspect
 
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         # Filter applied as a materialized per-outcome flag, excluded from buckets.
         assert "ranked_outcomes AS MATERIALIZED" in src
         assert "is_liquid" in src
@@ -99,7 +99,7 @@ class TestExclusionSymmetryCensus:
     def test_main_query_censuses_cohort_and_payload_surfaces_it(self):
         import inspect
 
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         # Census flag + counts in the query.
         assert "is_poly_never_traded" in src
         assert "poly_never_traded_total" in src
@@ -142,14 +142,22 @@ class _FakeDB:
         ]
 
     async def execute(self, statement):
+        # Queue #257 Item 1: route delegates to the shared
+        # compute_calibration_payload (more queries than the old route path);
+        # tolerate the extra reads with an empty result.
+        if not self._results:
+            return _FakeResult()
         return self._results.pop(0)
 
 
 @pytest.mark.asyncio
 async def test_route_fallback_includes_liquidity_filter_key():
-    # Cold-cache fallback serves liquidity_filter=None for shape consistency;
-    # the authoritative filtered numbers come from the precompute->Redis path.
+    # Queue #257 Item 1: the cold-cache fallback now delegates to the ONE shared
+    # compute_calibration_payload, so it serves the FULL liquidity-filter
+    # transparency dict (not the old degraded None) — the cold serve is no longer
+    # a lesser curve than the Redis-served one.
     calibration._cache = {"data": None, "timestamp": 0}
     resp = await calibration.public_calibration(db=_FakeDB(), bust=1)
     assert "liquidity_filter" in resp
-    assert resp["liquidity_filter"] is None
+    assert resp["liquidity_filter"] is not None
+    assert resp["liquidity_filter"]["applies_to"] == "kalshi"

@@ -13,6 +13,19 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes import calibration
+from app.tasks import precompute_calibration
+
+
+@pytest.fixture(autouse=True)
+def _disable_sample_gate(monkeypatch):
+    # Queue #257 Item 1: the route now delegates to the shared
+    # compute_calibration_payload, which applies the #997 min-sample gate (default
+    # 1000 outcomes) to by_sport/by_category. This file's spreads/totals summaries
+    # use small synthetic N, so disable the gate here — the gate itself is covered
+    # by test_calibration_min_sample_gate.py.
+    monkeypatch.setattr(
+        precompute_calibration, "_get_min_category_outcomes", lambda *_a, **_k: 0
+    )
 
 
 class _FakeResult:
@@ -70,6 +83,11 @@ class _FakeDB:
         ]
 
     async def execute(self, statement):
+        # Queue #257 Item 1: route delegates to the shared
+        # compute_calibration_payload (more queries than the old route path);
+        # tolerate the extra reads with an empty result.
+        if not self._results:
+            return _FakeResult()
         return self._results.pop(0)
 
 
@@ -590,7 +608,7 @@ class TestClosingLineBackfillSql:
     def test_spread_sql_in_calibration_query(self):
         """The calibration SQL must reference closing_home_spread columns."""
         import inspect
-        source = inspect.getsource(calibration.public_calibration)
+        source = inspect.getsource(precompute_calibration.compute_calibration_payload)
         assert "closing_home_spread" in source
         assert "closing_home_spread_odds" in source
         assert "closing_away_spread_odds" in source
@@ -601,7 +619,7 @@ class TestClosingLineBackfillSql:
     def test_total_sql_in_calibration_query(self):
         """The calibration SQL must reference closing_over_under columns."""
         import inspect
-        source = inspect.getsource(calibration.public_calibration)
+        source = inspect.getsource(precompute_calibration.compute_calibration_payload)
         assert "closing_over_under" in source
         assert "closing_over_odds" in source
         assert "closing_under_odds" in source
@@ -612,7 +630,7 @@ class TestClosingLineBackfillSql:
     def test_spread_devig_formula_in_sql(self):
         """The devig formula normalizes home implied prob by (home + away)."""
         import inspect
-        source = inspect.getsource(calibration.public_calibration)
+        source = inspect.getsource(precompute_calibration.compute_calibration_payload)
         # The devig formula divides by (home_implied + away_implied)
         assert "closing_home_spread_odds" in source
         assert "closing_away_spread_odds" in source
@@ -622,7 +640,7 @@ class TestClosingLineBackfillSql:
     def test_total_devig_formula_in_sql(self):
         """The devig formula normalizes over implied prob by (over + under)."""
         import inspect
-        source = inspect.getsource(calibration.public_calibration)
+        source = inspect.getsource(precompute_calibration.compute_calibration_payload)
         assert "closing_over_odds" in source
         assert "closing_under_odds" in source
         assert "ABS(closing_over_odds)" in source

@@ -86,7 +86,7 @@ class TestRuleText:
 
 class TestPrecomputeQueryEmbedsExclusion:
     def test_main_query_excludes_weather_wide_spread(self):
-        src = inspect.getsource(precompute_calibration._precompute_calibration_main)
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
         assert "is_weather_wide_spread" in src
         assert "NOT ro.is_weather_wide_spread" in src
         # Transparency count + payload surface.
@@ -95,17 +95,19 @@ class TestPrecomputeQueryEmbedsExclusion:
 
     def test_exclusion_is_read_side_only(self):
         src = inspect.getsource(
-            precompute_calibration._precompute_calibration_main
+            precompute_calibration.compute_calibration_payload
         ).lower()
         assert "update futures_outcomes" not in src
         assert "update futures_markets" not in src
         assert "delete from futures_outcomes" not in src
 
 
-class TestRouteFallbackEmbedsExclusion:
-    def test_route_fallback_mirrors_exclusion(self):
+class TestRouteFallbackDelegatesToSharedPath:
+    def test_route_fallback_delegates_to_shared_payload(self):
+        # Queue #257 Item 1: the cold-cache fallback delegates to the ONE shared
+        # compute_calibration_payload, so it inherits the weather wide-spread
+        # exclusion by construction — a cache miss can never be poisoned.
         from app.routes import calibration as calibration_route
 
-        src = inspect.getsource(calibration_route)
-        assert "is_weather_wide_spread" in src
-        assert "NOT ro.is_weather_wide_spread" in src
+        src = inspect.getsource(calibration_route.public_calibration)
+        assert "compute_calibration_payload" in src

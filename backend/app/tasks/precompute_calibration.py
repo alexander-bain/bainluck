@@ -5,6 +5,7 @@ data volumes (500K+ snapshot rows). Running them as background Celery tasks
 with results cached in Redis lets the API endpoints serve instantly.
 """
 
+import contextlib
 import json
 import logging
 import math
@@ -420,6 +421,76 @@ def market_needs_mex_normalization(
         and n_winners == 1
         and cp_sum is not None
         and cp_sum > MEX_NORMALIZE_THRESHOLD
+    )
+
+
+# Queue #257 Item 1 — the FIELD-COMPLETENESS invariant before normalization.
+#
+# market_needs_mex_normalization decides a market is a *candidate* for per-market
+# normalization (>=3 eligible, one winner over ALL outcomes, over-confident sum).
+# But normalizing divides each survivor's cp by the per-market cp sum so the
+# published partition sums to ~1.0 — and that is only correct when the survivors
+# ARE the whole field. If a published per-outcome exclusion (liquidity, poly
+# placeholder, esports bundle, golf placeholder, Kalshi prop threshold, weather
+# wide-spread) removed one or more members, the surviving cp sum is smaller than
+# the true full-field sum, so dividing the survivors by it INFLATES them (the
+# winner's true share is smaller than survivor_cp / survivor_sum). Worse, if the
+# excluded member WAS the winner, normalizing the losers to sum 1.0 is pure
+# fiction. Such a PARTIAL field must be EXCLUDED from the curve with a
+# machine-readable reason, never "normalized over survivors".
+#
+# Completeness is proven STRUCTURALLY: there is no stored expected-member count
+# (market_type='field' is a shape from app.utils.market_shape — ">2 competitors,
+# one wins" — with no member cardinality), so the source-backed invariant is "no
+# eligible member of this field was excluded" (survivor_n == eligible_n) AND "the
+# winner survived" (survivor_win_n == 1) AND "still a partition" (survivor_n >= 3).
+# When that holds, the survivor cp sum equals the divisor, so the bucketed field
+# sums to ~1.0 by construction; otherwise the field is excluded. (This detects
+# EXCLUSION-INDUCED partiality, which is what the curve controls; members that
+# were never ingested at all are undetectable without an expected-member count —
+# a documented forward limitation, not fabricated here.) Read-side only (gotcha
+# #21) — never mutates is_winner / calibration_probability.
+FIELD_COMPLETENESS_RULE_TEXT = (
+    "A resolved mutually-exclusive / field market is normalized (each outcome's "
+    "probability divided by the per-market sum) ONLY when its captured partition "
+    "is COMPLETE — every eligible member survives every per-outcome exclusion and "
+    "the winner is among the survivors — so the published field sums to ~1.0. If a "
+    "published exclusion removed any member, the field is PARTIAL: normalizing the "
+    "survivors would inflate them (their true combined share is < 1.0), so the "
+    "whole market is excluded from the curve with a repair reason instead of being "
+    "normalized over survivors. Completeness is structural (no stored expected-"
+    "member count exists); exclusion-induced partiality is what is detected. "
+    "Read-side only; never mutates resolutions."
+)
+
+
+def field_is_complete_for_normalization(
+    eligible_n: int, survivor_n: int, survivor_win_n: int
+) -> bool:
+    """True if a normalization-candidate field is COMPLETE enough to normalize (Queue #257).
+
+    Canonical, unit-tested mirror of the ``field_completeness`` CTE gate. Given a
+    market already confirmed a normalization candidate by
+    ``market_needs_mex_normalization`` (>=3 eligible, one winner over all
+    outcomes, sum > threshold), it is normalized over its survivors ONLY when:
+
+      * ``survivor_n == eligible_n`` — NO eligible member was removed by a
+        published per-outcome exclusion (the survivor cp sum therefore equals the
+        full-field divisor, so the normalized partition sums to ~1.0), AND
+      * ``survivor_win_n == 1`` — the winner itself survived (normalizing losers
+        to sum 1.0 when the winner was excluded would be fiction), AND
+      * ``survivor_n >= 3`` — the survivor set is still a partition, not a
+        collapsed 1-2 outcome remnant.
+
+    When this is False for a candidate, the market is a PARTIAL field and its
+    outcomes are EXCLUDED from the published curve (``is_field_incomplete``) with
+    a machine-readable reason — never normalized over the survivors. Read-side
+    only (gotcha #21).
+    """
+    return (
+        survivor_n == eligible_n
+        and survivor_win_n == 1
+        and survivor_n >= 3
     )
 
 
@@ -919,20 +990,37 @@ def _compute_horizon_mce(buckets: list[dict], weighted: bool = True) -> float | 
     return round(total_abs_err / total_w * 100, 2)
 
 
-async def _precompute_calibration_main():
-    """Precompute the main /api/calibration response and store in Redis.
+async def compute_calibration_payload(db) -> dict:
+    """The single canonical /api/calibration payload computation (Queue #257 Item 1).
 
-    This mirrors the logic in routes/calibration.py public_calibration() but
-    runs as a Celery background task so the HTTP endpoint can serve instantly
-    from the Redis cache instead of running 6 heavy queries in-request.
+    ONE eligible population + ONE normalization divisor, shared by BOTH serve
+    paths so a cold-cache fallback can never diverge from the precomputed serve:
+      * the scheduled ``precompute_calibration_main`` task (writes Redis), and
+      * ``routes/calibration.public_calibration``'s in-request fallback.
+
+    Previously each site carried its own copy of the CTE chain + Python
+    post-processing and they had drifted in ~11 material ways — the route's
+    cold-cache path was missing the liquidity / poly-placeholder / malformed-
+    binary / golf-placeholder exclusions and the DataGolf-residual guard, used a
+    looser resolution-source filter (kept ``pass2_loser`` / ``all_losers`` and
+    NULL-source rows), and computed equal-weighted MCE where the task used
+    n-weighted — so a cold serve showed a materially different curve. This
+    function is that ONE population, imported by both.
+
+    ``db`` is a live session supplied by the caller (task session or request
+    session); all reads run on it and the response dict is returned WITHOUT
+    writing Redis (the caching wrapper does that). Read-side only — never mutates
+    is_winner / calibration_probability (gotcha #21).
     """
     from sqlalchemy import func, select
 
     from app.models import FuturesMarket
-    from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
-    async with get_task_session() as db:
+    # nullcontext preserves the historical block structure (the queries below
+    # keep their original indentation) while running on the caller-provided
+    # session instead of opening its own — so both serve paths share one body.
+    with contextlib.nullcontext():
         # -----------------------------------------------------------
         # Query 1: Main futures calibration buckets
         # -----------------------------------------------------------
@@ -1105,14 +1193,17 @@ async def _precompute_calibration_main():
             ),
             ranked_outcomes AS MATERIALIZED (
                 SELECT
-                    -- Queue #157 (#1012): normalize mex >=3 single-winner markets
-                    -- whose eligible cp sum > threshold (divide each outcome by the
-                    -- per-market sum so the partition sums to ~1); all others raw.
-                    CASE WHEN mnm.market_id IS NOT NULL
-                         THEN COALESCE(fo.calibration_probability, fo.opening_probability) / mnm.cp_sum
-                         ELSE COALESCE(fo.calibration_probability, fo.opening_probability)
-                    END AS adj_opening_probability,
-                    (mnm.market_id IS NOT NULL) AS is_mex_normalized,
+                    -- Queue #157 (#1012): raw curve price + the per-market
+                    -- normalization divisor. The actual normalization (cp /
+                    -- mnm.cp_sum) is DEFERRED to the ``normalized`` CTE below,
+                    -- because it is gated on FIELD COMPLETENESS (Queue #257 Item
+                    -- 1) which can only be aggregated once these per-outcome
+                    -- exclusion flags exist. Carry market_id so completeness can
+                    -- be computed per market.
+                    COALESCE(fo.calibration_probability, fo.opening_probability) AS raw_cp,
+                    mnm.market_id AS mnm_market_id,
+                    mnm.cp_sum AS mnm_cp_sum,
+                    fo.market_id AS market_id,
                     fo.is_winner AS is_winner,
                     (fo.calibration_probability IS NOT NULL
                      AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
@@ -1181,15 +1272,74 @@ async def _precompute_calibration_main():
                                                     'no_pregame_trading'))
               AND COALESCE(fo.volume, -1) != 0
             ),
+            -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
+            -- normalization CANDIDATE market (in mex_norm_markets: mex/field,
+            -- single winner over all outcomes, >=3 eligible, sum > threshold),
+            -- count eligible members, survivors (those passing EVERY per-outcome
+            -- published exclusion), and whether the winner survived. All eligible
+            -- outcomes of a candidate appear in ranked_outcomes (its vm is in
+            -- clean_vms), so COUNT(*) here IS the eligible member count and the
+            -- survivor cp sum equals mnm.cp_sum iff nothing was excluded.
+            field_completeness AS (
+                SELECT ro.market_id,
+                    COUNT(*) AS eligible_n,
+                    COUNT(*) FILTER (
+                        WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_malformed_binary
+                          AND NOT ro.is_esports_bundle
+                          AND NOT ro.is_golf_placeholder
+                          AND NOT ro.is_kalshi_prop_threshold
+                          AND NOT ro.is_weather_wide_spread
+                    ) AS survivor_n,
+                    COUNT(*) FILTER (
+                        WHERE ro.is_winner
+                          AND ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_malformed_binary
+                          AND NOT ro.is_esports_bundle
+                          AND NOT ro.is_golf_placeholder
+                          AND NOT ro.is_kalshi_prop_threshold
+                          AND NOT ro.is_weather_wide_spread
+                    ) AS survivor_win_n
+                FROM ranked_outcomes ro
+                JOIN mex_norm_markets mnm ON mnm.market_id = ro.market_id
+                GROUP BY ro.market_id
+            ),
+            -- Queue #257 Item 1: apply normalization ONLY to COMPLETE candidate
+            -- fields (survivor_n = eligible_n AND winner survived AND >=3), so a
+            -- published field sums to ~1.0 over its survivors. A candidate whose
+            -- field is PARTIAL (a member was excluded) is flagged
+            -- is_field_incomplete and dropped from the curve by ``deduped`` —
+            -- never normalized over survivors. mnm.cp_sum equals the survivor sum
+            -- exactly when complete, so cp / mnm_cp_sum normalizes to ~1.
+            normalized AS (
+                SELECT ro.*,
+                    (ro.mnm_market_id IS NOT NULL
+                     AND fc.survivor_n = fc.eligible_n
+                     AND fc.survivor_win_n = 1
+                     AND fc.survivor_n >= 3) AS is_mex_normalized,
+                    (ro.mnm_market_id IS NOT NULL
+                     AND NOT (fc.survivor_n = fc.eligible_n
+                              AND fc.survivor_win_n = 1
+                              AND fc.survivor_n >= 3)) AS is_field_incomplete,
+                    CASE WHEN ro.mnm_market_id IS NOT NULL
+                              AND fc.survivor_n = fc.eligible_n
+                              AND fc.survivor_win_n = 1
+                              AND fc.survivor_n >= 3
+                         THEN ro.raw_cp / ro.mnm_cp_sum
+                         ELSE ro.raw_cp
+                    END AS adj_opening_probability
+                FROM ranked_outcomes ro
+                LEFT JOIN field_completeness fc ON fc.market_id = ro.market_id
+            ),
             mode_prices AS (
                 SELECT vm_id, adj_opening_probability AS mode_price
-                FROM ranked_outcomes
+                FROM normalized
                 WHERE is_multi AND eligible >= 3 AND is_liquid
                 GROUP BY vm_id, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
             deduped AS (
-                SELECT ro.* FROM ranked_outcomes ro
+                SELECT ro.* FROM normalized ro
                 LEFT JOIN mode_prices mp
                   ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
@@ -1197,7 +1347,9 @@ async def _precompute_calibration_main():
                     AND NOT ro.is_esports_bundle
                     AND NOT ro.is_golf_placeholder
                     AND NOT ro.is_kalshi_prop_threshold
-                    AND NOT ro.is_weather_wide_spread AND
+                    AND NOT ro.is_weather_wide_spread
+                    AND NOT ro.is_field_incomplete
+                    AND
                     CASE
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
@@ -1229,6 +1381,18 @@ async def _precompute_calibration_main():
                     -- Queue #157: multi-candidate normalization transparency —
                     -- how many curve outcomes had their probability normalized.
                     COUNT(*) FILTER (WHERE is_mex_normalized) AS mex_normalized_outcomes,
+                    -- Queue #257 Item 1: field-completeness transparency. A
+                    -- normalization CANDIDATE is a mex/field market that hit the
+                    -- >=3 / one-winner / sum>threshold gate; it is PUBLISHED
+                    -- (normalized) only if its field is complete, else EXCLUDED as
+                    -- a partial field. Report the candidate vs published split so
+                    -- the population change is honest, never silent.
+                    COUNT(DISTINCT market_id) FILTER (
+                        WHERE is_mex_normalized OR is_field_incomplete
+                    ) AS mex_candidate_markets,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_normalized_markets,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_field_incomplete) AS field_incomplete_markets,
+                    COUNT(*) FILTER (WHERE is_field_incomplete) AS field_incomplete_outcomes,
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
@@ -1236,7 +1400,7 @@ async def _precompute_calibration_main():
                     COUNT(*) FILTER (WHERE is_kalshi_prop_threshold) AS kalshi_prop_threshold_excluded,
                     -- Queue #183 Item 4: weather wide-spread exclusion count.
                     COUNT(*) FILTER (WHERE is_weather_wide_spread) AS weather_wide_spread_excluded
-                FROM ranked_outcomes
+                FROM normalized
             ),
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
@@ -1258,6 +1422,10 @@ async def _precompute_calibration_main():
                 MAX(ls.both_winner_excluded) AS both_winner_excluded,
                 MAX(ls.golf_placeholder_excluded) AS golf_placeholder_excluded,
                 MAX(ls.mex_normalized_outcomes) AS mex_normalized_outcomes,
+                MAX(ls.mex_candidate_markets) AS mex_candidate_markets,
+                MAX(ls.mex_normalized_markets) AS mex_normalized_markets,
+                MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
+                MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
                 MAX(ls.kalshi_prop_threshold_excluded) AS kalshi_prop_threshold_excluded,
                 MAX(ls.weather_wide_spread_excluded) AS weather_wide_spread_excluded
@@ -1326,6 +1494,23 @@ async def _precompute_calibration_main():
             if rows and rows[0].mex_normalized_outcomes is not None
             else 0
         )
+
+        # Queue #257 Item 1: field-completeness candidate/published split. A
+        # candidate is a mex/field market that hit the normalization gate; it is
+        # PUBLISHED (normalized) only if complete, else excluded as a partial
+        # field. Reported separately so the population change is truthful.
+        def _int0(attr):
+            return (
+                int(getattr(rows[0], attr))
+                if rows and getattr(rows[0], attr, None) is not None
+                else 0
+            )
+
+        mex_candidate_markets = _int0("mex_candidate_markets")
+        mex_normalized_markets = _int0("mex_normalized_markets")
+        field_incomplete_markets = _int0("field_incomplete_markets")
+        field_incomplete_outcomes = _int0("field_incomplete_outcomes")
+
         # Queue #159 (#1010): esports match-bundle exclusion transparency count.
         esports_bundle_excluded = (
             int(rows[0].esports_bundle_excluded)
@@ -1929,11 +2114,23 @@ async def _precompute_calibration_main():
             "rule": GOLF_PLACEHOLDER_RULE_TEXT,
             "excluded": golf_placeholder_excluded,
         },
-        "mex_normalization": {  # Queue #157 (#1012)
+        "mex_normalization": {  # Queue #157 (#1012) + Queue #257 Item 1
             "applies_to": "all",
             "rule": MEX_NORMALIZE_RULE_TEXT,
             "threshold": MEX_NORMALIZE_THRESHOLD,
             "normalized_outcomes": mex_normalized_outcomes,
+            # Queue #257 Item 1: the field-completeness invariant. candidate =
+            # markets that hit the normalization gate; published = those complete
+            # enough to normalize (each sums ~1.0 over its survivors); the rest
+            # are partial fields excluded from the curve with a repair reason,
+            # never normalized over survivors.
+            "field_completeness": {
+                "rule": FIELD_COMPLETENESS_RULE_TEXT,
+                "candidate_markets": mex_candidate_markets,
+                "published_normalized_markets": mex_normalized_markets,
+                "field_incomplete_excluded_markets": field_incomplete_markets,
+                "field_incomplete_excluded_outcomes": field_incomplete_outcomes,
+            },
         },
         "esports_multi_bundle_filter": {  # Queue #159 (#1010)
             "applies_to": "esports",
@@ -1978,11 +2175,34 @@ async def _precompute_calibration_main():
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Store in Redis
+    return response
+
+
+async def _precompute_calibration_main():
+    """Precompute the main /api/calibration payload and cache it in Redis.
+
+    Thin caching wrapper over the shared ``compute_calibration_payload`` (Queue
+    #257 Item 1): opens a task session, computes the ONE canonical payload, and
+    stores it under ``bainluck:calibration:main`` so the HTTP endpoint serves it
+    instantly instead of running the heavy queries in-request.
+    """
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    async with get_task_session() as db:
+        response = await compute_calibration_payload(db)
+
     rc = get_redis_client()
     rc.set("bainluck:calibration:main", json.dumps(response), ex=_MAIN_CACHE_TTL)
-    logger.info("Cached main calibration in Redis (%d buckets, %d outcomes)", len(bucket_dicts), total_outcomes)
-    return {"status": "ok", "buckets": len(bucket_dicts), "outcomes": total_outcomes}
+    logger.info(
+        "Cached main calibration in Redis (%d buckets, %d outcomes)",
+        len(response["buckets"]), response["total_outcomes"],
+    )
+    return {
+        "status": "ok",
+        "buckets": len(response["buckets"]),
+        "outcomes": response["total_outcomes"],
+    }
 
 
 def _time_horizon_payload(horizons_result: dict) -> dict:
