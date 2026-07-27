@@ -207,7 +207,12 @@ struct DiscoverView: View {
         return "golf"
     }
 
-    private func isStale(_ item: FeedItem) -> Bool {
+    /// Pure, testable staleness predicate powering the Discover stale gate
+    /// (L2-191). Terminal/date/extreme rot judged per card type, independent of
+    /// content: resolved/closed futures, past-resolution futures, expired FINAL
+    /// games, and near-decided/extreme probabilities. `now` is injectable so
+    /// tests are deterministic and don't straddle a date boundary (gotcha #44).
+    static func isStaleItem(_ item: FeedItem, now: Date = Date()) -> Bool {
         if let f = item.futures {
             if let leader = f.topOutcomes?.first {
                 let probability = leader.probability ?? 0
@@ -218,16 +223,24 @@ struct DiscoverView: View {
                 }
             }
             if f.status == "closed" || f.status == "resolved" { return true }
-            if let rd = f.resolutionDate, let d = rd.asDate, d < Date() { return true }
+            if let rd = f.resolutionDate, let d = rd.asDate, d < now { return true }
         }
         if let e = item.event {
             if e.status == "completed" || e.status == "closed" {
                 if let ct = e.commenceTime, let d = ct.asDate {
-                    return Date().timeIntervalSince(d) > 8 * 3600
+                    return now.timeIntervalSince(d) > 8 * 3600
                 }
             }
         }
         return false
+    }
+
+    /// Eligible = not stale. The stale gate has NO all-stale restoration path
+    /// ("settled means settled", L2-191): an all-stale input returns [] so the
+    /// view falls to the graceful end state rather than resurrecting settled
+    /// cards or minting a guess slot from them.
+    static func eligibleItems(_ items: [FeedItem], now: Date = Date()) -> [FeedItem] {
+        items.filter { !isStaleItem($0, now: now) }
     }
 
     private func itemId(_ item: FeedItem) -> String {
@@ -406,15 +419,17 @@ struct DiscoverView: View {
 
     private var filteredItems: [FeedItem] {
         // Compose in the #1221-ruled order: stale first, dismiss-decay second,
-        // floor last. Each step has a graceful fallback so the feed never empties.
+        // floor last. Dismiss/cooldown keep graceful fallbacks; the stale gate
+        // does NOT — "settled means settled" (L2-191): an all-stale payload must
+        // collapse to an honest end state, never restore resolved markets.
 
         // 1. Drop settled/FINAL rot (resolved futures, completed games, past
         // resolution dates) so a near-coin-flip season-series or a finished game
-        // never leads the feed (Queue #238). isStale was defined but never wired.
-        // Graceful fallback: if everything is stale, keep the full set rather
-        // than empty the feed (the #1091/#1043 empty-tab lesson).
-        let notStale = vm.items.filter { !isStale($0) }
-        let staleBase = notStale.isEmpty ? vm.items : notStale
+        // never leads the feed (Queue #238). No all-stale restoration path: if
+        // every card is stale, filteredItems empties and the view renders the
+        // graceful end state (L2-191 Item 2) instead of resurrecting settled
+        // cards or minting a guess slot from them.
+        let staleBase = Self.eligibleItems(vm.items)
 
         // 2. Soft, decaying dismiss (#1221): filter dismissed ids, but if that
         // would shrink the feed below `feedFloor` while more cards exist,
@@ -644,6 +659,10 @@ struct DiscoverView: View {
         VStack(spacing: 0) {
         ScrollView {
             VStack(spacing: 0) {
+                // Compute the eligible, grouped feed once per body pass — reused
+                // by the card grid, pagination trigger, and the empty-eligible
+                // end state below (L2-191).
+                let grouped = groupedItems
                 // Resolution digest — collapse N resolution notes into ONE
                 // card (#902 item 8) instead of stacking up to 3 at feed top.
                 if !resolutions.isEmpty {
@@ -731,7 +750,7 @@ struct DiscoverView: View {
                 }
 
                 // Cards (paginated — show `visibleCount` at a time)
-                let pageGrouped = Array(groupedItems.prefix(visibleCount))
+                let pageGrouped = Array(grouped.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
                 ScrollViewReader { proxy in
                     LazyVGrid(columns: columns, spacing: 16) {
@@ -895,7 +914,7 @@ struct DiscoverView: View {
                             .id(gi.id)
                             .onAppear {
                                 trackImpression(for: gi, rank: idx + 1)
-                                if idx == pageGrouped.count - 3 && visibleCount < groupedItems.count {
+                                if idx == pageGrouped.count - 3 && visibleCount < grouped.count {
                                     visibleCount += 20
                                 }
                                 if idx == pageGrouped.count - 5 {
@@ -908,11 +927,65 @@ struct DiscoverView: View {
                 .padding(.horizontal)
                 .padding(.bottom)
 
+                // Empty-eligible end state (L2-191 Item 2): the API returned
+                // cards but every one was filtered out as settled/FINAL rot, so
+                // there is nothing live to render. Honor "settled means settled"
+                // — never restore stale cards to fill the space. If more pages
+                // exist, keep fetching for fresh content (the card grid can't
+                // drive pagination when it renders zero rows); otherwise show
+                // the quiet, VoiceOver-labeled caught-up state with a refresh.
+                if grouped.isEmpty, !vm.items.isEmpty, vm.error == nil {
+                    if vm.hasMore {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("Finding fresh markets…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Finding fresh markets")
+                        // Re-fire whenever a new page lands (items count grows)
+                        // until fresh content appears or pagination is exhausted.
+                        .task(id: vm.items.count) {
+                            await vm.loadMoreIfNeeded()
+                        }
+                    } else {
+                        VStack(spacing: 16) {
+                            NativeFeedEndCard()
+                            Button {
+                                Task {
+                                    visibleCount = 20
+                                    dismissedAt.removeAll()
+                                    seenImpressions.removeAll()
+                                    await vm.load()
+                                    if let r = try? await APIClient.shared.fetchResolutions() {
+                                        resolutions = r.resolutions
+                                    }
+                                }
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.blue)
+                                    .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Refresh feed")
+                            .accessibilityHint("Checks for newly surfaced markets")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal)
+                        .padding(.vertical, 24)
+                    }
+                }
+
                 // Feed footer (#902 item 9): pagination already loads more as
                 // cards appear; surface a spinner while it fetches and an honest
                 // end-of-feed card once the API has no more pages, instead of a
-                // silent dead bottom.
-                if !vm.items.isEmpty {
+                // silent dead bottom. Only under a populated feed — the
+                // empty-eligible state above owns the no-live-cards case.
+                if !vm.items.isEmpty, !grouped.isEmpty {
                     if vm.loadingMore {
                         ProgressView()
                             .frame(maxWidth: .infinity)
