@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "description": "Static adversarial cases for semantic identity boundaries. expected_merge is product identity; current_merge records committed behavior inferred from the cited seam.",
+  "cases": [
+    {
+      "id": "false_exact_hyphen_digit_collapse",
+      "failure_class": "false_merge",
+      "taxonomy_type": "cross_source_question",
+      "left": {"source": "kalshi", "question": "Will the match finish 2-0?"},
+      "right": {"source": "polymarket", "question": "Will the match finish 20?"},
+      "expected_merge": false,
+      "current_merge": true,
+      "executable_check": "normalize_question",
+      "evidence": "backend/app/utils/cross_source_matching.py:93-98,200-227"
+    },
+    {
+      "id": "false_exact_decimal_collapse",
+      "failure_class": "false_merge",
+      "taxonomy_type": "cross_source_question",
+      "left": {"source": "kalshi", "question": "Will CPI be 3.2%?"},
+      "right": {"source": "polymarket", "question": "Will CPI be 32%?"},
+      "expected_merge": false,
+      "current_merge": true,
+      "executable_check": "normalize_question",
+      "evidence": "backend/app/utils/cross_source_matching.py:93-98,200-227"
+    },
+    {
+      "id": "false_generic_canonical_bucket",
+      "failure_class": "false_merge",
+      "taxonomy_type": "canonical_market_key",
+      "left": {"source": "kalshi", "key": "basketball::championship:2026", "question": "NBA champion"},
+      "right": {"source": "polymarket", "key": "basketball::championship:2026", "question": "NCAA champion"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/precompute_calibration.py:3128-3159"
+    },
+    {
+      "id": "false_source_id_collision",
+      "failure_class": "false_merge",
+      "taxonomy_type": "event",
+      "left": {"source": "espn", "source_id": "401", "sport": "basketball_ncaab", "teams": ["Kent State", "Akron"]},
+      "right": {"source": "espn", "source_id": "401", "sport": "basketball_ncaab", "teams": ["Ohio State", "Michigan"]},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/services/event_registry.py:165-168,187-208"
+    },
+    {
+      "id": "false_equal_time_doubleheader",
+      "failure_class": "false_merge",
+      "taxonomy_type": "event",
+      "left": {"source": "odds_api", "commence": "2026-08-01T19:00:00Z", "teams": ["A", "B"], "game": 1},
+      "right": {"source": "espn", "commence": "2026-08-01T19:00:00Z", "teams": ["A", "B"], "game": 2},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/services/event_registry.py:233-273"
+    },
+    {
+      "id": "miss_size_two_group",
+      "failure_class": "missed_merge",
+      "taxonomy_type": "futures_group",
+      "left": {"source": "polymarket", "group_id": "polymarket:best-picture", "candidate": "Film A"},
+      "right": {"source": "polymarket", "group_id": "polymarket:best-picture", "candidate": "Film B"},
+      "expected_merge": true,
+      "current_merge": false,
+      "evidence": "backend/app/tasks/precompute_calibration.py:1310-1328"
+    },
+    {
+      "id": "miss_short_paraphrase",
+      "failure_class": "missed_merge",
+      "taxonomy_type": "cross_source_question",
+      "left": {"source": "kalshi", "question": "Fed cuts?"},
+      "right": {"source": "polymarket", "question": "Fed rate cut?"},
+      "expected_merge": true,
+      "current_merge": false,
+      "executable_check": "near_match",
+      "evidence": "backend/app/utils/cross_source_matching.py:139-146"
+    },
+    {
+      "id": "miss_country_alias",
+      "failure_class": "missed_merge",
+      "taxonomy_type": "cross_source_question",
+      "left": {"source": "kalshi", "question": "Will US unemployment exceed 5 percent?"},
+      "right": {"source": "polymarket", "question": "Will United States unemployment be over 5 percent?"},
+      "expected_merge": true,
+      "current_merge": false,
+      "executable_check": "near_match",
+      "evidence": "backend/app/utils/cross_source_matching.py:26-67,139-155"
+    },
+    {
+      "id": "miss_soccer_draw_semantics",
+      "failure_class": "missed_merge",
+      "taxonomy_type": "event_market",
+      "left": {"source": "kalshi", "question": "Arsenal to win", "outcomes": ["Yes", "No"]},
+      "right": {"source": "odds_api", "question": "Arsenal v Chelsea moneyline", "outcomes": ["Arsenal", "Draw", "Chelsea"]},
+      "expected_merge": true,
+      "current_merge": false,
+      "evidence": "backend/app/utils/cross_source_matching.py:200-218"
+    },
+    {
+      "id": "miss_mma_name_alias",
+      "failure_class": "missed_merge",
+      "taxonomy_type": "event",
+      "left": {"source": "kalshi", "teams": ["J. Silva", "M. Santos"]},
+      "right": {"source": "espn", "teams": ["Joao Silva", "Mateus Santos"]},
+      "expected_merge": true,
+      "current_merge": false,
+      "evidence": "backend/app/services/event_registry.py:252-269"
+    },
+    {
+      "id": "unstable_equal_time_tie",
+      "failure_class": "unstable_id",
+      "taxonomy_type": "event",
+      "left": {"candidate_ids": [12, 13], "time_diffs": [0, 0], "input_order": [12, 13]},
+      "right": {"candidate_ids": [12, 13], "time_diffs": [0, 0], "input_order": [13, 12]},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/services/event_registry.py:245-273"
+    },
+    {
+      "id": "unstable_polymarket_active_reopen",
+      "failure_class": "unstable_id",
+      "taxonomy_type": "market_lifecycle",
+      "left": {"active": false, "status": "resolved", "winner": "Yes"},
+      "right": {"active": true, "status": "open", "winner": "Yes"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/polymarket.py:763-800,881-916"
+    },
+    {
+      "id": "unstable_kalshi_partial_sibling",
+      "failure_class": "unstable_id",
+      "taxonomy_type": "market_lifecycle",
+      "left": {"sibling_statuses": ["settled", "settled"], "status": "resolved"},
+      "right": {"sibling_statuses": ["settled", "open"], "status": "open"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/kalshi.py:757-764,790-805"
+    },
+    {
+      "id": "loss_fair_fight_question_identity",
+      "failure_class": "source_semantic_loss",
+      "taxonomy_type": "calibration_pair",
+      "left": {"source": "kalshi", "key": "basketball::championship:2026", "question": "NBA"},
+      "right": {"source": "polymarket", "key": "basketball::championship:2026", "question": "NCAA"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/precompute_calibration.py:3128-3175"
+    },
+    {
+      "id": "loss_group_relation_cardinality",
+      "failure_class": "source_semantic_loss",
+      "taxonomy_type": "calibration_population",
+      "left": {"group_size": 2, "relation": "exactly_one"},
+      "right": {"group_size": 2, "relation": "independent_binary"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/precompute_calibration.py:1310-1328"
+    },
+    {
+      "id": "loss_event_active_controls_submarkets",
+      "failure_class": "source_semantic_loss",
+      "taxonomy_type": "market_lifecycle",
+      "left": {"event_active": true, "submarket_closed": true},
+      "right": {"event_active": true, "submarket_closed": false},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/polymarket.py:881-916"
+    },
+    {
+      "id": "loss_model_market_provenance",
+      "failure_class": "source_semantic_loss",
+      "taxonomy_type": "calibration_source",
+      "left": {"source": "datagolf", "kind": "model_probability"},
+      "right": {"source": "kalshi", "kind": "market_probability"},
+      "expected_merge": false,
+      "current_merge": true,
+      "evidence": "backend/app/tasks/precompute_calibration.py:1310-1447"
+    }
+  ]
+}
