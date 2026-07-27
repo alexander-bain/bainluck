@@ -282,7 +282,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             />
           )}
 
-          {volumeStr && <div className="text-[11px] text-text-muted">{volumeStr}{resolveText ? ` · ${resolveText}` : ""}</div>}
+          {/* Meta footer — L2-184: confidence glyph joins the same semantic
+              footer as Variant A. SignalBars renders nothing when the tier is
+              absent; existing volume/resolve copy is preserved exactly. */}
+          {(volumeStr || data.confidence_tier) && (
+            <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+              {volumeStr && <span>{volumeStr}{resolveText ? ` · ${resolveText}` : ""}</span>}
+              {volumeStr && data.confidence_tier && <span>·</span>}
+              <SignalBars tier={data.confidence_tier} />
+            </div>
+          )}
 
           <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
         </div>

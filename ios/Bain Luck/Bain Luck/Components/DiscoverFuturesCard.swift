@@ -164,6 +164,11 @@ struct NativeFuturesDiscoverCard: View {
 
                     Spacer()
 
+                    // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
+                    // when absent. Same tier map + placement as the native
+                    // multi-candidate kernels (Comparison/Distribution/HeatMap).
+                    SignalBarsView(tier: data.confidenceTier)
+
                     ShareLink(
                         item: shareURL,
                         subject: Text(data.name),

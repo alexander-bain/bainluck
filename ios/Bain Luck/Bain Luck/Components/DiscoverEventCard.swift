@@ -221,6 +221,11 @@ struct NativeEventDiscoverCard: View {
                 HStack {
                     Spacer()
 
+                    // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
+                    // when absent. Same tier map + placement as the native
+                    // multi-candidate kernels (Comparison/Distribution/HeatMap).
+                    SignalBarsView(tier: event.confidenceTier)
+
                     ShareLink(
                         item: shareURL,
                         subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
