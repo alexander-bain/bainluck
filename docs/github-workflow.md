@@ -57,6 +57,8 @@ Use one GitHub Project for the repo, with these statuses:
 - Ready
 - In Progress
 - Needs User
+- Blocked
+- Parked
 - Review / Verify
 - Done
 
@@ -69,7 +71,7 @@ A growing share of issues are **filed by automation, not by hand**. Several back
 - **Flow Sentinel** (daily) — one issue per failing user-facing flow (search, duplicate events, event completeness, resolved-state, chart density, category/Discover). First real catch was #1085.
 - **Grid Sentinel** (daily) — one issue per championship grid (MLB/NBA/NHL) with REAL defects.
 - **Calibration Sentinel** (weekly) — one issue per broken calibration cohort.
-- **Board Sentinel** (daily) — keeps the BOARD itself honest (Queue #258): one deduped board-cleanup issue when board hygiene is RED.
+- **Board Sentinel** (daily) — keeps the BOARD itself honest (Queue #258, extended by Queue #265): scans the WHOLE open Project population for routing invariants and files one deduped board-cleanup issue when board hygiene is RED.
 - **Rage-shake bug reports** — user shake / `Cmd+Shift+F` reports that get auto-diagnosed (severity, root cause, category, Claude Code prompt).
 - **CI / Sentry alert intake** — GitHub Actions failures and Sentry issues (Sentry intake needs a scoped token: `project:read`, `event:read`, `org:read`).
 
@@ -81,9 +83,12 @@ All sentinels file through the **shared filing rail** (`backend/app/tasks/sentin
 - **P2 is the default filing priority.** A sentinel escalates to P1/P0 only with threshold evidence embedded in the issue body and an explicit severity reason. The rail **never edits the labels of an existing issue** — a human-prioritized issue is never silently downgraded by a later P2-default re-observation (it is only commented on).
 - **Fingerprint dedup on RED.** Each issue body carries a `<sentinel>-fingerprint:<hash>` marker. Before filing, the rail matches the fingerprint against **open `alert-intake` issues via the strongly-consistent REST list** (never the eventually-consistent `/search` index that let 5 dupes through — r252). A recurrence comments the lowest-numbered canonical issue instead of filing a duplicate.
 - **Auto-close on GREEN.** When a sentinel re-checks GREEN, the rail comments a recovery note and **closes exactly that fingerprint's canonical open issue** (matched by body marker only, so a human-filed lookalike is never auto-closed). GREEN with no open issue is a no-op. A later recurrence opens a fresh episode cleanly.
-- **UNKNOWN is never GREEN.** An API / rate-limit / auth inability is classified UNKNOWN — it neither files a cleanup accusation nor falsely resolves an open issue.
-- **48h triage bar.** An `alert-intake` card left untriaged in Inbox beyond 48h is a Board Sentinel RED.
-- **Board Sentinel thresholds** (`backend/app/tasks/board_sentinel.py`, Redis-tunable): duplicate open-`alert-intake` fingerprints → target 0; untriaged Inbox age → 48h; default/template P1 share among open `alert-intake` → cap 35% (past a 6-issue floor); blocked/parked cards in Inbox → target 0; open `alert-intake` missing every `area:*` label → target 0. Admin: `POST /api/admin/board-sentinel/run`, `GET /api/admin/board-sentinel/last`.
+- **UNKNOWN is never GREEN.** An API / rate-limit / auth inability is classified UNKNOWN — it neither files a cleanup accusation nor falsely resolves an open issue. For the Board Sentinel this also covers truncated REST/GraphQL pagination, a missing Project token, an absent Project item set, and a duplicate Project card (which makes the column join ambiguous): each goes UNKNOWN, never a false GREEN.
+- **Canonical-marker ownership.** A fingerprint is *owned* only by the issue that DECLARES it — the `<marker>:<hash>` immediately followed by the `(dedupe key — do not remove)` annotation, exactly as every sentinel writes it. A board-cleanup or meta issue that merely QUOTES another alert's marker (in an evidence table, a Markdown code span, or a comment) is **not** a second owner and never trips the duplicate-fingerprint check.
+- **48h triage bar.** Any open card left untriaged in Inbox beyond 48h is a Board Sentinel RED (board-wide; the >48h bar is the fresh-intake exemption).
+- **Whole-board population.** Since Queue #265 the Board Sentinel measures **every open Project issue**, not just `alert-intake`. It distinguishes `open_issues_scanned`, `open_project_items`, `open_alert_intake`, and an Inbox/status breakdown. Alert-only checks (duplicate fingerprints, template P1 share) stay scoped to `alert-intake`; routing checks run board-wide.
+- **Board Sentinel checks** (`backend/app/tasks/board_sentinel.py`, thresholds Redis-tunable): duplicate DECLARED open-`alert-intake` fingerprints → target 0; untriaged Inbox age (board-wide) → 48h; default/template P1 share among open `alert-intake` → cap 35% (past a 6-issue floor); blocked/parked cards in Inbox → target 0; any open issue missing every `area:*` label → target 0 (minus a tiny explicit meta allowlist: `epic`/`meta`/`tracking`); label ↔ Status parity for `blocked`/`parked`/`needs-user` in both directions → target 0; `needs-agent` on a blocked/parked card → target 0; any open issue absent from the Project board → target 0; Ready cards without an owner signal (`needs-agent`/`owner-ready`/`in-progress`/assignee) or under-scoped (< 200-char body) → target 0. Admin: `POST /api/admin/board-sentinel/run`, `GET /api/admin/board-sentinel/last`.
+- **Project-token requirement.** The whole-board scan reads the Project via the GitHub GraphQL API, which requires the Project-scoped token configured on Heroku. Without it (or without `GITHUB_TOKEN`), the Board Sentinel reports UNKNOWN — it never asserts the board is clean when it could not read it.
 
 Conventions for these:
 - They carry the **`alert-intake`** label (plus `area:*`/`type:*`/`priority:*`), and land in **Inbox** for triage — treat Inbox as the automation firehose, not a human backlog.

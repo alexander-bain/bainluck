@@ -8,22 +8,31 @@ rate-limit / auth inability — never GREEN, never a cleanup accusation) — and
 exactly ONE deduped board-cleanup issue when RED, closing it on GREEN through the
 shared filing rail (app/tasks/sentinel_filing.py).
 
-Daily checks (all target 0 unless noted):
-  1. duplicate fingerprints among open ``alert-intake`` issues — the exact class
-     the shared rail now prevents forward (r252: `286b23d93590` ×5; the confirmed
-     #1443/#1251/#1125 Grid dupes). Any residual is a REAL cleanup target.
-  2. untriaged ``alert-intake`` left in Inbox over 48h — Inbox is temporary intake;
-     a stale card means triage stalled.
+Since Queue #265 it measures the WHOLE open Project population (every open issue,
+not just ``alert-intake``) so routing invariants hold board-wide. Daily checks (all
+target 0 unless noted):
+  1. duplicate DECLARED fingerprints among open ``alert-intake`` issues — the exact
+     class the shared rail now prevents forward (r252: `286b23d93590` ×5). Only a
+     canonical *declaration* (``<marker>:<fp>  (dedupe key …)``) counts as ownership;
+     a cleanup/meta issue that merely QUOTES a marker is never a phantom owner.
+  2. untriaged issues left in Inbox over 48h (board-wide) — Inbox is temporary
+     intake; the >48h bar is itself the fresh-intake exemption.
   3. default/template P1 share among open ``alert-intake`` above a documented cap —
      after Queue #258 sentinels default P2, so a high auto-filed-P1 share is
      template noise to review (never an auto-downgrade — that stays a human call).
   4. parked/blocked issues sitting in Inbox — a blocked card belongs out of intake.
-  5. open ``alert-intake`` issues missing every ``area:*`` label — automation-filed
-     issues must always route to an area; a bare one is a filing regression.
+  5. any open issue missing every ``area:*`` label (board-wide, minus a tiny explicit
+     meta allowlist) — an un-routed card.
+  6. label ↔ Status parity for blocked / parked / needs-user, in both directions.
+  7. ``needs-agent`` on a blocked/parked card — it can't be picked up.
+  8. any open issue absent from the Project board — an untracked routing defect.
+  9. Ready cards that lack an owner signal or are under-scoped.
 
-Checks 2 and 4 need the Project board column (Status), read via GraphQL. If that
-read fails, those two checks are UNKNOWN (not GREEN) — we never accuse the board of
-being clean or dirty when we could not measure it.
+The column-dependent checks (2, 4, 6, 9) need the Project Status column and the
+membership check (8) needs the Project item set, both read via GraphQL. If that read
+fails — or the REST/GraphQL pagination truncates, or a duplicate card makes the join
+ambiguous — those checks are UNKNOWN (not GREEN): we never assert the board is clean
+when we could not measure it.
 
 Read-only against GitHub — the sentinel files/updates its own cleanup issue only;
 it performs NO bulk board mutation (Ops owns the one-time cleanup, per Queue #258).
@@ -53,13 +62,38 @@ TEMPLATE_P1_SHARE_CAP = 0.35       # board:sentinel_template_p1_share_cap
 TEMPLATE_P1_MIN_POPULATION = 6     # need at least this many intake issues to judge share
 
 INBOX_COLUMN = "Inbox"
+READY_COLUMN = "Ready"
 _BOARD_MARKER = "board-sentinel-fingerprint"
 # Labels that mean "not active intake" — a card carrying one should not sit in Inbox.
 _PARKED_LABELS = {"blocked", "parked", "on-hold"}
 
-# Any sentinel fingerprint marker embedded in an issue body, e.g.
-# ``flow-sentinel-fingerprint:abc123``. Used for the duplicate-fingerprint scan.
-_FINGERPRINT_RE = re.compile(r"([a-z][a-z0-9-]*-fingerprint):([0-9a-f]{6,40})")
+# Routing label ↔ Project Status column pairs whose drift is a REAL defect in both
+# directions (label present but wrong column; column set but label missing). These
+# are the board's canonical routing columns (see docs/github-workflow.md).
+_LABEL_COLUMN_PAIRS = (
+    ("blocked", "Blocked"),
+    ("parked", "Parked"),
+    ("needs-user", "Needs User"),
+)
+# A Ready card must carry one of these ownership signals (or an assignee) — otherwise
+# `Ready` is not a trustworthy pick-up queue.
+_OWNER_READY_LABELS = {"needs-agent", "owner-ready", "in-progress"}
+READY_MIN_BODY_CHARS = 200
+# Open issues legitimately allowed to carry no ``area:*`` label — tracking/meta cards
+# that route by their epic, not an area. Kept deliberately tiny and explicit.
+_AREA_EXEMPT_LABELS = {"epic", "meta", "tracking"}
+
+# A *quoted* sentinel marker (in a cleanup report, evidence table, or comment) is
+# NOT ownership — only a canonical *declaration* is. Every sentinel declares its
+# fingerprint the same way: ``<marker>:<fp>`` (optionally in backticks) immediately
+# followed by the ``(dedupe key — do not remove)`` annotation (verified across
+# flow/grid/board/calibration/horizon/settled-concept sentinels). We key ownership
+# on that declaration so a board-cleanup issue that merely lists another alert's
+# marker never becomes a phantom duplicate owner (Queue #265 Item 2).
+_DEDUPE_DECLARATION = "(dedupe key"
+_DECLARED_FINGERPRINT_RE = re.compile(
+    r"`?([a-z][a-z0-9-]*-fingerprint):([0-9a-f]{6,40})`?\s*\(dedupe key",
+)
 
 
 def _load_overrides() -> None:
@@ -100,9 +134,18 @@ def _parse_dt(value: str | None):
         return None
 
 
-def _fingerprints_in(body: str | None) -> set[tuple[str, str]]:
-    """Every ``<marker>:<fp>`` sentinel fingerprint pair found in a body."""
-    return {(m.group(1), m.group(2)) for m in _FINGERPRINT_RE.finditer(body or "")}
+def _declared_fingerprints_in(body: str | None) -> set[tuple[str, str]]:
+    """Every ``<marker>:<fp>`` pair *declared* (owned) by a body — i.e. followed by
+    the ``(dedupe key — do not remove)`` annotation.
+
+    A marker that appears without that annotation (quoted in a cleanup report's
+    evidence table, a Markdown code span in prose, or a comment) is NOT ownership
+    and is deliberately ignored, so a meta/cleanup issue listing another alert's
+    marker does not become a phantom duplicate owner (Queue #265 Item 2)."""
+    return {
+        (m.group(1), m.group(2))
+        for m in _DECLARED_FINGERPRINT_RE.finditer(body or "")
+    }
 
 
 def _labels(issue: dict) -> list[str]:
@@ -118,9 +161,11 @@ def _is_intake(issue: dict) -> bool:
 #   {number, title, body, labels:[str], created_at:iso, column:str|None})
 # ---------------------------------------------------------------------------
 def check_duplicate_fingerprints(issues: list[dict]) -> list[dict]:
-    """Same sentinel fingerprint on ≥2 open alert-intake issues — the r252 dupe
-    class the shared rail now prevents forward. The board sentinel's OWN marker is
-    excluded (its own issue is single-by-construction)."""
+    """Same sentinel fingerprint *declared* on ≥2 open alert-intake issues — the
+    r252 dupe class the shared rail now prevents forward. Only canonical
+    declarations count (a cleanup issue that merely QUOTES a marker is not a second
+    owner — Queue #265 Item 2). The board sentinel's OWN marker is excluded (its
+    own issue is single-by-construction)."""
     groups: dict[tuple[str, str], set[int]] = {}
     for i in issues:
         if not _is_intake(i):
@@ -128,7 +173,7 @@ def check_duplicate_fingerprints(issues: list[dict]) -> list[dict]:
         num = i.get("number")
         if num is None:
             continue
-        for marker, fp in _fingerprints_in(i.get("body")):
+        for marker, fp in _declared_fingerprints_in(i.get("body")):
             if marker == _BOARD_MARKER:
                 continue
             groups.setdefault((marker, fp), set()).add(num)
@@ -149,11 +194,13 @@ def check_duplicate_fingerprints(issues: list[dict]) -> list[dict]:
 
 
 def check_stale_inbox(issues: list[dict], now, max_hours: float = INBOX_TRIAGE_HOURS) -> list[dict]:
-    """alert-intake issues sitting in Inbox longer than the triage bar. ``now`` is
-    injected for testability."""
+    """Any open issue sitting in Inbox longer than the triage bar (Queue #265:
+    board-wide, not just alert-intake — Inbox is temporary intake for everything).
+    The >``max_hours`` bar is itself the exemption for genuinely fresh intake.
+    ``now`` is injected for testability."""
     out = []
     for i in issues:
-        if not _is_intake(i) or i.get("column") != INBOX_COLUMN:
+        if i.get("column") != INBOX_COLUMN:
             continue
         created = _parse_dt(i.get("created_at"))
         if created is None:
@@ -217,18 +264,133 @@ def check_blocked_in_inbox(issues: list[dict]) -> list[dict]:
 
 
 def check_missing_area_label(issues: list[dict]) -> list[dict]:
-    """Open alert-intake issues carrying no ``area:*`` label — an automation filing
-    regression (every sentinel adds an area label)."""
+    """Any open issue carrying no ``area:*`` label (Queue #265: board-wide — every
+    open issue must route to an area), excepting a tiny explicit meta allowlist
+    (tracking/epic cards that route by their epic). For automation-filed
+    alert-intake this is a filing regression; for the rest it is an un-routed card."""
     out = []
     for i in issues:
-        if not _is_intake(i):
+        labels = _labels(i)
+        if _AREA_EXEMPT_LABELS & set(labels):
             continue
-        if not any(str(l).startswith("area:") for l in _labels(i)):
+        if not any(str(l).startswith("area:") for l in labels):
+            scope = "alert-intake " if _is_intake(i) else ""
             out.append({
                 "check": "missing_area_label",
                 "issue": i.get("number"),
                 "detail": f"#{i.get('number')} '{(i.get('title') or '')[:60]}' has no "
-                          f"area:* label — assign one so it routes",
+                          f"area:* label — assign one so this {scope}card routes",
+            })
+    return out
+
+
+def check_label_status_parity(issues: list[dict]) -> list[dict]:
+    """Routing label ↔ Project Status drift, in both directions (Queue #265):
+      * a card with a ``blocked``/``parked``/``needs-user`` label that is NOT in the
+        matching column (except the Inbox+parked case, which ``check_blocked_in_inbox``
+        owns, so we don't double-flag); and
+      * a card sitting in the ``Blocked``/``Parked``/``Needs User`` column that lacks
+        the matching routing label.
+    Column-dependent: an issue whose column is unknown is skipped (measured elsewhere
+    as UNKNOWN)."""
+    out = []
+    for i in issues:
+        col = i.get("column")
+        if not col:
+            continue
+        labelset = set(_labels(i))
+        num = i.get("number")
+        title = (i.get("title") or "")[:60]
+        for label, column in _LABEL_COLUMN_PAIRS:
+            has_label = label in labelset
+            in_column = col == column
+            if has_label and not in_column:
+                # Inbox+blocked/parked is owned by check_blocked_in_inbox — skip so
+                # the same card isn't reported twice.
+                if col == INBOX_COLUMN and label in _PARKED_LABELS:
+                    continue
+                out.append({
+                    "check": "label_status_parity",
+                    "issue": num,
+                    "detail": f"#{num} '{title}' carries '{label}' but sits in "
+                              f"'{col}' (expected the '{column}' column)",
+                })
+            elif in_column and not has_label:
+                out.append({
+                    "check": "label_status_parity",
+                    "issue": num,
+                    "detail": f"#{num} '{title}' is in the '{column}' column but "
+                              f"lacks the '{label}' label",
+                })
+    return out
+
+
+def check_needs_agent_conflict(issues: list[dict]) -> list[dict]:
+    """``needs-agent`` on a ``blocked``/``parked`` card — a card that can't be
+    picked up must not advertise itself as agent-ready (Queue #265). Label-only."""
+    out = []
+    for i in issues:
+        labelset = set(_labels(i))
+        if "needs-agent" not in labelset:
+            continue
+        conflict = {"blocked", "parked"} & labelset
+        if conflict:
+            out.append({
+                "check": "needs_agent_conflict",
+                "issue": i.get("number"),
+                "detail": f"#{i.get('number')} '{(i.get('title') or '')[:60]}' is "
+                          f"{'/'.join(sorted(conflict))} yet still carries "
+                          f"needs-agent — clear one so it routes honestly",
+            })
+    return out
+
+
+def check_missing_from_project(issues: list[dict], project_numbers: set[int]) -> list[dict]:
+    """Open issues absent from the Project board (Queue #265 Item 1) — an untracked
+    issue is a REAL routing defect (it is invisible to every board-driven lane).
+    Runs only when the Project membership read succeeded (else UNKNOWN)."""
+    out = []
+    for i in issues:
+        num = i.get("number")
+        if num is None:
+            continue
+        if num not in project_numbers:
+            out.append({
+                "check": "missing_from_project",
+                "issue": num,
+                "detail": f"#{num} '{(i.get('title') or '')[:60]}' is open but not on "
+                          f"the Project board — add it so it routes",
+            })
+    return out
+
+
+def check_ready_scoping(issues: list[dict]) -> list[dict]:
+    """Ready cards must be scoped and pickable (Queue #265): each carries an
+    ownership signal (``needs-agent``/``owner-ready``/``in-progress`` or an assignee)
+    AND enough body to execute (>= ``READY_MIN_BODY_CHARS``). Column-dependent."""
+    out = []
+    for i in issues:
+        if i.get("column") != READY_COLUMN:
+            continue
+        num = i.get("number")
+        title = (i.get("title") or "")[:60]
+        labelset = set(_labels(i))
+        has_owner = bool(_OWNER_READY_LABELS & labelset) or bool(i.get("assignees"))
+        if not has_owner:
+            out.append({
+                "check": "ready_scoping",
+                "issue": num,
+                "detail": f"#{num} '{title}' is Ready but has no owner signal "
+                          f"(needs-agent / owner-ready / in-progress / assignee)",
+            })
+            continue
+        if len(str(i.get("body") or "")) < READY_MIN_BODY_CHARS:
+            out.append({
+                "check": "ready_scoping",
+                "issue": num,
+                "detail": f"#{num} '{title}' is Ready but under-scoped "
+                          f"(body < {READY_MIN_BODY_CHARS} chars) — add scope/AC "
+                          f"before it is picked up",
             })
     return out
 
@@ -238,44 +400,84 @@ def check_missing_area_label(issues: list[dict]) -> list[dict]:
 # could not run (no column data / fetch failure). GREEN = everything ran clean.
 # ---------------------------------------------------------------------------
 def classify_board(
-    issues: list[dict], now, *, columns_available: bool, fetch_errors: list[dict] | None = None
+    issues: list[dict],
+    now,
+    *,
+    columns_available: bool,
+    project_numbers: set[int] | None = None,
+    open_project_items: int | None = None,
+    fetch_errors: list[dict] | None = None,
 ) -> dict:
-    """Run every check and split into real findings + unknown checks. ``now`` and
-    ``columns_available`` are injected so the whole classification is a pure,
-    deterministic function of its inputs (fixtures cover every branch)."""
+    """Run every check and split into real findings + unknown checks. ``now``,
+    ``columns_available`` and the Project membership data are injected so the whole
+    classification is a pure, deterministic function of its inputs (fixtures cover
+    every branch).
+
+    ``columns_available`` gates the Project-column-dependent checks (stale-inbox,
+    blocked-in-inbox, label/status parity, Ready scoping). ``project_numbers`` (the
+    set of open issue numbers ON the board) gates the missing-from-project check —
+    it is ``None`` when the membership read failed, which is UNKNOWN, never GREEN."""
     fetch_errors = fetch_errors or []
     real: list[dict] = []
     unknown: list[dict] = []
 
-    # Checks that only need issue metadata (labels/body/created_at) always run.
+    # Label/body-only checks always run (board-wide where applicable).
     real += check_duplicate_fingerprints(issues)
     real += check_template_p1_share(issues)
     real += check_missing_area_label(issues)
+    real += check_needs_agent_conflict(issues)
 
-    # Column-dependent checks: REAL findings when we have column data, else UNKNOWN.
+    # Project-column-dependent checks: REAL when we have column data, else UNKNOWN.
     if columns_available:
         real += check_stale_inbox(issues, now)
         real += check_blocked_in_inbox(issues)
+        real += check_label_status_parity(issues)
+        real += check_ready_scoping(issues)
     else:
         unknown.append({
             "check": "inbox_column_checks",
-            "detail": "Project board column (Status) unavailable — stale-inbox and "
-                      "blocked-in-inbox checks could not run (UNKNOWN, not GREEN)",
+            "detail": "Project board column (Status) unavailable — stale-inbox, "
+                      "blocked-in-inbox, label/status-parity and Ready-scoping "
+                      "checks could not run (UNKNOWN, not GREEN)",
+        })
+
+    # Project membership: missing-from-board is REAL only when the membership read
+    # succeeded; otherwise it is UNKNOWN so we never falsely assert a clean board.
+    if project_numbers is not None:
+        real += check_missing_from_project(issues, project_numbers)
+    else:
+        unknown.append({
+            "check": "project_membership",
+            "detail": "Project board membership unavailable — missing-from-project "
+                      "check could not run (UNKNOWN, not GREEN)",
         })
 
     for err in fetch_errors:
         unknown.append({"check": "fetch_error", "detail": err.get("detail", str(err))})
 
-    return {"real": real, "unknown": unknown, "counts": _counts(issues, columns_available)}
+    return {
+        "real": real,
+        "unknown": unknown,
+        "counts": _counts(issues, columns_available, open_project_items),
+    }
 
 
-def _counts(issues: list[dict], columns_available: bool) -> dict:
+def _counts(
+    issues: list[dict], columns_available: bool, open_project_items: int | None = None
+) -> dict:
     intake = [i for i in issues if _is_intake(i)]
+    by_column: dict[str, int] | None = None
+    if columns_available:
+        by_column = {}
+        for i in issues:
+            col = i.get("column") or "(no column)"
+            by_column[col] = by_column.get(col, 0) + 1
     return {
         "open_issues_scanned": len(issues),
         "open_alert_intake": len(intake),
-        "in_inbox": sum(1 for i in issues if i.get("column") == INBOX_COLUMN)
-        if columns_available else None,
+        "open_project_items": open_project_items,
+        "in_inbox": (by_column or {}).get(INBOX_COLUMN, 0) if columns_available else None,
+        "by_column": by_column,
         "columns_available": columns_available,
     }
 
@@ -292,12 +494,79 @@ def board_verdict(classified: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Data fetch (GitHub REST + Project GraphQL). Returns (issues, columns_available,
-# errors). Network-touching — tests monkeypatch it or its httpx calls.
+# Data fetch (GitHub REST + Project GraphQL). Returns (issues, board, errors)
+# where board carries columns_available + Project membership. Network-touching —
+# tests monkeypatch it or its httpx calls.
 # ---------------------------------------------------------------------------
-def _fetch_project_columns() -> dict[int, str] | None:
-    """issue number → Project Status (column) via GraphQL, paginated. Returns None
-    on any failure (so the column-dependent checks go UNKNOWN, never GREEN)."""
+# Page caps sized well past the current board (1,013 items, 2026-07): 40×100 open
+# issues and 30×100 Project cards. Reaching the cap with a full final page means the
+# read was TRUNCATED → we report it as an error → UNKNOWN, never a false GREEN.
+_OPEN_ISSUES_MAX_PAGES = 40
+_PROJECT_MAX_PAGES = 30
+_PER_PAGE = 100
+
+
+def _fetch_open_issues() -> tuple[list[dict], bool, str | None]:
+    """Full paginated list of OPEN issues (ALL labels — the whole board population,
+    not just alert-intake), for board-wide routing checks.
+
+    Returns ``(issues, ok, error)``. ``ok`` is False on missing token, any REST/HTTP
+    failure (incl. rate-limit 403/429 via ``raise_for_status``), or TRUNCATED
+    pagination (more open issues than the cap) — every one of which must go UNKNOWN,
+    never a false GREEN. PRs are dropped (the issues endpoint includes them)."""
+    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
+
+    if not GITHUB_TOKEN:
+        return [], False, "GITHUB_TOKEN unset — cannot read the board"
+    issues: list[dict] = []
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    last_full = False
+    try:
+        for page in range(1, _OPEN_ISSUES_MAX_PAGES + 1):
+            resp = httpx.get(
+                f"https://api.github.com/repos/{REPO}/issues",
+                headers=headers,
+                params={"state": "open", "per_page": _PER_PAGE, "page": page},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not isinstance(batch, list) or not batch:
+                last_full = False
+                break
+            issues.extend(i for i in batch if "pull_request" not in i)
+            if len(batch) < _PER_PAGE:
+                last_full = False
+                break
+            last_full = True
+    except Exception as exc:
+        logger.warning("Board sentinel: open-issue list failed: %s", exc)
+        return issues, False, f"open-issue list failed: {str(exc)[:160]}"
+    if last_full:
+        # We stopped on the cap with a still-full final page → more issues remain.
+        return issues, False, (
+            f"open-issue pagination truncated at {_OPEN_ISSUES_MAX_PAGES} pages "
+            f"({len(issues)} scanned) — population incomplete"
+        )
+    return issues, True, None
+
+
+def _fetch_project_items() -> dict | None:
+    """Read the Project board via GraphQL, paginated. Returns a dict:
+
+        {"columns": {issue_number: Status},         # OPEN issues only
+         "project_numbers": set[int],               # OPEN issue numbers on the board
+         "duplicate_cards": [int, ...],             # issues with >1 card (ambiguous)
+         "open_project_items": int}
+
+    or ``None`` on ANY failure (missing token, HTTP/GraphQL error, or TRUNCATED
+    pagination) so the membership + column-dependent checks go UNKNOWN, never GREEN.
+    Closed issues and PRs/draft items are filtered at the source, so they never
+    pollute the open counts."""
     from app.tasks.bug_report_github import GITHUB_TOKEN, PROJECT_ID
 
     if not GITHUB_TOKEN or not PROJECT_ID:
@@ -313,8 +582,9 @@ def _fetch_project_columns() -> dict[int, str] | None:
                 ... on ProjectV2ItemFieldSingleSelectValue { name }
               }
               content {
-                ... on Issue { number }
-                ... on PullRequest { number }
+                __typename
+                ... on Issue { number state }
+                ... on PullRequest { number state }
               }
             }
           }
@@ -323,13 +593,16 @@ def _fetch_project_columns() -> dict[int, str] | None:
     }
     """
     columns: dict[int, str] = {}
+    card_counts: dict[int, int] = {}
+    project_numbers: set[int] = set()
     cursor = None
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
     }
+    truncated = True
     try:
-        for _ in range(20):  # up to 2000 board items — ample
+        for _ in range(_PROJECT_MAX_PAGES):
             resp = httpx.post(
                 "https://api.github.com/graphql",
                 headers=headers,
@@ -344,44 +617,89 @@ def _fetch_project_columns() -> dict[int, str] | None:
             items = (((data.get("data") or {}).get("node") or {}).get("items") or {})
             for node in items.get("nodes") or []:
                 content = node.get("content") or {}
+                # Skip PRs and draft items; count Issues only. ``__typename``/``state``
+                # are optional in fixtures → lenient: exclude only when explicitly a PR
+                # or explicitly CLOSED.
+                if content.get("__typename") == "PullRequest":
+                    continue
+                if str(content.get("state") or "").upper() == "CLOSED":
+                    continue
                 num = content.get("number")
+                if num is None:
+                    continue
+                project_numbers.add(num)
+                card_counts[num] = card_counts.get(num, 0) + 1
                 status = (node.get("fieldValueByName") or {}).get("name")
-                if num is not None and status:
+                if status:
                     columns[num] = status
             page = items.get("pageInfo") or {}
             if not page.get("hasNextPage"):
+                truncated = False
                 break
             cursor = page.get("endCursor")
     except Exception as exc:
-        logger.warning("Board sentinel: project column fetch failed: %s", exc)
+        logger.warning("Board sentinel: project item fetch failed: %s", exc)
         return None
-    return columns
+    if truncated:
+        logger.warning("Board sentinel: project pagination truncated at %d pages", _PROJECT_MAX_PAGES)
+        return None
+    return {
+        "columns": columns,
+        "project_numbers": project_numbers,
+        "duplicate_cards": sorted(n for n, c in card_counts.items() if c > 1),
+        "open_project_items": len(project_numbers),
+    }
 
 
-def _fetch_board_state() -> tuple[list[dict], bool, list[dict]]:
-    """Assemble the normalized open-issue list + column annotations.
+# Back-compat thin wrapper (issue number → Status) — some callers/tests only need
+# the column map. Prefer ``_fetch_project_items`` for membership + duplicate data.
+def _fetch_project_columns() -> dict[int, str] | None:
+    """issue number → Project Status (column). Returns None on any failure."""
+    proj = _fetch_project_items()
+    return None if proj is None else proj["columns"]
 
-    Returns (issues, columns_available, errors). A REST failure yields an empty
-    issue list + an error (→ verdict UNKNOWN). A GraphQL column failure keeps the
-    issues but marks columns unavailable (→ only checks 2/4 go UNKNOWN)."""
-    from app.tasks.sentinel_filing import list_open_alert_issues
 
+def _fetch_board_state() -> tuple[list[dict], dict, list[dict]]:
+    """Assemble the normalized FULL open-issue population + Project annotations.
+
+    Returns ``(issues, board, errors)`` where ``board`` carries
+    ``columns_available``, ``project_numbers`` (set | None), and
+    ``open_project_items`` (int | None). A total REST failure yields an empty issue
+    list + an error (→ verdict UNKNOWN). A truncated REST read keeps the partial
+    issues but records an error (→ UNKNOWN, never a false GREEN). A Project read
+    failure keeps the issues but marks columns/membership unavailable (→ the
+    column-dependent + membership checks go UNKNOWN)."""
     errors: list[dict] = []
-    raw = list_open_alert_issues()
-    if not raw:
-        # Could be a genuinely empty board OR a fetch failure — the rail already
-        # logged. We cannot tell them apart here, so treat empty as UNKNOWN only
-        # when the token is set (a real call was attempted).
-        from app.tasks.bug_report_github import GITHUB_TOKEN
+    raw, issues_ok, issues_err = _fetch_open_issues()
+    if not issues_ok:
+        errors.append({"detail": issues_err or "open-issue list failed"})
+        if not raw:
+            # Nothing to scan at all — pure UNKNOWN.
+            return [], {
+                "columns_available": False,
+                "project_numbers": None,
+                "open_project_items": None,
+            }, errors
 
-        if not GITHUB_TOKEN:
-            errors.append({"detail": "GITHUB_TOKEN unset — cannot read the board"})
-            return [], False, errors
-
-    columns = _fetch_project_columns()
-    columns_available = columns is not None
-    if not columns_available:
-        errors.append({"detail": "Project board column read failed (GraphQL)"})
+    proj = _fetch_project_items()
+    columns_available = proj is not None
+    if proj is None:
+        errors.append({"detail": "Project board read failed (GraphQL)"})
+        columns: dict[int, str] = {}
+        project_numbers: set[int] | None = None
+        open_project_items: int | None = None
+    else:
+        columns = proj["columns"]
+        project_numbers = proj["project_numbers"]
+        open_project_items = proj["open_project_items"]
+        if proj.get("duplicate_cards"):
+            # Duplicate cards make the column join ambiguous. Keep the last-wins map
+            # for the other checks, but record UNKNOWN so we never assert GREEN while
+            # a card is double-listed (Queue #265 Item 1).
+            errors.append({
+                "detail": f"Duplicate Project cards for issues {proj['duplicate_cards']} "
+                          f"— column join ambiguous",
+            })
 
     issues = []
     for i in raw:
@@ -394,10 +712,19 @@ def _fetch_board_state() -> tuple[list[dict], bool, list[dict]]:
                 (lbl.get("name") if isinstance(lbl, dict) else lbl)
                 for lbl in (i.get("labels") or [])
             ],
+            "assignees": [
+                (a.get("login") if isinstance(a, dict) else a)
+                for a in (i.get("assignees") or [])
+            ],
             "created_at": i.get("created_at"),
-            "column": (columns or {}).get(num),
+            "column": columns.get(num),
         })
-    return issues, columns_available, errors
+    board = {
+        "columns_available": columns_available,
+        "project_numbers": project_numbers,
+        "open_project_items": open_project_items,
+    }
+    return issues, board, errors
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +746,8 @@ def build_board_issue_body(classified: dict) -> str:
         f"`{_BOARD_MARKER}:{fp}`  (dedupe key — do not remove)",
         "",
         f"**Real board-hygiene defects:** {len(real)}  ",
+        f"**Open issues scanned:** {counts.get('open_issues_scanned')}  ",
+        f"**Open Project items:** {counts.get('open_project_items')}  ",
         f"**Open alert-intake scanned:** {counts.get('open_alert_intake')}  ",
         f"**Unknown (could not measure):** {len(unknown)}  ",
         "",
@@ -518,9 +847,14 @@ async def _run_board_sentinel(
 
     now = now or _dt.now(_tz.utc)
 
-    issues, columns_available, errors = _fetch_board_state()
+    issues, board, errors = _fetch_board_state()
     classified = classify_board(
-        issues, now, columns_available=columns_available, fetch_errors=errors
+        issues,
+        now,
+        columns_available=board.get("columns_available", False),
+        project_numbers=board.get("project_numbers"),
+        open_project_items=board.get("open_project_items"),
+        fetch_errors=errors,
     )
     verdict = board_verdict(classified)
 

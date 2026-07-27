@@ -47,12 +47,15 @@ describe("evaluateSentinel — board sentinel (Queue #258)", () => {
       verdict: "green",
       real: [],
       unknown: [],
-      counts: { open_alert_intake: 12 },
+      counts: { open_issues_scanned: 90, open_project_items: 90, open_alert_intake: 12 },
     };
     const v = evaluateSentinel(board, payload, false, NOW);
     expect(v.status).toBe("green");
     expect(v.headline).toBe("GREEN");
-    expect(v.detail).toContain("12 alert-intake scanned");
+    expect(v.detail).toContain("board clean");
+    expect(v.detail).toContain("90 open");
+    expect(v.detail).toContain("90 on board");
+    expect(v.detail).toContain("12 alert-intake");
   });
 
   it("board: real defects read RED and name the check kinds", () => {
@@ -85,6 +88,7 @@ describe("evaluateSentinel — board sentinel (Queue #258)", () => {
     expect(v.status).toBe("amber");
     expect(v.headline).toBe("UNKNOWN");
     expect(v.detail).toContain("not asserting clean");
+    expect(v.detail).toContain("inbox_column_checks");
   });
 
   it("board: no_run_cached still reads SILENT-RED (guard-of-the-guards)", () => {

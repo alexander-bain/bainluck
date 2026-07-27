@@ -149,23 +149,31 @@ function extractVerdict(
     const verdict = String(p["verdict"] ?? "");
     const real = (p["real"] as Array<Record<string, unknown>>) ?? [];
     const counts = (p["counts"] as Record<string, unknown>) ?? {};
-    const scanned = Number(counts["open_alert_intake"] ?? 0);
+    // Queue #265: the sentinel now scans the WHOLE open Project population, so the
+    // cockpit surfaces the full counts, not just alert-intake.
+    const scanned = Number(counts["open_issues_scanned"] ?? 0);
+    const projItems = counts["open_project_items"];
+    const intake = Number(counts["open_alert_intake"] ?? 0);
+    const scope = `${scanned} open${projItems != null ? ` · ${projItems} on board` : ""} · ${intake} alert-intake`;
     if (verdict === "red" || real.length > 0) {
       const kinds = [...new Set(real.map((f) => String(f["check"])))];
       return {
         red: true,
-        detail: `${real.length} board-hygiene defect(s)${kinds.length ? `: ${kinds.join(", ")}` : ""}`,
+        detail: `${real.length} board-hygiene defect(s)${kinds.length ? `: ${kinds.join(", ")}` : ""} · ${scope}`,
       };
     }
     if (verdict === "unknown") {
-      const unk = (p["unknown"] as unknown[]) ?? [];
+      const unk = (p["unknown"] as Array<Record<string, unknown>>) ?? [];
+      const reasons = [...new Set(unk.map((u) => String(u["check"] ?? "unknown")))];
       return {
         red: false,
         amber: true,
-        detail: `could not fully measure the board (${unk.length} unknown) — not asserting clean`,
+        detail: `could not fully measure the board (${unk.length} unknown${
+          reasons.length ? `: ${reasons.join(", ")}` : ""
+        }) — not asserting clean`,
       };
     }
-    return { red: false, detail: `board clean · ${scanned} alert-intake scanned` };
+    return { red: false, detail: `board clean · ${scope}` };
   }
 
   // settled-concept
