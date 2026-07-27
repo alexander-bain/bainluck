@@ -520,6 +520,25 @@ export interface FeedRefreshParams {
   new_items_count: number;
 }
 
+/**
+ * Discover theme-bundle card expanded. Carries the primary item's discover
+ * analytics (all optional — a bundle may have only a fallback category) plus the
+ * story grouping + position. Registered so the sanitation boundary keeps it.
+ */
+export interface ThemeBundleExpandParams {
+  content_type?: 'event' | 'futures' | 'grid';
+  item_id?: number | string;
+  category?: string;
+  item_name?: string;
+  score?: number;
+  headline?: string;
+  personalized?: boolean;
+  story_key: string;
+  member_count: number;
+  position?: number;
+  surface: 'discover';
+}
+
 // ============================================================================
 // Search Events
 // ============================================================================
@@ -655,6 +674,42 @@ export interface EvalVerdictParams extends FunnelDimensions {
   surface: 'cockpit' | 'label_pass';
 }
 
+/** Cockpit: toggled whether accepted eval proposals steer live ranking (#222). */
+export interface EvalPromoteToggleParams {
+  enabled: boolean;
+  surface: 'cockpit';
+}
+
+/** Admin: a human verdict on a team-identity cluster recommendation. */
+export interface TeamClusterVerdictParams {
+  verdict: string;
+  cluster_key: string;
+  sport?: string;
+  status?: string;
+  followed_recommendation: boolean;
+  surface: 'team_clusters';
+}
+
+/** Friend-challenge surface opened. */
+export interface FriendChallengeViewParams {
+  challenge_code: string;
+  market_id: number;
+  accepted: boolean;
+}
+
+/** Friend locked their pick on a shared challenge. */
+export interface FriendChallengeAcceptParams {
+  challenge_code: string;
+  market_id: number;
+  guess: 'higher' | 'lower';
+}
+
+/** A friend challenge was shared (native share sheet / clipboard). */
+export interface FriendChallengeShareParams {
+  challenge_code: string;
+  method: string;
+}
+
 // ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
@@ -736,6 +791,7 @@ export interface AnalyticsEventMap {
   feed_card_impression: FeedCardImpressionParams;
   feed_card_action: FeedCardActionParams;
   feed_refresh: FeedRefreshParams;
+  theme_bundle_expand: ThemeBundleExpandParams;
 
   // Funnel events (Phase 1 — Queue L2-133 Item 2, measurement_spec §2)
   streak_continued: StreakContinuedParams;
@@ -745,6 +801,15 @@ export interface AnalyticsEventMap {
 
   // Cockpit (Alex-ops) funnel (measurement_spec §2 — Queue L2-142 Item 4)
   eval_verdict: EvalVerdictParams;
+  eval_promote_toggle: EvalPromoteToggleParams;
+
+  // Admin taxonomy
+  team_cluster_verdict: TeamClusterVerdictParams;
+
+  // Friend challenge (GUESS funnel)
+  friend_challenge_view: FriendChallengeViewParams;
+  friend_challenge_accept: FriendChallengeAcceptParams;
+  friend_challenge_share: FriendChallengeShareParams;
 
   // Performance / observability (L2-189)
   feed_telemetry: FeedTelemetryParams;

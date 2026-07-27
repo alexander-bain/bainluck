@@ -2,7 +2,12 @@
 
 import Script from 'next/script';
 import { useEffect } from 'react';
-import { GA_CONFIG, initializeAnalytics, sendSessionEngagement } from '@/lib/analytics';
+import {
+  GA_CONFIG,
+  initializeAnalytics,
+  isAnalyticsConfigured,
+  sendSessionEngagement,
+} from '@/lib/analytics';
 
 /**
  * Google Analytics Script Component
@@ -13,7 +18,10 @@ import { GA_CONFIG, initializeAnalytics, sendSessionEngagement } from '@/lib/ana
  * This component should be placed in the root layout.
  */
 export function GoogleAnalytics() {
+  const configured = isAnalyticsConfigured();
+
   useEffect(() => {
+    if (!configured) return;
     // Initialize analytics after gtag script loads
     initializeAnalytics();
 
@@ -36,7 +44,12 @@ export function GoogleAnalytics() {
       window.removeEventListener('beforeunload', handleUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [configured]);
+
+  // No measurement id configured → don't load gtag.js or emit anything.
+  if (!configured) {
+    return null;
+  }
 
   return (
     <>
@@ -45,7 +58,10 @@ export function GoogleAnalytics() {
         src={`https://www.googletagmanager.com/gtag/js?id=${GA_CONFIG.MEASUREMENT_ID}`}
         strategy="afterInteractive"
       />
-      {/* Initialize dataLayer before gtag loads */}
+      {/* Initialize dataLayer + set consent BEFORE gtag processes anything.
+          Denied by default (Consent Mode v2); a stored analytics grant is
+          applied as an explicit update, so nothing is stored pre-consent and
+          the choice deterministically precedes any configuration/event. */}
       <Script
         id="gtag-init"
         strategy="afterInteractive"
@@ -54,14 +70,28 @@ export function GoogleAnalytics() {
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
 
-            // Set default consent - analytics enabled by default for US users
-            // (GDPR regions would need consent banner interaction)
+            // Denied by default until an explicit choice. No ads product, so
+            // every ads state stays denied even after a grant.
             gtag('consent', 'default', {
-              'analytics_storage': 'granted',
+              'analytics_storage': 'denied',
               'ad_storage': 'denied',
               'ad_user_data': 'denied',
               'ad_personalization': 'denied'
             });
+
+            // Apply a previously-stored analytics grant deterministically,
+            // before gtag.js config runs.
+            try {
+              var c = localStorage.getItem('${GA_CONFIG.CONSENT_STORAGE_KEY}');
+              if (c === 'all' || c === 'analytics') {
+                gtag('consent', 'update', {
+                  'analytics_storage': 'granted',
+                  'ad_storage': 'denied',
+                  'ad_user_data': 'denied',
+                  'ad_personalization': 'denied'
+                });
+              }
+            } catch (e) { /* localStorage unavailable */ }
           `,
         }}
       />

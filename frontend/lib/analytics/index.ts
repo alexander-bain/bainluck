@@ -30,10 +30,12 @@
 
 export * from './types';
 export * from './config';
+export * from './sanitize';
 export {
   initializeAnalytics,
   isAnalyticsReady,
   updateConsent,
+  isConsentGranted,
   setUserId,
   setUserProperties,
   trackEvent,

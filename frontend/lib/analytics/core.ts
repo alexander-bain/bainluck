@@ -9,7 +9,8 @@
  * - Performance-optimized tracking (requestIdleCallback)
  */
 
-import { GA_CONFIG, getPlatform, getStoredConsent } from './config';
+import { GA_CONFIG, getPlatform, getStoredConsent, isAnalyticsConfigured } from './config';
+import { sanitizeEvent } from './sanitize';
 import type {
   AnalyticsEventMap,
   AnalyticsEventName,
@@ -36,6 +37,12 @@ declare global {
 
 let isInitialized = false;
 let currentUserId: string | undefined;
+/**
+ * Whether the user has granted analytics consent. DENIED by default: no event
+ * is emitted until an explicit stored/current choice grants it. `updateConsent`
+ * is the only writer.
+ */
+let analyticsConsentGranted = false;
 let sessionStartTime = Date.now();
 let pagesViewed = 0;
 let eventsViewed = new Set<number>();
@@ -52,6 +59,9 @@ let viewedCharts = false;
  */
 export function initializeAnalytics(): void {
   if (typeof window === 'undefined' || isInitialized) return;
+  // No measurement id → analytics is disabled entirely (never send to an
+  // unexpected property). GoogleAnalytics.tsx also skips loading gtag.js.
+  if (!isAnalyticsConfigured()) return;
 
   // Initialize dataLayer
   window.dataLayer = window.dataLayer || [];
@@ -118,8 +128,6 @@ export function isAnalyticsReady(): boolean {
  * Update consent settings
  */
 export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
-  if (!isAnalyticsReady()) return;
-
   let consent: ConsentSettings;
 
   switch (level) {
@@ -140,11 +148,24 @@ export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
       break;
   }
 
-  window.gtag('consent', 'update', consent);
+  // Update the local emission gate FIRST so it holds even if gtag is not yet
+  // ready — no event is emitted until analytics is explicitly granted.
+  analyticsConsentGranted = consent.analytics_storage === 'granted';
+
+  if (isAnalyticsReady()) {
+    window.gtag('consent', 'update', consent);
+  }
 
   if (GA_CONFIG.DEBUG_MODE) {
     console.log('[Analytics] Consent updated:', level, consent);
   }
+}
+
+/**
+ * Whether analytics consent is currently granted (test/introspection helper).
+ */
+export function isConsentGranted(): boolean {
+  return analyticsConsentGranted;
 }
 
 // ============================================================================
@@ -159,11 +180,12 @@ export function setUserId(userId: string | undefined): void {
 
   currentUserId = userId;
 
-  if (userId) {
-    window.gtag('config', GA_CONFIG.MEASUREMENT_ID, {
-      user_id: userId,
-    });
-  }
+  // Set on login; on logout explicitly push `user_id: null` so GA drops the
+  // previously-configured identity before any subsequent anonymous event —
+  // clearing the local ref alone left the id configured in gtag.
+  window.gtag('config', GA_CONFIG.MEASUREMENT_ID, {
+    user_id: userId ?? null,
+  });
 
   if (GA_CONFIG.DEBUG_MODE) {
     console.log('[Analytics] User ID set:', userId ?? '(cleared)');
@@ -211,6 +233,14 @@ export function trackEvent<E extends AnalyticsEventName>(
     return;
   }
 
+  // Consent gate: emit NOTHING until analytics is explicitly granted.
+  if (!analyticsConsentGranted) {
+    if (GA_CONFIG.DEBUG_MODE) {
+      console.log('[Analytics] Event dropped (consent not granted):', eventName);
+    }
+    return;
+  }
+
   const sendEvent = () => {
     // Add common parameters
     const enrichedParams = {
@@ -223,10 +253,23 @@ export function trackEvent<E extends AnalyticsEventName>(
       platform: getPlatform(),
     };
 
-    window.gtag('event', eventName, enrichedParams);
+    // Central sanitation boundary: drop unknown events, strip unknown/PII
+    // params, and reduce raw queries to bounded metadata before gtag sees them.
+    const sanitized = sanitizeEvent(
+      eventName,
+      enrichedParams as unknown as Record<string, unknown>,
+    );
+    if (!sanitized) {
+      if (GA_CONFIG.DEBUG_MODE) {
+        console.log('[Analytics] Event dropped (unknown/blocked):', eventName);
+      }
+      return;
+    }
+
+    window.gtag('event', sanitized.name, sanitized.params);
 
     if (GA_CONFIG.DEBUG_MODE) {
-      console.log('[Analytics] Event tracked:', eventName, enrichedParams);
+      console.log('[Analytics] Event tracked:', sanitized.name, sanitized.params);
     }
   };
 
@@ -244,15 +287,10 @@ export function trackEvent<E extends AnalyticsEventName>(
 export function trackPageView(params: AnalyticsEventMap['page_view']): void {
   pagesViewed++;
 
+  // Exactly one page_view per call. GA4 auto page_view is disabled
+  // (`send_page_view: false`), so this custom event is the single source of
+  // truth — the previous extra `gtag('config', …)` re-send double-counted.
   trackEvent('page_view', params, { immediate: true });
-
-  // Also send to GA4's built-in page_view for compatibility
-  if (isAnalyticsReady()) {
-    window.gtag('config', GA_CONFIG.MEASUREMENT_ID, {
-      page_path: params.page_path,
-      page_title: params.page_title,
-    });
-  }
 }
 
 // ============================================================================

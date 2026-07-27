@@ -3,29 +3,44 @@
  */
 
 export const GA_CONFIG = {
-  /** GA4 Measurement ID */
-  MEASUREMENT_ID: 'G-CY59Q6K975',
+  /**
+   * GA4 Measurement ID — read from the environment, never hardcoded.
+   *
+   * `NEXT_PUBLIC_GA_MEASUREMENT_ID` is a public, build-time-inlined value (a GA
+   * measurement id is not a secret). When it is absent, analytics is DISABLED
+   * (`isAnalyticsConfigured()` → false) rather than silently sending hits to an
+   * unexpected/hardcoded property. Set it in `.env.production` (committed) and
+   * the Vercel dashboard for production builds.
+   */
+  MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID,
 
   /** Enable debug mode in development */
   DEBUG_MODE: process.env.NODE_ENV === 'development',
 
-  /** Consent defaults - analytics enabled by default for US users */
+  /**
+   * Consent defaults — DENIED by default (Consent Mode v2). No analytics
+   * storage until the user makes an explicit choice; every ads-related state
+   * stays denied because the product has no ads.
+   */
   DEFAULT_CONSENT: {
+    analytics_storage: 'denied' as const,
+    ad_storage: 'denied' as const,
+    ad_user_data: 'denied' as const,
+    ad_personalization: 'denied' as const,
+  },
+
+  /**
+   * Consent when the user accepts. The product has no ads, so ads states stay
+   * denied even on "Accept" — only analytics is granted.
+   */
+  GRANTED_CONSENT: {
     analytics_storage: 'granted' as const,
     ad_storage: 'denied' as const,
     ad_user_data: 'denied' as const,
     ad_personalization: 'denied' as const,
   },
 
-  /** Consent when user accepts all */
-  GRANTED_CONSENT: {
-    analytics_storage: 'granted' as const,
-    ad_storage: 'granted' as const,
-    ad_user_data: 'granted' as const,
-    ad_personalization: 'granted' as const,
-  },
-
-  /** Consent when user accepts analytics only */
+  /** Consent when user accepts analytics only (identical: no ads product) */
   ANALYTICS_ONLY_CONSENT: {
     analytics_storage: 'granted' as const,
     ad_storage: 'denied' as const,
@@ -64,6 +79,19 @@ export const GA_CONFIG = {
     DELAY: 1000,
   },
 } as const;
+
+/**
+ * Whether analytics is configured to run. False when
+ * `NEXT_PUBLIC_GA_MEASUREMENT_ID` is unset — in that case we never load gtag,
+ * never initialize, and never emit, rather than sending to an unexpected
+ * property. Callers should short-circuit on this.
+ */
+export function isAnalyticsConfigured(): boolean {
+  return (
+    typeof GA_CONFIG.MEASUREMENT_ID === 'string' &&
+    GA_CONFIG.MEASUREMENT_ID.length > 0
+  );
+}
 
 /**
  * Platform detection

@@ -181,10 +181,12 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
     setShowConsentBanner(false);
   }, []);
 
-  // Dismiss banner (use default denied consent)
+  // Dismiss banner = explicit denial. Persist AND push a denied consent update
+  // (previously it stored 'none' but never told gtag, leaving default state).
   const dismissBanner = useCallback(() => {
     setConsentState('none');
     storeConsent('none');
+    updateConsent('none');
     setShowConsentBanner(false);
   }, []);
 

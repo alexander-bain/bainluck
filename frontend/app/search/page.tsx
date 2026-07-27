@@ -217,7 +217,10 @@ function SearchContent() {
   const currentPage = pageParam ? parseInt(pageParam, 10) : 1;
 
   const { track } = useAnalytics();
-  usePageTracking({ pageType: 'search', pageTitle: 'Search', deps: [query] });
+  // Track one page_view when the search surface is entered — NOT on every query
+  // change (query stays within the same /search route). search_submit /
+  // search_result_click carry the per-query funnel signal instead.
+  usePageTracking({ pageType: 'search', pageTitle: 'Search' });
   useScrollDepth({ pageType: 'search' });
   useEngagementTime({ pageType: 'search' });
 
