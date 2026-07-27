@@ -60,18 +60,27 @@ final class PreferencesViewModel: ObservableObject {
         loading = true
         do {
             let response = try await APIClient.shared.fetchPreferences()
-            prefs = response
-            sportAffinities = response.sportAffinities
-            // Reflect the server's stored value; opt-in default is false.
-            morningDigestEnabled = response.pushPreferences?.morningDigest ?? false
-            morningDigestError = nil
-            error = nil
+            apply(loaded: response)
             logger.info("Preferences loaded: \(response.favorites.count) favorites")
         } catch {
             self.error = error.localizedDescription
             logger.error("Preferences load error: \(error)")
         }
         loading = false
+    }
+
+    /// Reflects a freshly-loaded preferences payload into published state.
+    /// Extracted from `load()` so relaunch persistence (the server's stored
+    /// opt-in reappearing on the toggle) is unit-testable without the network.
+    /// A missing/omitted `push_preferences` block keeps Morning Digest OFF —
+    /// never a silent opt-in.
+    func apply(loaded response: PreferencesResponse) {
+        prefs = response
+        sportAffinities = response.sportAffinities
+        // Reflect the server's stored value; opt-in default is false.
+        morningDigestEnabled = response.pushPreferences?.morningDigest ?? false
+        morningDigestError = nil
+        error = nil
     }
 
     // MARK: - Remove Favorite
