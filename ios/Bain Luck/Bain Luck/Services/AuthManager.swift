@@ -20,7 +20,15 @@ private let keychainAppleUserIdKey = "com.bainluck.appleUserId"
 @MainActor
 final class AuthManager: ObservableObject {
     /// The signed-in Bain Luck profile, or nil when the app is anonymous.
-    @Published var user: AuthUser?
+    /// On every change (login, logout, account switch, restore) the Discover
+    /// feed-cache identity is updated so last-good content is partitioned per
+    /// account and never crosses a logout/switch boundary (#1465).
+    @Published var user: AuthUser? {
+        didSet {
+            let userId = user.map { String($0.id) }
+            Task { await APIClient.shared.setFeedCacheIdentity(userId: userId) }
+        }
+    }
     /// True while launch-time Keychain restore or token validation is running.
     @Published var isLoading = true
     /// Last user-facing sign-in error for auth screens to present.

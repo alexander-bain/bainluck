@@ -143,7 +143,9 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     @MainActor
     private func loadedVM(_ replies: [Reply]) async throws -> (DiscoverViewModel, FakeFeedClient) {
         let fake = FakeFeedClient([.ok(try Self.initialPage())] + replies)
-        let vm = DiscoverViewModel(client: fake)
+        // lastGood/telemetry nil so these pagination tests stay hermetic (no disk
+        // cache read, no Firebase) — the SWR cache path is covered separately.
+        let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
         await vm.load()
         XCTAssertFalse(vm.loading, "initial load should clear loading")
         XCTAssertEqual(vm.items.count, 12, "initial page should populate 12 items")
@@ -310,7 +312,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
             .ok(try Self.mixedPage(validIds: Array(1...12), malformedCount: 5, offset: 0, hasMore: true, limit: 200)),
             .ok(try Self.response(ids: [500], offset: 200, hasMore: false, limit: 200)),
         ])
-        let vm = DiscoverViewModel(client: fake)
+        let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
         await vm.load()
         XCTAssertEqual(vm.items.count, 12, "12 valid items decoded; malformed tail dropped")
         fake.reset()

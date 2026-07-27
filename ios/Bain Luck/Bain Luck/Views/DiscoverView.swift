@@ -766,6 +766,39 @@ struct DiscoverView: View {
                     .padding(.vertical, 60)
                 }
 
+                // Honest staleness banner (#1465): we are showing the last-good
+                // cached feed but the background refresh failed, so this is not
+                // confirmed-current. Never present stale data as fresh — surface a
+                // quiet, non-blocking retry rather than blanking the feed.
+                if vm.refreshFailedShowingCache, !vm.items.isEmpty {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Showing recent markets")
+                                .font(.caption.weight(.semibold))
+                            Text("Couldn't refresh — pull down or retry")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Retry") {
+                            Task { await vm.load() }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .frame(minHeight: 44)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Showing recent markets. Couldn't refresh.")
+                    .accessibilityHint("Double-tap Retry to reload the latest feed")
+                }
+
                 // Swipe hint (shown once)
                 if showSwipeHint {
                     HStack(spacing: 12) {

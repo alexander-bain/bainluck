@@ -24,8 +24,28 @@ final class DiscoverViewModel: ObservableObject {
     /// the API has no more pages.
     @Published private(set) var hasMore = true
 
+    /// True while the currently rendered `items` came from the last-good disk
+    /// cache and have not yet been replaced by a fresh server response (#1465).
+    /// Lets the view stay honest that content is being revalidated.
+    @Published private(set) var isShowingCachedContent = false
+
+    /// True when a revalidation failed while last-good content is still on screen
+    /// (#1465). The view surfaces a small, honest "showing recent — couldn't
+    /// refresh" banner instead of silently presenting stale data as current.
+    @Published private(set) var refreshFailedShowingCache = false
+
+    /// When the currently shown last-good payload was stored, for honest staleness
+    /// framing. Nil once fresh content replaces the cache.
+    @Published private(set) var lastGoodStoredAt: Date?
+
     private var nextOffset = 0
     private let client: DiscoverFeedProviding
+    /// Read seam for the last-good disk cache (#1465). Nil in tests that only
+    /// exercise pagination so those stay hermetic and network-only.
+    private let lastGood: DiscoverLastGoodReading?
+    /// Sink for stale-while-revalidate telemetry (#1465). Defaults to Firebase;
+    /// injectable so tests can assert emitted events deterministically.
+    private let telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)?
 
     /// Upper bound on how many consecutive duplicate-only / ineligible server
     /// pages a single loadMore pass will scan before surfacing a retryable
@@ -33,8 +53,14 @@ final class DiscoverViewModel: ObservableObject {
     /// `limit` rows, so this is a wide-but-finite forward window.
     private static let maxPageScans = 6
 
-    init(client: DiscoverFeedProviding = APIClient.shared) {
+    init(
+        client: DiscoverFeedProviding = APIClient.shared,
+        lastGood: DiscoverLastGoodReading? = APIClient.shared,
+        telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) }
+    ) {
         self.client = client
+        self.lastGood = lastGood
+        self.telemetry = telemetry
     }
 
     private static let sportsCategories: Set<String> = [
@@ -45,18 +71,56 @@ final class DiscoverViewModel: ObservableObject {
 
     @MainActor
     func load() async {
+        // Stale-while-revalidate (#1465): on a cold view model, seed the last
+        // successful payload from disk so a first card renders immediately instead
+        // of blocking on the 9–13s cold `/api/feed` miss (#1459). The view re-runs
+        // its `now`-relative eligibility gate on this content, so nothing here
+        // extends how long a settled/aged card may survive.
+        if items.isEmpty, let lastGood {
+            let t0 = Date()
+            if let cached = await lastGood.loadLastGoodFeed() {
+                let renderable = Self.renderable(cached.response.items)
+                if renderable.isEmpty {
+                    telemetry?(DiscoverFeedTelemetry(
+                        outcome: .cacheMiss, cacheDecodeMs: Self.elapsedMs(since: t0),
+                        networkMs: nil, itemCount: 0, cacheAgeSeconds: nil))
+                } else {
+                    items = Self.interleave(renderable)
+                    hasMore = cached.response.hasMore
+                    nextOffset = Self.pageBoundary(cached.response, from: 0)
+                    loading = false
+                    error = nil
+                    isShowingCachedContent = true
+                    refreshFailedShowingCache = false
+                    lastGoodStoredAt = cached.storedAt
+                    telemetry?(DiscoverFeedTelemetry(
+                        outcome: .cacheHitServed, cacheDecodeMs: Self.elapsedMs(since: t0),
+                        networkMs: nil, itemCount: renderable.count,
+                        cacheAgeSeconds: cached.age(now: Date())))
+                }
+            } else {
+                telemetry?(DiscoverFeedTelemetry(
+                    outcome: .cacheMiss, cacheDecodeMs: Self.elapsedMs(since: t0),
+                    networkMs: nil, itemCount: 0, cacheAgeSeconds: nil))
+            }
+        }
+
+        // Only show the blocking loading state when there is nothing to render.
+        // When last-good seeded content, revalidation happens silently behind it.
         if items.isEmpty {
             loading = true
             error = nil
         }
+
+        let netStart = Date()
         for attempt in 1...3 {
             do {
                 let response = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: 0.15, cacheTTL: nil)
-                let renderable = response.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
+                let renderable = Self.renderable(response.items)
 
                 if renderable.count < 10 {
                     let fallback = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: nil, cacheTTL: nil)
-                    let fallbackRenderable = fallback.items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
+                    let fallbackRenderable = Self.renderable(fallback.items)
                     items = Self.interleave(fallbackRenderable)
                     hasMore = fallback.hasMore
                     // Advance by the SERVER page boundary (offset + limit), not the
@@ -69,8 +133,17 @@ final class DiscoverViewModel: ObservableObject {
                     nextOffset = Self.pageBoundary(response, from: 0)
                 }
 
+                // Fresh server content replaces last-good without blanking or a
+                // local reorder — the server order is preserved as decoded (#1465).
                 error = nil
                 loading = false
+                isShowingCachedContent = false
+                refreshFailedShowingCache = false
+                lastGoodStoredAt = nil
+                telemetry?(DiscoverFeedTelemetry(
+                    outcome: .revalidateSuccess, cacheDecodeMs: nil,
+                    networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
+                    cacheAgeSeconds: nil))
                 return
             } catch is CancellationError {
                 loading = false
@@ -85,10 +158,33 @@ final class DiscoverViewModel: ObservableObject {
                 }
             }
         }
-        if items.isEmpty {
-            error = "Couldn't load feed"
-        }
+
+        // All network attempts failed. Never blank last-good content — keep it and
+        // tell the truth that the refresh failed (#1465). With nothing cached, fall
+        // to the honest error state exactly as before.
         loading = false
+        if !items.isEmpty {
+            refreshFailedShowingCache = true
+            error = "Showing recent markets — couldn't refresh"
+            telemetry?(DiscoverFeedTelemetry(
+                outcome: .revalidateFailedKeptCache, cacheDecodeMs: nil,
+                networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
+                cacheAgeSeconds: lastGoodStoredAt.map { Date().timeIntervalSince($0) }))
+        } else {
+            error = "Couldn't load feed"
+            telemetry?(DiscoverFeedTelemetry(
+                outcome: .revalidateFailedNoCache, cacheDecodeMs: nil,
+                networkMs: Self.elapsedMs(since: netStart), itemCount: 0, cacheAgeSeconds: nil))
+        }
+    }
+
+    /// Cards the feed can actually render (event / futures / tournament / concept).
+    private static func renderable(_ items: [FeedItem]) -> [FeedItem] {
+        items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
+    }
+
+    private static func elapsedMs(since start: Date) -> Double {
+        Date().timeIntervalSince(start) * 1000
     }
 
     /// Advance pagination toward fresh content, always terminating in one of
@@ -252,14 +348,20 @@ final class DiscoverViewModel: ObservableObject {
 
 extension APIClient: DiscoverFeedProviding {
     /// Thin adapter mapping the narrow Discover pagination seam onto the full
-    /// `fetchFeed` surface (L2-192). Keeps production behavior identical while
-    /// letting tests inject a deterministic fake.
+    /// feed surface (L2-192). The offset-0 page routes through
+    /// `fetchFeedPersistingLastGood` so its raw body is cached as last-good for
+    /// the next launch (#1465); pagination pages stay transient. Production
+    /// behavior is otherwise identical, and tests inject a deterministic fake.
     nonisolated func fetchDiscoverFeed(
         limit: Int,
         offset: Int,
         eventPct: Double?,
         cacheTTL: TimeInterval?
     ) async throws -> FeedResponse {
-        try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+        try await fetchFeedPersistingLastGood(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
     }
 }
+
+// MARK: - Last-good read conformance (#1465)
+
+extension APIClient: DiscoverLastGoodReading {}

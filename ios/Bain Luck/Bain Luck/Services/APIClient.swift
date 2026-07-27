@@ -49,6 +49,15 @@ actor APIClient {
         let timestamp: Date
     }
 
+    /// Disk-backed last-good Discover feed cache (L2-197 / #1465). Persists the
+    /// raw offset-0 `/api/feed` body so a repeat launch can render a first card
+    /// immediately instead of blocking on the 9–13s cold server miss (#1459).
+    private let feedCache = DiscoverFeedCache()
+
+    /// Backend user id of the signed-in account, or nil when anonymous. Pushed by
+    /// `AuthManager` on sign-in/out/restore; partitions the feed cache namespace.
+    private var feedCacheUserId: String?
+
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
@@ -66,6 +75,23 @@ actor APIClient {
     /// Installs the auth token source used to attach Bearer credentials to API requests.
     func setAuthTokenProvider(_ provider: (() async -> String?)?) {
         authTokenProvider = provider
+    }
+
+    // MARK: - Discover Feed Cache Identity (#1465)
+
+    /// Update the feed-cache identity when the signed-in account changes. On a
+    /// real change (login, logout, account switch) every other namespace is
+    /// evicted so no prior user's — or signed-out — last-good can surface under
+    /// the new identity. Called by `AuthManager` whenever `user` changes.
+    func setFeedCacheIdentity(userId: String?) {
+        guard userId != feedCacheUserId else { return }
+        feedCacheUserId = userId
+        feedCache.evict(keepingOnly: currentFeedIdentity())
+    }
+
+    /// The current feed-cache namespace (signed-in user id, else anonymous session).
+    private func currentFeedIdentity() -> String {
+        DiscoverFeedCache.identity(userId: feedCacheUserId, sessionId: sessionId)
     }
 
     private init() {
@@ -134,6 +160,52 @@ actor APIClient {
 
         do {
             return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
+    /// Like `fetch`, but also returns the raw response bytes and a network/decode
+    /// timing split (#1465). Used for the Discover feed so the offset-0 body can
+    /// be persisted byte-for-byte as last-good and the cold-vs-warm cost measured.
+    /// Intentionally bypasses the in-memory TTL cache (the feed always sends
+    /// `cacheTTL: nil`) so the raw bytes are always the fresh server response.
+    private func fetchRaw<T: Decodable & Sendable>(
+        _ path: String,
+        query: [String: String] = [:]
+    ) async throws -> (value: T, raw: Data, networkMs: Double, decodeMs: Double) {
+        var components = URLComponents(string: baseURL + path)
+        if !query.isEmpty {
+            components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        guard let url = components?.url else { throw APIError.invalidURL }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let netStart = Date()
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+        let networkMs = Date().timeIntervalSince(netStart) * 1000
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw APIError.httpError(statusCode: http.statusCode, body: String(data: data, encoding: .utf8))
+        }
+
+        let decodeStart = Date()
+        do {
+            let value = try decoder.decode(T.self, from: data)
+            let decodeMs = Date().timeIntervalSince(decodeStart) * 1000
+            return (value, data, networkMs, decodeMs)
         } catch {
             throw APIError.decodingError(underlying: error)
         }
@@ -373,6 +445,43 @@ actor APIClient {
             q["tags"] = str
         }
         return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL)
+    }
+
+    /// Fetch the offset-0 Discover feed AND persist its raw body as last-good for
+    /// the current identity (#1465). The stale-while-revalidate path in
+    /// `DiscoverViewModel` reads this back on the next cold launch to render a
+    /// first card immediately. Only the offset-0 page is cached — pagination
+    /// pages are transient. Persistence and network telemetry are best-effort and
+    /// never block or fail the fetch. Non-offset-0 calls fall through to `fetchFeed`.
+    func fetchFeedPersistingLastGood(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        guard offset == 0 else {
+            return try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+        }
+
+        var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
+        if let eventPct { q["event_pct"] = String(eventPct) }
+
+        let result: (value: FeedResponse, raw: Data, networkMs: Double, decodeMs: Double) =
+            try await fetchRaw("/api/feed", query: q)
+
+        feedCache.store(rawBody: result.raw, identity: currentFeedIdentity(), storedAt: Date())
+        AnalyticsService.trackDiscoverFeedNetwork(
+            networkMs: result.networkMs,
+            decodeMs: result.decodeMs,
+            itemCount: result.value.items.count
+        )
+        return result.value
+    }
+
+    /// Read the last-good Discover payload for the current identity (#1465), or
+    /// nil when none exists. Fails closed on any corrupt/foreign entry.
+    func loadLastGoodFeed() -> CachedDiscoverFeed? {
+        feedCache.load(identity: currentFeedIdentity())
     }
 
     // MARK: - Grouped Futures Feed

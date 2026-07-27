@@ -143,6 +143,34 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - Discover Feed Latency (#1465 — stale-while-revalidate last-good cache)
+
+    /// A stale-while-revalidate cache observation from `DiscoverViewModel`.
+    /// Isolates perceived time-to-first-card (cache decode/render) from the server
+    /// round-trip so the client win is measurable without implying the backend
+    /// cold miss (#1459) is fixed. Carries no PII and no card content.
+    nonisolated static func trackDiscoverFeedCache(_ telemetry: DiscoverFeedTelemetry) {
+        Analytics.logEvent("discover_feed_cache", parameters: [
+            "outcome": telemetry.outcome.rawValue,
+            "cache_decode_ms": telemetry.cacheDecodeMs ?? -1,
+            "network_ms": telemetry.networkMs ?? -1,
+            "item_count": telemetry.itemCount,
+            "cache_age_seconds": telemetry.cacheAgeSeconds ?? -1,
+            "surface": "discover",
+        ])
+    }
+
+    /// The server-side split of an offset-0 feed fetch: network round-trip (TTFB +
+    /// download) vs client payload decode. Emitted from `APIClient` (#1465). No PII.
+    nonisolated static func trackDiscoverFeedNetwork(networkMs: Double, decodeMs: Double, itemCount: Int) {
+        Analytics.logEvent("discover_feed_network", parameters: [
+            "network_ms": networkMs,
+            "decode_ms": decodeMs,
+            "item_count": itemCount,
+            "surface": "discover",
+        ])
+    }
+
     // MARK: - Predictions
 
     nonisolated static func trackPredictionSubmit(
