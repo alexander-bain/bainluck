@@ -2816,9 +2816,12 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 2000},
     },
     "backfill-market-shapes": {
-        # Queue #194 Item 1 — classify + persist market shape into market_type.
-        # Every 20 min: drains the 456K-row NULL backlog over cycles, then keeps
-        # freshly-ingested markets shaped (only touches market_type IS NULL rows).
+        # Queue #194 Item 1 / Queue #260 — recompute + persist the semantics v2
+        # contract (display shape in market_type; relation/exhaustive/
+        # expected_winners/fingerprint in market_metadata.shape).
+        # Every 20 min: rolls over all rows in bounded/resumable cursor passes,
+        # recomputing on NULL / version-old / fingerprint-change and writing
+        # only on change (so a converged table costs reads only).
         "task": "app.tasks.backfill_market_shapes",
         "schedule": crontab(minute="*/20"),
         "kwargs": {"limit": 40000},
