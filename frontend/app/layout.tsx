@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
+import { GoogleAnalytics, AnalyticsProvider, ConsentBanner, WebVitalsReporter } from "@/components/Analytics";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import dynamic from "next/dynamic";
@@ -105,6 +105,7 @@ export default function RootLayout({
           <NavigationProgress />
         </Suspense>
         <GoogleAnalytics />
+        <WebVitalsReporter />
         <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>

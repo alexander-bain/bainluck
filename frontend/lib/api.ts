@@ -44,6 +44,7 @@ import type {
   GolfLeaderboardResponse,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
+import { reportFeedTelemetry } from "./feedTelemetry";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const AUTH_TOKEN_TIMEOUT_MS = 2500;
@@ -80,7 +81,20 @@ async function getAuthTokenWithTimeout(): Promise<string | null> {
 /**
  * Base fetch wrapper with error handling and optional auth
  */
-async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
+async function apiFetch<T>(
+  endpoint: string,
+  options?: RequestInit & {
+    timeoutMs?: number;
+    /**
+     * Optional observability hook (L2-189). When provided, it is invoked with
+     * the raw `Response` (before the body is parsed) and a small meta object,
+     * so callers such as fetchFeed can read exposed headers without weakening
+     * the generic `Promise<T>` contract. It must never throw; callers wrap
+     * their own body in try/catch and this call site does too.
+     */
+    onResponse?: (res: Response, meta: { authenticated: boolean }) => void;
+  }
+): Promise<T> {
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string> || {}),
   };
@@ -121,6 +135,16 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: "Unknown error" }));
         throw new Error(error.detail || `API error: ${res.status}`);
+      }
+
+      // Observability hook (L2-189). Runs before body parse so callers can read
+      // response headers. Best-effort only — never let it affect the response.
+      if (options?.onResponse) {
+        try {
+          options.onResponse(res, { authenticated: !!token });
+        } catch {
+          /* telemetry must never change rendering or retries */
+        }
       }
 
       return res.json();
@@ -1020,7 +1044,25 @@ export async function fetchFeed(params?: {
   const query = searchParams.toString();
   const sessionId = getDiscoverSessionId();
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
-  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`, { headers });
+
+  // L2-189: measure client time-to-response and emit bounded, non-PII latency
+  // telemetry from the exposed feed headers. All best-effort — never affects
+  // the value returned to the caller.
+  const startedAt =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
+  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`, {
+    headers,
+    onResponse: (res, meta) => {
+      const now =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      reportFeedTelemetry(res, {
+        endpoint: "/api/feed",
+        authenticated: meta.authenticated,
+        hasSessionId: !!sessionId,
+        durationMs: now - startedAt,
+      });
+    },
+  });
 }
 
 // ============================================================================

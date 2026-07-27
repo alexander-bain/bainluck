@@ -8,6 +8,7 @@ import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
+import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
 import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
@@ -805,19 +806,7 @@ export default function DiscoverPage() {
 
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
       <main className="max-w-7xl mx-auto px-4 py-4">
-        {isLoading && (
-          <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="break-inside-avoid rounded-2xl bg-surface-card border border-surface-border animate-pulse mb-4">
-                <div className="h-44 bg-surface-elevated rounded-t-2xl" />
-                <div className="p-4 space-y-3">
-                  <div className="h-5 bg-surface-elevated rounded w-3/4" />
-                  <div className="h-3 bg-surface-elevated rounded w-full" />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {isLoading && <DiscoverSkeletonGrid />}
 
         {!isLoading && feedError && !data && (
           <div className="text-center py-20 text-text-muted">

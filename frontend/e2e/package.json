@@ -1,0 +1,11 @@
+{
+  "name": "bainluck-e2e-traces",
+  "private": true,
+  "description": "L2-189 — isolated Playwright latency traces for Discover. Kept OUT of the main frontend dependency tree so it never touches Vercel/CI installs or `next build`.",
+  "scripts": {
+    "trace:discover": "playwright test discover-latency.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

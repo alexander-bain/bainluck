@@ -334,6 +334,46 @@ export interface StaleDataViewParams {
 }
 
 // ============================================================================
+// Performance / Observability Events (L2-189)
+// ============================================================================
+
+/**
+ * Feed latency telemetry — bounded, non-PII. Emitted once per `/api/feed`
+ * fetch from browser-visible timing/cache headers. Carries no token, cookie,
+ * session id, user id, or market payload; `cohort` is a coarse audience label.
+ */
+export interface FeedTelemetryParams {
+  /** Endpoint path only, e.g. "/api/feed" — never the query string / ids. */
+  endpoint: string;
+  /** Coarse audience bucket. */
+  cohort: 'authenticated' | 'session_anon' | 'shared_anon';
+  /** Backend cache disposition from `X-Feed-Cache` (or "unknown"). */
+  cache_status: string;
+  /** Backend compute time in ms from `X-Feed-Elapsed-Ms` (null if hidden). */
+  backend_elapsed_ms: number | null;
+  /** Client-observed time-to-response in ms. */
+  duration_ms: number;
+}
+
+/**
+ * A single Core Web Vital sample (LCP/INP/CLS/TTFB/FCP) reported via Next's
+ * `useReportWebVitals`. Value units follow web-vitals (ms for time metrics,
+ * unitless for CLS). No PII; page_path is a route path only.
+ */
+export interface WebVitalParams {
+  /** Metric id, e.g. "LCP", "INP", "CLS", "TTFB", "FCP". */
+  metric_name: string;
+  /** Metric value (ms for time metrics; unitless score for CLS). */
+  metric_value: number;
+  /** web-vitals rating bucket when provided by the source. */
+  rating?: 'good' | 'needs-improvement' | 'poor';
+  /** Navigation type reported by web-vitals (navigate/reload/back-forward…). */
+  navigation_type?: string;
+  /** Route path the metric was measured on (no query string / ids). */
+  page_path: string;
+}
+
+// ============================================================================
 // Account Events (for future auth integration)
 // ============================================================================
 
@@ -705,6 +745,10 @@ export interface AnalyticsEventMap {
 
   // Cockpit (Alex-ops) funnel (measurement_spec §2 — Queue L2-142 Item 4)
   eval_verdict: EvalVerdictParams;
+
+  // Performance / observability (L2-189)
+  feed_telemetry: FeedTelemetryParams;
+  web_vital: WebVitalParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;
