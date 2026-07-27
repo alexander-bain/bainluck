@@ -295,7 +295,7 @@ class TestGridFilingLifecycle:
         monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.update(n=n))
         fp = gs.grid_fingerprint("mlb")
         existing = [{"number": 1251, "title": "x",
-                     "body": f"`grid-sentinel-fingerprint:{fp}`",
+                     "body": f"`grid-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
                      "labels": [{"name": "alert-intake"}]}]
         classified = {"league": "mlb", "real": [], "explained": [], "watch": []}
         res = gs.file_grid_issue(classified, open_issues=existing)
@@ -324,7 +324,7 @@ class TestGridFilingLifecycle:
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not file a dupe")))
         fp = gs.grid_fingerprint("mlb")
         dupes = [{"number": n, "title": "x",
-                  "body": f"`grid-sentinel-fingerprint:{fp}`",
+                  "body": f"`grid-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
                   "labels": [{"name": "alert-intake"}]}
                  for n in (1443, 1251, 1125)]
         classified = {"league": "mlb", "phase": "in_season",

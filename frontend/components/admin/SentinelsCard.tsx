@@ -145,13 +145,20 @@ function extractVerdict(
   if (key === "board") {
     // Queue #258: verdict ∈ {red, green, unknown}. UNKNOWN (couldn't fully
     // measure — e.g. the board column read failed) reads AMBER, never GREEN and
-    // never a false RED.
+    // never a false RED. Queue #266 Item 3: GREEN is accepted ONLY for a
+    // schema-valid green payload (explicit verdict="green" AND a complete, valid
+    // population count). A missing / misspelled / future verdict, malformed counts,
+    // or an incomplete population reads AMBER — a partial cache/schema regression
+    // must never render as "board clean".
     const verdict = String(p["verdict"] ?? "");
-    const real = (p["real"] as Array<Record<string, unknown>>) ?? [];
+    const real = Array.isArray(p["real"])
+      ? (p["real"] as Array<Record<string, unknown>>)
+      : [];
     const counts = (p["counts"] as Record<string, unknown>) ?? {};
     // Queue #265: the sentinel now scans the WHOLE open Project population, so the
     // cockpit surfaces the full counts, not just alert-intake.
-    const scanned = Number(counts["open_issues_scanned"] ?? 0);
+    const scannedRaw = counts["open_issues_scanned"];
+    const scanned = Number(scannedRaw);
     const projItems = counts["open_project_items"];
     const intake = Number(counts["open_alert_intake"] ?? 0);
     const scope = `${scanned} open${projItems != null ? ` · ${projItems} on board` : ""} · ${intake} alert-intake`;
@@ -173,7 +180,20 @@ function extractVerdict(
         }) — not asserting clean`,
       };
     }
-    return { red: false, detail: `board clean · ${scope}` };
+    const countsValid =
+      typeof scannedRaw === "number" && Number.isFinite(scanned) && scanned >= 0;
+    const populationComplete = counts["population_complete"] !== false;
+    if (verdict === "green" && countsValid && populationComplete) {
+      return { red: false, detail: `board clean · ${scope}` };
+    }
+    // Malformed / incomplete / unrecognized verdict → AMBER, never a false GREEN.
+    return {
+      red: false,
+      amber: true,
+      detail: `board verdict unavailable or malformed (verdict="${verdict || "?"}"${
+        countsValid ? "" : ", counts missing/invalid"
+      }${populationComplete ? "" : ", population incomplete"}) — not asserting clean`,
+    };
   }
 
   // settled-concept

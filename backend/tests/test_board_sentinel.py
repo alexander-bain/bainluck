@@ -122,15 +122,31 @@ def test_duplicate_fingerprints_ignores_board_own_marker():
 # --------------------------------------------------------------------------
 # Item 3 — routing invariant checks
 # --------------------------------------------------------------------------
-def test_stale_inbox_flagged_only_past_bar_board_wide():
+def test_stale_inbox_flagged_by_residence_not_age():
+    # Residence (time first observed IN Inbox), NOT issue age — Queue #266 Item 3.
     issues = [
-        _iss(10, column="Inbox", age_hours=72),                     # stale intake
-        _iss(20, column="Inbox", age_hours=12),                     # fresh — exempt
-        _iss(30, column="Ready", age_hours=200),                    # not in Inbox
-        _iss(40, labels=("bug-report",), column="Inbox", age_hours=90),  # non-intake, stale
+        _iss(10, column="Inbox"),   # first-seen 72h ago → stale
+        _iss(20, column="Inbox"),   # first-seen 12h ago → fresh, exempt
+        _iss(30, column="Ready"),   # not in Inbox
+        _iss(40, column="Inbox"),   # first-seen 90h ago → stale
+        _iss(50, column="Inbox"),   # NO first-seen (just observed) → grace pass
     ]
-    out = bs.check_stale_inbox(issues, NOW, max_hours=48)
+    first_seen = {
+        10: NOW - timedelta(hours=72),
+        20: NOW - timedelta(hours=12),
+        40: NOW - timedelta(hours=90),
+        # 50 intentionally absent → first trustworthy observation → grace
+    }
+    out = bs.check_stale_inbox(issues, NOW, first_seen, max_hours=48)
     assert sorted(o["issue"] for o in out) == [10, 40]
+
+
+def test_stale_inbox_old_issue_newly_in_inbox_not_instantly_stale():
+    # An old issue (created long ago) just moved into Inbox has first-seen=NOW → 0h
+    # residence → NOT flagged (the C37 P2 false-alarm this fixes).
+    issues = [_iss(10, column="Inbox", age_hours=1000)]
+    out = bs.check_stale_inbox(issues, NOW, {10: NOW}, max_hours=48)
+    assert out == []
 
 
 def test_template_p1_share_flagged_above_cap():
@@ -255,9 +271,12 @@ def test_classify_mixed_red():
              body=_decl("flow-sentinel-fingerprint", fp), column="In Progress"),
         _iss(20, labels=("alert-intake", "area:infra"),
              body=_decl("flow-sentinel-fingerprint", fp), column="In Progress"),
-        _iss(30, labels=("alert-intake",), column="Inbox", age_hours=100),  # missing area + stale
+        _iss(30, labels=("alert-intake",), column="Inbox"),  # missing area + stale residence
     ]
-    c = bs.classify_board(issues, NOW, columns_available=True, project_numbers={10, 20, 30})
+    c = bs.classify_board(
+        issues, NOW, columns_available=True, project_numbers={10, 20, 30},
+        inbox_first_seen={30: NOW - timedelta(hours=100)},
+    )
     kinds = {f["check"] for f in c["real"]}
     assert {"duplicate_fingerprint", "missing_area_label", "stale_inbox"} <= kinds
     assert bs.board_verdict(c) == "red"
@@ -314,7 +333,7 @@ def test_file_board_issue_green_closes(monkeypatch):
     closed = {}
     monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.update(n=n))
     fp = bs.board_fingerprint()
-    existing = [_iss(500, body=f"`board-sentinel-fingerprint:{fp}`")]
+    existing = [_iss(500, body=_decl("board-sentinel-fingerprint", fp))]
     c = {"real": [], "unknown": [], "counts": {}}
     res = bs.file_board_issue(c, open_issues=existing)
     assert res["action"] == "resolved"
@@ -440,15 +459,18 @@ class _FakePostResp:
         return self._d
 
 
-def _node(num, status, *, typename="Issue", state="OPEN"):
+def _node(num, status, *, typename="Issue", state="OPEN", repo="alexander-bain/bainluck"):
+    content = {"__typename": typename, "number": num, "state": state}
+    if repo is not None:
+        content["repository"] = {"nameWithOwner": repo}
     return {
-        "content": {"__typename": typename, "number": num, "state": state},
-        "fieldValueByName": {"name": status},
+        "content": content,
+        "fieldValueByName": {"name": status} if status is not None else None,
     }
 
 
 def _page(nodes, *, has_next, cursor=None):
-    return {"data": {"node": {"items": {
+    return {"data": {"node": {"__typename": "ProjectV2", "items": {
         "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
         "nodes": nodes,
     }}}}
@@ -544,6 +566,146 @@ def test_fetch_project_columns_wrapper(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# Item 1 — GraphQL structural validation (a null/malformed node is UNKNOWN,
+# never a "successfully empty board" — C37 P1 #2)
+# --------------------------------------------------------------------------
+def test_fetch_project_items_null_node_returns_none(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp({"data": {"node": None}}))
+    assert bs._fetch_project_items() is None
+
+
+def test_fetch_project_items_missing_items_returns_none(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    # A ProjectV2 node with no items block — malformed success → UNKNOWN.
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp({"data": {"node": {"__typename": "ProjectV2"}}}))
+    assert bs._fetch_project_items() is None
+
+
+def test_fetch_project_items_missing_nodes_or_pageinfo_returns_none(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    bad = {"data": {"node": {"__typename": "ProjectV2", "items": {"nodes": [_node(1, "Inbox")]}}}}
+    monkeypatch.setattr(bs.httpx, "post", lambda *a, **k: _FakePostResp(bad))
+    assert bs._fetch_project_items() is None  # pageInfo absent
+
+
+def test_fetch_project_items_wrong_typename_returns_none(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    bad = {"data": {"node": {"__typename": "Repository", "items": {
+        "pageInfo": {"hasNextPage": False}, "nodes": [],
+    }}}}
+    monkeypatch.setattr(bs.httpx, "post", lambda *a, **k: _FakePostResp(bad))
+    assert bs._fetch_project_items() is None
+
+
+# --------------------------------------------------------------------------
+# Item 1 — repository-safe join (a same-number cross-repo issue never satisfies
+# Bain Luck membership or supplies its Status — C37 P2)
+# --------------------------------------------------------------------------
+def test_fetch_project_items_excludes_other_repo(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    nodes = [
+        _node(123, "Inbox"),                                   # ours
+        _node(123, "Ready", repo="someone/other-repo"),        # cross-repo #123 — excluded
+        _node(9, "Done", repo="someone/other-repo"),           # cross-repo — excluded
+    ]
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp(_page(nodes, has_next=False)))
+    proj = bs._fetch_project_items()
+    assert proj["project_numbers"] == {123}
+    assert proj["columns"] == {123: "Inbox"}  # not overwritten by the other repo
+    assert proj["duplicate_cards"] == []      # cross-repo #123 was not counted as a dup
+
+
+# --------------------------------------------------------------------------
+# Item 1 — unset / unrecognized Status is a REAL routing defect (C37 P1 #3)
+# --------------------------------------------------------------------------
+def test_fetch_project_items_reports_missing_and_custom_status(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    nodes = [
+        _node(1, "Inbox"),        # recognized
+        _node(2, None),           # unset Status → missing
+        _node(3, "Frobnicate"),   # custom/unrecognized → missing
+    ]
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp(_page(nodes, has_next=False)))
+    proj = bs._fetch_project_items()
+    assert proj["status_missing"] == [2, 3]
+
+
+def test_fetch_project_items_dup_card_excluded_from_missing_status(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    # #7 double-listed with conflicting statuses → ambiguous, excluded from missing.
+    nodes = [_node(7, "Inbox"), _node(7, None)]
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp(_page(nodes, has_next=False)))
+    proj = bs._fetch_project_items()
+    assert proj["duplicate_cards"] == [7]
+    assert proj["status_missing"] == []
+
+
+def test_fetch_project_items_deadline_returns_none(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(gh, "PROJECT_ID", "PVT_x")
+    monkeypatch.setattr(bs.httpx, "post",
+                        lambda *a, **k: _FakePostResp(_page([_node(1, "Inbox")], has_next=False)))
+    # A deadline already in the past → the paginator stops before any page → UNKNOWN.
+    assert bs._fetch_project_items(deadline=bs._time.monotonic() - 1) is None
+
+
+def test_fetch_open_issues_deadline_unknown(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(bs.httpx, "get",
+                        lambda *a, **k: _FakeGetResp([{"number": 1}]))
+    issues, ok, err = bs._fetch_open_issues(deadline=bs._time.monotonic() - 1)
+    assert ok is False and "deadline" in err
+
+
+# --------------------------------------------------------------------------
+# Item 1 — trust gate: an incomplete population files nothing (C37 P1 #1)
+# --------------------------------------------------------------------------
+def test_classify_incomplete_population_runs_no_real_checks():
+    fp = "deadbeef1234"
+    # A duplicate fingerprint WOULD be REAL on a complete population — but the
+    # population is incomplete, so no check runs and the run is UNKNOWN.
+    issues = [
+        _iss(10, labels=("alert-intake", "area:infra"),
+             body=_decl("flow-sentinel-fingerprint", fp)),
+        _iss(20, labels=("alert-intake", "area:infra"),
+             body=_decl("flow-sentinel-fingerprint", fp)),
+    ]
+    c = bs.classify_board(
+        issues, NOW, columns_available=True, project_numbers={10, 20},
+        population_complete=False,
+        fetch_errors=[{"detail": "open-issue pagination truncated"}],
+    )
+    assert c["real"] == []
+    assert any(u["check"] == "population_incomplete" for u in c["unknown"])
+    assert bs.board_verdict(c) == "unknown"
+    assert c["counts"]["population_complete"] is False
+
+
+def test_classify_missing_status_is_real():
+    issues = [_iss(10, labels=("alert-intake", "area:infra"))]
+    c = bs.classify_board(
+        issues, NOW, columns_available=True, project_numbers={10},
+        status_missing={10},
+    )
+    kinds = {f["check"] for f in c["real"]}
+    assert "missing_status" in kinds
+    assert bs.board_verdict(c) == "red"
+
+
+# --------------------------------------------------------------------------
 # _fetch_board_state integration (fetch layer glued together)
 # --------------------------------------------------------------------------
 def test_fetch_board_state_joins_and_flags_duplicate_cards(monkeypatch):
@@ -552,38 +714,61 @@ def test_fetch_board_state_joins_and_flags_duplicate_cards(monkeypatch):
          "assignees": [{"login": "alice"}], "created_at": NOW.isoformat()},
         {"number": 2, "title": "b", "labels": ["area:infra"], "created_at": NOW.isoformat()},
     ]
-    monkeypatch.setattr(bs, "_fetch_open_issues", lambda: (raw, True, None))
-    monkeypatch.setattr(bs, "_fetch_project_items", lambda: {
+    monkeypatch.setattr(bs, "_fetch_open_issues", lambda *a, **k: (raw, True, None))
+    monkeypatch.setattr(bs, "_fetch_project_items", lambda *a, **k: {
         "columns": {1: "Inbox", 2: "Ready"},
         "project_numbers": {1, 2},
         "duplicate_cards": [2],
+        "status_missing": [],
         "open_project_items": 2,
     })
     issues, board, errors = bs._fetch_board_state()
     assert board["columns_available"] is True
     assert board["project_numbers"] == {1, 2}
+    assert board["population_complete"] is True
     assert issues[0]["column"] == "Inbox"
+    # The duplicate-card issue (#2) has its column excluded (None) so it is never
+    # falsely flagged or cleared by a column-dependent check.
+    assert issues[1]["number"] == 2 and issues[1]["column"] is None
     assert issues[0]["assignees"] == ["alice"]
     assert any("Duplicate Project cards" in e["detail"] for e in errors)
 
 
 def test_fetch_board_state_total_rest_failure_is_unknown(monkeypatch):
-    monkeypatch.setattr(bs, "_fetch_open_issues", lambda: ([], False, "GITHUB_TOKEN unset"))
+    monkeypatch.setattr(bs, "_fetch_open_issues", lambda *a, **k: ([], False, "GITHUB_TOKEN unset"))
     issues, board, errors = bs._fetch_board_state()
     assert issues == []
     assert board["columns_available"] is False
     assert board["project_numbers"] is None
+    assert board["population_complete"] is False
     assert errors
+
+
+def test_fetch_board_state_truncated_rest_marks_incomplete(monkeypatch):
+    # A truncated REST read keeps partial rows but marks the population incomplete →
+    # the trust gate suppresses all checks (C37 P1 #1).
+    raw = [{"number": 1, "title": "a", "labels": [], "created_at": NOW.isoformat()}]
+    monkeypatch.setattr(bs, "_fetch_open_issues",
+                        lambda *a, **k: (raw, False, "open-issue pagination truncated"))
+    monkeypatch.setattr(bs, "_fetch_project_items", lambda *a, **k: {
+        "columns": {1: "Inbox"}, "project_numbers": {1},
+        "duplicate_cards": [], "status_missing": [], "open_project_items": 1,
+    })
+    issues, board, errors = bs._fetch_board_state()
+    assert len(issues) == 1
+    assert board["population_complete"] is False
+    assert any("truncated" in e["detail"] for e in errors)
 
 
 def test_fetch_board_state_project_failure_keeps_issues(monkeypatch):
     raw = [{"number": 1, "title": "a", "labels": [], "created_at": NOW.isoformat()}]
-    monkeypatch.setattr(bs, "_fetch_open_issues", lambda: (raw, True, None))
-    monkeypatch.setattr(bs, "_fetch_project_items", lambda: None)
+    monkeypatch.setattr(bs, "_fetch_open_issues", lambda *a, **k: (raw, True, None))
+    monkeypatch.setattr(bs, "_fetch_project_items", lambda *a, **k: None)
     issues, board, errors = bs._fetch_board_state()
     assert len(issues) == 1
     assert board["columns_available"] is False
     assert board["project_numbers"] is None
+    assert board["population_complete"] is True  # REST complete; only the Project read failed
     assert any("Project board read failed" in e["detail"] for e in errors)
 
 
@@ -604,8 +789,9 @@ class TestRunBoardSentinel:
             "project_numbers": project_numbers,
             "open_project_items": None if project_numbers is None else len(project_numbers),
         }
-        monkeypatch.setattr(bs, "_fetch_board_state", lambda: (issues, board, errors or []))
+        monkeypatch.setattr(bs, "_fetch_board_state", lambda *a, **k: (issues, board, errors or []))
         monkeypatch.setattr(bs, "_load_overrides", lambda: None)
+        monkeypatch.setattr(bs, "_load_inbox_residence", lambda *a, **k: {})
 
         class FakeRedis:
             def setex(self, *a, **k):
@@ -641,3 +827,66 @@ class TestRunBoardSentinel:
         stats = self._run(monkeypatch, [], columns_available=False, project_numbers=None,
                           errors=[{"detail": "GITHUB_TOKEN unset"}])
         assert stats["verdict"] == "unknown"
+
+    def test_run_incomplete_population_files_nothing(self, monkeypatch):
+        import asyncio
+        fp = "deadbeef1234"
+        issues = [
+            _iss(10, labels=("alert-intake", "area:infra"),
+                 body=_decl("flow-sentinel-fingerprint", fp)),
+            _iss(20, labels=("alert-intake", "area:infra"),
+                 body=_decl("flow-sentinel-fingerprint", fp)),
+        ]
+        board = {
+            "columns_available": True, "project_numbers": {10, 20},
+            "open_project_items": 2, "status_missing": set(),
+            "population_complete": False,
+        }
+        import app.tasks.sentinel_filing as sf
+        monkeypatch.setattr(bs, "_fetch_board_state",
+                            lambda *a, **k: (issues, board, [{"detail": "truncated"}]))
+        monkeypatch.setattr(bs, "_load_overrides", lambda: None)
+        monkeypatch.setattr(bs, "_load_inbox_residence", lambda *a, **k: {})
+        # No network in the filing path — the read stub is never even consulted because
+        # an UNKNOWN verdict short-circuits to unknown_no_op before reconciliation.
+        monkeypatch.setattr(sf, "fetch_open_alert_issues",
+                            lambda: sf.OpenIssuesResult(ok=True, issues=[]))
+        monkeypatch.setattr(gh, "create_github_issue",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not file on incomplete pop")))
+
+        class FakeRedis:
+            def setex(self, *a, **k):
+                pass
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: FakeRedis())
+        # file_issues=True — but an incomplete population must still not file.
+        stats = asyncio.run(bs._run_board_sentinel(file_issues=True, now=NOW))
+        assert stats["verdict"] == "unknown"
+        assert stats["real"] == []
+        assert stats["filed"]["action"] == "unknown_no_op"
+
+
+def test_run_deadline_caches_unknown_no_filing(monkeypatch):
+    import asyncio
+    import time as _t
+
+    def slow(*a, **k):
+        _t.sleep(0.3)
+        return [], {"columns_available": True, "project_numbers": set(),
+                    "population_complete": True}, []
+
+    monkeypatch.setattr(bs, "_fetch_board_state", slow)
+    monkeypatch.setattr(bs, "_load_overrides", lambda: None)
+    monkeypatch.setattr(bs, "file_board_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no filing on deadline")))
+
+    class FakeRedis:
+        def setex(self, *a, **k):
+            pass
+
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: FakeRedis())
+    stats = asyncio.run(bs._run_board_sentinel(file_issues=True, now=NOW, deadline_seconds=0.05))
+    assert stats["verdict"] == "unknown"
+    assert stats["filed"] is None
+    assert any(u["check"] == "deadline_exceeded" for u in stats["unknown"])
+    assert stats["counts"]["population_complete"] is False

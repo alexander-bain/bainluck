@@ -470,7 +470,7 @@ class TestFlowFilingLifecycle:
         monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.update(n=n))
         fp = flow_fingerprint("chart_density")
         existing = [{"number": 1147, "title": "x",
-                     "body": f"`flow-sentinel-fingerprint:{fp}`",
+                     "body": f"`flow-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
                      "labels": [{"name": "alert-intake"}]}]
         res = resolve_flow_issue(
             {"flow": "chart_density", "checked": 1, "passed": True, "failures": []},
@@ -503,7 +503,7 @@ class TestFlowFilingLifecycle:
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not file a dupe")))
         fp = flow_fingerprint("chart_density")
         existing = [{"number": 1147, "title": "x",
-                     "body": f"`flow-sentinel-fingerprint:{fp}`",
+                     "body": f"`flow-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
                      "labels": [{"name": "alert-intake"}]}]
         res = file_flow_issue(
             {"flow": "chart_density", "checked": 1, "passed": False,

@@ -40,8 +40,6 @@ it performs NO bulk board mutation (Ops owns the one-time cleanup, per Queue #25
 
 import hashlib
 import logging
-import os
-import re
 import time as _time
 from typing import Any
 
@@ -83,17 +81,21 @@ READY_MIN_BODY_CHARS = 200
 # that route by their epic, not an area. Kept deliberately tiny and explicit.
 _AREA_EXEMPT_LABELS = {"epic", "meta", "tracking"}
 
-# A *quoted* sentinel marker (in a cleanup report, evidence table, or comment) is
-# NOT ownership — only a canonical *declaration* is. Every sentinel declares its
-# fingerprint the same way: ``<marker>:<fp>`` (optionally in backticks) immediately
-# followed by the ``(dedupe key — do not remove)`` annotation (verified across
-# flow/grid/board/calibration/horizon/settled-concept sentinels). We key ownership
-# on that declaration so a board-cleanup issue that merely lists another alert's
-# marker never becomes a phantom duplicate owner (Queue #265 Item 2).
-_DEDUPE_DECLARATION = "(dedupe key"
-_DECLARED_FINGERPRINT_RE = re.compile(
-    r"`?([a-z][a-z0-9-]*-fingerprint):([0-9a-f]{6,40})`?\s*\(dedupe key",
-)
+# The canonical statuses (Project Status column values) a board card may carry —
+# the documented routing vocabulary (docs/github-workflow.md). An OPEN Project
+# member whose Status is unset OR outside this set is a REAL routing defect: it is on
+# the board but in no recognized execution lane (C37 P1, Queue #266 Item 1). When
+# Ops adds a column, add it here (and to the workflow doc) in the same change.
+_KNOWN_STATUSES = frozenset({
+    "Inbox",
+    "Ready",
+    "In Progress",
+    "Needs User",
+    "Review / Verify",
+    "Blocked",
+    "Parked",
+    "Done",
+})
 
 
 def _load_overrides() -> None:
@@ -135,17 +137,17 @@ def _parse_dt(value: str | None):
 
 
 def _declared_fingerprints_in(body: str | None) -> set[tuple[str, str]]:
-    """Every ``<marker>:<fp>`` pair *declared* (owned) by a body — i.e. followed by
-    the ``(dedupe key — do not remove)`` annotation.
+    """Every ``(marker, fp)`` pair *canonically declared* (owned) by a body.
 
-    A marker that appears without that annotation (quoted in a cleanup report's
-    evidence table, a Markdown code span in prose, or a comment) is NOT ownership
-    and is deliberately ignored, so a meta/cleanup issue listing another alert's
-    marker does not become a phantom duplicate owner (Queue #265 Item 2)."""
-    return {
-        (m.group(1), m.group(2))
-        for m in _DECLARED_FINGERPRINT_RE.finditer(body or "")
-    }
+    Delegates to the ONE shared declaration parser (``sentinel_filing`` — Queue #266
+    Item 2) so dedup, recurrence, and close all agree on ownership. A marker QUOTED
+    in a cleanup report's evidence table, a Markdown code fence, a blockquote, or an
+    indented code block is NOT ownership and is deliberately ignored, so a
+    meta/cleanup issue listing another alert's marker does not become a phantom
+    duplicate owner (Queue #265 Item 2, hardened by Queue #266)."""
+    from app.tasks.sentinel_filing import declared_fingerprints
+
+    return declared_fingerprints(body)
 
 
 def _labels(issue: dict) -> list[str]:
@@ -193,27 +195,64 @@ def check_duplicate_fingerprints(issues: list[dict]) -> list[dict]:
     return out
 
 
-def check_stale_inbox(issues: list[dict], now, max_hours: float = INBOX_TRIAGE_HOURS) -> list[dict]:
-    """Any open issue sitting in Inbox longer than the triage bar (Queue #265:
-    board-wide, not just alert-intake — Inbox is temporary intake for everything).
-    The >``max_hours`` bar is itself the exemption for genuinely fresh intake.
-    ``now`` is injected for testability."""
+def check_stale_inbox(
+    issues: list[dict],
+    now,
+    inbox_first_seen: dict[int, Any] | None = None,
+    max_hours: float = INBOX_TRIAGE_HOURS,
+) -> list[dict]:
+    """Any open issue that has *resided* in Inbox longer than the triage bar (Queue
+    #265: board-wide, not just alert-intake — Inbox is temporary intake for
+    everything).
+
+    Measures RESIDENCE, not issue age (C37 P2, Queue #266 Item 3): an old issue just
+    moved into Inbox is not instantly stale. ``inbox_first_seen`` maps issue number →
+    the datetime the sentinel FIRST observed it in Inbox (persisted across runs by
+    ``_load_inbox_residence`` and cleared when it leaves). An issue with no recorded
+    first-seen (this run is the first trustworthy observation) is given a grace pass.
+    The >``max_hours`` bar is itself the exemption for genuinely fresh intake. ``now``
+    is injected for testability."""
+    inbox_first_seen = inbox_first_seen or {}
     out = []
     for i in issues:
         if i.get("column") != INBOX_COLUMN:
             continue
-        created = _parse_dt(i.get("created_at"))
-        if created is None:
+        num = i.get("number")
+        first_seen = inbox_first_seen.get(num)
+        if first_seen is None:
+            # First trustworthy observation in Inbox → grace (residence unknown yet).
             continue
-        age_h = (now - created).total_seconds() / 3600.0
-        if age_h > max_hours:
+        residence_h = (now - first_seen).total_seconds() / 3600.0
+        if residence_h > max_hours:
             out.append({
                 "check": "stale_inbox",
-                "issue": i.get("number"),
-                "age_hours": round(age_h, 1),
-                "detail": f"#{i.get('number')} '{(i.get('title') or '')[:60]}' has sat "
-                          f"in Inbox {age_h:.0f}h (>{max_hours:.0f}h triage bar)",
+                "issue": num,
+                "age_hours": round(residence_h, 1),
+                "detail": f"#{num} '{(i.get('title') or '')[:60]}' has resided "
+                          f"in Inbox {residence_h:.0f}h (>{max_hours:.0f}h triage bar)",
             })
+    return out
+
+
+def check_missing_status(issues: list[dict], status_missing: set[int] | None) -> list[dict]:
+    """Any OPEN Project member whose Status is unset or outside the recognized
+    routing vocabulary (``_KNOWN_STATUSES``) — it is on the board but in no execution
+    lane, so it is invisible to every board-driven pick-up (C37 P1, Queue #266 Item
+    1). ``status_missing`` is the set of such member issue numbers (computed at fetch
+    time from the Project read); ``None`` means the Project read failed → UNKNOWN, so
+    this check does not run."""
+    if not status_missing:
+        return []
+    by_num = {i.get("number"): i for i in issues}
+    out = []
+    for num in sorted(status_missing):
+        i = by_num.get(num) or {}
+        out.append({
+            "check": "missing_status",
+            "issue": num,
+            "detail": f"#{num} '{(i.get('title') or '')[:60]}' is on the Project board "
+                      f"but has no recognized Status column — set one so it routes",
+        })
     return out
 
 
@@ -407,21 +446,54 @@ def classify_board(
     project_numbers: set[int] | None = None,
     open_project_items: int | None = None,
     fetch_errors: list[dict] | None = None,
+    population_complete: bool = True,
+    inbox_first_seen: dict[int, Any] | None = None,
+    status_missing: set[int] | None = None,
 ) -> dict:
     """Run every check and split into real findings + unknown checks. ``now``,
-    ``columns_available`` and the Project membership data are injected so the whole
+    ``columns_available`` and the Project data are injected so the whole
     classification is a pure, deterministic function of its inputs (fixtures cover
     every branch).
 
+    ``population_complete`` is the TRUST GATE (C37 P1, Queue #266 Item 1): when the
+    REST open-issue population is incomplete (a total failure or truncated
+    pagination), NO population-derived REAL check runs and NO filing/closing happens
+    — the whole run is UNKNOWN. Only a COMPLETE population may RED honestly. (A
+    Project/GraphQL read failure with a complete REST population is different: the
+    column/membership checks go UNKNOWN, but the label/body checks on the complete
+    population may still RED.)
+
     ``columns_available`` gates the Project-column-dependent checks (stale-inbox,
-    blocked-in-inbox, label/status parity, Ready scoping). ``project_numbers`` (the
-    set of open issue numbers ON the board) gates the missing-from-project check —
-    it is ``None`` when the membership read failed, which is UNKNOWN, never GREEN."""
+    blocked-in-inbox, label/status parity, Ready scoping, missing-status).
+    ``project_numbers`` (open issue numbers ON the board) gates missing-from-project;
+    ``status_missing`` (members with no recognized Status) gates missing-status —
+    both ``None``/absent when the read failed → UNKNOWN, never GREEN."""
     fetch_errors = fetch_errors or []
     real: list[dict] = []
     unknown: list[dict] = []
 
-    # Label/body-only checks always run (board-wide where applicable).
+    if not population_complete:
+        # The open-issue population itself is incomplete → we cannot trust any
+        # population-derived finding (denominators, board-wide routing). Run NO real
+        # checks and NO reconciliation; the run is UNKNOWN, never a false RED accusation
+        # or a false GREEN (C37 P1 #1).
+        unknown.append({
+            "check": "population_incomplete",
+            "detail": "Open-issue population incomplete (REST read failed or "
+                      "truncated) — no board-hygiene check ran (UNKNOWN, not GREEN "
+                      "and never a filed accusation)",
+        })
+        for err in fetch_errors:
+            unknown.append({"check": "fetch_error", "detail": err.get("detail", str(err))})
+        return {
+            "real": [],
+            "unknown": unknown,
+            "counts": _counts(issues, columns_available, open_project_items,
+                              population_complete=False),
+        }
+
+    # Label/body-only checks always run (board-wide where applicable) — the
+    # population is complete, so these are trustworthy.
     real += check_duplicate_fingerprints(issues)
     real += check_template_p1_share(issues)
     real += check_missing_area_label(issues)
@@ -429,7 +501,7 @@ def classify_board(
 
     # Project-column-dependent checks: REAL when we have column data, else UNKNOWN.
     if columns_available:
-        real += check_stale_inbox(issues, now)
+        real += check_stale_inbox(issues, now, inbox_first_seen)
         real += check_blocked_in_inbox(issues)
         real += check_label_status_parity(issues)
         real += check_ready_scoping(issues)
@@ -445,11 +517,14 @@ def classify_board(
     # succeeded; otherwise it is UNKNOWN so we never falsely assert a clean board.
     if project_numbers is not None:
         real += check_missing_from_project(issues, project_numbers)
+        # A member with no recognized Status is a real routing defect — but only when
+        # we actually read the Project (else the membership branch already went UNKNOWN).
+        real += check_missing_status(issues, status_missing)
     else:
         unknown.append({
             "check": "project_membership",
             "detail": "Project board membership unavailable — missing-from-project "
-                      "check could not run (UNKNOWN, not GREEN)",
+                      "and missing-status checks could not run (UNKNOWN, not GREEN)",
         })
 
     for err in fetch_errors:
@@ -458,12 +533,17 @@ def classify_board(
     return {
         "real": real,
         "unknown": unknown,
-        "counts": _counts(issues, columns_available, open_project_items),
+        "counts": _counts(issues, columns_available, open_project_items,
+                          population_complete=True),
     }
 
 
 def _counts(
-    issues: list[dict], columns_available: bool, open_project_items: int | None = None
+    issues: list[dict],
+    columns_available: bool,
+    open_project_items: int | None = None,
+    *,
+    population_complete: bool = True,
 ) -> dict:
     intake = [i for i in issues if _is_intake(i)]
     by_column: dict[str, int] | None = None
@@ -473,12 +553,16 @@ def _counts(
             col = i.get("column") or "(no column)"
             by_column[col] = by_column.get(col, 0) + 1
     return {
+        # ``open_issues_scanned`` is trustworthy only when the population is complete;
+        # on an incomplete read it is a partial count (cockpit reads population_complete
+        # to distinguish a full count from an unavailable/partial dimension — C37 P1).
         "open_issues_scanned": len(issues),
         "open_alert_intake": len(intake),
         "open_project_items": open_project_items,
         "in_inbox": (by_column or {}).get(INBOX_COLUMN, 0) if columns_available else None,
         "by_column": by_column,
         "columns_available": columns_available,
+        "population_complete": population_complete,
     }
 
 
@@ -506,14 +590,15 @@ _PROJECT_MAX_PAGES = 30
 _PER_PAGE = 100
 
 
-def _fetch_open_issues() -> tuple[list[dict], bool, str | None]:
+def _fetch_open_issues(deadline: float | None = None) -> tuple[list[dict], bool, str | None]:
     """Full paginated list of OPEN issues (ALL labels — the whole board population,
     not just alert-intake), for board-wide routing checks.
 
     Returns ``(issues, ok, error)``. ``ok`` is False on missing token, any REST/HTTP
-    failure (incl. rate-limit 403/429 via ``raise_for_status``), or TRUNCATED
-    pagination (more open issues than the cap) — every one of which must go UNKNOWN,
-    never a false GREEN. PRs are dropped (the issues endpoint includes them)."""
+    failure (incl. rate-limit 403/429 via ``raise_for_status``), TRUNCATED pagination
+    (more open issues than the cap), or the inner ``deadline`` (a ``time.monotonic()``
+    instant) elapsing mid-pagination — every one of which must go UNKNOWN, never a
+    false GREEN. PRs are dropped (the issues endpoint includes them)."""
     from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
 
     if not GITHUB_TOKEN:
@@ -527,6 +612,11 @@ def _fetch_open_issues() -> tuple[list[dict], bool, str | None]:
     last_full = False
     try:
         for page in range(1, _OPEN_ISSUES_MAX_PAGES + 1):
+            if deadline is not None and _time.monotonic() > deadline:
+                return issues, False, (
+                    f"open-issue read exceeded the inner deadline at page {page} "
+                    f"({len(issues)} scanned) — population incomplete"
+                )
             resp = httpx.get(
                 f"https://api.github.com/repos/{REPO}/issues",
                 headers=headers,
@@ -555,25 +645,33 @@ def _fetch_open_issues() -> tuple[list[dict], bool, str | None]:
     return issues, True, None
 
 
-def _fetch_project_items() -> dict | None:
+def _fetch_project_items(deadline: float | None = None) -> dict | None:
     """Read the Project board via GraphQL, paginated. Returns a dict:
 
-        {"columns": {issue_number: Status},         # OPEN issues only
+        {"columns": {issue_number: Status},         # OPEN Bain Luck issues only
          "project_numbers": set[int],               # OPEN issue numbers on the board
          "duplicate_cards": [int, ...],             # issues with >1 card (ambiguous)
+         "status_missing": [int, ...],              # members with no recognized Status
          "open_project_items": int}
 
-    or ``None`` on ANY failure (missing token, HTTP/GraphQL error, or TRUNCATED
-    pagination) so the membership + column-dependent checks go UNKNOWN, never GREEN.
-    Closed issues and PRs/draft items are filtered at the source, so they never
-    pollute the open counts."""
-    from app.tasks.bug_report_github import GITHUB_TOKEN, PROJECT_ID
+    or ``None`` on ANY failure so the membership + column-dependent checks go UNKNOWN,
+    never GREEN. Returns ``None`` for: missing token/project id; an HTTP/GraphQL
+    error; the inner ``deadline`` elapsing; TRUNCATED pagination; or a STRUCTURALLY
+    MALFORMED success payload (``node`` not a ProjectV2 object, missing/typed-wrong
+    ``items``/``nodes``/``pageInfo``) — a null/absent node must be a typed failure,
+    never a "successfully empty board" that would falsely flag every issue as
+    missing-from-project (C37 P1 #2). Closed issues, PRs/draft items, and cards from
+    OTHER repositories are filtered at the source; the join is by (repository, number)
+    so a same-number issue from another repo can never satisfy Bain Luck membership
+    or supply its Status (C37 P2)."""
+    from app.tasks.bug_report_github import GITHUB_TOKEN, PROJECT_ID, REPO
 
     if not GITHUB_TOKEN or not PROJECT_ID:
         return None
     query = """
     query($projectId: ID!, $cursor: String) {
       node(id: $projectId) {
+        __typename
         ... on ProjectV2 {
           items(first: 100, after: $cursor) {
             pageInfo { hasNextPage endCursor }
@@ -583,8 +681,8 @@ def _fetch_project_items() -> dict | None:
               }
               content {
                 __typename
-                ... on Issue { number state }
-                ... on PullRequest { number state }
+                ... on Issue { number state repository { nameWithOwner } }
+                ... on PullRequest { number state repository { nameWithOwner } }
               }
             }
           }
@@ -603,6 +701,9 @@ def _fetch_project_items() -> dict | None:
     truncated = True
     try:
         for _ in range(_PROJECT_MAX_PAGES):
+            if deadline is not None and _time.monotonic() > deadline:
+                logger.warning("Board sentinel: project read exceeded the inner deadline")
+                return None
             resp = httpx.post(
                 "https://api.github.com/graphql",
                 headers=headers,
@@ -611,12 +712,29 @@ def _fetch_project_items() -> dict | None:
             )
             resp.raise_for_status()
             data = resp.json()
-            if data.get("errors"):
-                logger.warning("Board sentinel: GraphQL project read errored: %s", data["errors"])
+            if not isinstance(data, dict) or data.get("errors"):
+                logger.warning("Board sentinel: GraphQL project read errored: %s",
+                               (data.get("errors") if isinstance(data, dict) else data))
                 return None
-            items = (((data.get("data") or {}).get("node") or {}).get("items") or {})
-            for node in items.get("nodes") or []:
-                content = node.get("content") or {}
+            # Validate the success payload structurally — a null/absent/wrong-typed
+            # node|items|nodes|pageInfo is a typed FAILURE (UNKNOWN), never an empty
+            # board (C37 P1 #2).
+            node = (data.get("data") or {}).get("node")
+            if not isinstance(node, dict) or node.get("__typename") != "ProjectV2":
+                logger.warning("Board sentinel: GraphQL node is not a ProjectV2 (%r)",
+                               type(node).__name__)
+                return None
+            items = node.get("items")
+            if not isinstance(items, dict):
+                logger.warning("Board sentinel: GraphQL items block malformed")
+                return None
+            nodes = items.get("nodes")
+            page = items.get("pageInfo")
+            if not isinstance(nodes, list) or not isinstance(page, dict):
+                logger.warning("Board sentinel: GraphQL nodes/pageInfo malformed")
+                return None
+            for card in nodes:
+                content = (card or {}).get("content") or {}
                 # Skip PRs and draft items; count Issues only. ``__typename``/``state``
                 # are optional in fixtures → lenient: exclude only when explicitly a PR
                 # or explicitly CLOSED.
@@ -624,15 +742,21 @@ def _fetch_project_items() -> dict | None:
                     continue
                 if str(content.get("state") or "").upper() == "CLOSED":
                     continue
+                # Repository-safe join: only Bain Luck issues count. A repository that
+                # is present and NOT the configured REPO is another project's card and
+                # is skipped (lenient when absent — fixtures omit it, the real API does
+                # not — C37 P2).
+                repo = (content.get("repository") or {}).get("nameWithOwner")
+                if repo is not None and repo != REPO:
+                    continue
                 num = content.get("number")
                 if num is None:
                     continue
                 project_numbers.add(num)
                 card_counts[num] = card_counts.get(num, 0) + 1
-                status = (node.get("fieldValueByName") or {}).get("name")
+                status = (card.get("fieldValueByName") or {}).get("name")
                 if status:
                     columns[num] = status
-            page = items.get("pageInfo") or {}
             if not page.get("hasNextPage"):
                 truncated = False
                 break
@@ -643,10 +767,20 @@ def _fetch_project_items() -> dict | None:
     if truncated:
         logger.warning("Board sentinel: project pagination truncated at %d pages", _PROJECT_MAX_PAGES)
         return None
+    duplicate_cards = sorted(n for n, c in card_counts.items() if c > 1)
+    # A member whose Status is unset or outside the recognized vocabulary is in no
+    # execution lane — a REAL routing defect. Duplicate-card members are excluded here
+    # (their Status is ambiguous, owned by the duplicate-card UNKNOWN).
+    dup_set = set(duplicate_cards)
+    status_missing = sorted(
+        n for n in project_numbers
+        if n not in dup_set and columns.get(n) not in _KNOWN_STATUSES
+    )
     return {
         "columns": columns,
         "project_numbers": project_numbers,
-        "duplicate_cards": sorted(n for n, c in card_counts.items() if c > 1),
+        "duplicate_cards": duplicate_cards,
+        "status_missing": status_missing,
         "open_project_items": len(project_numbers),
     }
 
@@ -659,43 +793,59 @@ def _fetch_project_columns() -> dict[int, str] | None:
     return None if proj is None else proj["columns"]
 
 
-def _fetch_board_state() -> tuple[list[dict], dict, list[dict]]:
+def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict, list[dict]]:
     """Assemble the normalized FULL open-issue population + Project annotations.
 
     Returns ``(issues, board, errors)`` where ``board`` carries
-    ``columns_available``, ``project_numbers`` (set | None), and
-    ``open_project_items`` (int | None). A total REST failure yields an empty issue
-    list + an error (→ verdict UNKNOWN). A truncated REST read keeps the partial
-    issues but records an error (→ UNKNOWN, never a false GREEN). A Project read
-    failure keeps the issues but marks columns/membership unavailable (→ the
-    column-dependent + membership checks go UNKNOWN)."""
+    ``columns_available``, ``project_numbers`` (set | None), ``open_project_items``
+    (int | None), ``status_missing`` (set | None), and ``population_complete`` (bool).
+
+    * A total OR truncated OR deadline-hit REST read makes ``population_complete``
+      False — the whole run is UNKNOWN and NO check runs (C37 P1 #1: an incomplete
+      population must never file a RED accusation).
+    * A Project/GraphQL read failure keeps a COMPLETE REST population but marks
+      columns/membership unavailable (→ the column + membership + status checks go
+      UNKNOWN, while the label/body checks on the complete population may still RED).
+    * Duplicate Project cards make specific joins ambiguous: those issues' columns are
+      set to ``None`` (excluded from column-dependent findings) and an UNKNOWN error
+      is recorded, but unambiguous label/body findings on the complete population may
+      still RED.
+
+    ``deadline`` (a ``time.monotonic()`` instant) bounds both paginators."""
     errors: list[dict] = []
-    raw, issues_ok, issues_err = _fetch_open_issues()
+    raw, issues_ok, issues_err = _fetch_open_issues(deadline=deadline)
+    population_complete = issues_ok
     if not issues_ok:
         errors.append({"detail": issues_err or "open-issue list failed"})
         if not raw:
-            # Nothing to scan at all — pure UNKNOWN.
+            # Nothing to scan at all — pure UNKNOWN; skip the Project read entirely.
             return [], {
                 "columns_available": False,
                 "project_numbers": None,
                 "open_project_items": None,
+                "status_missing": None,
+                "population_complete": False,
             }, errors
 
-    proj = _fetch_project_items()
+    proj = _fetch_project_items(deadline=deadline)
     columns_available = proj is not None
+    dup_set: set[int] = set()
     if proj is None:
         errors.append({"detail": "Project board read failed (GraphQL)"})
         columns: dict[int, str] = {}
         project_numbers: set[int] | None = None
         open_project_items: int | None = None
+        status_missing: set[int] | None = None
     else:
         columns = proj["columns"]
         project_numbers = proj["project_numbers"]
         open_project_items = proj["open_project_items"]
+        status_missing = set(proj.get("status_missing") or [])
         if proj.get("duplicate_cards"):
-            # Duplicate cards make the column join ambiguous. Keep the last-wins map
-            # for the other checks, but record UNKNOWN so we never assert GREEN while
-            # a card is double-listed (Queue #265 Item 1).
+            # Duplicate cards make the column join ambiguous for THOSE issues. Exclude
+            # them from column-dependent findings (column → None) and record UNKNOWN,
+            # so we never falsely flag or clear a double-listed card (C37 P1 #1).
+            dup_set = set(proj["duplicate_cards"])
             errors.append({
                 "detail": f"Duplicate Project cards for issues {proj['duplicate_cards']} "
                           f"— column join ambiguous",
@@ -717,14 +867,76 @@ def _fetch_board_state() -> tuple[list[dict], dict, list[dict]]:
                 for a in (i.get("assignees") or [])
             ],
             "created_at": i.get("created_at"),
-            "column": columns.get(num),
+            # A duplicate-card issue's column is ambiguous → exclude it from column
+            # checks by leaving it None.
+            "column": None if num in dup_set else columns.get(num),
         })
     board = {
         "columns_available": columns_available,
         "project_numbers": project_numbers,
         "open_project_items": open_project_items,
+        "status_missing": status_missing,
+        "population_complete": population_complete,
     }
     return issues, board, errors
+
+
+# ---------------------------------------------------------------------------
+# Inbox residence state (Queue #266 Item 3) — measure time SPENT in Inbox, not
+# issue age. Keyed by issue identity in Redis; cleared when an issue leaves Inbox.
+# ---------------------------------------------------------------------------
+_INBOX_STATE_KEY = "bainluck:board_sentinel:inbox_first_seen"
+_INBOX_STATE_TTL = 60 * 86400  # 60 days — well past the 48h triage bar
+
+
+def _load_inbox_residence(issues: list[dict], now, columns_available: bool) -> dict[int, Any]:
+    """Return ``{issue_number: first-seen-in-Inbox datetime}`` for issues CURRENTLY in
+    Inbox, persisting/refreshing the durable state as a side effect (C37 P2, Queue
+    #266 Item 3).
+
+    First observation of an issue in Inbox records ``now`` (so it gets a grace pass —
+    residence ~0 — and an old issue just moved into Inbox is not instantly stale).
+    Issues no longer in Inbox are dropped from the state (cleared on exit, so a
+    re-entry starts a fresh clock). Degrades to an empty map when columns are
+    unavailable (stale-inbox is UNKNOWN then anyway) or Redis is unreachable."""
+    if not columns_available:
+        return {}
+    current = {
+        i["number"] for i in issues
+        if i.get("column") == INBOX_COLUMN and i.get("number") is not None
+    }
+    stored: dict[str, str] = {}
+    rc = None
+    try:
+        import json as _json
+
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        raw = rc.get(_INBOX_STATE_KEY)
+        if raw:
+            loaded = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            if isinstance(loaded, dict):
+                stored = loaded
+    except Exception as exc:
+        logger.info("Board sentinel: inbox-residence state read failed: %s", exc)
+
+    result: dict[int, Any] = {}
+    updated: dict[str, str] = {}
+    for num in current:
+        prior = _parse_dt(stored.get(str(num)))
+        first_seen = prior or now
+        result[num] = first_seen
+        updated[str(num)] = first_seen.isoformat()
+
+    if rc is not None:
+        try:
+            import json as _json
+
+            rc.setex(_INBOX_STATE_KEY, _INBOX_STATE_TTL, _json.dumps(updated))
+        except Exception as exc:
+            logger.info("Board sentinel: inbox-residence state write failed: %s", exc)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -781,10 +993,12 @@ def severity_for_board(real: list[dict]) -> str:
     return "P2"
 
 
-def file_board_issue(classified: dict, open_issues: list[dict] | None = None) -> dict:
+def file_board_issue(classified: dict, open_issues=None) -> dict:
     """RED/GREEN lifecycle for the single board-cleanup issue, via the shared rail
     (Queue #258). UNKNOWN neither files nor closes — we never accuse or falsely
-    resolve when we could not measure."""
+    resolve when we could not measure. ``open_issues`` may be a plain list or a typed
+    ``OpenIssuesResult`` (a failed dedup read then makes the rail no-op UNKNOWN rather
+    than file blind — Queue #266 Item 2)."""
     from app.tasks.sentinel_filing import reconcile_issue
 
     fp = board_fingerprint()
@@ -833,6 +1047,19 @@ def file_board_issue(classified: dict, open_issues: list[dict] | None = None) ->
 # ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
+def _cache_board_stats(stats: dict) -> None:
+    try:
+        import json as _json
+
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().setex(
+            "bainluck:board_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
+        )
+    except Exception as exc:
+        logger.warning("Board sentinel result cache write failed: %s", exc)
+
+
 async def _run_board_sentinel(
     file_issues: bool = True,
     now=None,
@@ -840,14 +1067,56 @@ async def _run_board_sentinel(
 ) -> dict[str, Any]:
     """Read the board, classify hygiene findings, and (in a live run) file/close the
     single deduped board-cleanup issue. Caches a scorecard to Redis for the cockpit.
-    ``now`` is injected for testability (the age math is otherwise wall-clock)."""
+    ``now`` is injected for testability (the age math is otherwise wall-clock).
+
+    The board read runs in a worker thread bounded by an INNER ``deadline_seconds``
+    budget (default 120s, well under the 840/900s Celery limits and short enough that
+    the inline admin route never blocks unbounded — C37 P2, Queue #266 Item 3). Both
+    paginators also self-check the same monotonic deadline. On timeout the run caches
+    an honest UNKNOWN and performs NO reconciliation."""
+    import asyncio
+
     _load_overrides()
     start = _time.monotonic()
+    deadline_mono = start + deadline_seconds
     from datetime import datetime as _dt, timezone as _tz
 
     now = now or _dt.now(_tz.utc)
+    mode = "live" if file_issues else "detect_only"
 
-    issues, board, errors = _fetch_board_state()
+    try:
+        issues, board, errors = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_board_state, deadline_mono),
+            timeout=deadline_seconds,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning("Board sentinel: board read exceeded the %ss inner budget", deadline_seconds)
+        stats = {
+            "mode": mode,
+            "verdict": "unknown",
+            "counts": {"population_complete": False, "columns_available": False},
+            "thresholds": {
+                "inbox_triage_hours": INBOX_TRIAGE_HOURS,
+                "template_p1_share_cap": TEMPLATE_P1_SHARE_CAP,
+                "template_p1_min_population": TEMPLATE_P1_MIN_POPULATION,
+            },
+            "real": [],
+            "unknown": [{
+                "check": "deadline_exceeded",
+                "detail": f"board read exceeded the {deadline_seconds:.0f}s inner budget "
+                          f"— cached UNKNOWN, no reconciliation (never a false GREEN/RED)",
+            }],
+            "offenders": [],
+            "filed": None,
+            "duration_seconds": round(_time.monotonic() - start, 1),
+            "generated_at": now.isoformat(),
+        }
+        _cache_board_stats(stats)
+        return stats
+
+    inbox_first_seen = _load_inbox_residence(
+        issues, now, board.get("columns_available", False)
+    )
     classified = classify_board(
         issues,
         now,
@@ -855,11 +1124,14 @@ async def _run_board_sentinel(
         project_numbers=board.get("project_numbers"),
         open_project_items=board.get("open_project_items"),
         fetch_errors=errors,
+        population_complete=board.get("population_complete", True),
+        inbox_first_seen=inbox_first_seen,
+        status_missing=board.get("status_missing"),
     )
     verdict = board_verdict(classified)
 
     stats: dict[str, Any] = {
-        "mode": "live" if file_issues else "detect_only",
+        "mode": mode,
         "verdict": verdict,
         "counts": classified["counts"],
         "thresholds": {
@@ -877,25 +1149,15 @@ async def _run_board_sentinel(
     }
 
     if file_issues:
-        from app.tasks.sentinel_filing import list_open_alert_issues
+        from app.tasks.sentinel_filing import fetch_open_alert_issues
 
-        # Reuse one snapshot (the same list already backs _fetch_board_state, but a
-        # fresh read here keeps the filing dedup honest even if the board changed).
-        stats["filed"] = file_board_issue(classified, open_issues=list_open_alert_issues())
+        # A fresh TYPED read keeps the filing dedup honest even if the board changed —
+        # and a failed read makes the rail no-op UNKNOWN instead of filing blind.
+        stats["filed"] = file_board_issue(classified, open_issues=fetch_open_alert_issues())
 
     stats["duration_seconds"] = round(_time.monotonic() - start, 1)
     stats["generated_at"] = now.isoformat()
-
-    try:
-        import json as _json
-
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
-            "bainluck:board_sentinel:last", 14 * 86400, _json.dumps(stats, default=str)
-        )
-    except Exception as exc:
-        logger.warning("Board sentinel result cache write failed: %s", exc)
+    _cache_board_stats(stats)
 
     logger.info(
         "Board sentinel (%s): verdict=%s, %d real defect(s), %d unknown in %.1fs",

@@ -96,6 +96,49 @@ describe("evaluateSentinel — board sentinel (Queue #258)", () => {
     expect(v.status).toBe("red");
     expect(v.headline).toBe("SILENT");
   });
+
+  it("board: a missing/misspelled/future verdict reads AMBER, never GREEN (Queue #266)", () => {
+    for (const verdict of ["", "greenish", "clean", "future_state"]) {
+      const payload = {
+        generated_at: iso(1 * HOUR),
+        verdict,
+        real: [],
+        unknown: [],
+        counts: { open_issues_scanned: 90, open_project_items: 90, open_alert_intake: 12 },
+      };
+      const v = evaluateSentinel(board, payload, false, NOW);
+      expect(v.status).toBe("amber");
+      expect(v.headline).toBe("UNKNOWN");
+      expect(v.detail).toContain("not asserting clean");
+    }
+  });
+
+  it("board: green verdict with malformed/missing counts reads AMBER", () => {
+    const payload = {
+      generated_at: iso(1 * HOUR),
+      verdict: "green",
+      real: [],
+      unknown: [],
+      counts: {}, // open_issues_scanned missing → not a schema-valid green
+    };
+    const v = evaluateSentinel(board, payload, false, NOW);
+    expect(v.status).toBe("amber");
+    expect(v.headline).toBe("UNKNOWN");
+    expect(v.detail).toContain("counts missing/invalid");
+  });
+
+  it("board: green verdict with an incomplete population reads AMBER", () => {
+    const payload = {
+      generated_at: iso(1 * HOUR),
+      verdict: "green",
+      real: [],
+      unknown: [],
+      counts: { open_issues_scanned: 40, population_complete: false },
+    };
+    const v = evaluateSentinel(board, payload, false, NOW);
+    expect(v.status).toBe("amber");
+    expect(v.detail).toContain("population incomplete");
+  });
 });
 
 describe("evaluateSentinel — fresh-green", () => {
