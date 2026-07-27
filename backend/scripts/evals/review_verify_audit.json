@@ -1,0 +1,1170 @@
+[
+  {
+    "number": 651,
+    "title": "K-Recovery 9: Backfill calibration_probability for 348K Kalshi outcomes (37% coverage)",
+    "labels": [
+      "area:calibration",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #651 latest comment 2026-07-09T17:11:38Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into #138 (freeze-gap recovery) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #651: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 683,
+    "title": "P0: Get complete snapshot history for 150K+ Kalshi outcomes missing all price data",
+    "labels": [
+      "area:calibration",
+      "priority:p0",
+      "needs-agent"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #683 latest comment 2026-07-09T17:11:39Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into #138 (freeze-gap recovery) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #683: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 754,
+    "title": "P1: Deep audit \u2014 71,896 pass2_guess outcomes corrupting calibration",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #754 latest comment 2026-07-06T20:41:57Z by alexander-bain: ## [ops-lane] OPS-325 \u2014 curve de-poison CONFIRMED authoritative (round 84, 2026-07-06 20:38Z) Round-83's `computed_at: None` caveat is **resolved**: `precompute_calibration_main` is healthy (consec=0, succ24=454, ~every 3min) and **poly MCE held at 4.13 across a 90-min waiter** (18 readings, 19:07\u219220:38, byte-stable). So 4.13 is the real precomputed value \u2014 the de-poison is authoritative, not a cache-transient. - **poly MCE 4.13** \u2705 (was 9.25 pre-fix; beat the 4.78 target \u2014 all 3 poison classes "
+    ],
+    "closure_comment_draft": "Closing #754: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 802,
+    "title": "Resolve 861 KXMLBTB (MLB total bases) \u2014 ESPN lacks doubles/triples, need alternative source",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #802 latest comment 2026-07-09T17:11:42Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #802: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 805,
+    "title": "Resolve 13,021 no-score outcomes \u2014 events exist but scores never backfilled",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #805 latest comment 2026-07-09T17:11:43Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #805: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 816,
+    "title": "Resolve 1,696 NCAAB 1H outcomes \u2014 need halftime scores from ESPN",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #816 latest comment 2026-07-09T17:11:44Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #816: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 827,
+    "title": "Store per-outcome volume from Kalshi API and exclude zero-volume from calibration",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #827 latest comment 2026-07-09T17:11:47Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #827: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 836,
+    "title": "Migrate Kalshi live prices to WebSocket; evaluate lifecycle channel for settlement push",
+    "labels": [
+      "area:infra",
+      "type:perf",
+      "priority:p1"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #836 latest comment 2026-06-24T23:47:34Z by alexander-bain: **WS Redis-shadow grader SHIPPED** (`5a27d813`, 2026-06-24T23:47:33Z) \u2014 option (b), no migration, deploy-dark. - **app/services/ws_shadow.py:** SHADOW flag `bainluck:ws_shadow_enabled` (default OFF), `verdict_from_lifecycle` (pure), `record_shadow_verdict` (Redis hash `bainluck:ws_shadow_verdict`, keyed by settled ticker external_id, 14d TTL \u2014 NEVER is_winner), `compare_shadow_verdicts` (joins `FuturesOutcome.external_id == ticker` EXACTLY \u2192 no rsplit/format-aware resolution needed on the shadow"
+    ],
+    "closure_comment_draft": "Do not close #836: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 837,
+    "title": "Polymarket: CLOB market WebSocket + batch REST for live prices",
+    "labels": [
+      "area:infra",
+      "type:perf",
+      "priority:p1"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #837 latest comment 2026-06-25T00:35:43Z by alexander-bain: **Polymarket WS shadow consumer SHIPPED** (`94587354`, 2026-06-25T00:35:42Z) \u2014 mirrors the Kalshi shadow (`5a27d813`), deploy-dark, no migration. - `verdict_from_polymarket_resolved` (ws_shadow.py): parses a `market_resolved` push into both per-outcome verdicts keyed by `{condition_id}_yes`/`_no` \u2014 mirrors the authoritative `handle_resolved` winning logic exactly (verified against polymarket_ws.py:207). - `_run_polymarket_ws_shadow_consumer` (polymarket_ws.py): gated on `is_ws_shadow_enabled()` "
+    ],
+    "closure_comment_draft": "Do not close #837: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 870,
+    "title": "Discover card context snippets v2: from generic hooks to evidence-grounded angles",
+    "labels": [
+      "area:discover-ranking",
+      "type:quality",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #870 latest comment 2026-06-25T18:19:53Z by alexander-bain: ## Verify-close sweep (Lane 2 L2-18, 2026-06-25T18:16Z) \u2014 NOT closed (not read-only verifiable) commit `6b29b63e` (snippet v2 LLM phrasing pass). Feed audit shows snippet-issues@20=1/20 (good). NOT closed: 'evidence-grounded vs generic' is a subjective quality bar \u2014 needs a human read of live snippets. \u2192 ops/Alex glance. issue-closure-requires-proof: staying at Review/Verify until the live/visual check is done."
+    ],
+    "closure_comment_draft": "Do not close #870 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 871,
+    "title": "Event detail: evidence-gated line-move attribution (replace 'Why did the line move?')",
+    "labels": [
+      "area:event-details",
+      "type:quality",
+      "priority:p0",
+      "needs-investigation"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #871 latest comment 2026-06-25T18:40:50Z by alexander-bain: ## Shipped \u2192 Review / Verify **Commit `1d44f47b`.** CI run `28192194727` = **SUCCESS** (backend+frontend+deploy) \u2192 Heroku. Per Alex's MC rule (gate on EXPLANATION CONFIDENCE, not move size): `assess_move_attribution()` (line_movement.py) replaces the weak `has_any_context` LLM dump in `get_line_movement_analysis`. Deterministic: data-quality gate (book-count change \u2192 artifact \u2192 conf 0), concrete-attributor required (scoring play / direction-consistent injury), one deterministic claim, conservati"
+    ],
+    "closure_comment_draft": "Do not close #871 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 872,
+    "title": "Manus closed-loop QA program: high-frequency sweeps, digest intake, fix verification",
+    "labels": [
+      "area:admin-ops",
+      "type:ops",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #872 latest comment 2026-06-11T22:56:26Z by alexander-bain: ## Queue #38 progress \u2014 intake wiring + poller fix landed (`e3b034d4`) The twice-deferred batch-0 items are done this run: **1. Verify poller fixed (`scripts/manus_verify.py`)** \u2014 the poller read a non-existent top-level `status`/`result` field on `task.detail`, so it never detected completion (always timed out). Rewritten to the real Manus v2 shape: `task.detail \u2192 task.status == \"stopped\"`, verdict text from `task.listMessages` assistant content. Added `--poll TASK_ID` to re-poll an existing ta"
+    ],
+    "closure_comment_draft": "Do not close #872 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 883,
+    "title": "Futures detail page redesign: beat Kalshi/Polymarket on clarity",
+    "labels": [
+      "area:event-details",
+      "type:quality",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #883 latest comment 2026-07-07T23:37:46Z by alexander-bain: **Lane 2 / Queue L2-49 \u2014 #883 blend-only detail EDGE STATES SHIPPED (web; Review/Verify)** Hardened the L2-46/47 blend-only layout for the three edge states: - **Loading:** anatomy skeleton (title \u2192 big number \u2192 chart+movement \u2192 related, animate-pulse) replacing the spinner void; removed the unused LoadingSpinner import. - **Resolved:** hero features the actual WINNER (is_winner, may differ from highest-prob) + a \"Won\"/\"Resolved\" chip; live movement pill + \"Resolves <date>\" suppressed; present-t"
+    ],
+    "closure_comment_draft": "Do not close #883 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 888,
+    "title": "Native league pages rescue: grid data, movers junk, quiet sources, v1 Browse cut",
+    "labels": [
+      "area:native",
+      "type:bug",
+      "priority:p0"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #888 latest comment 2026-06-19T22:30:01Z by alexander-bain: ## Triage \u2014 recommended next step (P0, native) **Code state:** Code addresses all 4 findings: grid cells render off `cell?.mergedProbability` (`LeagueGridView.swift:294`, decodes from `merged_probability`); zero-movement movers filtered (`:121`, `abs(change) >= 0.001`); full-name fallback `shortName ?? name` (`:348`); row-level source chips (no top-of-page source bar); v1 Browse cut \u2014 `topicSection` (\"Prediction Markets\") call site commented out \"hidden for v1\" (`LeaguesView.swift:61`). **\u26a0\ufe0f Lat"
+    ],
+    "closure_comment_draft": "Do not close #888 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 891,
+    "title": "Content Understanding v2: market tag profiles",
+    "labels": [
+      "area:discover-ranking",
+      "type:feature",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #891 latest comment 2026-07-09T17:11:37Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the RANK program (#141/#142/#143 Discover ordering) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #891: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 894,
+    "title": "Native vs web calibration MCE mismatch \u2014 client-side vs API computation",
+    "labels": [
+      "area:native",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #894 latest comment 2026-07-12T01:51:43Z by alexander-bain: ## L2-82 shipped to master \u2014 a34736a9 (CI green: run 29175761775, all jobs \u2705) **What landed:** the native Calibration tab now consumes payload v2 and kills the client-side re-derivation that caused the native-vs-web mismatch. - New `Utilities/CalibrationMath.swift` \u2014 pure, unit-testable math ported 1:1 from the web (`frontend/lib/calibrationMath.ts` + the page's aggregate/wilsonCI/brier). ECE (n-weighted) is the headline; MCE (equal-weighted) demoted. - Models decode payload v2: `min_category_ou"
+    ],
+    "closure_comment_draft": "Closing #894: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 899,
+    "title": "backfill_winners OOM-crashes background worker during calibration phase",
+    "labels": [
+      "area:infra",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #899 latest comment 2026-06-24T18:47:34Z by alexander-bain: **SHIPPED** (`839a9a8c`, 2026-06-24T18:47:33Z) \u2014 the box_score player-prop resolver is now memory-bounded. **Root cause (confirmed, supersedes the original calibration-price premise):** the calibration-price phase was already SQL-batched (stale premise, per Queue #85). The genuine Python-memory OOM is in `_resolve_kalshi_player_props_from_boxscore`: the query joined `e.box_score_data` (full box-score JSONB, all players) onto **every outcome row**, and `result.all()` materialized every copy at on"
+    ],
+    "closure_comment_draft": "Closing #899: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 907,
+    "title": "Resolver LIMIT-10000 starvation: backfill_winners only processes 10K of 41K resolvable markets",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #907 latest comment 2026-07-09T17:11:49Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #907: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 916,
+    "title": "Feed exhaustion: heavy users hit a permanent wall (no card recycling)",
+    "labels": [
+      "area:discover-ranking",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #916 latest comment 2026-06-25T18:19:43Z by alexander-bain: ## Verify-close sweep (Lane 2 L2-18, 2026-06-25T18:16Z) \u2014 NOT closed (not read-only verifiable) commit `eb634c8e` (card recycling for exhausted feeds). NOT closed: needs a heavy/exhausted Discover session to confirm recycling kicks in (Alex is the heaviest user) \u2014 not read-only confirmable. \u2192 ops/Alex check. issue-closure-requires-proof: staying at Review/Verify until the live/visual check is done."
+    ],
+    "closure_comment_draft": "Do not close #916 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 920,
+    "title": "Live win-probability chart doesn't update during a live game (hero score/odds do)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #920 latest comment 2026-06-25T18:19:18Z by alexander-bain: ## Verify-close sweep (Lane 2 L2-18, 2026-06-25T18:16Z) \u2014 NOT closed (not read-only verifiable) commit `f1cb6265` (extend each series to live-edge on live games). NOT closed: needs a LIVE game to confirm the hero chart updates \u2014 can't verify read-only off a live game. \u2192 ops check during a live game. issue-closure-requires-proof: staying at Review/Verify until the live/visual check is done."
+    ],
+    "closure_comment_draft": "Do not close #920 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 933,
+    "title": "Theme-grouping Phase 1 (slice 3): awards / competition-field bundle card",
+    "labels": [
+      "area:discover-ranking",
+      "type:feature",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #933 latest comment 2026-06-25T18:46:26Z by alexander-bain: ## Verify-close sweep (Lane 2 L2-20, 2026-06-25) \u2014 shipped, \u2192 Review/Verify Theme-grouping slice 3 SHIPPED: commit `dccf38c8` (`discover_bundles.assemble_awards_theme_bundles` \u2014 clusters entertainment award/competition group_id futures into one `type:bundle kind:theme` card) + render fix `9e7ee0ae` (#934). NOT closing: it had a follow-up render fix (yellow flag) and surfacing a bundle needs an active awards-night with group_id futures (off-season) \u2192 live confirmation owed. \u2192 R/V; close once an a"
+    ],
+    "closure_comment_draft": "Do not close #933 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 938,
+    "title": "Multi-candidate field markets: calibration_probability un-normalized + multiple winners marked (golf round-leader/winner, Polymarket)",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #938 latest comment 2026-07-09T17:11:50Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #938: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 944,
+    "title": "Kalshi multi-game-series game markets collapse onto last game's event (commence_time=resolution date, #14)",
+    "labels": [
+      "area:event-details",
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #944 latest comment 2026-07-09T17:11:54Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into the calibration pack (#997/#947/#994/#845) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #944: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 947,
+    "title": "Fix _resolve_kalshi_spread_total_from_scores re-inverting game_score markets on re-pull (durable replacement for the time-starved re-grade band-aid)",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #947 latest comment 2026-07-08T17:22:13Z by alexander-bain: ## [ops-lane] OPS-419 \u2014 #947 spreads/totals root-cause: gotcha-#17 UNDER-side mis-sign (evidence pack) \u2014 2026-07-08 17:19Z Calibration by side across resolved totals/spreads outcomes (pred vs actual winrate): | side | n | pred | actual | gap | |---|---|---|---|---| | **Under** | 36,296 | 0.485 | 0.296 | **18.9pp** | | Over | 88,942 | 0.518 | 0.431 | 8.7pp | | other (spreads) | 127,274 | 0.403 | 0.333 | 7.0pp | **Signature = asymmetric over-prediction, Under ~2\u00d7 worse than Over.** This is the got"
+    ],
+    "closure_comment_draft": "Do not close #947 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 948,
+    "title": "Theme-grouping Phase 1 (slice 6): guarded today's-biggest-swings bundle",
+    "labels": [
+      "area:discover-ranking",
+      "type:feature",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #948 latest comment 2026-06-18T16:22:21Z by alexander-bain: ## Fold SHIPPED + tested, but LIVE PROOF hit the wall \u2192 the movement SIGNAL is inadequate (flag, per the queue's STOP-and-flag guard) Commit `c07445f6` (\u2192 CI green \u2192 Heroku): `assemble_swings_theme_bundles` + guard + wiring + 5 tests, all green. The fold/guard logic is correct and the guard is **validated by production data**. BUT the feature is **inert** with the current signal. ### Live finding (db-query 2026-06-18) - `probability_change_24h` IS populated (619,089 non-null) and 74,186 outcomes"
+    ],
+    "closure_comment_draft": "Do not close #948: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 949,
+    "title": "US Open: Kalshi golf prop series missing from the ticker map (rely on daily LLM)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #949 latest comment 2026-06-25T18:20:10Z by alexander-bain: ## Verify-close sweep (Lane 2 L2-18, 2026-06-25T18:16Z) \u2014 NOT closed (not read-only verifiable) commit `dc2efd10` (US Open Kalshi golf prop ticker map). NOT closed: off-season \u2014 no active tournament. \u2192 re-verify at The Open (July). issue-closure-requires-proof: staying at Review/Verify until the live/visual check is done."
+    ],
+    "closure_comment_draft": "Do not close #949: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 950,
+    "title": "US Open: Polymarket scrambled-major name ('uptspt open') orphans events from us_open grouping",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #950 latest comment 2026-07-09T17:11:57Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into Event Concept Pages (#999) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #950: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 972,
+    "title": "claim_issue.py can't resolve project items past the board's ~400-item list cap",
+    "labels": [
+      "area:admin-ops",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #972 latest comment 2026-06-24T18:51:13Z by alexander-bain: ## Shipped + verified (Batch B) **Commit `57a7c384`.** CI run `28121684195` = **SUCCESS** (backend+frontend+deploy) \u2192 Heroku. Fix: resolve Project items from the issue side via GraphQL (`repository.issue.projectItems`) instead of the 200-capped `item-list`. **Production-verified by this run** \u2014 the fixed script moved #968/#970/#971 \u2192 Review/Verify, #961 \u2192 In Progress, and resolved brand-new #972/#973 on first try (all previously hit the 'could not find its project item' bug). Card currently In P"
+    ],
+    "closure_comment_draft": "Closing #972: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 977,
+    "title": "#922 follow-up: clamp game_state_backfill Final marker to now() (audit of raw WinProbSnapshot writers)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #977 latest comment 2026-06-24T21:06:06Z by alexander-bain: ## Shipped \u2192 Review / Verify **Commit `d37b6421`.** CI run `28129320837` = **SUCCESS** (backend+frontend+deploy) \u2192 Heroku. Audited all raw WinProbSnapshot writers (table in issue body); the one BROKEN path \u2014 `_write_start_end_markers` Final marker = max(captured_at) across all snapshot tables (could inherit a future point) \u2014 now clamped via `_resolve_marker_window` (min(max,now) + >=30min guard). 20 tests pass (new `test_marker_window_clamp.py` + no regression on #922 wp-timeline + slice-1 guard"
+    ],
+    "closure_comment_draft": "Closing #977: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 978,
+    "title": "Golf tournament page: render round_top 'Rounds' panel (#951 frontend completion)",
+    "labels": [
+      "area:event-details",
+      "type:feature",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #978 latest comment 2026-07-09T17:11:58Z by alexander-bain: [ops-lane] Board-triage 2026-07-09: ABSORBED into Event Concept Pages (#999) \u2014 tracked there. (Board-column move to program deferred; comment-linked.)"
+    ],
+    "closure_comment_draft": "Closing #978: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 979,
+    "title": "Event-detail: collapse deep-OTM alternate spread ladder rungs (#921 residual)",
+    "labels": [
+      "area:event-details",
+      "type:quality",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #979 latest comment 2026-06-25T00:45:15Z by alexander-bain: ## Shipped \u2192 Review / Verify **Commit `a4d058db`.** CI run `28139025819` = **SUCCESS** (backend+frontend+deploy) \u2192 Heroku. `get_game_markets` now drops spread outcomes with cover prob < `_SPREAD_DEEP_OTM_FLOOR` (0.02) \u2014 measured to collapse the 38-item ladder on event 14961907 to its 3 meaningful lines. Near-money + main line kept. `TestDeepOtmSpreadCollapse` + startup + seeded-events = 38 passed. Live proof (an event with an alt-spread ladder shows only meaningful lines) owed to ops."
+    ],
+    "closure_comment_draft": "Closing #979: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 980,
+    "title": "Stale/wrong completed-event scores: finished games stuck at 0-0 (OPS-137 / #805-adjacent)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #980 latest comment 2026-07-09T17:10:54Z by alexander-bain: [ops-lane] Board-triage: reprioritized p2\u2192p1 \u2014 the 0-0/FINAL display class is still reproducing in Manus today. Plausibly fixed by #1000 (espn transition fix) \u2014 recommend a Manus re-sweep post-#1000 to see which findings die."
+    ],
+    "closure_comment_draft": "Do not close #980: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 982,
+    "title": "#980 follow-up: re-feed box_score'd events stuck at 0-total (ESPN final + anti-thrash marker)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #982 latest comment 2026-07-09T17:10:57Z by alexander-bain: [ops-lane] Board-triage: reprioritized p2\u2192p1 \u2014 the 0-0/FINAL display class is still reproducing in Manus today. Plausibly fixed by #1000 (espn transition fix) \u2014 recommend a Manus re-sweep post-#1000 to see which findings die."
+    ],
+    "closure_comment_draft": "Do not close #982: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 983,
+    "title": "#980 correctness: gate score-correction on ESPN FINAL status (premature-completion writes mid-game scores)",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #983 latest comment 2026-07-09T17:10:59Z by alexander-bain: [ops-lane] Board-triage: reprioritized p2\u2192p1 \u2014 the 0-0/FINAL display class is still reproducing in Manus today. Plausibly fixed by #1000 (espn transition fix) \u2014 recommend a Manus re-sweep post-#1000 to see which findings die."
+    ],
+    "closure_comment_draft": "Do not close #983: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 984,
+    "title": "poll_polymarket sustained SoftTimeLimit outage \u2014 Polymarket ingestion down >24h (consec=13)",
+    "labels": [
+      "area:infra",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #984 latest comment 2026-07-21T17:38:12Z by alexander-bain: **[ops-lane] Status clarification (2026-07-21):** the SoftTimeLimit *death* described here appears **recovered** \u2014 `poll_polymarket` is currently healthy (successes_24h=561, consec_fail=0, last_success 17:18Z, dur ~200s well under the 540s limit). The `SoftTimeLimitExceeded` still shown in `last_error` is a stale field, not a live failure. However, a **distinct** poly failure is now live: **creation freeze** \u2014 the poll completes and refreshes prices but has created ~0 new markets since 2026-07-1"
+    ],
+    "closure_comment_draft": "Closing #984: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 989,
+    "title": "Polymarket null-source under-graded cohort: curve-exclude + score-recover ~17.6K sports props (poly MCE 7.95\u21924.78pp)",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #989 latest comment 2026-07-08T17:22:14Z by alexander-bain: [ops-lane] OPS-420 (2026-07-08 17:19Z): CLOB clob_authoritative 5,772, clob_ordinal 232 \u2014 both growing/accruing. Healthy."
+    ],
+    "closure_comment_draft": "Closing #989: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 993,
+    "title": "Instant Answers: make Bain Luck the fastest answer to entity questions",
+    "labels": [
+      "area:discover-ranking",
+      "area:search",
+      "type:feature",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #993 latest comment 2026-07-07T21:45:37Z by alexander-bain: [ops-lane] OPS-368 \u2014 L2-45 typeahead parity CORROBORATED \u2705 (2026-07-07 21:44Z, Heroku v3300). Typeahead now matches /search: - 'nba mvp' \u2192 **MVP Winner #1, Eastern Conf Finals MVP #2, WNBA: 2026 MVP #3** (NBA-first, WNBA demoted \u2014 was WNBA-only/first through round 90). - 'lebron james' \u2192 NBA: LeBron James Next Team #1. - 'nfl mvp' \u2192 MVP Winner? #1, Pro Football Championship MVP? #2. The nba-mvp typeahead-parity residual (flagged rounds 88-90) is CLOSED \u2014 league-recall ported to the typeahead pat"
+    ],
+    "closure_comment_draft": "Closing #993: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 994,
+    "title": "DataGolf calibration above-diagonal offset = survivorship by one-sided DNP retag (CONFIRMED, row-level) \u2014 symmetric-exclusion fix",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #994 latest comment 2026-07-09T20:02:31Z by alexander-bain: ## Queue #150 follow-ups DEFERRED (guardrail) Two #994-adjacent reads from Queue #150 Item 0 could not run \u2014 the data_exfiltration guardrail blocked all prod credentialed access this session (continued conversation, cumulative taint): - **alt-tour recovered-count** (post-beat verification of the #994 fix shipped in 2ee66f66): pending the next `recover-datagolf-participation` beat + a fresh-window read. - **datagolf fold-vs-regression** (is datagolf intentionally folded into golf-category in the "
+    ],
+    "closure_comment_draft": "Do not close #994 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 999,
+    "title": "Generic Event Concept Pages (golf \u2192 tennis/UFC/F1, awards-ready)",
+    "labels": [
+      "area:event-details",
+      "type:feature",
+      "priority:p2",
+      "in-progress",
+      "area:backend"
+    ],
+    "classification": "misrouted",
+    "evidence": [
+      "github: issue #999 latest comment 2026-07-15T13:34:47Z by alexander-bain: ### [ops-lane r208] The Open \u2014 pre-tee-off (2026-07-15 13:32Z Wed; tee-off ~05:35Z Thu 07-16, ~16h out) Running before tee-off, so this is a readiness confirm \u2014 the **tee-off verification (live-mode flip, leaderboard fusing, freshness, in-play chart density, R1-leader moving) is left for the post-05:35Z round** (the L2 live queue + the next ops companion). **Readiness \u2014 GREEN, and now with grid coverage:** - **Grid sentinel UN-DARKENED** (#200 landed) \u2014 `/grid-sentinel/last` returns a live verdi"
+    ],
+    "closure_comment_draft": "Do not close #999: Review/Verify conflicts with its active in-progress label/ownership. Reconcile owner and status first.",
+    "required_live_proof_if_not_close": "Confirm the active owner; move to In Progress or remove the stale in-progress label before verification.",
+    "confidence": "high"
+  },
+  {
+    "number": 1009,
+    "title": "Kalshi market CREATION produces 0 despite poll completing update phase \u2014 create path starved (post-#995 recurrence)",
+    "labels": [
+      "area:infra",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1009 latest comment 2026-07-27T20:59:19Z by alexander-bain: **[ops-lane r283] Watchdog vs. actual-row-creation disagreement \u2014 needs code-lane adjudication** The creation-stall watchdog is still firing: Sentry **BAINLUCK-TF** = 47 events/24h (\"Market CREATION stalled: kalshi \u2014 no new markets in 23.0h\"). But a direct DB census contradicts it: ``` SELECT max(created_at), count(*) FILTER (created_at > now()-24h), count(*) FILTER (created_at > now()-2h) FROM futures_markets WHERE source='kalshi' \u2192 newest = 2026-07-27 18:54:20Z (11:54 AM PT) \u2192 created_24h = 96"
+    ],
+    "closure_comment_draft": "Do not close #1009: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1011,
+    "title": "Soccer calibration: capture 3-way (draw) probability \u2014 draw dropped at ingest causes 7-17pp over-prediction across ~20 leagues",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1",
+      "needs-agent"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1011 latest comment 2026-07-12T02:56:15Z by alexander-bain: **Curve blocker resolved \u2014 remaining scope is forward 3-way capture only.** The per-bookmaker soccer exclusion (v3368, e2677e1c) deployed 2026-07-12 01:58Z and is now reflected in the live calibration payload (`generated_at=02:17:55Z`): `soccer_2way_filter` excludes **48,567** rows across `odds_api` + `odds_api_bookmaker`, `odds_api_bookmaker` source is at **1.28pp**, and **0** soccer_* per-league charts exceed 5pp. The earlier same-round observation that only `odds_api` was covered was a stale "
+    ],
+    "closure_comment_draft": "Do not close #1011: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1021,
+    "title": "A2 \u2014 Grammar adapters v1 (Kalshi / Polymarket / Odds API)",
+    "labels": [
+      "area:infra",
+      "type:feature",
+      "priority:p1",
+      "epic:universal-matching"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1021 latest comment 2026-07-13T16:31:27Z by alexander-bain: ## [triage-handoff Queue #178] A2 poly derivative grammar \u2014 measurement bug found; TRUE game-shape 71.3%; NO forced cutover Queue #178 Item 1 targeted the derivative matchup gap that supposedly gated the poly `market_event` cutover at 69.3%. Investigation found the gate was **partly a phantom** \u2014 the audit itself couldn't read `matchup_title`. ### Two bugs fixed (commit `49903079`, CI `29266362722` green) 1. **Audit measurement bug** \u2014 `audit_resolution_engine._md()` only tried `json.loads`, but"
+    ],
+    "closure_comment_draft": "Do not close #1021: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1023,
+    "title": "A4 \u2014 Resolution engine v1: signature matching + strategy registry",
+    "labels": [
+      "area:infra",
+      "type:feature",
+      "priority:p1",
+      "epic:universal-matching"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1023 latest comment 2026-07-12T19:25:25Z by alexander-bain: **A4 resolution engine v1 shipped \u2014 shadow-mode, NO cutover (Queue #168, CLI triage handoff).** `c54cb6fa` \u00b7 CI run 29205640523 = **success** \u00b7 59 tests pass (test_startup + test_resolution_engine[19] + test_grammar_adapters[24] + test_entity_registry[12]). ONE engine over A1 entities + A2 grammar mentions. Match = entity-signature agreement (participants \u2227 competition/concept \u2227 market-type \u2227 line \u2227 date-window) with the L2-62 negative-case discipline. Existing mechanisms are now **strategies in"
+    ],
+    "closure_comment_draft": "Do not close #1023: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1024,
+    "title": "A5 \u2014 MMA first proof (READY-FIXES MMA pack; Alex's 3-link example)",
+    "labels": [
+      "area:infra",
+      "type:feature",
+      "priority:p1",
+      "epic:universal-matching"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1024 latest comment 2026-07-13T14:35:51Z by alexander-bain: ## [triage-handoff Queue #177 Item 2] Jul-18 card blend gap FIXED live \u2014 combat card-prefix strip (the blend_gate_vs_link pattern) Ops (#887 r171) flagged a \"settled-wps artifact\" follow-up to f6352a82. Investigating it surfaced a **live** bug on the pinned Jul-18 card, now fixed and verified end-to-end. **The gap:** 2 scheduled Jul-18 UFC fights were linked to Kalshi but blending **betting-only**: - 14970727 Ricci vs Kline (`KXUFCFIGHT-26JUL18RICKLI`) - 14970728 Rodrigues Jr vs Franco (`KXUFCFI"
+    ],
+    "closure_comment_draft": "Do not close #1024: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1028,
+    "title": "B1 \u2014 Generic competition HUB page (one route + adapter config per competition)",
+    "labels": [
+      "area:event-details",
+      "type:feature",
+      "priority:p2",
+      "in-progress",
+      "epic:surfaces-everything"
+    ],
+    "classification": "misrouted",
+    "evidence": [
+      "github: issue #1028 latest comment 2026-07-12T12:58:02Z by alexander-bain: **L2-88 (Lane 2) \u2014 hub discovery entries SHIPPED** \u00b7 sha 4d78daab \u00b7 CI GREEN \u00b7 Heroku v3382 \u00b7 2026-07-12 The generic competition HUB (this issue) now has discovery entries so the four built hubs are findable, not only via a direct URL: - **Nav:** Boxing added to the Browse menu (Desktop + Bottom) \u2014 golf/tennis/mma were already present \u2192 all four hubs (`/hub/{mma,boxing,golf,tennis}`) reachable from nav. - **Typeahead:** new `hub` suggestion row via `events._match_hub_suggestions` (config-importe"
+    ],
+    "closure_comment_draft": "Do not close #1028: Review/Verify conflicts with its active in-progress label/ownership. Reconcile owner and status first.",
+    "required_live_proof_if_not_close": "Confirm the active owner; move to In Progress or remove the stale in-progress label before verification.",
+    "confidence": "high"
+  },
+  {
+    "number": 1054,
+    "title": "Calibration Sentinel: self-serve detection \u2192 diagnosis \u2192 auto-filing (de-Alex the smoke detector)",
+    "labels": [
+      "area:calibration",
+      "type:quality",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1054 latest comment 2026-07-12T20:07:25Z by alexander-bain: ## [ops-lane] Round 155 \u2014 hockey-props residual is evidence-held; #1055 now has a NAMED cost The sentinel's first real-time filing is **still blocked**: `/api/admin/calibration-sentinel/last` shows **6\u00d7 `skipped_no_token`** \u2014 GITHUB_TOKEN (#1055) is not set. ### The concrete cost-of-delay (this is why #1055 matters now, not abstractly) - The **hockey-props residual** revealed by #941 (polymarket hockey props under-pricing ~17pp; hockey category now honestly 5.71pp, n=26,472) is exactly the kind "
+    ],
+    "closure_comment_draft": "Do not close #1054 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1059,
+    "title": "NBA-Kalshi degenerate mapping (A4 shadow table) \u2014 NBA championship grid at 6/100",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1059 latest comment 2026-07-15T19:10:22Z by alexander-bain: ## Queue #204 \u2014 Measure-page data-integrity forensic (verdicts for the grid-eval story + L2-128 captions) Ran the three-item integrity pass on the source-intelligence / championship-grid corpus (2026-07-15, prod db-query censuses). Publishing verdicts here since this is the grid-eval story and L2-128 owns the caption copy. ### The odds_api \"48.9% Spurs\" row \u2014 classified: **real next-season odds, mislabeled (not absurd, not stale)** `futures_markets #2` \"NBA Championship Winner\" (odds_api) is a *"
+    ],
+    "closure_comment_draft": "Do not close #1059 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1063,
+    "title": "Search misses The Open Championship (golf major) \u2014 'the open'/'open championship' surface a tennis US Open concept or nothing",
+    "labels": [
+      "area:search",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #1063 latest comment 2026-07-13T04:30:51Z by alexander-bain: ## [ops-lane r165] Independent ops sign-off \u2014 #1063 VERIFIED FIXED (all 5 phrases), and the r164 \"still broken\" alarm was a parsing error Confirming the A-lane's fix from a clean third-party read (deployed 902c5cb8, which includes 54408f3d). Live `/api/events/search`, reading the **`event_concepts`** field: | query | `event_concepts[0]` | |---|---| | `the open` | **The Open Championship** \u2705 | | `british open` | **The Open Championship** \u2705 | | `royal birkdale` | **The Open Championship** \u2705 | | `o"
+    ],
+    "closure_comment_draft": "Closing #1063: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 1076,
+    "title": "DataGolf pre-tournament markets for upcoming events created status='resolved' (The Open field excluded from live blend)",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1076 latest comment 2026-07-13T23:46:38Z by alexander-bain: [Lane-2 / L2-110 Item 2 \u2014 Open T-1 precondition read] **Remaining scope: status flip landed, but the frozen outcome probabilities were never cleared \u2014 DataGolf is now \"back in the blend\" with corrupt 0/1 values, producing a wrong Open leader.** Verified live prod 2026-07-13 ~23:45Z. The r181/r182 \"PASS\" confirmed `status` flipped `resolved\u2192open` (correct, guard + self-heal working). But the self-heal restored *status only*. The premature `clean_resolution` had already stamped `is_winner` + `curr"
+    ],
+    "closure_comment_draft": "Do not close #1076: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1077,
+    "title": "Golf resolution_date diverges across surfaces (Kalshi close-time vs DataGolf schedule) \u2014 latent countdown trap",
+    "labels": [
+      "area:sports",
+      "type:bug",
+      "priority:p3"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #1077 latest comment 2026-07-13T22:35:23Z by alexander-bain: ## Golf resolution_date normalization shipped + verified LIVE (Queue #185, SHA 29ee2904) Backend normalization added in `_enrich_with_schedule` (routes/golf.py): once a DataGolf schedule `end_date` exists it is ground truth, so `resolution_date` is set to it \u2014 the Kalshi close-time artifact (gotcha #14) stops diverging across surfaces. **Production verification (2026-07-13, after category-precompute refresh):** - The Open Championship: `end_date=2026-07-19T00:00:00+00:00`, `resolution_date=2026-"
+    ],
+    "closure_comment_draft": "Closing #1077: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 1078,
+    "title": "Flow sentinel v1 \u2014 scripted user-flow acceptance sentinel against production",
+    "labels": [
+      "area:infra",
+      "type:feature",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #1078 latest comment 2026-07-13T22:35:03Z by alexander-bain: ## Flow Sentinel v1 shipped (Queue #185) \u2014 SHA 29ee2904, CI green (run 29289711654) Built per this issue's scope + the calibration-sentinel template. Deployed to production and verified end-to-end. **Six flows (Alex's six failure classes), each asserting a concrete condition:** 1. `search_gold_set` \u2014 25 frozen Instant Answers entities; regression-first vs the frozen baseline (only a WORKED-then-broke entity files, so a healthy run is green). 2. `duplicate_events` \u2014 same real-world event (sport +"
+    ],
+    "closure_comment_draft": "Closing #1078: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 1080,
+    "title": "P7 Step 0 \u2014 Apple secondary-surface audit (watch/iPad/Mac inventory)",
+    "labels": [
+      "area:native",
+      "type:quality",
+      "priority:p2"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1080 latest comment 2026-07-24T23:12:43Z by alexander-bain: **L2-180 (Lane 2) \u2014 the dormant native targets are now wired and build.** Commit 1f0352c1, CI 30132716420 green. The P7 Step-0 caveat here was that `BainLuckWidget/`, the Watch complication, and `BainLuckTests/` were orphan source folders not in any Xcode target. All three are now real targets: - **BainLuckWidget** \u2014 WidgetKit app-extension, embedded into `Bain Luck.app/PlugIns/BainLuckWidget.appex` and ValidateEmbeddedBinary-passed during the main-app build (fully verified on iOS simulator). - "
+    ],
+    "closure_comment_draft": "Do not close #1080: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1081,
+    "title": "Football/motorsports misclassification sweep (#181 forensics)",
+    "labels": [
+      "area:sports",
+      "area:calibration",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1081 latest comment 2026-07-15T17:32:47Z by alexander-bain: ## Queue #203 Item 2 \u2014 motorsports half SHIPPED (code), verification deferred to fresh terminal **CLI triage handoff, Queue #203 (2026-07-15).** Completes the motorsports half left open by #202. ### Shipped (commit `3619f445`, pushed to master; CI pending) - **`scripts/fix_misclassified_kalshi_categories.py`** \u2014 generalizes #202's ticker-based reclassification to any mis-tagged source category via `--from-category`. Same precise/idempotent logic: scans Kalshi rows in the source category, re-deri"
+    ],
+    "closure_comment_draft": "Do not close #1081 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1089,
+    "title": "NHL goal-family Kalshi markets have corrupt captured prices at every band (KXNHLGOAL/PTS/AST)",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1089 latest comment 2026-07-14T23:13:10Z by alexander-bain: Moved to Review/Verify: honest-band recovery shipped (40d67456); curve ECE re-measure pending next precompute."
+    ],
+    "closure_comment_draft": "Do not close #1089 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1090,
+    "title": "Discover candidate pool too thin (~61 cards at limit=200) \u2014 feed ends abruptly and amplifies single-sport share",
+    "labels": [
+      "area:discover-ranking",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1090 latest comment 2026-07-15T00:04:20Z by alexander-bain: **Queue #195 (CLI triage handoff) \u2014 thin pool + golf reorder \u2192 Review/Verify** Diagnosis (live `/api/feed?limit=200&event_pct=0.15`, 2026-07-14): pool collapsed to **68** items, **17 golf-ish (~25%)**. First-20 was diverse anonymously (\u226510 categories) \u2014 the #187 golf cap works *pre-personalization*. Two real causes: 1. **No broaden-recall path** when the post-filter pool is thin (Open week + summer break strand real open markets behind the no-movement/freshness filters). After 48h seen-suppressi"
+    ],
+    "closure_comment_draft": "Do not close #1090 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1101,
+    "title": "Manus sweep failed \u2014 2026-07-14",
+    "labels": [
+      "area:infra",
+      "type:ops",
+      "alert-intake"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1101 latest comment 2026-07-15T02:45:59Z by alexander-bain: ## Root cause + fix (Queue #198, CLI triage handoff) **Root cause \u2014 the empty `()` name AND the missing error text:** `.github/workflows/manus-sweep.yml` pinned the checkout to a manually-rotated PAT (`token: ${{ secrets.GH_PUSH_TOKEN }}`). That PAT lapsed (~Jul-11), so `actions/checkout@v4` died at **step 2** with `fatal: could not read Username for 'https://github.com'`. Because checkout failed, the **Determine sweep mode** step was SKIPPED \u2014 so `steps.mode.outputs.mode` resolved to empty (`()"
+    ],
+    "closure_comment_draft": "Do not close #1101 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1107,
+    "title": "The Open event-detail endpoint ~4-5s server-side TTFB (uncached) \u2014 slow on year's biggest golf day",
+    "labels": [
+      "area:infra",
+      "type:perf",
+      "priority:p2"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1107 latest comment 2026-07-15T17:35:03Z by alexander-bain: Latency data point (Open Live pre-flight, 2026-07-15T17:35Z): /api/event/event:golf:the-open-championship cold ttfb **12.3s** (up from 4.8s measured 2026-07-15T13:39Z). Notable scoping hint: the /api/futures/6/history sub-endpoint for the SAME page returns in **0.5s**. So the latency is in the concept-detail fan-out/aggregation in /api/event/{key}, NOT the chart/history queries. Optimize the concept assembly (section market fan-out) rather than the charts."
+    ],
+    "closure_comment_draft": "Do not close #1107: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1112,
+    "title": "Polymarket/Kalshi game-market side-inversion: home_win_probability stores the mirror (73% of dramatic 'disagreements')",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #1112 latest comment 2026-07-15T22:22:13Z by alexander-bain: ## Queue #207 Item 1 \u2014 SHIPPED + historical correction verified **Source fix (deployed v3471, commit 77c6f955):** `_check_and_fix_inversion` now has a peer-consensus fallback. When the sportsbook line is ambiguous (~0.5) or missing \u2014 the mid-game stale-pregame blind spot where the primary check provably cannot fire \u2014 a prediction-market snapshot is flipped when it is the extreme MIRROR of \u22652 unanimous independent live peers (stat_model/mlb/espn/betting; kalshi+poly excluded as they can share the"
+    ],
+    "closure_comment_draft": "Closing #1112: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 1147,
+    "title": "[Flow Sentinel] user-visible charts below the density bar (1 failing, 1 checked)",
+    "labels": [
+      "area:event-details",
+      "priority:p2",
+      "alert-intake"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1147 latest comment 2026-07-23T04:29:52Z by alexander-bain: **Ops verification (r253) \u2014 cry-wolf fix VERIFIED. Residual: the tile query still times out (chart_density now unmonitored).** #1147 (commit 859da59b) deployed as **v3544 @ 2026-07-22 20:23 PT (03:23 UTC)**. The last nightly flow-sentinel run (01:38 UTC) predated it, so I triggered a fresh live run. Post-fix run **2026-07-23 04:25:47 UTC**: ``` chart_density: passed=True, skipped=True, failures=[], evidence.reason=\"QueryCanceledError: canceling statement due to statement timeout\" filed this run:"
+    ],
+    "closure_comment_draft": "Do not close #1147: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1162,
+    "title": "SQLAlchemy async connection-pool leak \u2014 BAINLUCK-RN 'non-checked-in connections' firing ~113/24h",
+    "labels": [
+      "area:infra",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1162 latest comment 2026-07-22T18:52:32Z by alexander-bain: **[ops-lane r241] Pool leak continuing to improve \u2014 18/24h.** BAINLUCK-RN \"garbage collector trying to clean up non-checked-in connection\" true 24h bucket = **18/24h** (down from the title's ~113/24h; matches r240's 18). Trend is down and holding. Not yet zero. Leaving OPEN for one more window to confirm it settles to 0 before closing."
+    ],
+    "closure_comment_draft": "Do not close #1162 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1168,
+    "title": "Moments Engine: game_moments stream + prob-delta join \u2192 chart key moments, THE DIVERGENCE, and #871 explanations",
+    "labels": [
+      "area:event-details",
+      "type:feature",
+      "priority:p2"
+    ],
+    "classification": "close-with-existing-evidence",
+    "evidence": [
+      "github: issue #1168 latest comment 2026-07-24T17:48:41Z by alexander-bain: ## \u2705 v1-MLB backend verified on production (v3569, Deploy 1967d467) Ran `compute_game_moments` on prod, then measured: **Moments populated & correct** \u2014 `game_moments`: 16 total, **9 confident** (\u22650.5), across 2 completed MLB games. Every confident moment is direction-consistent by construction (home scores \u2192 home WP up; away scores \u2192 away WP up). Samples: - `St. Louis Cardinals score \u2014 win prob +11.4 pts` (conf 0.88) - `Arizona Diamondbacks score \u2014 win prob +14.8 pts` (conf 0.993) - `Detroit Ti"
+    ],
+    "closure_comment_draft": "Closing #1168: the current issue record documents shipped/superseded work and the latest evidence quoted above. The canonical follow-up remains linked where this card was absorbed.",
+    "required_live_proof_if_not_close": "",
+    "confidence": "high"
+  },
+  {
+    "number": 1197,
+    "title": "Sustained Redis ConnectionError (TLS) to Heroku Redis :10819 \u2014 ~135/24h, unowned since Feb",
+    "labels": [
+      "area:infra",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1197 latest comment 2026-07-24T16:49:05Z by alexander-bain: **[ops-lane r263] The Redis drop-windows come due \u2014 latency close-gate CONFIRMED green; raw Redis churn is UNMOVED (the residual, as predicted).** Read at ~16:0x\u201316:4xZ Jul 24 (past 01:00Z \u2014 windows genuinely due). **Latency co-metric (warm team routes, the #247 close-gate) \u2014 MET and holding:** - teams/boston-bruins **1.06s** (200) - teams/new-york-yankees **0.74s** (200) - teams/boston-celtics **0.92s** (200) All 200, all <2s. Down from r262's 6\u20138s. The #247 route-DB fixes (74e8a11d et al.) hol"
+    ],
+    "closure_comment_draft": "Do not close #1197: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1199,
+    "title": "coverage_metrics beat stale (~2d, 2 consecutive fails) \u2014 snapshot_coverage_metrics not completing",
+    "labels": [
+      "type:bug",
+      "priority:p3",
+      "in-progress",
+      "area:backend"
+    ],
+    "classification": "misrouted",
+    "evidence": [
+      "github: issue #1199 latest comment 2026-07-22T17:07:21Z by alexander-bain: **Fixed (Queue #233, 7fd7ada2) \u2014 awaiting 2 scheduled runs to confirm.** ## Diagnosis `snapshot_coverage_metrics` was already moved to the heavy queue (#224), so 'now runs' \u2014 but it still SoftTimeLimitExceeded ~1/24h because it ran **two** heavy queries: the coverage LATERAL scan AND a `market_status` CTE writing `bainluck:backfill_winners_status`. ## Fix (chunk under the limit, via dead-code removal) That second CTE **duplicated** the dedicated `precompute_backfill_winners_status` task, which o"
+    ],
+    "closure_comment_draft": "Do not close #1199: Review/Verify conflicts with its active in-progress label/ownership. Reconcile owner and status first.",
+    "required_live_proof_if_not_close": "Confirm the active owner; move to In Progress or remove the stale in-progress label before verification.",
+    "confidence": "high"
+  },
+  {
+    "number": 1207,
+    "title": "G2 premature-live \u2014 event status flips live + ESPN win-prob ~4h before first pitch",
+    "labels": [
+      "area:event-details",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1207 latest comment 2026-07-22T21:36:24Z by alexander-bain: ## Queue #237 Item 4 \u2014 backend premature-live guard shipped (Review/Verify) **Root writer fixed (SHA dbab9ef7, CI 29958634147 green + deployed).** The premature-live flips came from the ESPN sync path in `app/utils/espn_helpers.py`, which trusted ESPN's `status==\"in\"` (and its pregame win-prob) with no \"game has started\" check. Three writers were ungated: 1. `update_event_fields_from_espn` scheduled\u2192live branch. 2. `_sync_espn_live_events` event-creation status. 3. `write_espn_win_probability` ("
+    ],
+    "closure_comment_draft": "Do not close #1207 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1219,
+    "title": "WHAT-HIT card can't name the champion \u2014 concept feed payload emits no graded winner",
+    "labels": [
+      "area:discover-ranking",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1219 latest comment 2026-07-23T01:46:38Z by alexander-bain: **#1219 verification \u2014 ops lane r251 (2026-07-23).** **Code path verified.** `_resolve_concept_champion` (`feed.py:6490`) emits `data.winner` on a settled concept's WHAT-HIT card when the concept envelope's `primary.competitors[]` has exactly one `won=True`; the L2-159 renderer consumes it (frontend contract `marqueeWhatHit.test.tsx`). CI-gated by `TestResolveConceptChampion` (4 cases), green on v3540. **Live proof is not yet clean \u2014 a caveat surfaced.** There is exactly one currently-settled ma"
+    ],
+    "closure_comment_draft": "Do not close #1219 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1221,
+    "title": "Native Discover starvation: client-side dismiss + group-collapse shrink feed to ~2 cards (API is healthy)",
+    "labels": [
+      "area:discover-ranking",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1221 latest comment 2026-07-23T19:31:35Z by alexander-bain: Verification of the fix is now tracked as a needs-user check in #1243 (native pull-to-refresh dogfood). This issue closes on Alex's confirmation there. [ops-lane]"
+    ],
+    "closure_comment_draft": "Do not close #1221 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1228,
+    "title": "[Flow Sentinel] search misses gold-set entities (3 failing, 25 checked)",
+    "labels": [
+      "area:search",
+      "priority:p2",
+      "alert-intake"
+    ],
+    "classification": "regressed",
+    "evidence": [
+      "github: issue #1228 latest comment 2026-07-25T07:12:12Z by alexander-bain: Flow Sentinel re-observed this failure: 1 failing of 25 checked (fingerprint `b3de76c58ce6`). Still open."
+    ],
+    "closure_comment_draft": "Do not close #1228: current issue evidence reports recurrence, an active residual, or loss of monitoring. Move to Ready/In Progress after collision check.",
+    "required_live_proof_if_not_close": "Reproduce current failure, ship the named residual fix, then obtain fresh green evidence.",
+    "confidence": "high"
+  },
+  {
+    "number": 1230,
+    "title": "Poly link rate 72.5% (drag): unlinked open Polymarket residual is upstream coverage (ITF/Setka-TT/minor soccer+cricket), not a name/ticker matching bug",
+    "labels": [
+      "area:event-details",
+      "type:quality",
+      "needs-investigation"
+    ],
+    "classification": "blocked-on-dependency",
+    "evidence": [
+      "github: issue #1230 latest comment 2026-07-24T19:01:25Z by alexander-bain: ## Code shipped (Queue #249 Item 3), live metric verification PENDING Two changes landed + deployed (commit 568f32de, CI run 30118028675 green): **1. Classifier PREVENTION at ingest** (the real fix \u2014 the earlier work was a repair/retag). Root cause: Setka/TT-Cup Polymarket events have a bare \"Player vs. Player\" parent title that `categorize_by_rules` routed to **baseball** via summer seasonal inference (`futures_categorization.py` `_seasonal_sport_for_college_matchup`), and Polymarket ingests at"
+    ],
+    "closure_comment_draft": "Do not close #1230: move to Blocked/Parked as appropriate and name the implementation, source, seasonal, device, or upstream dependency.",
+    "required_live_proof_if_not_close": "Satisfy the dependency identified in the latest issue comment, then return to Ready or Review/Verify.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1453,
+    "title": "C19: GA4 consent, identity, counting & PII correctness (web)",
+    "labels": [
+      "area:infra",
+      "type:bug"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1453 latest comment 2026-07-27T19:33:00Z by alexander-bain: **SHIPPED** \u2014 L2-190 (Lane 2) at `d38a7e2a`, CI run 30297996201 GREEN (frontend-build \u2713 backend-tests \u2713 deploy \u2713). Implemented all three items: - **Item 1** denied-by-default Consent Mode v2 (no event before an explicit grant; ads always denied; measurement id from `NEXT_PUBLIC_GA_MEASUREMENT_ID`, analytics disabled when absent, no source fallback; dismiss now issues an explicit denied update). - **Item 2** exactly one `page_view` per navigation (removed duplicate `gtag('config')` re-send; `/sea"
+    ],
+    "closure_comment_draft": "Do not close #1453 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1454,
+    "title": "Calibration self-grading leakage (C20/C21): price-derived truth must not grade its own forecast",
+    "labels": [
+      "area:calibration",
+      "type:bug",
+      "priority:p1"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1454 latest comment 2026-07-27T20:59:16Z by alexander-bain: **[ops-lane r283 / OPS-1022] q262+q263 calibration contract \u2014 still BLOCKED on organic cache refresh (do not verify vapor)** Both queues are now deployed: **Queue #262 `aba60394` = v3597 @ 2026-07-27 13:16 PT (20:16Z)** and **Queue #263 `b2ceb834` = v3599 @ 13:46 PT (20:46Z)**. Per #263's own handoff the population fingerprint is now **q263** (not q262), so that is the marker to look for. All calibration contract surfaces still serve **pre-deploy caches**, so the contract remains unobservable th"
+    ],
+    "closure_comment_draft": "Do not close #1454 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1455,
+    "title": "Native Discover must never refill with settled cards (settled means settled)",
+    "labels": [
+      "area:discover-ranking",
+      "type:bug",
+      "priority:p2"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1455 latest comment 2026-07-27T21:09:05Z by alexander-bain: **L2-193 shipped \u2014 C29 repair (commit `ae64bbe6`, CI run 30304883006 = success).** Closes the two C29 defects in `7f5b41f2` without any lifecycle/ranking/card/backend-contract change. **Item 1 \u2014 pagination advances by the server page boundary (C29 P1).** `DiscoverViewModel.loadMoreIfNeeded` (and both `load()` paths) now advance by `offset + limit` (new `pageBoundary(_:from:)` helper), not the tolerant decoder's decoded item count. This matches the backend contract (`feed_items[offset:offset+limi"
+    ],
+    "closure_comment_draft": "Do not close #1455 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  },
+  {
+    "number": 1457,
+    "title": "C30: HTTP shared-cache policy bypasses auth/identity \u2014 protected & personalized responses marked public",
+    "labels": [
+      "area:infra",
+      "priority:p1",
+      "type:security"
+    ],
+    "classification": "needs-live-verification",
+    "evidence": [
+      "github: issue #1457 latest comment 2026-07-27T21:11:56Z by alexander-bain: Fix shipped and deployed. Commit 5d3d93e0; CI run 30305137545 green (backend-tests, frontend-build, deploy all success). Centralized identity-aware cache policy in backend/app/utils/http_cache_policy.py; request_timing middleware now delegates to apply_cache_policy(). Protected/personalized/identity-bearing (Authorization, x-session-id, session_id cookie, /admin, all /api/feed) become private, no-store; route-owned directives (completed event-history 3600s) preserved; anonymous public routes kee"
+    ],
+    "closure_comment_draft": "Do not close #1457 yet: obtain the issue-specific live/device verification requested in its latest comment, then quote timestamped evidence.",
+    "required_live_proof_if_not_close": "Run the exact verification named in the latest issue comment; generic CI or an unrelated sentinel is insufficient.",
+    "confidence": "medium"
+  }
+]
