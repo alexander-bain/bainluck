@@ -35,7 +35,10 @@ _MAIN_CACHE_TTL = 7200
 # population-derived surface (horizon diagnostics, /calibration/examples,
 # bucket-debug, snapshot-health) so a future population change is VISIBLE across
 # all consumers. Bump when _calibration_population_ctes changes materially.
-CALIBRATION_POPULATION_VERSION = "q263"
+# q267 (C44 #1): the crude volume=0 eligibility gate was retired in favor of the
+# bid/trade evidence predicate, so bid-bearing zero-volume Kalshi rows now enter
+# the population and no-evidence phantoms are counted (not silently pre-dropped).
+CALIBRATION_POPULATION_VERSION = "q267"
 
 # L2-73 (#999 §E): the corrections log — "what we found and fixed" — served in the
 # payload so web + native render the same trust panel. Static seed from the #997
@@ -248,13 +251,39 @@ def _get_min_category_outcomes(rc) -> int:
 # calibration query, where ``fo`` is futures_outcomes and ``vm`` carries source).
 # outcome_is_calibration_liquid() is the canonical, unit-tested Python definition
 # of the same predicate — keep the two in sync.
+#
+# Queue #267 (C44 #1): this evidence predicate is ALSO the canonical Kalshi
+# ELIGIBILITY boundary. It supersedes the crude ``COALESCE(fo.volume,-1) != 0``
+# proxy (#827) which excluded confirmed-zero-volume rows BEFORE this predicate
+# could run — silently dropping the bid-bearing ``volume=0`` rows this contract
+# promises to keep (the fixture ``outcome_is_calibration_liquid(0.3, 0) is True``).
+# ``kalshi_liquidity_exists_sql()`` re-emits the predicate against an arbitrary
+# source/outcome-id alias so the population scans that DON'T compute ``is_liquid``
+# as a column (field candidates/divisor, golf over-subscription, fair-fight) apply
+# the SAME evidence contract instead of the volume proxy. It evaluates to TRUE for
+# every non-Kalshi source (poly keeps its own placeholder-band policy downstream)
+# and for Kalshi rows with real bid/trade evidence; FALSE only for Kalshi rows
+# that NEVER showed a bid or trade — the true no-evidence phantoms.
 # ---------------------------------------------------------------------------
-KALSHI_LIQUIDITY_EXISTS = (
-    "(vm.source <> 'kalshi' OR EXISTS (\n"
-    "        SELECT 1 FROM futures_odds_snapshots fos\n"
-    "        WHERE fos.outcome_id = fo.id\n"
-    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
-)
+def kalshi_liquidity_exists_sql(
+    source: str = "vm.source", outcome_id: str = "fo.id"
+) -> str:
+    """Source-aware Kalshi bid/trade evidence predicate (Queue #267).
+
+    Returns the SQL boolean that is TRUE unless ``source`` is Kalshi AND no
+    snapshot ever showed ``yes_bid > 0`` or ``last_price > 0`` for ``outcome_id``.
+    Non-Kalshi sources are always TRUE here (their liquidity policy is applied
+    elsewhere); the caller keeps the volume column out of eligibility entirely.
+    """
+    return (
+        f"({source} <> 'kalshi' OR EXISTS (\n"
+        f"        SELECT 1 FROM futures_odds_snapshots fos\n"
+        f"        WHERE fos.outcome_id = {outcome_id}\n"
+        f"          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+    )
+
+
+KALSHI_LIQUIDITY_EXISTS = kalshi_liquidity_exists_sql()
 
 KALSHI_LIQUIDITY_RULE_TEXT = (
     "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade "
@@ -1217,7 +1246,11 @@ def _calibration_population_ctes(
                   -- settlement_sync) and unknown sources fail closed. Single
                   -- source of truth = resolution_authority.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
-                  AND COALESCE(fo.volume, -1) != 0
+                  -- Queue #267 (C44 #1): evidence-backed liquidity, not the volume
+                  -- proxy. A never-bid/never-traded Kalshi placeholder is not a real
+                  -- band member, so it must not inflate the >=2 over-subscription
+                  -- count; a bid-bearing volume=0 outcome IS real and must count.
+                  AND {kalshi_liquidity_exists_sql(source='mi.source')}
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 2
             ),
@@ -1273,7 +1306,12 @@ def _calibration_population_ctes(
                   -- identical to the ranked_outcomes / golf-placeholder scans so
                   -- candidate detection matches the published population.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
-                  AND COALESCE(fo.volume, -1) != 0
+                  -- Queue #267 (C44 #1): the field ROSTER counts evidence-bearing
+                  -- members only (matching the is_liquid survivor gate), so a
+                  -- bid-bearing volume=0 member is part of the partition and a
+                  -- never-bid/never-traded Kalshi phantom is not — instead of the
+                  -- volume proxy that dropped real bid-bearing volume=0 members.
+                  AND {kalshi_liquidity_exists_sql(source='mi.source')}
                 GROUP BY fo.market_id
                 HAVING COUNT(*) >= 3
             ),
@@ -1288,11 +1326,17 @@ def _calibration_population_ctes(
                     COUNT(*) AS present_eligible_n
                 FROM futures_outcomes fo
                 JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id
                 {curve_price_join}
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
-                  AND COALESCE(fo.volume, -1) != 0
+                  -- Queue #267 (C44 #1): the divisor sums the SAME evidence-bearing
+                  -- roster as mex_field_candidates / the is_liquid survivors, so for
+                  -- a COMPLETE field the divisor equals the survivor sum and the
+                  -- normalized partition still sums to ~1.0 (a phantom's price can
+                  -- never inflate the divisor). Replaces the volume proxy.
+                  AND {kalshi_liquidity_exists_sql(source='mi.source')}
                 GROUP BY fo.market_id
             ),
             group_sizes AS (
@@ -1444,7 +1488,14 @@ def _calibration_population_ctes(
                   -- / settlement_sync) can no longer grade its own forecast, all
                   -- guess-family is excluded, and unknown sources fail closed.
                   AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
-              AND COALESCE(fo.volume, -1) != 0
+                  -- Queue #267 (C44 #1): NO standalone volume gate here. The Kalshi
+                  -- evidence predicate (is_liquid = KALSHI_LIQUIDITY_EXISTS) is
+                  -- computed as a per-outcome flag above and filtered in ``deduped``
+                  -- (WHERE ro.is_liquid). Keeping ALL candidates in ranked_outcomes
+                  -- is what makes kalshi_included / kalshi_excluded honest: a
+                  -- never-bid/never-traded phantom is COUNTED as excluded here, not
+                  -- silently removed at eligibility; a bid-bearing volume=0 row now
+                  -- survives is_liquid and reaches the curve (the C44 #1 fix).
             ),
             -- Queue #257 Item 1: FIELD-COMPLETENESS aggregation. For each
             -- normalization CANDIDATE market (mex/field, single winner over all
@@ -2102,7 +2153,11 @@ async def compute_calibration_payload(db) -> dict:
             WHERE fm.status = 'resolved'
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND COALESCE(fo.volume, -1) != 0
+              -- Queue #267 (C44 #1): the truth census measures the resolution-source
+              -- contract over the documented "resolved + opening-in-(0,1)" shape;
+              -- the crude volume gate was never part of that shape (liquidity is a
+              -- per-source, evidence-based, downstream decision) and dropping it
+              -- keeps the census a faithful pre-liquidity classification.
             GROUP BY 1
         """)
         truth_result = await db.execute(truth_sql)
@@ -3168,7 +3223,11 @@ async def _query_futures_fair_fight_impl(db):
               -- unknown winner can never grade a fair-fight row either. Read-side
               -- only (gotcha #21).
               AND fo.resolution_source IN """ + CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL + """
-              AND COALESCE(fo.volume, -1) != 0
+              -- Queue #267 (C44 #1): fair-fight has no downstream is_liquid gate, so
+              -- the Kalshi evidence predicate IS its liquidity boundary here — the
+              -- same contract as the headline (bid-bearing volume=0 kept, never-bid/
+              -- never-traded phantoms excluded), replacing the volume proxy.
+              AND """ + kalshi_liquidity_exists_sql(source="fm.source") + """
         )
         SELECT source, category, prob, is_winner
         FROM matched_outcomes

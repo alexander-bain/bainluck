@@ -70,6 +70,61 @@ class TestLiquiditySQL:
         assert '"liquidity_filter"' in src
 
 
+class TestNoPrePredicateVolumeGate:
+    """Queue #267 (C44 #1): the crude ``COALESCE(fo.volume,-1) != 0`` eligibility
+    gate (#827) is GONE — it pre-empted the bid/trade evidence predicate and
+    silently dropped the zero-volume/bid-bearing rows the contract keeps. These
+    are the source-level regression guards; the exact row-semantic proof lives in
+    ``test_calibration_canonical_pg.py`` (Postgres-gated). This class is written to
+    FAIL the moment a pre-predicate volume gate returns anywhere in the population
+    scans, so the old false-green (source-string-only) test class can no longer
+    hide the defect.
+    """
+
+    _GATE = "COALESCE(fo.volume, -1) != 0"
+
+    def test_canonical_ctes_have_no_volume_gate(self):
+        # Covers golf_placeholder_markets, mex_field_candidates, mex_field_divisor,
+        # and ranked_outcomes — the four in-CTE scans that carried the gate.
+        assert self._GATE not in precompute_calibration._calibration_population_ctes()
+
+    def test_horizon_population_has_no_volume_gate(self):
+        sql, _ = precompute_calibration._build_time_horizon_sql(days=0)
+        assert self._GATE not in sql
+
+    def test_truth_census_and_payload_have_no_volume_gate(self):
+        import inspect
+
+        src = inspect.getsource(precompute_calibration.compute_calibration_payload)
+        assert self._GATE not in src
+
+    def test_fair_fight_has_no_volume_gate(self):
+        import inspect
+
+        src = inspect.getsource(precompute_calibration._query_futures_fair_fight_impl)
+        assert self._GATE not in src
+
+    def test_evidence_predicate_is_the_eligibility_boundary(self):
+        # The retired gate is REPLACED by the source-aware evidence predicate in
+        # the scans that don't compute is_liquid as a column (roster/divisor/golf).
+        ctes = precompute_calibration._calibration_population_ctes()
+        assert ctes.count("mi.source <> 'kalshi'") >= 3
+        # ranked_outcomes still filters is_liquid downstream (counts stay honest).
+        assert "WHERE ro.is_liquid AND" in ctes
+
+    def test_source_aware_helper_reemits_the_predicate(self):
+        sql = precompute_calibration.kalshi_liquidity_exists_sql(
+            source="mi.source", outcome_id="fo.id"
+        )
+        assert "mi.source <> 'kalshi'" in sql
+        assert "fos.yes_bid > 0 OR fos.last_price > 0" in sql
+        assert "fos.outcome_id = fo.id" in sql
+        # The default constant is exactly the vm.source/fo.id instantiation.
+        assert precompute_calibration.KALSHI_LIQUIDITY_EXISTS == (
+            precompute_calibration.kalshi_liquidity_exists_sql()
+        )
+
+
 class TestExclusionSymmetryCensus:
     """Queue #220/221 Item 3: the poly never-traded cohort is counted, the
     exclusion is parameterized per source, and the asymmetry is surfaced — all

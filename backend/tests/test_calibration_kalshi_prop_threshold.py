@@ -262,8 +262,19 @@ class TestSourceIntelligenceHonorsExclusion:
         # The guess/threshold families are NOT eligible → excluded by omission.
         assert "pass3_threshold" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
         assert "pass2_guess" not in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
-        # And drops zero-volume placeholder rows (illiquid one-sided capture).
-        assert "COALESCE(fo.volume, -1) != 0" in src
+        # Queue #267 (C44 #1): the fair fight excludes illiquid one-sided Kalshi
+        # captures via the bid/trade EVIDENCE predicate — the same contract as the
+        # headline — NOT the crude volume proxy that dropped bid-bearing volume=0
+        # rows. Fair-fight has no downstream is_liquid column, so the predicate is
+        # inlined here (built via kalshi_liquidity_exists_sql keyed on fm.source).
+        assert "COALESCE(fo.volume, -1) != 0" not in src
+        assert 'kalshi_liquidity_exists_sql(source="fm.source")' in src
+        # The helper it calls emits the exact bid/trade evidence predicate.
+        from app.tasks.precompute_calibration import kalshi_liquidity_exists_sql
+
+        pred = kalshi_liquidity_exists_sql(source="fm.source")
+        assert "fm.source <> 'kalshi'" in pred
+        assert "fos.yes_bid > 0 OR fos.last_price > 0" in pred
 
     def test_fair_fight_is_read_side_only(self):
         # Gotcha #21: the fair-fight query must never mutate resolutions/prices.
