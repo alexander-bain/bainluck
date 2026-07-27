@@ -1,8 +1,7 @@
-"""Offline search gold-set evaluator using a local serialized candidate corpus.
+"""Offline entity-correct Search evaluator using C47's probe registry.
 
-The gold markdown is parsed from both the coverage and real-history halves. A
-corpus JSON contains surfaces with ``name``, ``surface`` and optional ``volume``.
-Production concept detectors and futures reranking are imported when available.
+The legacy markdown parser remains available only to identify rows needing
+migration. Scoring requires versioned Search probes with stable entity IDs.
 """
 
 from __future__ import annotations
@@ -11,10 +10,13 @@ import argparse
 import json
 import re
 import sys
-from collections import defaultdict
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
+
+try:
+    from .probe_registry import filter_probes, load_registry
+except ImportError:  # Direct ``python scripts/evals/search_gold_eval.py`` use.
+    from probe_registry import filter_probes, load_registry
 
 BACKEND = Path(__file__).resolve().parents[2]
 if str(BACKEND) not in sys.path:
@@ -51,59 +53,139 @@ def parse_gold_markdown(path: str | Path) -> list[dict[str, str]]:
     return rows
 
 
-def load_corpus(path: str | Path) -> list[dict[str, Any]]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return data if isinstance(data, list) else data.get("items", data.get("rows", []))
+class SearchGoldMigrationError(ValueError):
+    """Raised when legacy gold lacks stable entity identity."""
 
 
-def rank_local(query: str, corpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    from app.routes.events import _apply_search_synonyms, _rerank_search_futures, _strip_search_scaffolding
-
-    terms = _strip_search_scaffolding(re.findall(r"[a-z0-9]+", query.lower()))
-    expanded = _apply_search_synonyms([(term, None) for term in terms])
-    tokens = {token for term, synonym in expanded for token in f"{term} {synonym or ''}".split()}
-    candidates = []
-    for item in corpus:
-        haystack = " ".join(str(item.get(key, "")) for key in ("name", "aliases", "outcomes")).lower()
-        overlap = len(tokens & set(re.findall(r"[a-z0-9]+", haystack)))
-        phrase = query.lower().strip(" ?\"") in haystack
-        if overlap:
-            candidate = dict(item)
-            candidate["_rank"] = (int(phrase), overlap / max(len(tokens), 1), float(item.get("volume") or 0))
-            candidates.append(candidate)
-    candidates.sort(key=lambda item: item["_rank"], reverse=True)
-    futures = [item for item in candidates if item.get("surface") == "market"]
-    if futures:
-        objects = [SimpleNamespace(**item, llm_sport_category=item.get("category"), volume=item.get("volume", 0)) for item in futures]
-        ordered = _rerank_search_futures(objects, expanded)
-        order = {obj.name: index for index, obj in enumerate(ordered)}
-        candidates.sort(key=lambda item: (item.get("surface") == "market", -order.get(item.get("name"), 999), item["_rank"]), reverse=True)
-    return candidates
+def load_result_rows(path: str | Path) -> dict[str, list[dict[str, Any]]]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = payload.get("results", payload) if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise ValueError("SEARCH_RESULTS_INVALID: expected a result-row list")
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = row.get("probe_key") if isinstance(row, dict) else None
+        candidates = row.get("candidates") if isinstance(row, dict) else None
+        if not isinstance(key, str) or not isinstance(candidates, list):
+            raise ValueError("SEARCH_RESULTS_INVALID: probe_key and candidates are required")
+        if key in result:
+            raise ValueError(f"SEARCH_RESULTS_DUPLICATE: {key}")
+        result[key] = candidates
+    return result
 
 
-def evaluate(gold: list[dict[str, str]], corpus: list[dict[str, Any]]) -> dict[str, Any]:
-    buckets: dict[str, list[bool]] = defaultdict(list)
-    misses = []
-    for row in gold:
-        ranked = rank_local(row["query"], corpus)
-        top = ranked[0] if ranked else None
-        expected = row["expected_surface"]
-        ok = top is not None and (expected == "any" or expected in str(top.get("surface", "")))
-        buckets[row["class"]].append(ok)
-        if not ok:
-            misses.append({"query": row["query"], "expected_surface": expected, "actual_top_3": [{"name": x.get("name"), "surface": x.get("surface")} for x in ranked[:3]]})
-    return {"total": len(gold), "top_1_rate": sum(map(sum, buckets.values())) / len(gold) if gold else 0, "per_class": {key: {"correct": sum(values), "total": len(values), "rate": sum(values) / len(values)} for key, values in sorted(buckets.items())}, "worst_misses": misses[:20]}
+def require_entity_gold(rows: list[dict[str, Any]]) -> None:
+    """Reject legacy surface-only rows instead of recreating the old false green."""
+
+    missing = [row.get("query", "<unknown>") for row in rows if not row.get("expected_entity_id")]
+    if missing:
+        raise SearchGoldMigrationError(
+            "SEARCH_GOLD_MIGRATION_REQUIRED: stable expected_entity_id missing for "
+            + ", ".join(sorted(missing))
+        )
+
+
+def _score_probe(probe: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    identity = probe["identity"]
+    oracle = probe["oracle"]["answer"]
+    lifecycle = probe["lifecycle"]
+    key = identity["probe_key"]
+    expected_ids = {oracle["expected_entity_id"], *oracle.get("allowed_entity_ids", [])}
+    expected_surfaces = set(oracle["expected_surfaces"])
+    expected_type = oracle["expected_item_type"]
+
+    top = candidates[0] if candidates else None
+    expected_rank = next(
+        (index for index, candidate in enumerate(candidates, 1) if candidate.get("entity_id") in expected_ids),
+        None,
+    )
+    if top is None:
+        code = "NO_RESULTS"
+    elif top.get("entity_id") not in expected_ids:
+        code = "ENTITY_NOT_TOP"
+    elif "any" not in expected_surfaces and top.get("surface") not in expected_surfaces:
+        code = "SURFACE_MISMATCH"
+    elif top.get("item_type") != expected_type:
+        code = "TYPE_MISMATCH"
+    else:
+        code = "PASS"
+
+    passed = code == "PASS"
+    known = lifecycle["known_failure_status"]
+    if known == "xfail":
+        disposition = "xpass" if passed else "xfail"
+    elif known == "fixed" and not passed:
+        disposition = "regression"
+    else:
+        disposition = "pass" if passed else "fail"
+    return {
+        "probe_key": key,
+        "probe_version": identity["probe_version"],
+        "query_class": oracle["query_class"],
+        "code": code,
+        "disposition": disposition,
+        "expected_rank": expected_rank,
+        "reciprocal_rank": 1 / expected_rank if expected_rank else 0.0,
+        "actual_top": None if top is None else {
+            "entity_id": top.get("entity_id"),
+            "surface": top.get("surface"),
+            "item_type": top.get("item_type"),
+        },
+    }
+
+
+def evaluate_entity_probes(
+    probes: list[dict[str, Any]],
+    results: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Score supplied ranked results against validated Search probes."""
+
+    details = []
+    seen_keys = set()
+    for probe in sorted(probes, key=lambda row: (row["identity"]["probe_key"], row["identity"]["probe_version"])):
+        if probe["identity"]["task_type"] != "search_entity":
+            raise ValueError("SEARCH_TASK_TYPE_INVALID")
+        key = probe["identity"]["probe_key"]
+        if key in seen_keys:
+            raise ValueError(f"SEARCH_PROBE_DUPLICATE: {key}")
+        seen_keys.add(key)
+        details.append(_score_probe(probe, results.get(key, [])))
+
+    counts = {name: sum(row["disposition"] == name for row in details) for name in ("pass", "fail", "xfail", "xpass", "regression")}
+    strict_passes = sum(row["code"] == "PASS" for row in details)
+    by_class: dict[str, dict[str, int]] = {}
+    for row in details:
+        bucket = by_class.setdefault(row["query_class"], {"total": 0, "passed": 0})
+        bucket["total"] += 1
+        bucket["passed"] += row["code"] == "PASS"
+    return {
+        "total": len(details),
+        "entity_top_1_rate": strict_passes / len(details) if details else 0.0,
+        "mean_reciprocal_rank": sum(row["reciprocal_rank"] for row in details) / len(details) if details else 0.0,
+        "lifecycle_counts": counts,
+        "per_query_class": {key: by_class[key] for key in sorted(by_class)},
+        "details": details,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold", required=True)
-    parser.add_argument("--corpus", required=True)
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--registry")
+    parser.add_argument("--split", choices=("train", "tune", "test", "canary"))
+    parser.add_argument("--results")
+    parser.add_argument("--legacy-gold")
     args = parser.parse_args()
-    report = evaluate(parse_gold_markdown(args.gold), load_corpus(args.corpus))
+    if args.legacy_gold:
+        require_entity_gold(parse_gold_markdown(args.legacy_gold))
+        raise AssertionError("legacy parser unexpectedly produced entity gold")
+    if not (args.registry and args.split and args.results):
+        parser.error("--registry, --split, and --results are required")
+    records = load_registry(args.registry)
+    probes = filter_probes(records, task_type="search_entity", split=args.split)
+    report = evaluate_entity_probes(probes, load_result_rows(args.results))
     print(json.dumps(report, indent=2))
-    return 1 if report["top_1_rate"] < 1 else 0
+    counts = report["lifecycle_counts"]
+    return 1 if counts["fail"] or counts["regression"] or counts["xpass"] else 0
 
 
 if __name__ == "__main__":

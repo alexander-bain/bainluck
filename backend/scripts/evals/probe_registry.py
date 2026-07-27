@@ -151,6 +151,12 @@ def validate_registry(
         fixture_hash = evidence.get("fixture_hash")
         if not isinstance(fixture_hash, str) or not _HASH_RE.fullmatch(fixture_hash):
             errors.append(_error("EVIDENCE_HASH_INVALID", f"{base}.evidence.fixture_hash", "fixture_hash must be lowercase sha256 hex"))
+        elif evidence.get("hash_scope") == "presentation/v1":
+            observed_hash = hashlib.sha256(
+                json.dumps(record.get("presentation", {}), sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if fixture_hash != observed_hash:
+                errors.append(_error("EVIDENCE_HASH_MISMATCH", f"{base}.evidence.fixture_hash", "fixture hash does not match canonical presentation"))
         if not all(evidence.get(field) not in (None, "") for field in ("source", "provenance", "license_usage_note")):
             errors.append(_error("EVIDENCE_MISSING", f"{base}.evidence", "source, provenance, and license_usage_note are required"))
         if evidence.get("pii_redacted") is not True:
@@ -176,10 +182,16 @@ def validate_registry(
         votes = oracle.get("votes")
         if isinstance(votes, dict) and len(votes) == 2 and len(set(votes.values())) == 2 and oracle.get("answer") not in (None, ""):
             errors.append(_error("TIE_RECORDED_AS_TRUTH", f"{base}.oracle.answer", "a 1-1 tie must remain unresolved"))
-        if task_type == "search_entity" and kind in {"objective", "known_answer"}:
+        if task_type == "search_entity" and kind in {"objective", "known_answer", "adjudicated"}:
             answer = oracle.get("answer")
             if not isinstance(answer, dict) or not answer.get("expected_entity_id"):
                 errors.append(_error("SEARCH_EXPECTED_ENTITY_MISSING", f"{base}.oracle.answer", "objective Search gold requires expected_entity_id"))
+            elif not isinstance(answer.get("allowed_entity_ids", []), list):
+                errors.append(_error("SEARCH_ALLOWED_IDS_INVALID", f"{base}.oracle.answer.allowed_entity_ids", "allowed entity IDs must be a list"))
+            elif not isinstance(answer.get("expected_surfaces"), list) or not answer["expected_surfaces"]:
+                errors.append(_error("SEARCH_SURFACES_INVALID", f"{base}.oracle.answer.expected_surfaces", "Search gold requires expected surfaces"))
+            elif not answer.get("expected_item_type") or not answer.get("query_class"):
+                errors.append(_error("SEARCH_ORACLE_INCOMPLETE", f"{base}.oracle.answer", "Search gold requires item type and query class"))
 
         presentation = record.get("presentation", {})
         normalized_presentation = "\n".join(_strings(presentation)).casefold()

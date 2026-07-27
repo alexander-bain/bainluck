@@ -1,0 +1,91 @@
+{
+  "metadata": {
+    "schema_version": "probe-registry/v1",
+    "task_type": "search_entity",
+    "label_schema": "search_entity/v1",
+    "description": "Synthetic entity-correct Search gold. Queries are presentation; oracle IDs are evaluator-only."
+  },
+  "probes": [
+    {
+      "identity": {"probe_key": "search-red-sox-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "team", "question_id": "synthetic:query:red-sox", "entity_ids": ["synthetic:team:boston-red-sox"]},
+      "evidence": {"fixture_hash": "4bca3ea05aea6e2dece5718e81fa39048929f817d29e66fafc9352c822b03e91", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "wrong-entity/correct-surface counterclass", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:team:boston-red-sox", "allowed_entity_ids": [], "expected_surfaces": ["team"], "expected_item_type": "team", "query_class": "canonical_team"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic canonical entity registry", "evidence": "team name and league identity", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "baseline", "failure_family": "wrong-entity-same-surface", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "entity:synthetic-red-sox", "contamination_lineage": ["lineage:synthetic-red-sox"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "red sox"}
+    },
+    {
+      "identity": {"probe_key": "search-us-open-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "concept", "question_id": "synthetic:query:us-open", "entity_ids": ["synthetic:concept:us-open-tennis", "synthetic:concept:us-open-golf"]},
+      "evidence": {"fixture_hash": "1799d44b7a471c78478c1511b91f49fe600411f71186b4879cf3f427a8458490", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "ambiguous tournament query", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "adjudicated", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:concept:us-open-tennis", "allowed_entity_ids": ["synthetic:concept:us-open-golf"], "expected_surfaces": ["concept"], "expected_item_type": "concept", "query_class": "ambiguous_tournament"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "declared ambiguity set", "evidence": "both tournaments are valid unqualified interpretations", "adjudication_history": [{"at": "2026-07-27T00:00:00Z", "authority": "search-evals", "decision": "allow both concepts"}]},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "ambiguous", "failure_family": "tournament-homonym", "issue_gotcha": "#1206", "known_failure_status": "xfail"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "query-family:synthetic-us-open", "contamination_lineage": ["lineage:synthetic-us-open"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "US Open"}
+    },
+    {
+      "identity": {"probe_key": "search-bos-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "team", "question_id": "synthetic:query:bos", "entity_ids": ["synthetic:team:boston-celtics", "synthetic:team:boston-red-sox", "synthetic:team:boston-bruins"]},
+      "evidence": {"fixture_hash": "c0593fe09dc4cb82fc8d86352aa62d8a0b1fb898b1ef17ff647f22d9769f798d", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "city abbreviation ambiguity", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "adjudicated", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:team:boston-celtics", "allowed_entity_ids": ["synthetic:team:boston-red-sox", "synthetic:team:boston-bruins"], "expected_surfaces": ["team"], "expected_item_type": "team", "query_class": "ambiguous_alias"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "declared city-team ambiguity set", "evidence": "unqualified city abbreviation admits multiple teams", "adjudication_history": [{"at": "2026-07-27T00:00:00Z", "authority": "search-evals", "decision": "allow declared Boston teams"}]},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "ambiguous", "failure_family": "league-collision", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "query-family:synthetic-bos", "contamination_lineage": ["lineage:synthetic-bos"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "BOS"}
+    },
+    {
+      "identity": {"probe_key": "search-world-cup-concept-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "concept", "question_id": "synthetic:query:world-cup", "entity_ids": ["synthetic:concept:world-cup"]},
+      "evidence": {"fixture_hash": "40e2585f9b45c15220dbbf045ee6245eaaec0d0aefd996fc5c923954e059b8a5", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "concept/event/market counterclass", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:concept:world-cup", "allowed_entity_ids": [], "expected_surfaces": ["concept"], "expected_item_type": "concept", "query_class": "concept_intent"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic intent fixture", "evidence": "unqualified competition name resolves to its hub", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "adversarial", "failure_family": "surface-type-confusion", "issue_gotcha": null, "known_failure_status": "fixed"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "entity:synthetic-world-cup", "contamination_lineage": ["lineage:synthetic-world-cup-concept"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "World Cup"}
+    },
+    {
+      "identity": {"probe_key": "search-world-cup-event-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "event", "question_id": "synthetic:query:world-cup-final", "entity_ids": ["synthetic:event:world-cup-final"]},
+      "evidence": {"fixture_hash": "64046f576704987311d8a29ace613463f7ea26ca148c3e90b143aaa636736e01", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "qualified event intent", "valid_at": "2026-08-01T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:event:world-cup-final", "allowed_entity_ids": [], "expected_surfaces": ["event"], "expected_item_type": "event", "query_class": "event_intent"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic scheduled-event identity", "evidence": "qualified teams and final identify one event", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "baseline", "failure_family": "surface-type-confusion", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "event:synthetic-world-cup-final", "contamination_lineage": ["lineage:synthetic-world-cup-event"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "Team Alpha vs Team Beta World Cup final"}
+    },
+    {
+      "identity": {"probe_key": "search-stale-alias-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "team", "question_id": "synthetic:query:oakland-as", "entity_ids": ["synthetic:team:athletics"]},
+      "evidence": {"fixture_hash": "e44fa3d0cc1edc28602f0c129c803ba69e5e1232008ffc4fafd20b7e7db0d7cc", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "historical alias fixture", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:team:athletics", "allowed_entity_ids": [], "expected_surfaces": ["team"], "expected_item_type": "team", "query_class": "stale_alias"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic alias registry", "evidence": "historical alias maps to canonical team identity", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "regression", "failure_family": "stale-alias", "issue_gotcha": null, "known_failure_status": "fixed"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "entity:synthetic-athletics", "contamination_lineage": ["lineage:synthetic-athletics"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "Oakland A's"}
+    },
+    {
+      "identity": {"probe_key": "search-full-question-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "market", "question_id": "synthetic:query:wedding-location", "entity_ids": ["synthetic:market:wedding-location"]},
+      "evidence": {"fixture_hash": "3b6f3e426939bb2996ef944bcf26f4ea37e115b3723f7c0ed77dd2a6550eaab9", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "full-question market lookup", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:market:wedding-location", "allowed_entity_ids": [], "expected_surfaces": ["market"], "expected_item_type": "market", "query_class": "full_question"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic exact-question identity", "evidence": "complete question identifies one market", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "baseline", "failure_family": "full-question-miss", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "market:synthetic-wedding-location", "contamination_lineage": ["lineage:synthetic-wedding-location"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "Where will Taylor Swift and Travis Kelce's wedding occur?"}
+    },
+    {
+      "identity": {"probe_key": "search-zero-result-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "concept", "question_id": "synthetic:query:robotics-cup", "entity_ids": ["synthetic:concept:robotics-cup"]},
+      "evidence": {"fixture_hash": "495a8c7c5c492802aedf7a0c9b318dfd68651429dd1ba56020cad3e0a3dae65a", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "zero-result counterclass", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:concept:robotics-cup", "allowed_entity_ids": [], "expected_surfaces": ["any"], "expected_item_type": "concept", "query_class": "expected_surface_any"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic canonical entity registry", "evidence": "the entity exists even when any surface is acceptable", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "adversarial", "failure_family": "empty-any-false-green", "issue_gotcha": "#1206", "known_failure_status": "xfail"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "entity:synthetic-robotics-cup", "contamination_lineage": ["lineage:synthetic-robotics-cup"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "Robotics Cup"}
+    },
+    {
+      "identity": {"probe_key": "search-market-type-001", "probe_version": 1, "schema_version": "probe-registry/v1", "surface": "search", "task_type": "search_entity", "item_type": "market", "question_id": "synthetic:query:alpha-champion", "entity_ids": ["synthetic:market:alpha-champion"]},
+      "evidence": {"fixture_hash": "388a2ef87ebc111c1e79b22464cbb6ec640b4324edd386ef23f95707c4c20a47", "hash_scope": "presentation/v1", "source": "synthetic", "provenance": "market-versus-concept type counterclass", "captured_at": "2026-07-27T00:00:00Z", "license_usage_note": "synthetic; unrestricted", "pii_redacted": true},
+      "oracle": {"oracle_kind": "objective", "label_schema": "search_entity/v1", "label_schema_version": 1, "answer": {"expected_entity_id": "synthetic:market:alpha-champion", "allowed_entity_ids": [], "expected_surfaces": ["market"], "expected_item_type": "market", "query_class": "market_intent"}, "allowed_alternatives": [], "abstain_allowed": false, "authority": "synthetic exact-market identity", "evidence": "question wording identifies a market rather than its parent concept", "adjudication_history": []},
+      "lifecycle": {"state": "active", "owner": "search-evals", "difficulty": "adversarial", "failure_family": "surface-type-confusion", "issue_gotcha": null, "known_failure_status": "pass"},
+      "audience_safety": {"reviewer_audience": "engineer", "kid_facing": false, "guardian_safety_authority": null, "privacy_sensitivity": "none"},
+      "isolation": {"split": "test", "real_world_group_key": "market:synthetic-alpha-champion", "contamination_lineage": ["lineage:synthetic-alpha-champion"], "prompt_version": null, "model_version": null, "scorer_version": "search-entity/v1"},
+      "presentation": {"query": "Will Team Alpha win the championship?"}
+    }
+  ]
+}
