@@ -2019,18 +2019,21 @@ def send_morning_digest(self):
     return _tracked_run("morning_digest", _run_morning_digest())
 
 
-# Queue 272 (#1459): the canonical compute has grown to ~600s on the production
-# population (last success measured 605.8s — right AT the old 600s soft limit),
-# so the hourly beat oscillated across the boundary and kept dying with
-# SoftTimeLimitExceeded BEFORE it could publish, blanking the cache once the 2h
-# TTL expired. The compute is a single canonical CTE whose semantics are frozen
-# by the queue gates, so it cannot be chunked; the fix is to give it real
-# headroom (soft 900 / hard 960) so a ~600s run completes and publishes instead
-# of repeating the same expensive-then-killed prefix every hour. Memory is
-# unchanged (same payload built either way); the heavy lane (concurrency 2,
-# hourly cadence, siblings 6h-staggered) absorbs the longer hold. The durable
-# last-good key (see _precompute_calibration_main) covers any residual overrun.
-@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.precompute_calibration_main")
+# Queue 272 (#1459): the canonical compute is a single frozen-semantics CTE whose
+# wall time on the production population VARIES widely with concurrent DB load —
+# measured 605.8s at a quiet moment (18:24 UTC) but 910s under a 399-deep
+# background backfill queue (22:33 UTC). At the old 600s (then 900s) soft limit it
+# kept dying with SoftTimeLimitExceeded BEFORE it could publish, so once the 2h
+# TTL expired the cache blanked and /api/calibration 503'd. The gates forbid
+# chunking/changing the query, so the fix is real headroom over the observed
+# contended range: soft 1500 / hard 1560 (25/26 min). One successful run warms the
+# fresh key AND the durable 7-day last-good key (see _precompute_calibration_main),
+# after which any later overrun is invisible to the route (it serves last-good as
+# stale). Memory is unchanged (same payload); the heavy lane (concurrency 2,
+# hourly cadence, siblings 6h-staggered) absorbs the longer hold. The underlying
+# query cost / backfill DB-contention is a separate perf follow-up (#1197 stays
+# open) — this queue restores availability, not compute speed.
+@celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
     """Precompute main /api/calibration response and cache in Redis (every 1h)."""
     from app.tasks.precompute_calibration import _precompute_calibration_main
