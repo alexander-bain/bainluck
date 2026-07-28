@@ -47,6 +47,32 @@ final class DiscoverViewModel: ObservableObject {
     /// injectable so tests can assert emitted events deterministically.
     private let telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)?
 
+    /// Total wall-clock budget for transient retries of the initial load
+    /// (L2-201 / #1472). One budget across ALL retries — NOT a fresh timeout per
+    /// attempt — so a slow/timing-out request that consumes the budget yields a
+    /// single attempt rather than multiplying one load into many long requests
+    /// (C42 P3). Injectable so tests drive it deterministically.
+    private let retryBudget: TimeInterval
+    /// Backoff between transient retries, clamped to the remaining budget.
+    private let retryBackoff: TimeInterval
+
+    /// Monotonic load identity (L2-201 / #1472). Each `load()` claims the next
+    /// value; a load whose generation is superseded by a newer `load()` (pull to
+    /// refresh, account switch, rapid re-entry) discards its late response instead
+    /// of overwriting the current session's feed. Prevents a stale in-flight
+    /// response from one identity clobbering another's.
+    private var loadGeneration = 0
+
+    /// Bounded first page (L2-201 / #1472). The initial load requests only enough
+    /// cards for the first viewport so first paint no longer waits on the full
+    /// former window to transfer/decode/interleave (C42 P1). The remaining pages
+    /// load in the background through the existing scroll-driven
+    /// `loadMoreIfNeeded` pagination/merge contract (DiscoverView prefetches ~3
+    /// cards before the rendered window's end). The backend ranks the full
+    /// candidate universe before slicing, so a 50-card first page returns the
+    /// first 50 of the former 200 in the same order.
+    static let firstPageLimit = 50
+
     /// Upper bound on how many consecutive duplicate-only / ineligible server
     /// pages a single loadMore pass will scan before surfacing a retryable
     /// error instead of spinning forever (L2-192 Item 2). Each page is up to
@@ -56,11 +82,15 @@ final class DiscoverViewModel: ObservableObject {
     init(
         client: DiscoverFeedProviding = APIClient.shared,
         lastGood: DiscoverLastGoodReading? = APIClient.shared,
-        telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) }
+        telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) },
+        retryBudget: TimeInterval = 6,
+        retryBackoff: TimeInterval = 1
     ) {
         self.client = client
         self.lastGood = lastGood
         self.telemetry = telemetry
+        self.retryBudget = retryBudget
+        self.retryBackoff = retryBackoff
     }
 
     private static let sportsCategories: Set<String> = [
@@ -71,6 +101,12 @@ final class DiscoverViewModel: ObservableObject {
 
     @MainActor
     func load() async {
+        // Claim a load identity so a superseded (older) load discards its late
+        // response instead of overwriting a newer session's feed (L2-201 / #1472).
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let loadStart = Date()
+
         // Stale-while-revalidate (#1465): on a cold view model, seed the last
         // successful payload from disk so a first card renders immediately instead
         // of blocking on the 9–13s cold `/api/feed` miss (#1459). The view re-runs
@@ -78,14 +114,20 @@ final class DiscoverViewModel: ObservableObject {
         // extends how long a settled/aged card may survive.
         if items.isEmpty, let lastGood {
             let t0 = Date()
-            if let cached = await lastGood.loadLastGoodFeed() {
+            let cached = await lastGood.loadLastGoodFeed()
+            // A newer load() started while we read the disk cache — its identity
+            // owns the feed now; do not seed stale content over it.
+            guard generation == loadGeneration else { return }
+            if let cached {
                 let renderable = Self.renderable(cached.response.items)
                 if renderable.isEmpty {
                     telemetry?(DiscoverFeedTelemetry(
                         outcome: .cacheMiss, cacheDecodeMs: Self.elapsedMs(since: t0),
-                        networkMs: nil, itemCount: 0, cacheAgeSeconds: nil))
+                        itemCount: 0))
                 } else {
+                    let mergeStart = Date()
                     items = Self.interleave(renderable)
+                    let mergeMs = Self.elapsedMs(since: mergeStart)
                     hasMore = cached.response.hasMore
                     nextOffset = Self.pageBoundary(cached.response, from: 0)
                     loading = false
@@ -95,13 +137,15 @@ final class DiscoverViewModel: ObservableObject {
                     lastGoodStoredAt = cached.storedAt
                     telemetry?(DiscoverFeedTelemetry(
                         outcome: .cacheHitServed, cacheDecodeMs: Self.elapsedMs(since: t0),
-                        networkMs: nil, itemCount: renderable.count,
-                        cacheAgeSeconds: cached.age(now: Date())))
+                        itemCount: renderable.count,
+                        cacheAgeSeconds: cached.age(now: Date()),
+                        mergeMs: mergeMs,
+                        firstCardMs: Self.elapsedMs(since: loadStart)))
                 }
             } else {
                 telemetry?(DiscoverFeedTelemetry(
                     outcome: .cacheMiss, cacheDecodeMs: Self.elapsedMs(since: t0),
-                    networkMs: nil, itemCount: 0, cacheAgeSeconds: nil))
+                    itemCount: 0))
             }
         }
 
@@ -111,27 +155,36 @@ final class DiscoverViewModel: ObservableObject {
             loading = true
             error = nil
         }
+        // Whether a first card is already on screen from the cache seed. When
+        // false, the network success below is what produces first paint, so its
+        // `firstCardMs` is the true cold time-to-first-card.
+        let seededFromCache = !items.isEmpty
 
+        // One bounded first-page fetch with deadline-aware, classified retries
+        // (L2-201 / #1472). The prior code re-issued a normalized-identical
+        // `event_pct: nil` fallback (a no-op the backend collapses to the same
+        // Discover page) and retried EVERY error — decode/4xx included — up to a
+        // six-request ceiling. This makes a single attempt, retries only transient
+        // transport / 5xx / 429 failures, and only while one shared budget remains.
         let netStart = Date()
-        for attempt in 1...3 {
+        let deadline = Date().addingTimeInterval(retryBudget)
+        while true {
             do {
-                let response = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: 0.15, cacheTTL: nil)
-                let renderable = Self.renderable(response.items)
+                let response = try await client.fetchDiscoverFeed(
+                    limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
+                // A newer load() superseded this one mid-flight (refresh / account
+                // switch) — drop this response rather than overwrite (C42, races).
+                guard generation == loadGeneration else { return }
 
-                if renderable.count < 10 {
-                    let fallback = try await client.fetchDiscoverFeed(limit: 200, offset: 0, eventPct: nil, cacheTTL: nil)
-                    let fallbackRenderable = Self.renderable(fallback.items)
-                    items = Self.interleave(fallbackRenderable)
-                    hasMore = fallback.hasMore
-                    // Advance by the SERVER page boundary (offset + limit), not the
-                    // decoded item count — the tolerant decoder drops malformed rows,
-                    // so initial and incremental loads must share one contract (C29).
-                    nextOffset = Self.pageBoundary(fallback, from: 0)
-                } else {
-                    items = Self.interleave(renderable)
-                    hasMore = response.hasMore
-                    nextOffset = Self.pageBoundary(response, from: 0)
-                }
+                let renderable = Self.renderable(response.items)
+                let mergeStart = Date()
+                items = Self.interleave(renderable)
+                let mergeMs = Self.elapsedMs(since: mergeStart)
+                hasMore = response.hasMore
+                // Advance by the SERVER page boundary (offset + limit), not the
+                // decoded item count — the tolerant decoder drops malformed rows,
+                // so initial and incremental loads must share one contract (C29).
+                nextOffset = Self.pageBoundary(response, from: 0)
 
                 // Fresh server content replaces last-good without blanking or a
                 // local reorder — the server order is preserved as decoded (#1465).
@@ -141,9 +194,10 @@ final class DiscoverViewModel: ObservableObject {
                 refreshFailedShowingCache = false
                 lastGoodStoredAt = nil
                 telemetry?(DiscoverFeedTelemetry(
-                    outcome: .revalidateSuccess, cacheDecodeMs: nil,
+                    outcome: .revalidateSuccess,
                     networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
-                    cacheAgeSeconds: nil))
+                    mergeMs: mergeMs,
+                    firstCardMs: seededFromCache ? nil : Self.elapsedMs(since: loadStart)))
                 return
             } catch is CancellationError {
                 loading = false
@@ -152,35 +206,83 @@ final class DiscoverViewModel: ObservableObject {
                 loading = false
                 return
             } catch {
-                print("DiscoverView load error (attempt \(attempt)/3): \(error)")
-                if attempt < 3 {
-                    try? await Task.sleep(for: .seconds(1.5))
-                }
+                // A newer load() owns the feed — stop silently, let it drive state.
+                guard generation == loadGeneration else { return }
+                print("DiscoverView load error: \(error)")
+                // Only transient transport / 5xx / 429 self-heal; decode and
+                // non-retryable 4xx cannot, so never spend a retry on them. And a
+                // retry happens only while the ONE shared budget still has time —
+                // a request that itself burned the budget yields no further attempt.
+                let remaining = deadline.timeIntervalSinceNow
+                guard Self.isRetryable(error), remaining > 0 else { break }
+                try? await Task.sleep(for: .seconds(min(retryBackoff, remaining)))
+                guard generation == loadGeneration else { return }
             }
         }
 
         // All network attempts failed. Never blank last-good content — keep it and
         // tell the truth that the refresh failed (#1465). With nothing cached, fall
         // to the honest error state exactly as before.
+        guard generation == loadGeneration else { return }
         loading = false
         if !items.isEmpty {
             refreshFailedShowingCache = true
             error = "Showing recent markets — couldn't refresh"
             telemetry?(DiscoverFeedTelemetry(
-                outcome: .revalidateFailedKeptCache, cacheDecodeMs: nil,
+                outcome: .revalidateFailedKeptCache,
                 networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
                 cacheAgeSeconds: lastGoodStoredAt.map { Date().timeIntervalSince($0) }))
         } else {
             error = "Couldn't load feed"
             telemetry?(DiscoverFeedTelemetry(
-                outcome: .revalidateFailedNoCache, cacheDecodeMs: nil,
-                networkMs: Self.elapsedMs(since: netStart), itemCount: 0, cacheAgeSeconds: nil))
+                outcome: .revalidateFailedNoCache,
+                networkMs: Self.elapsedMs(since: netStart), itemCount: 0))
         }
     }
 
-    /// Cards the feed can actually render (event / futures / tournament / concept).
+    /// Whether a failed fetch should be retried (L2-201 / #1472). Only transient
+    /// transport failures, 5xx, and 429 can self-heal; decoding/schema failures,
+    /// non-retryable 4xx, invalid URLs, and cancellation cannot, so retrying them
+    /// only multiplies work (C42 P3). Handles both `APIError` (production) and the
+    /// raw `URLError`/`CancellationError` deterministic fakes throw in tests.
+    static func isRetryable(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let api = error as? APIError {
+            switch api {
+            case .networkError:
+                return !api.isCancellation
+            case .httpError(let code, _):
+                return code == 429 || (500...599).contains(code)
+            case .decodingError, .invalidURL:
+                return false
+            }
+        }
+        if let url = error as? URLError {
+            return url.code != .cancelled
+        }
+        return false
+    }
+
+    /// Cards the feed can actually render, admitted through ONE shared
+    /// predicate (L2-201 / #1472 — C42 P1). Previously this dropped `bundle`
+    /// cards even though `DiscoverView` has a full comparison-bundle render path,
+    /// so feed-driven bundles were silently discarded from the initial page AND
+    /// dragged the renderable count below the old fallback threshold. A bundle is
+    /// admitted only when it carries at least one renderable child; an empty /
+    /// all-ineligible bundle contributes no card (matching DiscoverView's bundle
+    /// sanitization) and must not seed a first card or inflate the page.
     private static func renderable(_ items: [FeedItem]) -> [FeedItem] {
-        items.filter { $0.event != nil || $0.futures != nil || $0.tournament != nil || $0.concept != nil }
+        items.filter(isRenderable)
+    }
+
+    private static func isRenderable(_ item: FeedItem) -> Bool {
+        if item.event != nil || item.futures != nil || item.tournament != nil || item.concept != nil {
+            return true
+        }
+        if let bundle = item.bundle {
+            return bundle.items.contains(where: isRenderable)
+        }
+        return false
     }
 
     private static func elapsedMs(since start: Date) -> Double {
@@ -340,6 +442,11 @@ final class DiscoverViewModel: ObservableObject {
     private static func itemKey(_ item: FeedItem) -> String {
         if let event = item.event { return "event-\(event.id)" }
         if let futures = item.futures { return "futures-\(futures.id)" }
+        // Bundles dedup on their stable bundle id so a comparison card cannot
+        // duplicate across pages (matches DiscoverView's key) — L2-201 / #1472.
+        if let bundle = item.bundle { return "bundle-\(bundle.id)" }
+        // tournament/concept fall through to FeedItem.id ("tournament-<key>" /
+        // "concept-<key>"), which is already stable and unique.
         return item.id
     }
 }

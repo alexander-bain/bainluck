@@ -156,17 +156,40 @@ enum AnalyticsService {
             "network_ms": telemetry.networkMs ?? -1,
             "item_count": telemetry.itemCount,
             "cache_age_seconds": telemetry.cacheAgeSeconds ?? -1,
+            // First-card attribution milestones (L2-201 / #1472). -1 marks a stage
+            // that did not run for this observation. Opaque status string only.
+            "auth_ready_ms": telemetry.authReadyMs ?? -1,
+            "backend_elapsed_ms": telemetry.backendElapsedMs ?? -1,
+            "merge_ms": telemetry.mergeMs ?? -1,
+            "first_card_ms": telemetry.firstCardMs ?? -1,
+            "cache_status": telemetry.cacheStatus ?? "unknown",
             "surface": "discover",
         ])
     }
 
-    /// The server-side split of an offset-0 feed fetch: network round-trip (TTFB +
-    /// download) vs client payload decode. Emitted from `APIClient` (#1465). No PII.
-    nonisolated static func trackDiscoverFeedNetwork(networkMs: Double, decodeMs: Double, itemCount: Int) {
+    /// The server-side split of an offset-0 feed fetch, milestone-attributed
+    /// (L2-201 / #1472): local auth-token resolution, network round-trip (TTFB +
+    /// download), client payload decode, the backend's own build time
+    /// (`X-Feed-Elapsed-Ms`), the cache status header (`X-Feed-Cache`), and the
+    /// response byte size. Emitted from `APIClient` (#1465). Carries no PII,
+    /// token, payload, or market question. Any missing value is reported as -1.
+    nonisolated static func trackDiscoverFeedNetwork(
+        networkMs: Double,
+        decodeMs: Double,
+        itemCount: Int,
+        authReadyMs: Double? = nil,
+        backendElapsedMs: Double? = nil,
+        responseBytes: Int? = nil,
+        cacheStatus: String? = nil
+    ) {
         Analytics.logEvent("discover_feed_network", parameters: [
             "network_ms": networkMs,
             "decode_ms": decodeMs,
             "item_count": itemCount,
+            "auth_ready_ms": authReadyMs ?? -1,
+            "backend_elapsed_ms": backendElapsedMs ?? -1,
+            "response_bytes": responseBytes ?? -1,
+            "cache_status": cacheStatus ?? "unknown",
             "surface": "discover",
         ])
     }

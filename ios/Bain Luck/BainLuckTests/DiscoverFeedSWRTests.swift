@@ -150,8 +150,12 @@ final class DiscoverFeedSWRTests: XCTestCase {
     func testRefreshFailureKeepsLastGoodAndSurfacesHonestState() async throws {
         let cache = FakeLastGood(try cached([futuresJSON(1), futuresJSON(2)]))
         let sink = TelemetrySink()
+        // retryBudget 0 → exactly one transient attempt (no waiting), so the test
+        // stays fast and deterministic while still proving the honest kept-cache
+        // state (L2-201 / #1472).
         let vm = DiscoverViewModel(client: FakeClient(.fail(URLError(.notConnectedToInternet))),
-                                   lastGood: cache, telemetry: { sink.record($0) })
+                                   lastGood: cache, telemetry: { sink.record($0) },
+                                   retryBudget: 0)
 
         await vm.load()
 
@@ -168,7 +172,8 @@ final class DiscoverFeedSWRTests: XCTestCase {
     func testNoCacheRevalidateFailureFallsToHonestError() async throws {
         let sink = TelemetrySink()
         let vm = DiscoverViewModel(client: FakeClient(.fail(URLError(.timedOut))),
-                                   lastGood: FakeLastGood(nil), telemetry: { sink.record($0) })
+                                   lastGood: FakeLastGood(nil), telemetry: { sink.record($0) },
+                                   retryBudget: 0)
 
         await vm.load()
 

@@ -191,4 +191,48 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
     let itemCount: Int
     /// Age of the served/kept cached payload, when one was involved.
     let cacheAgeSeconds: Double?
+
+    // MARK: - First-card attribution milestones (L2-201 / #1472)
+    //
+    // These optional fields let one trace attribute perceived latency to a
+    // specific stage — auth, network+backend, decode, merge, or UI — rather than
+    // reporting a single opaque total (C42 P2). All are nil for observations
+    // where the stage did not run (e.g. a cache seed has no network milestones).
+    // No PII, token, payload, or market question is ever carried.
+
+    /// Milliseconds to resolve the local auth token before the request left the
+    /// client (Keychain read; nil when anonymous or not measured).
+    let authReadyMs: Double?
+    /// Milliseconds the backend reported building the payload (`X-Feed-Elapsed-Ms`).
+    let backendElapsedMs: Double?
+    /// Milliseconds to interleave/merge the decoded page into presentation order.
+    let mergeMs: Double?
+    /// Milliseconds from load start to the first card becoming renderable.
+    let firstCardMs: Double?
+    /// Server cache status header (`X-Feed-Cache`), an opaque status string.
+    let cacheStatus: String?
+
+    init(
+        outcome: Outcome,
+        cacheDecodeMs: Double? = nil,
+        networkMs: Double? = nil,
+        itemCount: Int,
+        cacheAgeSeconds: Double? = nil,
+        authReadyMs: Double? = nil,
+        backendElapsedMs: Double? = nil,
+        mergeMs: Double? = nil,
+        firstCardMs: Double? = nil,
+        cacheStatus: String? = nil
+    ) {
+        self.outcome = outcome
+        self.cacheDecodeMs = cacheDecodeMs
+        self.networkMs = networkMs
+        self.itemCount = itemCount
+        self.cacheAgeSeconds = cacheAgeSeconds
+        self.authReadyMs = authReadyMs
+        self.backendElapsedMs = backendElapsedMs
+        self.mergeMs = mergeMs
+        self.firstCardMs = firstCardMs
+        self.cacheStatus = cacheStatus
+    }
 }

@@ -170,10 +170,21 @@ actor APIClient {
     /// be persisted byte-for-byte as last-good and the cold-vs-warm cost measured.
     /// Intentionally bypasses the in-memory TTL cache (the feed always sends
     /// `cacheTTL: nil`) so the raw bytes are always the fresh server response.
+    /// Milestone-attributed feed fetch (L2-201 / #1472). Beyond the raw bytes it
+    /// returns a per-stage timing split — local auth-token resolution
+    /// (`authReadyMs`), network round-trip (`networkMs`), payload decode
+    /// (`decodeMs`) — plus the backend's own build time (`X-Feed-Elapsed-Ms`), the
+    /// server cache status (`X-Feed-Cache`), and the response byte size, so one
+    /// trace can attribute latency to auth vs network+backend vs decode rather
+    /// than a single opaque total. Carries no PII, token, or payload text.
     private func fetchRaw<T: Decodable & Sendable>(
         _ path: String,
         query: [String: String] = [:]
-    ) async throws -> (value: T, raw: Data, networkMs: Double, decodeMs: Double) {
+    ) async throws -> (
+        value: T, raw: Data,
+        authReadyMs: Double, networkMs: Double, decodeMs: Double,
+        backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int
+    ) {
         var components = URLComponents(string: baseURL + path)
         if !query.isEmpty {
             components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -183,9 +194,16 @@ actor APIClient {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+
+        // Auth-ready milestone: the token provider is a local Keychain read (see
+        // AuthManager), NOT a network refresh, so an anonymous fetch (nil
+        // provider) waits on nothing and a signed-in fetch reuses the cached
+        // credential. Measured so telemetry can prove that, not because it blocks.
+        let authStart = Date()
         if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        let authReadyMs = Date().timeIntervalSince(authStart) * 1000
 
         let netStart = Date()
         let data: Data
@@ -197,15 +215,23 @@ actor APIClient {
         }
         let networkMs = Date().timeIntervalSince(netStart) * 1000
 
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw APIError.httpError(statusCode: http.statusCode, body: String(data: data, encoding: .utf8))
+        var backendElapsedMs: Double?
+        var cacheStatus: String?
+        if let http = response as? HTTPURLResponse {
+            if !(200...299).contains(http.statusCode) {
+                throw APIError.httpError(statusCode: http.statusCode, body: String(data: data, encoding: .utf8))
+            }
+            if let elapsed = http.value(forHTTPHeaderField: "X-Feed-Elapsed-Ms") {
+                backendElapsedMs = Double(elapsed)
+            }
+            cacheStatus = http.value(forHTTPHeaderField: "X-Feed-Cache")
         }
 
         let decodeStart = Date()
         do {
             let value = try decoder.decode(T.self, from: data)
             let decodeMs = Date().timeIntervalSince(decodeStart) * 1000
-            return (value, data, networkMs, decodeMs)
+            return (value, data, authReadyMs, networkMs, decodeMs, backendElapsedMs, cacheStatus, data.count)
         } catch {
             throw APIError.decodingError(underlying: error)
         }
@@ -466,14 +492,21 @@ actor APIClient {
         var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
         if let eventPct { q["event_pct"] = String(eventPct) }
 
-        let result: (value: FeedResponse, raw: Data, networkMs: Double, decodeMs: Double) =
-            try await fetchRaw("/api/feed", query: q)
+        let result: (
+            value: FeedResponse, raw: Data,
+            authReadyMs: Double, networkMs: Double, decodeMs: Double,
+            backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int
+        ) = try await fetchRaw("/api/feed", query: q)
 
         feedCache.store(rawBody: result.raw, identity: currentFeedIdentity(), storedAt: Date())
         AnalyticsService.trackDiscoverFeedNetwork(
             networkMs: result.networkMs,
             decodeMs: result.decodeMs,
-            itemCount: result.value.items.count
+            itemCount: result.value.items.count,
+            authReadyMs: result.authReadyMs,
+            backendElapsedMs: result.backendElapsedMs,
+            responseBytes: result.responseBytes,
+            cacheStatus: result.cacheStatus
         )
         return result.value
     }
