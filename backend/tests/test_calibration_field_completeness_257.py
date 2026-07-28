@@ -145,9 +145,16 @@ class TestSingleCanonicalPopulation:
 
     def test_precompute_task_caches_shared_payload(self):
         src = inspect.getsource(precompute_calibration._precompute_calibration_main)
-        # The scheduled task is a thin wrapper: compute the shared payload, cache.
+        # The scheduled task is a thin wrapper: compute the shared payload, publish.
         assert "compute_calibration_payload" in src
-        assert 'rc.set("bainluck:calibration:main"' in src
+        assert "_publish_calibration_main" in src
+        # Queue 272 (#1459): publication writes the canonical main key (via the
+        # helper + module constant), plus the durable last-good survivor key.
+        pub = inspect.getsource(precompute_calibration._publish_calibration_main)
+        assert precompute_calibration._MAIN_KEY == "bainluck:calibration:main"
+        assert "rc.set(" in pub
+        assert "_MAIN_KEY" in pub
+        assert "_MAIN_LAST_GOOD_KEY" in pub
 
 
 # ---------------------------------------------------------------------------
