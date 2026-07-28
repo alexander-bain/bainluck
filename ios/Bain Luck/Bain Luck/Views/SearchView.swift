@@ -148,6 +148,11 @@ struct SearchView: View {
             AnalyticsService.trackScreen(name: "search", type: "search")
             updateLandscapeColumns()
         }
+        .onDisappear {
+            // Navigating away invalidates any in-flight typeahead/search so a
+            // late response can't publish onto an absent surface (L2-198).
+            viewModel.cancelInFlightWork()
+        }
         .task {
             await viewModel.loadTrending()
         }
@@ -191,6 +196,9 @@ struct SearchView: View {
                 }
             if !viewModel.query.isEmpty {
                 Button {
+                    // Cancel any in-flight typeahead/search first so a late
+                    // response can't repopulate the field we're clearing (L2-198).
+                    viewModel.cancelInFlightWork()
                     viewModel.query = ""
                     viewModel.suggestions = []
                     viewModel.results = nil

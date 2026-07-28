@@ -256,6 +256,14 @@ function SearchContent() {
     setIsLoading(true);
     setError(null);
 
+    // Ignore-flag guard (L2-198): the results query is driven by the URL `q`
+    // param, which changes rapidly as the user re-searches. Without this, a slow
+    // response for an earlier query can land after a newer one and overwrite the
+    // results (query N-1 clobbering query N). The cleanup flips `ignore` when the
+    // effect re-runs (new query) or the page unmounts (navigation away), so a
+    // superseded/late response is dropped instead of published.
+    let ignore = false;
+
     searchEvents({
       q: query,
       sport: sportFilter,
@@ -263,6 +271,7 @@ function SearchContent() {
       per_page: 25,
     })
       .then((data) => {
+        if (ignore) return;
         setResults(data);
         setIsLoading(false);
         track('search_submit', {
@@ -273,22 +282,29 @@ function SearchContent() {
         });
       })
       .catch((err) => {
+        if (ignore) return;
         setError(err.message);
         setIsLoading(false);
       });
+
+    return () => { ignore = true; };
   }, [query, sportFilter, currentPage]);
 
   useEffect(() => {
     if (query && query.length >= 2) return;
     setSuggestionsLoading(true);
+    let ignore = false;
     fetchSearchSuggestions()
       .then((data) => {
+        if (ignore) return;
         setSuggestions(data.suggestions);
         setSuggestionsLoading(false);
       })
       .catch(() => {
+        if (ignore) return;
         setSuggestionsLoading(false);
       });
+    return () => { ignore = true; };
   }, [query]);
 
   const setFilter = (sport: string | undefined) => {

@@ -16,8 +16,23 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var trendingSearches: [TrendingQuery] = []
 
     private var debounceTask: Task<Void, Never>?
+    // Full-search stale-response guard (L2-198). Every search() bumps the
+    // generation; a response whose generation is no longer current is dropped so
+    // an older/slower query can't overwrite a newer one, a cleared field, or a
+    // surface the user has left. Mirrors FuturesListViewModel.loadGeneration.
+    private var searchGeneration = 0
 
-    init() {
+    // Injectable full-search transport so the stale-response race is
+    // deterministically testable (default preserves production behavior).
+    typealias SearchFetching = (_ query: String, _ sport: String?) async throws -> SearchResponse
+    private let searchFetch: SearchFetching
+
+    init(
+        searchFetch: @escaping SearchFetching = { query, sport in
+            try await APIClient.shared.fetchSearch(query: query, sport: sport)
+        }
+    ) {
+        self.searchFetch = searchFetch
         recentSearches = RecentSearches.load()
     }
 
@@ -55,24 +70,45 @@ final class SearchViewModel: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2 else { return }
 
+        searchGeneration &+= 1
+        let generation = searchGeneration
+        let sport = selectedSport.isEmpty ? nil : selectedSport
+
         loading = true
         do {
-            let sport = selectedSport.isEmpty ? nil : selectedSport
-            results = try await APIClient.shared.fetchSearch(query: trimmed, sport: sport)
+            let response = try await searchFetch(trimmed, sport)
+            // Stale-response guard (L2-198): only the latest search generation may
+            // publish. A slower older query, a cleared field, or a surface the
+            // user has navigated away from (all bump/invalidate the generation)
+            // can never overwrite the newest results.
+            guard generation == searchGeneration else { return }
+            results = response
             suggestions = []
             error = nil
             loading = false
-            let totalResults = (results?.results.count ?? 0) + (results?.futures.count ?? 0)
+            let totalResults = response.results.count + response.futures.count
             AnalyticsService.trackSearch(query: trimmed, resultsCount: totalResults)
 
             // Save to recent searches
             RecentSearches.save(trimmed)
             recentSearches = RecentSearches.load()
         } catch {
+            // A superseded search must not publish its error/spinner either.
+            guard generation == searchGeneration else { return }
             self.error = error.localizedDescription
             loading = false
             logger.error("Search failed: \(error)")
         }
+    }
+
+    /// Invalidate any in-flight typeahead and full search — for a cleared field
+    /// or when the search surface disappears — so a late response cannot publish
+    /// onto a stale/absent surface (L2-198).
+    @MainActor
+    func cancelInFlightWork() {
+        debounceTask?.cancel()
+        searchGeneration &+= 1
+        loading = false
     }
 
     @MainActor

@@ -8,6 +8,7 @@ import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
+import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
 
 interface Props {
   isOpen: boolean;
@@ -22,10 +23,11 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
   const [didYouMean, setDidYouMean] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
-  // Aborts the previous in-flight typeahead so a slow earlier keystroke can't
-  // clobber the results of a newer one (the mobile stale-response race — the
-  // desktop SearchBar was already guarded, mobile was not). L2-178.
-  const typeaheadAbortRef = useRef<AbortController | null>(null);
+  // Stale-response / cancellation guard (L2-178 introduced abort; L2-198 closes
+  // the residual clear/close/unmount races and shares the primitive with the
+  // desktop SearchBar). Cancels the previous in-flight typeahead and refuses to
+  // publish any request that no longer owns the gate. See lib/typeaheadRace.ts.
+  const gate = useRef(new TypeaheadRequestGate()).current;
   const recentSearches = getRecentSearches();
 
   useEffect(() => {
@@ -34,27 +36,44 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
+      // Closing must cancel any in-flight typeahead and clear ALL derived state
+      // (suggestions AND did-you-mean) — otherwise a slow response lands after
+      // close and flashes stale results/spelling on the next reopen (L2-198).
+      gate.cancel();
       setQuery("");
       setSuggestions([]);
+      setDidYouMean(null);
+      setLoading(false);
     }
     return () => { document.body.style.overflow = ""; };
-  }, [isOpen]);
+  }, [isOpen, gate]);
+
+  // Abort any in-flight typeahead on unmount so a late response can't call
+  // setState on a dead surface (L2-198).
+  useEffect(() => () => { gate.cancel(); }, [gate]);
 
   const fetchSuggestions = useCallback(async (q: string) => {
     if (q.length < 2) {
+      // Clearing/shortening below threshold must also cancel the in-flight
+      // request so a slow response for the prior query can't repopulate a
+      // cleared field (L2-198 stale-response race).
+      gate.cancel();
       setSuggestions([]);
+      setDidYouMean(null);
+      setLoading(false);
       return;
     }
     // Cancel any in-flight typeahead so stale results can't overwrite fresh ones.
-    typeaheadAbortRef.current?.abort();
-    const controller = new AbortController();
-    typeaheadAbortRef.current = controller;
+    const controller = gate.begin();
 
     setLoading(true);
     // L2-96: curated concept hubs (e.g. "midterms") not derivable from market names.
     const curated = matchCuratedConcepts(q);
     try {
       const data = await fetchTypeahead(q, controller.signal);
+      // Request-generation guard (L2-198): only the owning request publishes, so
+      // a superseded/cleared/closed request can never overwrite fresh results.
+      if (!gate.owns(controller)) return;
       const backendKeys = new Set(
         data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
       );
@@ -66,13 +85,15 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
     } catch (err) {
       // A newer keystroke aborted this request — a fresher one owns the state.
       if (err instanceof DOMException && err.name === "AbortError") return;
+      // A superseded/cleared request must not publish its fallback either.
+      if (!gate.owns(controller)) return;
       setSuggestions(curated);
     } finally {
       // Only the latest request clears the spinner; a superseded (aborted)
       // request must not turn it off out from under the fresh one.
-      if (typeaheadAbortRef.current === controller) setLoading(false);
+      if (gate.owns(controller)) setLoading(false);
     }
-  }, []);
+  }, [gate]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);

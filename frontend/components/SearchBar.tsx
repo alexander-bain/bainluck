@@ -9,6 +9,7 @@ import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
+import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
 
 interface SearchBarProps {
   initialQuery?: string;
@@ -36,9 +37,11 @@ export default function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
-  // Aborts the previous in-flight typeahead request so a slow earlier keystroke
-  // can't clobber the results of a newer one (and to stop wasted work).
-  const typeaheadAbortRef = useRef<AbortController | null>(null);
+  // Stale-response / cancellation guard (L2-198). Cancels the previous in-flight
+  // typeahead so a slow earlier keystroke can't clobber a newer one, and refuses
+  // to publish any request that no longer owns the gate (cleared field, navigated
+  // away, unmounted). Shared primitive: see lib/typeaheadRace.ts.
+  const gate = useRef(new TypeaheadRequestGate()).current;
 
   // Load recent searches on mount; trending cached for 5 min
   useEffect(() => {
@@ -73,17 +76,26 @@ export default function SearchBar({
     return () => document.removeEventListener("keydown", handleGlobalKey);
   }, []);
 
+  // Abort any in-flight typeahead when the search bar unmounts (navigation
+  // away) so a late response can't call setState on a dead surface (L2-198).
+  useEffect(() => () => { gate.cancel(); }, [gate]);
+
   const fetchSuggestions = useCallback(async (q: string) => {
     if (q.length < 2) {
+      // Clearing (or shortening below the threshold) must also cancel any
+      // in-flight request — otherwise a slow response for the prior, longer
+      // query lands after the field is cleared and repopulates the dropdown
+      // (L2-198 stale-response race). Cancel, drop ownership, and reset state.
+      gate.cancel();
       setSuggestions([]);
+      setDidYouMean(null);
+      setLoading(false);
       setIsOpen(false);
       return;
     }
 
     // Cancel any in-flight typeahead so stale results can't overwrite fresh ones.
-    typeaheadAbortRef.current?.abort();
-    const controller = new AbortController();
-    typeaheadAbortRef.current = controller;
+    const controller = gate.begin();
 
     setLoading(true);
     setShowRecent(false);
@@ -92,6 +104,11 @@ export default function SearchBar({
     const curated = matchCuratedConcepts(q);
     try {
       const data = await fetchTypeahead(q, controller.signal);
+      // Request-generation guard (L2-198): only the owning request may publish.
+      // Belt-and-suspenders with the AbortController — if the transport ever
+      // resolves a superseded/cleared/unmounted request, this still drops it so
+      // query N-1 can never overwrite query N.
+      if (!gate.owns(controller)) return;
       const backendKeys = new Set(
         data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
       );
@@ -116,15 +133,17 @@ export default function SearchBar({
     } catch (err) {
       // A newer keystroke aborted this request — a fresher one owns the state.
       if (err instanceof DOMException && err.name === "AbortError") return;
+      // A superseded/cleared request must not publish its fallback either.
+      if (!gate.owns(controller)) return;
       // Backend down/slow: still surface curated hubs so discovery survives.
       setSuggestions(curated);
       setIsOpen(curated.length > 0);
     } finally {
       // Only the latest request clears the loading flag; a superseded (aborted)
       // request must not turn the spinner off out from under the fresh one.
-      if (typeaheadAbortRef.current === controller) setLoading(false);
+      if (gate.owns(controller)) setLoading(false);
     }
-  }, [track]);
+  }, [track, gate]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -152,7 +171,12 @@ export default function SearchBar({
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Drop any in-flight typeahead once the user commits to a destination, so a
+  // late response can't reopen the dropdown after navigation (L2-198).
+  const cancelInFlightTypeahead = () => gate.cancel();
+
   const navigateToSearch = (q: string) => {
+    cancelInFlightTypeahead();
     saveRecentSearch(q);
     setRecentSearches(getRecentSearches());
     router.push(`/search?q=${encodeURIComponent(q)}`);
@@ -161,6 +185,7 @@ export default function SearchBar({
   };
 
   const selectSuggestion = (suggestion: TypeaheadSuggestion) => {
+    cancelInFlightTypeahead();
     setIsOpen(false);
     setShowRecent(false);
     setQuery("");
