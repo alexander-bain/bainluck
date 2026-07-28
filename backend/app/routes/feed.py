@@ -1473,36 +1473,57 @@ async def get_feed(
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
 
     # === SCORE FUTURES ===
+    # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
+    # cold build. Bound it to the time remaining under the total request budget so
+    # a pathological build degrades to the valid events-only feed rather than a 30s
+    # Heroku router H12. On timeout we roll back (the cancelled query may leave the
+    # session mid-statement) and serve the partial feed.
     _is_sports_mode = (mode or "").lower() == "sports"
-    if include_futures:
+
+    def _futures_budget_s() -> float:
+        elapsed_ms = (time.perf_counter() - _started_at) * 1000
+        return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
+
+    if include_futures and _futures_budget_s() <= 0.5:
+        logger.warning(
+            "Feed: no time budget left for futures scoring — serving events-only "
+            "partial feed (#1459)"
+        )
+    elif include_futures:
         try:
             if _is_sports_mode:
                 # Sports mode: skip the expensive Discover scoring pipeline
                 # (10 candidate pool queries + editorial recall + interestingness
                 # cache). Instead, run a single fast query for top sports futures.
-                futures_items = await _score_sports_mode_futures(
-                    db,
-                    now,
-                    sport,
-                    ctx,
-                    my_teams_only=my_teams_only,
-                    my_team_names=my_team_names,
-                    my_team_sport_categories=my_team_sport_categories,
+                futures_items = await asyncio.wait_for(
+                    _score_sports_mode_futures(
+                        db,
+                        now,
+                        sport,
+                        ctx,
+                        my_teams_only=my_teams_only,
+                        my_team_names=my_team_names,
+                        my_team_sport_categories=my_team_sport_categories,
+                    ),
+                    timeout=_futures_budget_s(),
                 )
             else:
-                futures_items = await _score_futures(
-                    db,
-                    now,
-                    sport,
-                    ctx,
-                    my_teams_only=my_teams_only,
-                    my_team_names=my_team_names,
-                    my_team_sport_categories=my_team_sport_categories,
-                    tag_filter=dynamic_tag_filter or None,
-                    static_tag_filter=static_tag_filter or None,
-                    timing_records=_timings,
-                    timing_started_at=_started_at,
-                    config=discover_config,
+                futures_items = await asyncio.wait_for(
+                    _score_futures(
+                        db,
+                        now,
+                        sport,
+                        ctx,
+                        my_teams_only=my_teams_only,
+                        my_team_names=my_team_names,
+                        my_team_sport_categories=my_team_sport_categories,
+                        tag_filter=dynamic_tag_filter or None,
+                        static_tag_filter=static_tag_filter or None,
+                        timing_records=_timings,
+                        timing_started_at=_started_at,
+                        config=discover_config,
+                    ),
+                    timeout=_futures_budget_s(),
                 )
 
                 # #1090: broaden recall when the post-filter pool collapses. The
@@ -1525,18 +1546,30 @@ async def get_feed(
                     seen_ids = {
                         (it.get("data") or {}).get("id") for it in futures_items
                     }
-                    broadened = await _score_futures(
-                        db,
-                        now,
-                        sport,
-                        ctx,
-                        my_teams_only=my_teams_only,
-                        my_team_names=my_team_names,
-                        my_team_sport_categories=my_team_sport_categories,
-                        tag_filter=dynamic_tag_filter or None,
-                        static_tag_filter=static_tag_filter or None,
-                        config=relaxed,
-                    )
+                    # The broaden pass is best-effort: if it exceeds the remaining
+                    # budget, keep the primary futures rather than losing them.
+                    try:
+                        broadened = await asyncio.wait_for(
+                            _score_futures(
+                                db,
+                                now,
+                                sport,
+                                ctx,
+                                my_teams_only=my_teams_only,
+                                my_team_names=my_team_names,
+                                my_team_sport_categories=my_team_sport_categories,
+                                tag_filter=dynamic_tag_filter or None,
+                                static_tag_filter=static_tag_filter or None,
+                                config=relaxed,
+                            ),
+                            timeout=_futures_budget_s(),
+                        )
+                    except asyncio.TimeoutError:
+                        broadened = []
+                        logger.warning(
+                            "Feed #1090 broaden: exceeded remaining budget — "
+                            "keeping primary futures (#1459)"
+                        )
                     added = [
                         it
                         for it in broadened
@@ -1554,6 +1587,18 @@ async def get_feed(
                         )
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
+        except asyncio.TimeoutError:
+            # Primary futures scoring exceeded the request budget — serve the
+            # events feed we already built rather than a 30s router H12 (#1459).
+            logger.warning(
+                "Feed: futures scoring exceeded the %dms request budget — serving "
+                "events-only partial feed (#1459)",
+                _rc.FEED_TOTAL_BUDGET_MS,
+            )
+            try:
+                await db.rollback()
+            except Exception:
+                pass
         except Exception as e:
             logger.error(
                 "Feed: futures scoring failed, returning partial feed: %s",

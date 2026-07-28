@@ -60,6 +60,11 @@ REDIS_OP_DEADLINE_MS = _env_int("REQUEST_REDIS_OP_DEADLINE_MS", 600)
 ROUTER_TIMEOUT_MS = _env_int("REQUEST_ROUTER_TIMEOUT_MS", 30000)
 COMPUTE_DEADLINE_MS = _env_int("REQUEST_COMPUTE_DEADLINE_MS", 22000)
 DB_CHECKOUT_DEADLINE_MS = _env_int("REQUEST_DB_CHECKOUT_DEADLINE_MS", 1000)
+# Total /api/feed request budget — the futures-scoring pass (the slow, DB-bound
+# stage that hangs a cold build) is bounded to the time remaining under this so a
+# pathological build degrades to the valid events-only feed instead of a 30s
+# Heroku router H12 (#1459). Kept comfortably under the 30s cutoff.
+FEED_TOTAL_BUDGET_MS = _env_int("FEED_TOTAL_BUDGET_MS", 25000)
 # Calibration cold-miss compute is deadline-guarded so it can never run to the
 # router cutoff (the 12-27s inline CTE that caused the #1459 calibration H12).
 # The precompute beat keeps Redis warm, so a request-path compute is rare and,

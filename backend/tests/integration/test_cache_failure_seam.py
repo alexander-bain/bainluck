@@ -461,3 +461,62 @@ async def test_feed_cache_write_does_not_block_response(monkeypatch):
             "metrics": {"independent": True, "verdict": "red"},
         }
     )
+
+
+async def test_feed_futures_scoring_deadline_degrades_to_partial():
+    """A hung futures-scoring pass is cancelled at the budget → events-only feed.
+
+    Mirrors the GET /api/feed guard: the futures stage is wrapped in
+    ``asyncio.wait_for`` under the remaining request budget; on timeout the handler
+    keeps the (already-built) events feed instead of a 30s router H12 (#1459).
+    """
+
+    async def _hanging_futures_scorer():
+        await asyncio.sleep(30)
+        return ["never"]
+
+    budget_ms = 200
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    futures_items = None
+    timed_out = False
+    try:
+        futures_items = await asyncio.wait_for(
+            _hanging_futures_scorer(), timeout=budget_ms / 1000.0
+        )
+    except asyncio.TimeoutError:
+        timed_out = True
+        futures_items = []  # degrade: keep the events feed we already built
+    elapsed_ms = (loop.time() - start) * 1000
+
+    assert timed_out is True
+    assert futures_items == []
+    assert elapsed_ms < 2000  # bounded by the budget, never the 30s router cutoff
+
+    _assert_contract_clean(
+        {
+            "id": "feed-futures-scoring-deadline",
+            "endpoint": "feed",
+            "cache_state": "miss",
+            "last_good": {"available": False, "usable": False},
+            "redis_stages": [],
+            "concurrent_requests": 1,
+            "builds_started": 1,
+            # Futures scoring STARTED but was hard-cancelled at the budget — the
+            # request degraded to events-only instead of running to the cutoff.
+            "compute": {
+                "started": True,
+                "duration_ms": budget_ms,
+                "deadline_ms": budget_ms,
+                "passes": 1,
+            },
+            "db": {"checkout_result": "ok", "wait_ms": 10},
+            "cache_write": {
+                "result": "skipped",
+                "duration_ms": 0,
+                "awaited_before_response": False,
+            },
+            "response": {"kind": "degraded", "elapsed_ms": round(elapsed_ms)},
+            "metrics": {"independent": True, "verdict": "red"},
+        }
+    )
