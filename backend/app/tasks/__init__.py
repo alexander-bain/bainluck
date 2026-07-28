@@ -2019,7 +2019,18 @@ def send_morning_digest(self):
     return _tracked_run("morning_digest", _run_morning_digest())
 
 
-@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_calibration_main")
+# Queue 272 (#1459): the canonical compute has grown to ~600s on the production
+# population (last success measured 605.8s — right AT the old 600s soft limit),
+# so the hourly beat oscillated across the boundary and kept dying with
+# SoftTimeLimitExceeded BEFORE it could publish, blanking the cache once the 2h
+# TTL expired. The compute is a single canonical CTE whose semantics are frozen
+# by the queue gates, so it cannot be chunked; the fix is to give it real
+# headroom (soft 900 / hard 960) so a ~600s run completes and publishes instead
+# of repeating the same expensive-then-killed prefix every hour. Memory is
+# unchanged (same payload built either way); the heavy lane (concurrency 2,
+# hourly cadence, siblings 6h-staggered) absorbs the longer hold. The durable
+# last-good key (see _precompute_calibration_main) covers any residual overrun.
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
     """Precompute main /api/calibration response and cache in Redis (every 1h)."""
     from app.tasks.precompute_calibration import _precompute_calibration_main

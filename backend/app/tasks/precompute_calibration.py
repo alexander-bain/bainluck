@@ -31,6 +31,38 @@ _CACHE_TTL = 86400
 # Main calibration cache TTL: 2 hours (refreshed every 1h by beat)
 _MAIN_CACHE_TTL = 7200
 
+# Queue 272 (#1459): the DURABLE last-good key. The main key (`bainluck:
+# calibration:main`, 2h TTL) is the FRESH surface; this parallel key is the
+# survivor. It is written on every successful publish with a long TTL so a streak
+# of compute timeouts — the observed failure mode (SoftTimeLimitExceeded at ~605s,
+# 3 consecutive fails, last success 605.8s at the 600s soft limit) — can never
+# blank the /api/calibration route: the main key expires after 2h but the route
+# falls back to this last-good payload (served `stale`, its own generated_at kept)
+# until a complete replacement is ready. Both keys are SET-only (never DEL), so a
+# failed/partial publish can never destroy a usable prior payload (Item 1).
+_MAIN_LAST_GOOD_KEY = "bainluck:calibration:main:last_good"
+_MAIN_KEY = "bainluck:calibration:main"
+# 7 days: long enough to bridge any realistic compute-perf incident while the
+# underlying query cost is worked separately, short enough to self-expire if the
+# beat is fully retired.
+_MAIN_LAST_GOOD_TTL = 604800
+
+
+def _main_payload_is_publishable(response: Any) -> bool:
+    """True if a computed calibration payload is complete enough to publish (Queue 272).
+
+    A partial/empty payload must never replace a valid cache entry (Item 1). The
+    canonical calibration compute always returns non-empty ``buckets`` and a
+    positive ``total_outcomes`` on the production population, so an empty/zero
+    result is a degraded compute (statement_timeout mid-CTE, cancelled build) that
+    is NOT written to either key. Read-side/publish-side only — never mutates data.
+    """
+    return (
+        isinstance(response, dict)
+        and bool(response.get("buckets"))
+        and (response.get("total_outcomes") or 0) > 0
+    )
+
 # Queue #262: canonical calibration-population fingerprint. Surfaced on every
 # population-derived surface (horizon diagnostics, /calibration/examples,
 # bucket-debug, snapshot-health) so a future population change is VISIBLE across
@@ -2619,31 +2651,106 @@ def _build_truth_evidence(
     }
 
 
+def _publish_calibration_main(rc, payload_json: str) -> dict:
+    """Publish the serialized main payload to the durable + fresh keys (Queue 272).
+
+    Writes the durable ``last_good`` key FIRST (the survivor) then the fresh
+    ``main`` key. Both are bounded SETs (the sync client carries a 5s socket
+    timeout — gotcha #39 — so a Redis stall terminates in seconds, never blocking
+    the heavy worker to its hard limit) and both are SET-only (never DEL), so a
+    failed write can never destroy a usable prior payload. Returns per-key stage
+    results so the terminal task metric can distinguish a compute success from a
+    publication failure (Item 1)."""
+    stages: dict = {}
+    for label, key, ttl in (
+        ("last_good", _MAIN_LAST_GOOD_KEY, _MAIN_LAST_GOOD_TTL),
+        ("main", _MAIN_KEY, _MAIN_CACHE_TTL),
+    ):
+        try:
+            rc.set(key, payload_json, ex=ttl)
+            stages[label] = "ok"
+        except Exception as exc:  # noqa: BLE001 — captured, never destroys prior value
+            stages[label] = "error"
+            stages[f"{label}_error"] = str(exc)[:200]
+            logger.warning("calibration publish: %s SET failed: %s", label, exc)
+    return stages
+
+
 async def _precompute_calibration_main():
     """Precompute the main /api/calibration payload and cache it in Redis.
 
     Thin caching wrapper over the shared ``compute_calibration_payload`` (Queue
     #257 Item 1): opens a task session, computes the ONE canonical payload, and
-    stores it under ``bainluck:calibration:main`` so the HTTP endpoint serves it
-    instantly instead of running the heavy queries in-request.
+    publishes it so the HTTP endpoint serves it instantly instead of running the
+    heavy queries in-request.
+
+    Queue 272 (#1459) — truthful terminal + durable publication:
+      * A partial/empty compute (statement_timeout mid-CTE, cancellation) is
+        NEVER published — it cannot replace a valid cache entry.
+      * The payload is published to BOTH the fresh ``main`` key (2h TTL) and the
+        durable ``last_good`` key (7d TTL) so a streak of compute timeouts — the
+        observed failure — can never blank the route.
+      * Terminal metrics distinguish the compute, serialize, and publish stages
+        (with generated_at + payload size) so a publication failure is visible
+        and can never masquerade as success. A failed ``main`` publish RAISES so
+        ``_tracked_run`` records a failure, while the SET-only writes leave any
+        prior last-good intact.
     """
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
+    t0 = time.monotonic()
     async with get_task_session() as db:
         response = await compute_calibration_payload(db)
+    compute_ms = round((time.monotonic() - t0) * 1000)
+
+    # A partial/empty compute must never overwrite a valid cache entry (Item 1).
+    if not _main_payload_is_publishable(response):
+        raise RuntimeError(
+            f"calibration compute produced an unpublishable payload "
+            f"(buckets={len(response.get('buckets') or []) if isinstance(response, dict) else 'n/a'}, "
+            f"outcomes={response.get('total_outcomes') if isinstance(response, dict) else 'n/a'}) "
+            f"after {compute_ms}ms — not published"
+        )
+
+    t1 = time.monotonic()
+    payload_json = json.dumps(response)
+    serialize_ms = round((time.monotonic() - t1) * 1000)
+    payload_bytes = len(payload_json)
 
     rc = get_redis_client()
-    rc.set("bainluck:calibration:main", json.dumps(response), ex=_MAIN_CACHE_TTL)
-    logger.info(
-        "Cached main calibration in Redis (%d buckets, %d outcomes)",
-        len(response["buckets"]), response["total_outcomes"],
-    )
-    return {
-        "status": "ok",
+    t2 = time.monotonic()
+    stages = _publish_calibration_main(rc, payload_json)
+    publish_ms = round((time.monotonic() - t2) * 1000)
+
+    summary = {
         "buckets": len(response["buckets"]),
         "outcomes": response["total_outcomes"],
+        "generated_at": response.get("generated_at"),
+        "payload_bytes": payload_bytes,
+        "compute_ms": compute_ms,
+        "serialize_ms": serialize_ms,
+        "publish_ms": publish_ms,
+        "publish": stages,
     }
+
+    # A failed FRESH-key publish is not a success even if the compute was fine —
+    # record it as a failure (last-good stays intact for the route to serve).
+    if stages.get("main") != "ok":
+        raise RuntimeError(
+            f"calibration main-key publish failed "
+            f"(last_good={stages.get('last_good')}, main={stages.get('main')}, "
+            f"err={stages.get('main_error')}); prior last-good preserved"
+        )
+
+    logger.info(
+        "Cached main calibration in Redis (%d buckets, %d outcomes, %d bytes; "
+        "compute=%dms publish=%dms; last_good=%s)",
+        summary["buckets"], summary["outcomes"], payload_bytes,
+        compute_ms, publish_ms, stages.get("last_good"),
+    )
+    summary["status"] = "ok"
+    return summary
 
 
 def _time_horizon_payload(horizons_result: dict) -> dict:

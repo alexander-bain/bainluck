@@ -812,6 +812,31 @@ async def public_calibration(
     except Exception:
         _redis_failed = True
 
+    # 2b. Clean miss of the FRESH key (Redis healthy, ``main`` key just absent —
+    #     the observed failure: the hourly precompute timed out for >2h and the 2h
+    #     TTL expired). Before paying a cold compute, serve the DURABLE last-good
+    #     key the precompute writes on every successful publish (Queue 272 #1459).
+    #     It is served ``stale`` with its own generated_at so freshness is honest,
+    #     and cached in-process so subsequent same-dyno reads are instant. ``bust``
+    #     skips this to force a genuine recompute.
+    if not _redis_failed and not bust:
+        try:
+            rc = await _rc.get_shared_async_redis()
+            lg = await _rc.bounded_redis_call(
+                lambda: rc.get("bainluck:calibration:main:last_good")
+            )
+            if lg.is_ok:
+                data = _json.loads(lg.value)
+                if isinstance(data, dict):
+                    _cache["data"] = data
+                    _cache["timestamp"] = now
+                    _rc.remember_last_good(_lg_key, data)
+                    degraded = dict(data)
+                    degraded["cache"] = {"status": "stale", "reason": "main_key_absent"}
+                    return degraded
+        except Exception:
+            pass
+
     # 3. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
     #    payload over recomputing during Redis flakiness (Queue 271 Item 2).
     #    ``bust`` explicitly asks for a fresh recompute, so it skips this.

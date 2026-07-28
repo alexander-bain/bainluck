@@ -1,0 +1,329 @@
+"""Queue 272 (#1459): durable + truthful calibration precompute publication.
+
+The hourly ``precompute_calibration_main`` beat blanked ``/api/calibration``:
+the canonical compute grew to ~600s and kept dying with SoftTimeLimitExceeded
+BEFORE it could publish, so once the 2h TTL expired the route 503'd (the
+in-process last-good does not survive a dyno restart). These tests pin the fix:
+
+  * a partial/empty compute is NEVER published (can't replace a valid entry);
+  * a successful compute publishes BOTH the fresh ``main`` key and the durable
+    ``last_good`` key (SET-only, never DEL);
+  * a publish failure RAISES (recorded as a task failure) yet leaves any prior
+    last-good intact — it can never masquerade as success;
+  * the terminal summary distinguishes the compute / serialize / publish stages
+    with generated_at + payload size;
+  * the route serves the durable last-good (as ``stale``) on a clean main-key
+    miss instead of paying a cold compute or 503-ing.
+
+Scenarios (Item 2 acceptance): cache absent, publish success, publish failure,
+Redis stall, compute timeout, cancellation, repeated beat, sibling progress.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import app.tasks.precompute_calibration as pc
+from app.tasks.precompute_calibration import (
+    _MAIN_KEY,
+    _MAIN_LAST_GOOD_KEY,
+    _main_payload_is_publishable,
+    _precompute_calibration_main,
+    _publish_calibration_main,
+)
+
+
+def _payload(*, buckets=1, outcomes=635464):
+    return {
+        "buckets": [{"bucket": i} for i in range(buckets)],
+        "total_outcomes": outcomes,
+        "generated_at": "2026-07-28T18:24:25+00:00",
+    }
+
+
+class _FakeCM:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return MagicMock()
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def _patch_compute(response=None, *, raises=None):
+    async def _compute(db):
+        if raises is not None:
+            raise raises
+        return response
+
+    return _compute
+
+
+# ---------------------------------------------------------------------------
+# _main_payload_is_publishable — the partial/empty guard
+# ---------------------------------------------------------------------------
+def test_publishable_accepts_real_payload():
+    assert _main_payload_is_publishable(_payload()) is True
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"buckets": [], "total_outcomes": 0},  # empty (degraded compute)
+        {"buckets": [], "total_outcomes": 100},  # no buckets
+        {"buckets": [{"b": 1}], "total_outcomes": 0},  # zero outcomes
+        {},  # nothing
+        None,  # cancelled/None
+        "not a dict",
+    ],
+)
+def test_publishable_rejects_partial_or_empty(bad):
+    assert _main_payload_is_publishable(bad) is False
+
+
+# ---------------------------------------------------------------------------
+# _publish_calibration_main — dual-key, SET-only, bounded, fault-tolerant
+# ---------------------------------------------------------------------------
+def test_publish_writes_both_keys_set_only():
+    rc = MagicMock()
+    stages = _publish_calibration_main(rc, json.dumps(_payload()))
+
+    assert stages == {"last_good": "ok", "main": "ok"}
+    written = {c.args[0] for c in rc.set.call_args_list}
+    assert written == {_MAIN_KEY, _MAIN_LAST_GOOD_KEY}
+    # SET-only: a publish must never DEL a prior payload.
+    rc.delete.assert_not_called()
+
+
+def test_publish_main_failure_preserves_last_good_write():
+    """A stalled/erroring ``main`` SET is captured; the durable write already ran."""
+    rc = MagicMock()
+
+    def _set(key, *a, **k):
+        if key == _MAIN_KEY:
+            raise ConnectionError("SSL: UNEXPECTED_EOF")
+        return True
+
+    rc.set.side_effect = _set
+    stages = _publish_calibration_main(rc, json.dumps(_payload()))
+
+    assert stages["last_good"] == "ok"  # durable survivor written first
+    assert stages["main"] == "error"
+    assert "UNEXPECTED_EOF" in stages["main_error"]
+    rc.delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _precompute_calibration_main — terminal state truthfulness
+# ---------------------------------------------------------------------------
+async def test_precompute_success_publishes_and_reports_stages():
+    rc = MagicMock()
+    payload = _payload(buckets=1572)
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(payload)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)):
+        summary = await _precompute_calibration_main()
+
+    assert summary["status"] == "ok"
+    assert summary["buckets"] == 1572
+    assert summary["outcomes"] == 635464
+    assert summary["generated_at"] == payload["generated_at"]
+    assert summary["payload_bytes"] > 0
+    # stage timings present (truthful terminal — Item 1)
+    for k in ("compute_ms", "serialize_ms", "publish_ms"):
+        assert k in summary
+    assert summary["publish"] == {"last_good": "ok", "main": "ok"}
+    written = {c.args[0] for c in rc.set.call_args_list}
+    assert written == {_MAIN_KEY, _MAIN_LAST_GOOD_KEY}
+
+
+async def test_precompute_empty_payload_never_published():
+    """A degraded (empty) compute must not overwrite a valid cache entry."""
+    rc = MagicMock()
+    empty = {"buckets": [], "total_outcomes": 0}
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(empty)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(empty)):
+        with pytest.raises(RuntimeError, match="unpublishable"):
+            await _precompute_calibration_main()
+
+    rc.set.assert_not_called()  # neither key touched
+    rc.delete.assert_not_called()
+
+
+async def test_precompute_main_publish_failure_raises_but_keeps_last_good():
+    """Publish failure is a task failure, not a success — and never DELs."""
+    rc = MagicMock()
+    payload = _payload()
+
+    def _set(key, *a, **k):
+        if key == _MAIN_KEY:
+            raise ConnectionError("redis stall")
+        return True
+
+    rc.set.side_effect = _set
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(payload)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)):
+        with pytest.raises(RuntimeError, match="main-key publish failed"):
+            await _precompute_calibration_main()
+
+    # last-good SET was still attempted (durable survivor); nothing was DEL'd.
+    written = {c.args[0] for c in rc.set.call_args_list}
+    assert _MAIN_LAST_GOOD_KEY in written
+    rc.delete.assert_not_called()
+
+
+async def test_precompute_compute_timeout_propagates_unpublished():
+    """SoftTimeLimitExceeded-class compute failure never publishes anything."""
+    rc = MagicMock()
+
+    class _SoftTimeLimitExceeded(Exception):
+        pass
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(None)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(
+        pc,
+        "compute_calibration_payload",
+        _patch_compute(raises=_SoftTimeLimitExceeded()),
+    ):
+        with pytest.raises(_SoftTimeLimitExceeded):
+            await _precompute_calibration_main()
+
+    rc.set.assert_not_called()
+
+
+async def test_precompute_cancellation_propagates_unpublished():
+    """A cancelled build retains the last-good payload (nothing written/DEL'd)."""
+    rc = MagicMock()
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(None)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(
+        pc,
+        "compute_calibration_payload",
+        _patch_compute(raises=asyncio.CancelledError()),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await _precompute_calibration_main()
+
+    rc.set.assert_not_called()
+    rc.delete.assert_not_called()
+
+
+async def test_precompute_repeated_beat_is_idempotent():
+    """Two successive runs both publish the same keys (no drift, no starvation)."""
+    rc = MagicMock()
+    payload = _payload()
+
+    with patch("app.tasks.base.get_task_session", return_value=_FakeCM(payload)), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)):
+        s1 = await _precompute_calibration_main()
+        s2 = await _precompute_calibration_main()
+
+    assert s1["status"] == s2["status"] == "ok"
+    # 2 runs x 2 keys = 4 SETs, all idempotent overwrites of the same 2 keys.
+    written = [c.args[0] for c in rc.set.call_args_list]
+    assert written.count(_MAIN_KEY) == 2
+    assert written.count(_MAIN_LAST_GOOD_KEY) == 2
+
+
+# ---------------------------------------------------------------------------
+# Route — durable last-good serves during a clean main-key miss (sibling progress)
+# ---------------------------------------------------------------------------
+class _RouteRedis:
+    """Async Redis stand-in: main key absent, durable last-good present."""
+
+    def __init__(self, *, main=None, last_good=None):
+        self._store = {}
+        if main is not None:
+            self._store["bainluck:calibration:main"] = main
+        if last_good is not None:
+            self._store["bainluck:calibration:main:last_good"] = last_good
+        self.gets = []
+
+    async def get(self, key):
+        self.gets.append(key)
+        return self._store.get(key)
+
+
+def _fake_getter(client):
+    async def _get():
+        return client
+
+    return _get
+
+
+async def test_route_serves_durable_last_good_on_main_miss(monkeypatch):
+    """Main key expired (clean miss) but the durable last-good bridges the gap —
+    the route serves it as ``stale`` and never pays the cold compute."""
+    from app.routes import calibration
+    from app.utils import request_cache as rc
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+    payload = _payload(buckets=1572)
+    client = _RouteRedis(main=None, last_good=json.dumps(payload))
+    monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
+
+    async def _boom(db):
+        raise AssertionError("cold compute ran despite a durable last-good")
+
+    monkeypatch.setattr(
+        "app.tasks.precompute_calibration.compute_calibration_payload", _boom
+    )
+
+    out = await calibration.public_calibration(db=object(), bust=0)
+
+    assert out["total_outcomes"] == 635464
+    assert out["generated_at"] == payload["generated_at"]
+    assert out["cache"] == {"status": "stale", "reason": "main_key_absent"}
+    assert "bainluck:calibration:main:last_good" in client.gets
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+
+async def test_route_bust_skips_durable_last_good(monkeypatch):
+    """bust=1 must force a fresh recompute, not serve the durable last-good."""
+    from app.routes import calibration
+    from app.utils import request_cache as rc
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+    fresh = _payload(buckets=3)
+    client = _RouteRedis(main=None, last_good=json.dumps(_payload(buckets=1572)))
+    monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
+
+    async def _compute(db):
+        return fresh
+
+    monkeypatch.setattr(
+        "app.tasks.precompute_calibration.compute_calibration_payload", _compute
+    )
+
+    out = await calibration.public_calibration(db=object(), bust=1)
+
+    # served the fresh recompute, not the durable last-good
+    assert out["buckets"] == fresh["buckets"]
+    assert "cache" not in out or out.get("cache", {}).get("status") != "stale"
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
