@@ -15,7 +15,20 @@ protocol DiscoverFeedProviding: Sendable {
 }
 
 final class DiscoverViewModel: ObservableObject {
-    @Published private(set) var items: [FeedItem] = []
+    @Published private(set) var items: [FeedItem] = [] {
+        didSet { itemsVersion &+= 1 }
+    }
+
+    /// Monotonic version bumped on every `items` reassignment (L2-202 / C42 P2).
+    /// The feed only ever replaces `items` wholesale — cold load, cache seed,
+    /// pull-to-refresh, account switch, pagination merge — so a counter is a
+    /// cheaper, more reliable "did the feed change" signal than diffing the array.
+    /// `DiscoverView` folds this into its presentation memo signature so the
+    /// interleave+group pipeline rebuilds when the feed actually changes, not on
+    /// every SwiftUI body pass. Not `@Published`: it always changes in lockstep
+    /// with `items`, whose publish already re-runs any dependent view body.
+    private(set) var itemsVersion = 0
+
     @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var loadingMore = false
@@ -400,36 +413,13 @@ final class DiscoverViewModel: ObservableObject {
         return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
+    /// Page-merge interleave (L2-202): delegates to the shared linear-traversal
+    /// core so the O(n²) `removeFirst()` drain is gone here and in the view's two
+    /// interleave paths, with byte-for-byte identical order. This call site keeps
+    /// its historical lack of a small-input guard — the core handles 0/1/2 items
+    /// the same way the old inline loop did.
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
-        var sports = items.filter { sportsCategories.contains(category(for: $0)) }
-        var nonSports = items.filter { !sportsCategories.contains(category(for: $0)) }
-        if nonSports.isEmpty { return items }
-
-        var result: [FeedItem] = []
-        var lastCategory = ""
-        var sportsSince = 0
-        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
-
-        while !sports.isEmpty || !nonSports.isEmpty {
-            if !nonSports.isEmpty && (sportsSince >= maxSportsRun || sports.isEmpty) {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSince = 0
-                lastCategory = category(for: item)
-            } else if !sports.isEmpty {
-                if category(for: sports[0]) == lastCategory,
-                   let swapIdx = sports.prefix(5).firstIndex(where: { category(for: $0) != lastCategory }) {
-                    sports.swapAt(0, swapIdx)
-                }
-                let item = sports.removeFirst()
-                result.append(item)
-                sportsSince += 1
-                lastCategory = category(for: item)
-            } else {
-                break
-            }
-        }
-        return result
+        FeedInterleave.byCategory(items, sportsCategories: sportsCategories, category: category(for:))
     }
 
     private static func category(for item: FeedItem) -> String {

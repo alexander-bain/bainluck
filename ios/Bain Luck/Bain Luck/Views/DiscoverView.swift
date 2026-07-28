@@ -185,6 +185,16 @@ struct DiscoverView: View {
     @State private var challengeIndex = 0
     @State private var challengeComplete = false
 
+    // Presentation memo (L2-202 / C42 P2): a reference-type cache held in @State
+    // so mutating its contents is invisible to SwiftUI's invalidation. Rebuilds
+    // the interleave+group pipeline only when `presentationSignature` changes.
+    @State private var presentationCache = MemoizedPresentation<[DiscoverGroupedItem]>()
+    // Monotonic stamps bumped by the two view-owned semantic inputs so the memo
+    // signature changes exactly when they do (the feed itself is tracked by
+    // `vm.itemsVersion`).
+    @State private var dismissVersion = 0
+    @State private var profileVersion = 0
+
     private let sportsCats: Set<String> = [
         "basketball", "football", "baseball", "hockey", "soccer",
         "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
@@ -347,6 +357,9 @@ struct DiscoverView: View {
 
     private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction, source: String = "card") {
         interactionProfile.record(category: itemCategory(item), action: action)
+        // The profile feeds category cooldown + personalization ranking, so a
+        // recorded interaction is a semantic input change — invalidate the memo.
+        profileVersion &+= 1
         let actionName: String
         switch action {
         case .detailOpen: actionName = "open"
@@ -497,7 +510,45 @@ struct DiscoverView: View {
         return cooldownFiltered.isEmpty ? dismissBase : cooldownFiltered
     }
 
+    /// Memoized presentation (L2-202 / C42 P2). SwiftUI re-evaluates every
+    /// computed property read in `body` on each render — scroll (`visibleCount`),
+    /// impression tracking (`seenImpressions`), and any unrelated `@State` change
+    /// all re-run `body`. Without a memo, each of those rebuilt the entire
+    /// sanitize → stale-gate → dismiss → cooldown → interleave → group →
+    /// personalize → interleave pipeline over the whole payload on the main actor.
+    /// The memo rebuilds only when a semantic input changes; see
+    /// `presentationSignature`.
     private var groupedItems: [DiscoverGroupedItem] {
+        presentationCache.resolve(signature: presentationSignature) {
+            buildGroupedItems()
+        }
+    }
+
+    /// Cheap signature of every input the presentation actually depends on. Any
+    /// change here rebuilds `groupedItems` exactly once; anything NOT here (scroll
+    /// position, impression set, daily-guess count, sheet flags…) reuses the memo.
+    ///   • `vm.itemsVersion` — feed content: cold load, cache seed, pull-to-refresh,
+    ///     account switch, and pagination merge all reassign `items` (monotonic bump),
+    ///     so this alone covers refresh, pagination, and account/session change.
+    ///   • `dismissVersion` — the decaying dismiss store (swipe / context-menu
+    ///     "less like this" / refresh clear) that `filteredItems` reads.
+    ///   • `profileVersion` — the interaction profile driving category cooldown
+    ///     suppression and local personalization ranking (the app has no separate
+    ///     preference/filter surface on this screen; these two are its inputs).
+    ///   • `Self.staleBucket()` — a coarse wall-clock bucket so the lifecycle stale
+    ///     gate re-evaluates on a bounded cadence (e.g. after backgrounding) without
+    ///     rebuilding on every body pass. A card can outlive its stale threshold by
+    ///     at most one bucket, far tighter than the reload cadence.
+    private var presentationSignature: String {
+        "\(vm.itemsVersion)|\(dismissVersion)|\(profileVersion)|\(Self.staleBucket())"
+    }
+
+    /// Coarse staleness bucket (30s) — see `presentationSignature`.
+    private static func staleBucket() -> Int {
+        Int(Date().timeIntervalSince1970 / 30)
+    }
+
+    private func buildGroupedItems() -> [DiscoverGroupedItem] {
         var groups: [String: [FeedItem]] = [:]
         var groupTitles: [String: String] = [:]
         var result: [DiscoverGroupedItem] = []
@@ -608,44 +659,10 @@ struct DiscoverView: View {
     }
 
     private func interleave(_ items: [FeedItem]) -> [FeedItem] {
+        // Preserve this call site's small-input guard, then delegate to the shared
+        // linear-traversal core (L2-202): identical order, no O(n²) removeFirst.
         guard items.count > 2 else { return items }
-
-        var sports = items.filter { sportsCats.contains(itemCategory($0)) }
-        var nonSports = items.filter { !sportsCats.contains(itemCategory($0)) }
-        guard !nonSports.isEmpty else { return items }
-
-        var result: [FeedItem] = []
-        var lastCategory = ""
-        var sportsSinceNonSport = 0
-        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
-
-        while !sports.isEmpty || !nonSports.isEmpty {
-            if !nonSports.isEmpty && (sportsSinceNonSport >= maxSportsRun || sports.isEmpty) {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = itemCategory(item)
-                continue
-            }
-
-            if !sports.isEmpty {
-                if itemCategory(sports[0]) == lastCategory,
-                   let swapIdx = sports.prefix(5).firstIndex(where: { itemCategory($0) != lastCategory }) {
-                    sports.swapAt(0, swapIdx)
-                }
-                let item = sports.removeFirst()
-                result.append(item)
-                lastCategory = itemCategory(item)
-                sportsSinceNonSport += 1
-            } else if !nonSports.isEmpty {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = itemCategory(item)
-            }
-        }
-
-        return result
+        return FeedInterleave.byCategory(items, sportsCategories: sportsCats, category: itemCategory)
     }
 
     private func groupedCategory(_ item: DiscoverGroupedItem) -> String {
@@ -653,44 +670,10 @@ struct DiscoverView: View {
     }
 
     private func interleaveGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        // Same shared linear core as `interleave`, classified by the grouped
+        // item's primary category (L2-202): identical order, no O(n²) removeFirst.
         guard items.count > 2 else { return items }
-
-        var sports = items.filter { sportsCats.contains(groupedCategory($0)) }
-        var nonSports = items.filter { !sportsCats.contains(groupedCategory($0)) }
-        guard !nonSports.isEmpty else { return items }
-
-        var result: [DiscoverGroupedItem] = []
-        var lastCategory = ""
-        var sportsSinceNonSport = 0
-        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
-
-        while !sports.isEmpty || !nonSports.isEmpty {
-            if !nonSports.isEmpty && (sportsSinceNonSport >= maxSportsRun || sports.isEmpty) {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = groupedCategory(item)
-                continue
-            }
-
-            if !sports.isEmpty {
-                if groupedCategory(sports[0]) == lastCategory,
-                   let swapIdx = sports.prefix(5).firstIndex(where: { groupedCategory($0) != lastCategory }) {
-                    sports.swapAt(0, swapIdx)
-                }
-                let item = sports.removeFirst()
-                result.append(item)
-                lastCategory = groupedCategory(item)
-                sportsSinceNonSport += 1
-            } else if !nonSports.isEmpty {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = groupedCategory(item)
-            }
-        }
-
-        return result
+        return FeedInterleave.byCategory(items, sportsCategories: sportsCats, category: groupedCategory)
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -1064,6 +1047,7 @@ struct DiscoverView: View {
                                 Task {
                                     visibleCount = 20
                                     dismissedAt.removeAll()
+                                    dismissVersion &+= 1
                                     seenImpressions.removeAll()
                                     await vm.load()
                                     if let r = try? await APIClient.shared.fetchResolutions() {
@@ -1134,6 +1118,7 @@ struct DiscoverView: View {
             // Pull-to-refresh shows a full feed this session (in-memory clear);
             // the persisted, decaying store on disk is intact for the next launch.
             dismissedAt.removeAll()
+            dismissVersion &+= 1
             seenImpressions.removeAll()
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
@@ -1184,6 +1169,10 @@ struct DiscoverView: View {
     private func hideForSession(_ id: String) {
         dismissedAt[id] = Date().timeIntervalSince1970
         Self.saveDismissed(dismissedAt)
+        // Bump BEFORE the groupedItems read below so the count reflects the
+        // just-dismissed card (the memo would otherwise return the pre-dismiss
+        // presentation).
+        dismissVersion &+= 1
         if visibleCount >= max(groupedItems.count - 8, 0) {
             visibleCount += 20
             Task { await vm.loadMoreIfNeeded() }
