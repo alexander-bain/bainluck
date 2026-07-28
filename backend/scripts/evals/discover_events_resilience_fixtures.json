@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "description": "Implementation-neutral discover_events durability and continuation contracts derived from C62.",
+  "fixtures": [
+    {
+      "name": "normal_multi_sport",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"none","sport":null,"phase":"none"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":[],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "slow_odds_source",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"slow_odds","sport":"mlb","phase":"odds_fetch"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["mlb"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "hung_espn_date",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"hung_espn","sport":"nba","phase":"espn_date"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["nba"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "huge_bookmaker_payload",
+      "input_order": ["nba"],
+      "units": [{"sport":"nba","event_ids":["e1","e2"],"snapshot_ids":["s1","s2","s3","s4"]}],
+      "failure": {"kind":"none","sport":null,"phase":"snapshot_batch"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2","s3","s4"],"retry_cursor":[],"deferred_cursor":[],"redis_complete_sports":["nba"],"terminal_counters":{"committed_units":1,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "duplicate_payload",
+      "input_order": ["nba"],
+      "units": [{"sport":"nba","event_ids":["e1","e1"],"snapshot_ids":["s1","s1"]}],
+      "failure": {"kind":"none","sport":null,"phase":"upsert"},
+      "pre_state": {"committed_event_ids":["e1"],"committed_snapshot_ids":["s1"],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1"],"committed_snapshot_ids":["s1"],"retry_cursor":[],"deferred_cursor":[],"redis_complete_sports":["nba"],"terminal_counters":{"committed_units":1,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "db_timeout_before_commit",
+      "input_order": ["nba", "mlb"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]}],
+      "failure": {"kind":"db_timeout_before_commit","sport":"mlb","phase":"commit"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2"],"retry_cursor":["mlb"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba"],"terminal_counters":{"committed_units":2,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "db_timeout_after_commit",
+      "input_order": ["nba", "mlb"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]}],
+      "failure": {"kind":"db_timeout_after_commit","sport":"nba","phase":"post_commit_accounting"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2"],"retry_cursor":["nba"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba"],"terminal_counters":{"committed_units":2,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "poison_event",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"poison_event","sport":"mlb","phase":"event_upsert"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["mlb"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "hard_kill_mid_unit",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"hard_kill_mid_unit","sport":"mlb","phase":"snapshot_write"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["mlb","nhl"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "hard_kill_between_units",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"hard_kill_between_units","sport":"nba","phase":"after_commit"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["mlb","nhl"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "redis_marker_write_failure",
+      "input_order": ["nba", "mlb"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]}],
+      "failure": {"kind":"redis_marker_failure","sport":"nba","phase":"post_commit_marker"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2"],"retry_cursor":[],"deferred_cursor":[],"redis_complete_sports":["mlb","nba"],"terminal_counters":{"committed_units":2,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":1},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "redis_marker_ahead_of_rollback",
+      "input_order": ["nba", "mlb"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]}],
+      "failure": {"kind":"none","sport":null,"phase":"startup_reconcile"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":["nba"]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2"],"retry_cursor":["nba"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba"],"terminal_counters":{"committed_units":2,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":1},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "sibling_source_survival",
+      "input_order": ["nba", "mlb", "nhl"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]},{"sport":"nhl","event_ids":["e3"],"snapshot_ids":["s3"]}],
+      "failure": {"kind":"db_timeout_before_commit","sport":"nba","phase":"registry_flush"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2","e3"],"committed_snapshot_ids":["s1","s2","s3"],"retry_cursor":["nba"],"deferred_cursor":[],"redis_complete_sports":["mlb","nba","nhl"],"terminal_counters":{"committed_units":3,"deferred_units":0,"failed_units":0,"piggyback_failures":0,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    },
+    {
+      "name": "piggyback_failure",
+      "input_order": ["nba", "mlb"],
+      "units": [{"sport":"nba","event_ids":["e1"],"snapshot_ids":["s1"]},{"sport":"mlb","event_ids":["e2"],"snapshot_ids":["s2"]}],
+      "failure": {"kind":"piggyback_failure","sport":null,"phase":"taxonomy"},
+      "pre_state": {"committed_event_ids":[],"committed_snapshot_ids":[],"redis_complete_sports":[]},
+      "resume_deferred": true,
+      "current_early_ack": {"redelivered":false,"lost_if_killed":true,"marker_policy":"before_commit"},
+      "proposed_late_ack": {"redelivered":true,"lost_if_killed":false,"marker_policy":"after_commit"},
+      "expected": {"committed_event_ids":["e1","e2"],"committed_snapshot_ids":["s1","s2"],"retry_cursor":[],"deferred_cursor":[],"redis_complete_sports":["mlb","nba"],"terminal_counters":{"committed_units":2,"deferred_units":0,"failed_units":0,"piggyback_failures":1,"marker_repairs":0},"duplicate_count":0,"sibling_outcome":"all_committed","cleanup_observed":true}
+    }
+  ]
+}
