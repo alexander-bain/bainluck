@@ -1192,10 +1192,47 @@ export async function removePin(
 // ============================================================================
 
 /**
+ * In-flight coalescing for `GET /api/me/preferences`.
+ *
+ * On a single hard authenticated load, multiple mount-time consumers request the
+ * same preferences: the app-shell `preferred_sport` GA4 property (via
+ * `usePreferredSportProperty` in `PinSyncEffect`) plus a route's own
+ * `useCategoryInterests` (on `/sports` and `/preferences`). Without coalescing
+ * these fire as separate identical requests. We share ONE in-flight promise so
+ * concurrent consumers hit the network once.
+ *
+ * Keyed by the resolved auth token so a user switch never reuses the prior user's
+ * in-flight promise, and cleared on settle so nothing is cached across loads
+ * (a subsequent load — including after logout — always makes a fresh request).
+ * Anonymous callers never reach here: `useCategoryInterests` reads localStorage
+ * when unauthenticated and never calls this function.
+ */
+let _inFlightPreferences: {
+  token: string | null;
+  promise: Promise<UserPreferencesResponse>;
+} | null = null;
+
+/**
  * Fetch the current user's preferences and team favorites
  */
 export async function fetchUserPreferences(): Promise<UserPreferencesResponse> {
-  return apiFetch<UserPreferencesResponse>("/api/me/preferences");
+  const token = await getAuthTokenWithTimeout();
+
+  // Reuse an in-flight request only for the SAME auth identity.
+  if (_inFlightPreferences && _inFlightPreferences.token === token) {
+    return _inFlightPreferences.promise;
+  }
+
+  const promise = apiFetch<UserPreferencesResponse>("/api/me/preferences").finally(
+    () => {
+      // Clear on settle so nothing persists across loads / user switches.
+      if (_inFlightPreferences?.promise === promise) {
+        _inFlightPreferences = null;
+      }
+    },
+  );
+  _inFlightPreferences = { token, promise };
+  return promise;
 }
 
 /**
