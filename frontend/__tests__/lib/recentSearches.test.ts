@@ -69,6 +69,44 @@ describe("getRecentSearches", () => {
     expect(() => getRecentSearches()).not.toThrow();
     expect(getRecentSearches()).toEqual([]);
   });
+
+  // L2-199 — complete the C4-stated malformed-shape matrix: bare null, bare
+  // scalar (string/number), and blocked storage must all degrade to [] without
+  // throwing (a `.filter`/`.length`/`.map` on a non-array crashed the search UI).
+  it("returns [] for a stored bare null", () => {
+    localStorageMock._set(KEY, JSON.stringify(null));
+    expect(() => getRecentSearches()).not.toThrow();
+    expect(getRecentSearches()).toEqual([]);
+  });
+
+  it("returns [] for a stored bare string", () => {
+    localStorageMock._set(KEY, JSON.stringify("celtics"));
+    expect(() => getRecentSearches()).not.toThrow();
+    expect(getRecentSearches()).toEqual([]);
+  });
+
+  it("returns [] for a stored bare number", () => {
+    localStorageMock._set(KEY, JSON.stringify(42));
+    expect(() => getRecentSearches()).not.toThrow();
+    expect(getRecentSearches()).toEqual([]);
+  });
+
+  it("returns [] without throwing when storage access is blocked", () => {
+    localStorageMock.getItem.mockImplementationOnce(() => {
+      throw new Error("SecurityError: storage blocked");
+    });
+    expect(() => getRecentSearches()).not.toThrow();
+    expect(getRecentSearches()).toEqual([]);
+  });
+});
+
+describe("saveRecentSearch (blocked storage)", () => {
+  it("does not throw when localStorage.setItem is blocked", () => {
+    localStorageMock.setItem.mockImplementationOnce(() => {
+      throw new Error("QuotaExceededError");
+    });
+    expect(() => saveRecentSearch("celtics")).not.toThrow();
+  });
 });
 
 describe("saveRecentSearch", () => {

@@ -6,10 +6,10 @@
  */
 
 import { motion } from "framer-motion";
-import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
 import { espnHeadshotUrl, sportKeyToEspnHeadshotSport, getWikipediaImage } from "@/lib/images";
+import { useEntityImage } from "@/lib/entityImage";
 
 interface StatLine {
   id: number;
@@ -58,32 +58,15 @@ function PlayerAvatar({
   sportKey?: string;
   size?: number;
 }) {
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(
-    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey ?? null)) : null)
-  );
-  const [failed, setFailed] = useState(false);
-
-  // Re-seed when the player identity changes. If this avatar instance is ever
-  // reused for a different player (e.g. a list re-render), it must NOT keep the
-  // previous player's resolved face — the "wrong-face" bug (L2-178). The
-  // GroupedFeedRenderer key fix prevents the recycle in the common path; this is
-  // the belt-and-suspenders reset for any other reuse.
-  useEffect(() => {
-    setResolvedUrl(
-      headshotUrl ||
-        (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey ?? null)) : null)
-    );
-    setFailed(false);
-  }, [playerName, headshotUrl, espnPlayerId, sportKey]);
-
-  useEffect(() => {
-    if (resolvedUrl || failed) return;
-    // Fallback to Wikipedia
-    getWikipediaImage(playerName).then((url) => {
-      if (url) setResolvedUrl(url);
-      else setFailed(true);
-    });
-  }, [playerName, resolvedUrl, failed]);
+  // Identity-safe image resolution (L2-199): seeds from the direct headshot/ESPN
+  // URL, re-seeds when the player identity changes (a recycled instance never
+  // keeps the previous player's face — the "wrong-face" bug), and drops a late
+  // Wikipedia lookup fired for a superseded player so it can't land on another
+  // player's name. See lib/entityImage.ts.
+  const directUrl =
+    headshotUrl ||
+    (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey ?? null)) : null);
+  const { url: resolvedUrl, failed, markFailed } = useEntityImage(playerName, directUrl, getWikipediaImage);
 
   const initials = playerName
     .split(" ")
@@ -103,10 +86,7 @@ function PlayerAvatar({
         height={size}
         className="rounded-full object-cover flex-shrink-0 bg-surface-elevated"
         style={{ width: dim, height: dim }}
-        onError={() => {
-          setResolvedUrl(null);
-          setFailed(true);
-        }}
+        onError={markFailed}
       />
     );
   }

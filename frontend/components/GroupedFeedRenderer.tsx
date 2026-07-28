@@ -84,6 +84,23 @@ function PlayoffProgressionItem({
  * The kernel discipline (Queue L2-119): a Quantity ladder NEVER renders without
  * its question context, so we always resolve to a non-empty title.
  */
+/**
+ * Stable per-entity React key for a grouped-feed row (L2-178 / L2-199).
+ *
+ * NOT the array index: an index key made React recycle a card instance (and its
+ * resolved player headshot / team logo) for a DIFFERENT entity when the list
+ * reordered or updated — the "wrong-face" bug. Keying by entity identity forces
+ * a fresh component instance (fresh image state) whenever the entity at a
+ * position changes, so a replaced row can never retain the previous entity's
+ * image or failure state. `group_key` is the grouping identity for grouped
+ * items; ungrouped markets key by their market id.
+ */
+export function groupedFeedItemKey(item: GroupedFeedItem): string {
+  return item.type === "market"
+    ? `market-${item.market.id}`
+    : `${item.type}-${item.group_key}`;
+}
+
 export function formatThresholdTitle(title: string): string {
   const cleaned = (title ?? "")
     .replace(/\s+/g, " ")
@@ -194,16 +211,9 @@ export default function GroupedFeedRenderer({
       initial="hidden"
       animate="visible"
     >
-      {items.map((item, idx) => {
-        // Key by a STABLE entity id, not the array index. Index keys made React
-        // recycle a card instance (and its resolved player headshot) for a
-        // different entity when the list reordered/updated — the "wrong-face"
-        // bug (L2-178). group_key is the grouping identity for grouped items;
-        // ungrouped markets key by their market id.
-        const key =
-          item.type === "market"
-            ? `market-${item.market.id}`
-            : `${item.type}-${item.group_key}`;
+      {items.map((item) => {
+        // Key by a STABLE entity id, not the array index (see groupedFeedItemKey).
+        const key = groupedFeedItemKey(item);
 
         switch (item.type) {
           case "stat_prop":

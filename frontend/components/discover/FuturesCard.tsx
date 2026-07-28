@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
@@ -11,6 +11,28 @@ import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils"
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
 import type { CardActionCallbacks } from "./types";
+
+// Deterministic exposure hash — the same char-fold the card has always used,
+// factored out so the SSR/first-render seed and the post-mount session
+// assignment share one implementation (L2-199).
+function computeVariantB(id: number, session: string): boolean {
+  const seed = `${session}_${id}`;
+  const hash = Array.from(seed).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+  return Math.abs(hash) % 2 === 0;
+}
+
+// Read the persisted Discover session id WITHOUT creating one — preserving the
+// existing A/B allocation intent (anon users hash under "anon", exactly as the
+// old render-time `localStorage.getItem` did). Guarded so blocked storage
+// returns the stable fallback instead of throwing (L2-199).
+function readSessionSeed(): string {
+  if (typeof window === "undefined") return "anon";
+  try {
+    return localStorage.getItem("bainluck_session_id") || "anon";
+  } catch {
+    return "anon";
+  }
+}
 
 interface FuturesCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -24,6 +46,27 @@ interface FuturesCardProps extends CardActionCallbacks {
 export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
   const [showHeatmapContext, setShowHeatmapContext] = useState(false);
+  // A/B variant: exposure-level assignment — hash(session + market) so each
+  // market serves both variants across sessions and each session sees both.
+  //
+  // Hydration-safe (L2-199): the session id lives in localStorage, which is
+  // undefined during SSR and can THROW when browser storage is blocked. The old
+  // code read it during render, so (a) the server hashed "ssr_<id>" while the
+  // client hashed the real session — server and first-hydration markup could
+  // pick structurally DIFFERENT card variants, causing a React hydration
+  // mismatch / subtree replacement / flicker — and (b) a storage-access throw
+  // took down the whole card subtree. We now seed a hydration-stable default
+  // ("anon") for SSR AND the first client render (the useState initializer runs
+  // identically on both), then resolve the real session-scoped assignment in a
+  // post-mount effect. The SSR body stays non-personalized (edge-cache safe),
+  // and the assignment is stable after mount and across rerenders. `data-card-
+  // variant` records the assigned variant for exposure analytics. Anon users
+  // (no session id) hash under "anon" both before and after mount → no flip,
+  // preserving the existing allocation intent exactly.
+  const [variantB, setVariantB] = useState(() => computeVariantB(data.id, "anon"));
+  useEffect(() => {
+    setVariantB(computeVariantB(data.id, readSessionSeed()));
+  }, [data.id]);
   const catStyle = getCat(data.llm_sport_category);
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const leader = data.top_outcomes?.[0];
@@ -212,11 +255,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  // A/B variant: exposure-level assignment — hash(session + market) so each
-  // market serves both variants across sessions and each session sees both.
-  const _abSeed = `${typeof window !== "undefined" ? (localStorage.getItem("bainluck_session_id") || "anon") : "ssr"}_${data.id}`;
-  const _abHash = Array.from(_abSeed).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
-  const variantB = (Math.abs(_abHash) % 2 === 0);
   const pctDisplay = prob != null ? `${Math.round(prob * 100)}%` : null;
   const movementVal = leader?.movement;
   const movementUp = movementVal != null && movementVal > 0;

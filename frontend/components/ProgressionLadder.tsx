@@ -6,10 +6,10 @@
  */
 
 import { motion } from "framer-motion";
-import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
 import { getWikipediaImage } from "@/lib/images";
+import { useEntityImage } from "@/lib/entityImage";
 import { probabilityTextClass } from "@/lib/probabilityColors";
 
 /**
@@ -29,16 +29,12 @@ function TeamLogo({
   teamColors?: { primary: string };
   size?: number;
 }) {
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(logoUrl || null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (resolvedUrl || failed) return;
-    getWikipediaImage(entityName).then((url) => {
-      if (url) setResolvedUrl(url);
-      else setFailed(true);
-    });
-  }, [entityName, resolvedUrl, failed]);
+  // Identity-safe logo resolution (L2-199): re-seeds when the team identity
+  // changes — previously this instance kept the prior team's logo after a
+  // recycle because the fetch effect early-returned on a non-null resolvedUrl —
+  // and drops a late Wikipedia lookup fired for a superseded team so it can't
+  // land on another team. See lib/entityImage.ts.
+  const { url: resolvedUrl, failed, markFailed } = useEntityImage(entityName, logoUrl, getWikipediaImage);
 
   const initials = entityName
     .split(" ")
@@ -60,7 +56,7 @@ function TeamLogo({
         height={size}
         className="rounded object-contain flex-shrink-0 bg-surface-elevated/30"
         style={{ width: dim, height: dim }}
-        onError={() => { setResolvedUrl(null); setFailed(true); }}
+        onError={markFailed}
       />
     );
   }
