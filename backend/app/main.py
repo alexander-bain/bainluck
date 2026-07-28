@@ -65,9 +65,23 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events."""
     # Startup
     await init_db()
+    # Queue 271 / #1197: warm the process-shared async Redis client so the feed +
+    # calibration request paths reuse ONE pool instead of constructing/closing a
+    # pool per request (the churn that amplifies the Heroku Redis TLS flakiness).
+    try:
+        from app.utils.request_cache import get_shared_async_redis
+
+        await get_shared_async_redis()
+    except Exception:  # pragma: no cover - never block startup on Redis
+        logger.debug("shared async redis warm-up skipped", exc_info=True)
     yield
     # Shutdown
-    pass
+    try:
+        from app.utils.request_cache import close_shared_async_redis
+
+        await close_shared_async_redis()
+    except Exception:  # pragma: no cover - shutdown best-effort
+        logger.debug("shared async redis close skipped", exc_info=True)
 
 
 app = FastAPI(

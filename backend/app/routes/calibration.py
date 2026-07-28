@@ -3,7 +3,7 @@
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -769,46 +769,94 @@ async def public_calibration(
     """Public calibration data for the /calibration page.
 
     Served from Redis (precomputed by precompute_calibration_main task every 1h).
-    Falls back to in-process cache, then live computation if Redis is empty.
+    Falls back to in-process cache, then a truthful last-good/stale payload, and
+    only as a last resort a deadline-guarded compute.
+
+    Queue 271 (#1459/#1197) hardening:
+    * The Redis read is now a *shared async* client + a hard-bounded op — no more
+      SYNCHRONOUS ``get_redis_client().get()`` on the async event loop (gotcha
+      #39), which blocked the loop for the whole read.
+    * On a Redis *failure* (stall/error) a usable in-process/last-good payload is
+      served instead of recomputing during flakiness.
+    * The in-request ``compute_calibration_payload`` CTE (the 12-27s cold path
+      that H12'd at the router) is now wrapped in a hard compute deadline: it
+      either finishes fast or fails fast + explicit (503 + Retry-After). It is
+      never allowed to run toward the router cutoff and never synthesizes a curve.
     """
+    import asyncio
     import json as _json
+
+    from app.utils import request_cache as _rc
+
+    _lg_key = "calibration:main"
 
     # 1. In-process cache (survives between requests on same dyno)
     now = time.time()
     if not bust and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
         return _cache["data"]
 
-    # 2. Redis precomputed cache (survives deploys)
+    # 2. Redis precomputed cache (survives deploys) — shared async client + a
+    #    hard-bounded op so a Redis stall can never block the loop or the router.
+    _redis_failed = False
     try:
-        from app.tasks.redis_state import get_redis_client
-        rc = get_redis_client()
-        cached = rc.get("bainluck:calibration:main")
-        if cached:
-            data = _json.loads(cached)
-            _cache["data"] = data
-            _cache["timestamp"] = now
-            return data
+        rc = await _rc.get_shared_async_redis()
+        res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
+        if res.is_ok:
+            data = _json.loads(res.value)
+            if isinstance(data, dict):
+                _cache["data"] = data
+                _cache["timestamp"] = now
+                _rc.remember_last_good(_lg_key, data)
+                return data
+        _redis_failed = res.is_failure
     except Exception:
-        pass
+        _redis_failed = True
 
-    # 3. Fallback: compute in-request via the ONE shared canonical path (Queue
-    # #257 Item 1). This used to carry its own ~650-line copy of the CTE chain +
-    # Python post-processing that had drifted from the precompute task in ~11
-    # material ways — it was missing the liquidity / poly-placeholder /
-    # malformed-binary / golf-placeholder exclusions and the DataGolf-residual
-    # guard, used a looser resolution-source filter (kept pass2_loser/all_losers
-    # and NULL-source rows), and computed equal-weighted MCE where the task used
-    # n-weighted — so a cold-cache serve showed a materially different curve than
-    # the Redis-served one. It now delegates to compute_calibration_payload so
-    # the two serve paths are byte-for-byte the SAME population + divisor. Slower
-    # on a cold cache (runs the full query in-request) but correct; the
-    # precompute beat keeps bainluck:calibration:main warm so this is rare.
+    # 3. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
+    #    payload over recomputing during Redis flakiness (Queue 271 Item 2).
+    #    ``bust`` explicitly asks for a fresh recompute, so it skips this.
+    if _redis_failed and not bust:
+        stale = (
+            _cache["data"]
+            if isinstance(_cache["data"], dict)
+            else _rc.recall_last_good(_lg_key)
+        )
+        if isinstance(stale, dict):
+            degraded = dict(stale)
+            degraded["cache"] = {"status": "stale", "reason": "redis_unavailable"}
+            return degraded
+
+    # 4. Clean cache miss (Redis empty) with nothing cached — compute via the ONE
+    #    shared canonical path, but under a HARD deadline so it can never run to
+    #    the router cutoff. On breach: serve last-good if any, else fail fast.
     from app.tasks.precompute_calibration import compute_calibration_payload
 
-    data = await compute_calibration_payload(db)
-    _cache["data"] = data
-    _cache["timestamp"] = now
-    return data
+    try:
+        data = await _rc.run_with_deadline(
+            compute_calibration_payload(db),
+            deadline_ms=_rc.CALIBRATION_COMPUTE_DEADLINE_MS,
+        )
+        _cache["data"] = data
+        _cache["timestamp"] = now
+        _rc.remember_last_good(_lg_key, data)
+        return data
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        stale = (
+            _cache["data"]
+            if isinstance(_cache["data"], dict)
+            else _rc.recall_last_good(_lg_key)
+        )
+        if isinstance(stale, dict):
+            degraded = dict(stale)
+            degraded["cache"] = {"status": "stale", "reason": "compute_deadline"}
+            return degraded
+        raise HTTPException(
+            status_code=503,
+            detail="Calibration data is warming up. Please retry shortly.",
+            headers={"Retry-After": "30"},
+        )
 
 
 # ---------------------------------------------------------------------------

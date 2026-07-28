@@ -6,6 +6,23 @@ from datetime import datetime, timezone, timedelta
 from app.utils.pulse import PulseDataPoint
 
 
+@pytest.fixture(autouse=True)
+def _reset_request_cache_state():
+    """Isolate the process-local request-cache primitives (Queue 271).
+
+    ``app.utils.request_cache`` keeps a process-global last-good store + in-flight
+    singleflight registry. Without a reset they leak across tests (e.g. one
+    calibration/feed test's last-good bleeding into the next). Cheap and safe.
+    """
+    from app.utils import request_cache as _rc
+
+    _rc._reset_last_good_for_tests()
+    _rc._reset_inflight_for_tests()
+    yield
+    _rc._reset_last_good_for_tests()
+    _rc._reset_inflight_for_tests()
+
+
 @pytest.fixture
 def game_start():
     """A game start time for testing."""

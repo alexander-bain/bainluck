@@ -301,10 +301,19 @@ def _discover_runtime_config_defaults() -> dict[str, float | bool]:
 async def _load_discover_runtime_config() -> dict[str, float | bool]:
     config = _discover_runtime_config_defaults()
     try:
-        from app.tasks.redis_state import get_async_redis_client
+        # Queue 271 (#1459/#1197): this runs on EVERY /api/feed request BEFORE the
+        # response-cache lookup. Use the process-shared client + a hard-bounded op
+        # so a Redis stall here can never block the request before a cached payload
+        # can be served, and never leak a per-request pool. Failure => env defaults.
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-        redis = get_async_redis_client()
-        raw = await redis.hgetall("bainluck:discover_runtime_config")
+        redis = await get_shared_async_redis()
+        res = await bounded_redis_call(
+            lambda: redis.hgetall("bainluck:discover_runtime_config")
+        )
+        if not res.is_ok:
+            return config
+        raw = res.value or {}
         decoded = {
             (k.decode() if isinstance(k, bytes) else k): (
                 v.decode() if isinstance(v, bytes) else v
@@ -1147,62 +1156,105 @@ async def get_feed(
             "interaction_suppression_enabled": False,
         }
 
-    # --- Redis response cache (anon 15s, auth 5s, my_teams 30s) ---
+    # --- Redis response cache (anon 60s, auth/session 5s, my_teams 30s) ---
+    # Queue 271 (#1459/#1197): reads go through the process-SHARED async client +
+    # a hard-bounded op (no per-request pool churn, no unbounded await). A Redis
+    # *failure* (stall/connect error) serves a process-local last-good payload
+    # instead of forcing a cold recompute, so a Redis blip can never turn into a
+    # cold-compute miss-storm. Malformed cache is treated as a typed miss, never a
+    # crash. See app/utils/request_cache.py + the C55 contract.
+    from app.utils import request_cache as _rc
+
     _cache_key = None
     # Session/user feeds change as impressions are recorded. Keep anonymous
     # no-session cache warmer, but make per-session Discover refreshes respond
     # quickly to "already seen" suppression.
     _cache_ttl = 30 if my_teams_only else (5 if (feed_user or feed_session_id) else 60)
-    _async_redis = None
+    _shared_redis = None
     _cache_status = "disabled"
+
+    def _safe_cache_payload(raw):
+        try:
+            value = _json_module.loads(raw)
+        except Exception:
+            return None
+        return value if isinstance(value, dict) else None
+
     if not debug and not exclude_reviewed:
         _cache_status = "miss"
+        _user_part = (
+            f"u:{feed_user.id}"
+            if feed_user
+            else f"s:{feed_session_id}" if feed_session_id else "anon"
+        )
+        _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}:{mode or 'discover'}"
+        _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
         try:
-            from app.tasks.redis_state import get_async_redis_client
-
-            _async_redis = get_async_redis_client()
-            _user_part = (
-                f"u:{feed_user.id}"
-                if feed_user
-                else f"s:{feed_session_id}" if feed_session_id else "anon"
+            _shared_redis = await _rc.get_shared_async_redis()
+            _fresh = await _rc.bounded_redis_call(
+                lambda: _shared_redis.get(_cache_key)
             )
-            _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}:{mode or 'discover'}"
-            _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
-            cached = await _async_redis.get(_cache_key)
-            if cached:
-                await _async_redis.aclose()
-                payload = _json_module.loads(cached)
-                if isinstance(payload, dict):
+            if _fresh.is_ok:
+                payload = _safe_cache_payload(_fresh.value)
+                if payload is not None:
+                    _rc.remember_last_good(_cache_key, payload)
                     payload["cache"] = build_feed_cache_metadata(
-                        "hit",
-                        ttl_seconds=_cache_ttl,
+                        "hit", ttl_seconds=_cache_ttl
                     )
-                _previous_at = _record_feed_timing(
-                    _timings, _started_at, _previous_at, "cache_hit"
-                )
-                _set_feed_cache_status(response, "hit")
-                _set_feed_timing_header(response, _started_at)
-                return payload
-            # Stale fallback: serve old data if primary cache expired
-            _stale_key = f"{_cache_key}:stale"
-            stale = await _async_redis.get(_stale_key)
-            if stale:
-                await _async_redis.aclose()
-                payload = _json_module.loads(stale)
-                if isinstance(payload, dict):
+                    _previous_at = _record_feed_timing(
+                        _timings, _started_at, _previous_at, "cache_hit"
+                    )
+                    _set_feed_cache_status(response, "hit")
+                    _set_feed_timing_header(response, _started_at)
+                    return payload
+                # Malformed fresh value → typed miss; fall through to stale/build.
+            # Stale fallback: serve old data if primary cache expired.
+            _stale = await _rc.bounded_redis_call(
+                lambda: _shared_redis.get(f"{_cache_key}:stale")
+            )
+            if _stale.is_ok:
+                payload = _safe_cache_payload(_stale.value)
+                if payload is not None:
+                    _rc.remember_last_good(_cache_key, payload)
                     payload["cache"] = build_feed_cache_metadata(
-                        "stale_hit",
-                        ttl_seconds=_cache_ttl,
+                        "stale_hit", ttl_seconds=_cache_ttl
                     )
-                _previous_at = _record_feed_timing(
-                    _timings, _started_at, _previous_at, "cache_stale_hit"
-                )
-                _set_feed_cache_status(response, "stale_hit")
-                _set_feed_timing_header(response, _started_at)
-                return payload
+                    _previous_at = _record_feed_timing(
+                        _timings, _started_at, _previous_at, "cache_stale_hit"
+                    )
+                    _set_feed_cache_status(response, "stale_hit")
+                    _set_feed_timing_header(response, _started_at)
+                    return payload
+            if _fresh.is_failure or _stale.is_failure:
+                # Redis stalled/errored (NOT a clean miss). Serve process-local
+                # last-good before paying a cold compute — a Redis blip must not
+                # become a stampede of cold builds (the #1459 driver).
+                _cache_status = "error"
+                _lg = _rc.recall_last_good(_cache_key)
+                if isinstance(_lg, dict):
+                    out = dict(_lg)
+                    out["cache"] = build_feed_cache_metadata(
+                        "last_good",
+                        ttl_seconds=_cache_ttl,
+                        reason="redis_unavailable",
+                    )
+                    _previous_at = _record_feed_timing(
+                        _timings, _started_at, _previous_at, "cache_last_good"
+                    )
+                    _set_feed_cache_status(response, "last_good")
+                    _set_feed_timing_header(response, _started_at)
+                    return out
         except Exception:
-            _cache_key = None
             _cache_status = "error"
+            _lg = _rc.recall_last_good(_cache_key)
+            if isinstance(_lg, dict):
+                out = dict(_lg)
+                out["cache"] = build_feed_cache_metadata(
+                    "last_good", ttl_seconds=_cache_ttl, reason="redis_unavailable"
+                )
+                _set_feed_cache_status(response, "last_good")
+                _set_feed_timing_header(response, _started_at)
+                return out
     elif debug:
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
@@ -1257,6 +1309,49 @@ async def get_feed(
             "my_teams_only": True,
             "requires_auth": True,
         }
+
+    # --- Singleflight: coalesce identical concurrent cold builds (Queue 271) ---
+    # Only ONE cold build runs per cache key per process; other identical requests
+    # await the leader's payload instead of each paying the full multi-second
+    # compute. This is what stops the concurrent-cold-build stampede that tips
+    # /api/feed over the 30s router cutoff (#1459). Per-process (not a Redis lock)
+    # so it works even while Redis is the thing that is flaky (#1197). Waiters
+    # bound their wait, so a dead/cancelled leader can never orphan them.
+    _sf_future = None
+    _is_build_leader = False
+    if _cache_key and _cache_status in ("miss", "error"):
+        _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
+        if not _is_build_leader:
+            _coalesced = None
+            try:
+                _coalesced = await _rc.run_with_deadline(
+                    asyncio.shield(_sf_future),
+                    deadline_ms=_rc.COMPUTE_DEADLINE_MS,
+                )
+            except Exception:
+                _coalesced = None
+            if isinstance(_coalesced, dict):
+                out = dict(_coalesced)
+                out["cache"] = build_feed_cache_metadata(
+                    "coalesced", ttl_seconds=_cache_ttl
+                )
+                _previous_at = _record_feed_timing(
+                    _timings, _started_at, _previous_at, "cache_coalesced"
+                )
+                _set_feed_cache_status(response, "coalesced")
+                _set_feed_timing_header(response, _started_at)
+                return out
+            # Leader produced nothing usable — try last-good, else lead a build.
+            _lg = _rc.recall_last_good(_cache_key)
+            if isinstance(_lg, dict):
+                out = dict(_lg)
+                out["cache"] = build_feed_cache_metadata(
+                    "last_good", ttl_seconds=_cache_ttl, reason="leader_unavailable"
+                )
+                _set_feed_cache_status(response, "last_good")
+                _set_feed_timing_header(response, _started_at)
+                return out
+            _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
 
     # Load personalization context (one DB query for all user data)
     try:
@@ -1770,17 +1865,34 @@ async def get_feed(
         ),
     )
 
-    # --- Write to cache ---
-    if _cache_key and _async_redis:
+    # --- Publish the freshly built payload (Queue 271) ---
+    # Leader: record process-local last-good and hand the payload to any coalesced
+    # waiters BEFORE returning, so a Redis-down waiter still gets a real payload.
+    if _cache_key:
+        _rc.remember_last_good(_cache_key, payload)
+    if _is_build_leader and _sf_future is not None:
+        _rc.finish_build(_cache_key, _sf_future, result=payload)
+
+    # Redis publication runs detached so a slow/hung write never delays THIS
+    # response (the cache-write-stall seam). Both the fresh + :stale mirrors are
+    # written under a bounded op on the shared client.
+    if _cache_key and _shared_redis is not None:
         try:
             _payload_json = _json_module.dumps(payload, default=str)
-            await _async_redis.setex(_cache_key, _cache_ttl, _payload_json)
-            await _async_redis.setex(
-                f"{_cache_key}:stale",
-                FEED_RESPONSE_STALE_TTL_SECONDS,
-                _payload_json,
-            )
-            await _async_redis.aclose()
+
+            async def _publish_feed_cache(
+                _client=_shared_redis, _json=_payload_json, _key=_cache_key
+            ):
+                await _rc.bounded_redis_call(
+                    lambda: _client.setex(_key, _cache_ttl, _json)
+                )
+                await _rc.bounded_redis_call(
+                    lambda: _client.setex(
+                        f"{_key}:stale", FEED_RESPONSE_STALE_TTL_SECONDS, _json
+                    )
+                )
+
+            _rc.schedule_background(_publish_feed_cache())
         except Exception:
             pass
 
@@ -1890,12 +2002,15 @@ async def _apply_manual_review_decisions(
     # Fails open (absent/unreadable => enabled) so a Redis blip never silently
     # drops human steering; only an explicit off token disengages.
     try:
-        from app.tasks.redis_state import get_async_redis_client
+        # Queue 271: shared client + bounded op (no per-request pool, no unbounded
+        # await). A Redis stall fails open (returns MISS) so steering stays enabled.
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-        _krc = get_async_redis_client()
-        _kill_raw = await _krc.get(_EVAL_PROMOTE_ENABLED_KEY)
-        await _krc.aclose()
-        if not _eval_is_enabled_value(_kill_raw):
+        _krc = await get_shared_async_redis()
+        _kill_res = await bounded_redis_call(
+            lambda: _krc.get(_EVAL_PROMOTE_ENABLED_KEY)
+        )
+        if _kill_res.is_ok and not _eval_is_enabled_value(_kill_res.value):
             logger.info("eval_promote kill switch engaged — applying no review steers")
             return
     except Exception:
@@ -5329,11 +5444,16 @@ async def _score_futures(
 
     # --- Load precomputed interestingness scores from Redis ---
     try:
-        from app.tasks.redis_state import get_async_redis_client
+        # Queue 271: shared client + bounded ops (no per-request pool, no
+        # unbounded await on a large MGET). A Redis stall degrades to no-blend.
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-        _int_redis = get_async_redis_client()
+        _int_redis = await get_shared_async_redis()
         # Read blend weight (default 0.2; set to 0 to disable)
-        raw_weight = await _int_redis.get("interestingness:blend_weight")
+        _weight_res = await bounded_redis_call(
+            lambda: _int_redis.get("interestingness:blend_weight")
+        )
+        raw_weight = _weight_res.value if _weight_res.is_ok else None
         if raw_weight is not None:
             try:
                 _interestingness_blend_weight = float(
@@ -5349,9 +5469,13 @@ async def _score_futures(
         if _interestingness_blend_weight > 0:
             _int_keys = [f"interestingness:{mid}" for mid in market_ids]
             if _int_keys:
-                _int_values = await _int_redis.mget(_int_keys)
+                _mget_res = await bounded_redis_call(
+                    lambda: _int_redis.mget(_int_keys),
+                    treat_none_as_miss=False,
+                )
+                _int_values = _mget_res.value if _mget_res.is_ok else None
                 _interestingness_cache = {}
-                for mid, raw_val in zip(market_ids, _int_values):
+                for mid, raw_val in zip(market_ids, _int_values or []):
                     if raw_val is not None:
                         try:
                             parsed = _json_module.loads(
@@ -5362,7 +5486,6 @@ async def _score_futures(
                             _interestingness_cache[mid] = parsed
                         except (ValueError, TypeError):
                             pass
-        await _int_redis.aclose()
     except Exception:
         logger.debug(
             "Interestingness cache load failed — skipping blend", exc_info=True
@@ -6725,13 +6848,21 @@ async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict
 
         envelope = None
         try:
-            from app.tasks.redis_state import get_redis_client
+            # Queue 271 (gotcha #39): async path must not make a SYNC Redis call on
+            # the event loop. Shared client + bounded async op; failure => rebuild.
+            from app.utils.request_cache import (
+                bounded_redis_call,
+                get_shared_async_redis,
+            )
 
-            _rc = get_redis_client()
-            cached = _rc.get(f"bainluck:event_concept:{key}")
-            if cached:
+            _concept_redis = await get_shared_async_redis()
+            _cached_res = await bounded_redis_call(
+                lambda: _concept_redis.get(f"bainluck:event_concept:{key}")
+            )
+            if _cached_res.is_ok:
                 import json as _json
 
+                cached = _cached_res.value
                 envelope = _json.loads(
                     cached.decode() if isinstance(cached, bytes) else cached
                 )
