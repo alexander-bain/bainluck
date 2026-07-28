@@ -1,0 +1,95 @@
+{
+  "schema_version": "polymarket-discovery-fixtures/v1",
+  "note": "Synthetic Gamma event payloads for identity + decomposition edge cases. No real PII; team names are placeholders.",
+  "gamma_main_plus_prop": {
+    "id": "9001",
+    "title": "NBA: Alphas vs Betas",
+    "slug": "nba-alphas-betas-2026-01-15",
+    "ticker": "nba-alphas-betas",
+    "startDate": "2026-01-15T03:00:00Z",
+    "markets": [
+      {
+        "conditionId": "0x11aa22bb33cc44dd55ee66ff77001122334455667788990011223344556677ee",
+        "question": "Will the Alphas beat the Betas?",
+        "clobTokenIds": "[\"1001\", \"1002\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.62\", \"0.38\"]",
+        "volume": "125000",
+        "closed": true
+      },
+      {
+        "conditionId": "0x99xxprop",
+        "question": "Will Player One score over 27.5 points?",
+        "groupItemTitle": "Player One points",
+        "clobTokenIds": "[\"2001\", \"2002\"]",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.0\", \"1.0\"]",
+        "volume": "4200",
+        "closed": true
+      },
+      {
+        "conditionId": "0x99xxspread",
+        "question": "Will the Alphas beat the Betas by more than 5.5 points?",
+        "clobTokenIds": "[\"3001\", \"3002\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.45\", \"0.55\"]",
+        "volume": "8800",
+        "closed": true
+      }
+    ]
+  },
+  "gamma_city_only_alias": {
+    "id": "9002",
+    "title": "MLB: Los Angeles vs New York",
+    "slug": "mlb-los-angeles-new-york-2026-06-15",
+    "ticker": "mlb-la-ny",
+    "startDate": "2026-06-15T23:00:00Z",
+    "markets": [
+      {
+        "conditionId": "0xcityonly",
+        "question": "Will Los Angeles beat New York?",
+        "clobTokenIds": "[\"4001\", \"4002\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.5\", \"0.5\"]",
+        "volume": "1000",
+        "closed": true
+      }
+    ]
+  },
+  "gamma_home_away_reversed": {
+    "id": "9003",
+    "title": "NHL: Betas at Alphas",
+    "slug": "nhl-betas-alphas-2026-03-01",
+    "ticker": "nhl-betas-alphas",
+    "startDate": "2026-03-01T00:00:00Z",
+    "markets": [
+      {
+        "conditionId": "0xreversed",
+        "question": "Will the Betas beat the Alphas?",
+        "clobTokenIds": "[\"5001\", \"5002\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.4\", \"0.6\"]",
+        "volume": "2000",
+        "closed": true
+      }
+    ]
+  },
+  "gamma_malformed_token_ids": {
+    "id": "9004",
+    "title": "NBA: Alphas vs Betas",
+    "slug": "nba-alphas-betas-2026-02-02",
+    "ticker": "nba-alphas-betas-2",
+    "startDate": "2026-02-02T00:00:00Z",
+    "markets": [
+      {
+        "conditionId": "0xmalformed",
+        "question": "Will the Alphas beat the Betas?",
+        "clobTokenIds": "not-a-json-list",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.5\", \"0.5\"]",
+        "volume": "10",
+        "closed": true
+      }
+    ]
+  }
+}
