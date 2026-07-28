@@ -1,0 +1,49 @@
+{
+  "schema_version": "polymarket-recovery-fixtures/v1",
+  "base": {
+    "schema_version": "polymarket-recovery/v1",
+    "policy": {"version": "synthetic-policy/v1", "robustness": {"version": "synthetic-density/v1", "min_effective_points": 4, "max_gap_minutes": 90}, "meaningful_trade": {"version": "alex-threshold/pending", "threshold": null}},
+    "events": [{
+      "canonical_event_id": "NBA:2026-01-01:ALPHA:BETA:G1", "record_version": 1, "league": "NBA", "game_date": "2026-01-01", "teams": ["Alpha", "Beta"], "game_number": 1,
+      "attempts": [
+        {"surface":"gamma_event","attempted_at":"2026-01-02T00:00:00Z","request_identity":"league/day/teams","result":"found","http_status":200,"terminal":true},
+        {"surface":"gamma_market","attempted_at":"2026-01-02T00:00:01Z","request_identity":"event:e1","result":"found","http_status":200,"terminal":true},
+        {"surface":"clob_condition","attempted_at":"2026-01-02T00:00:02Z","request_identity":"condition:c1","result":"found","http_status":200,"terminal":true}
+      ],
+      "main_state":"poly_main_recovered",
+      "main_contract":{"polymarket_event_id":"e1","condition_id":"c1e","period":"full_game","scheduled_instance":"G1","outcomes":[{"label":"Yes","token_id":"tok-yes","index":0},{"label":"No","token_id":"tok-no","index":1}]},
+      "history_job":{"durable_id":"job-main-1","state":"complete"},
+      "retry":{"state":"complete"},
+      "timeline":{"raw_points":6,"effective_points":5,"first_at":"2025-12-31T00:00:00Z","last_at":"2026-01-02T00:00:00Z","largest_gap_minutes":60,"pregame_span_minutes":600,"ingame_span_minutes":120,"terminal_behavior":"closed","token_id":"tok-yes","dedup_key":"e1:c1e:tok-yes","rendered_usable":true,"side_token_verified":true,"upstream_ingame_points":true}
+    }],
+    "props": [{
+      "canonical_event_id":"NBA:2026-01-01:ALPHA:BETA:G1","record_version":1,"polymarket_event_id":"e1","condition_id":"prop-c1e","enumerated_from_source_event":true,"represented":true,"terminal_yes_probability":0,
+      "semantic":{"subject":"Player One","stat":"points","threshold":20.5,"direction":"over_under","period":"full_game"},
+      "outcomes":[{"label":"Over","token_id":"prop-over","index":0},{"label":"Under","token_id":"prop-under","index":1}],
+      "trade_classification":"threshold_pending","trade_evidence":{"trade_count":3,"candlestick_count":5,"volume":null},"recovery_state":"recovered",
+      "timeline":{"raw_points":6,"effective_points":5,"first_at":"2025-12-31T00:00:00Z","last_at":"2026-01-02T00:00:00Z","largest_gap_minutes":60,"pregame_span_minutes":600,"ingame_span_minutes":120,"terminal_behavior":"yes_zero","token_id":"prop-over","dedup_key":"e1:prop-c1e:prop-over","rendered_usable":true,"side_token_verified":true,"upstream_ingame_points":true}
+    }]
+  },
+  "cases": [
+    {"id":"unknown-blocks","path":"events.0.main_state","value":"unknown","expected_code":"EVENT_BLOCKS_CLOSURE"},
+    {"id":"missing-surface","path":"events.0.attempts.2","delete":true,"expected_code":"ARCHIVAL_SURFACES_INCOMPLETE"},
+    {"id":"transient-terminal","path":"events.0.attempts.2.result","value":"rate_limited","expected_code":"TRANSIENT_MARKED_TERMINAL"},
+    {"id":"token-side-collision","path":"events.0.main_contract.outcomes.1.token_id","value":"tok-yes","expected_code":"OUTCOME_TOKEN_MAPPING_INVALID"},
+    {"id":"condition-ending-e-preserved","path":"events.0.main_contract.condition_id","value":"abcde","expected_code":null},
+    {"id":"in-memory-skip","path":"events.0.history_job.durable_id","value":null,"expected_code":"DURABLE_HISTORY_JOB_MISSING"},
+    {"id":"permanent-tombstone","path":"events.0.retry.state","value":"failed","expected_code":"UNQUALIFIED_FAILURE_TOMBSTONE"},
+    {"id":"opening-terminal","path":"events.0.timeline.effective_points","value":2,"expected_code":"OPENING_TERMINAL_ONLY"},
+    {"id":"duplicate-inflation","path":"events.0.timeline.raw_points","value":3,"expected_code":"DUPLICATE_INFLATED_POINTS"},
+    {"id":"largest-gap","path":"events.0.timeline.largest_gap_minutes","value":500,"expected_code":"TIMELINE_GAP_TOO_LARGE"},
+    {"id":"no-ingame","path":"events.0.timeline.ingame_span_minutes","value":0,"expected_code":"INGAME_COVERAGE_MISSING"},
+    {"id":"prop-local-only","path":"props.0.enumerated_from_source_event","value":false,"expected_code":"PROP_LOCAL_ONLY"},
+    {"id":"terminal-zero-dropped","path":"props.0.represented","value":false,"expected_code":"TERMINAL_ZERO_PROP_DROPPED"},
+    {"id":"null-volume-with-trades","path":"props.0.trade_evidence.volume","value":null,"expected_code":null},
+    {"id":"prop-token-collision","path":"props.0.outcomes.1.token_id","value":"prop-over","expected_code":"PROP_TOKEN_MAPPING_INVALID"},
+    {"id":"threshold-silently-excluded","path":"props.0.trade_classification","value":"not_meaningful","expected_code":"TRADE_THRESHOLD_UNRATIFIED"},
+    {"id":"prop-unaccounted","path":"props.0.recovery_state","value":"excluded","expected_code":"PROP_UNACCOUNTED"},
+    {"id":"nonlisting-single-search","path":"events.0.main_state","value":"poly_nonlisting_archivally_proven","expected_code":"NONLISTING_PROOF_INCOMPLETE"},
+    {"id":"mlb-doubleheader-missing-game-number","path":"events.0.game_number","value":null,"expected_code":"GAME_NUMBER_MISSING"},
+    {"id":"nhl-alias-wrong-event","path":"props.0.canonical_event_id","value":"NHL:unknown","expected_code":"PROP_EVENT_UNKNOWN"}
+  ]
+}
