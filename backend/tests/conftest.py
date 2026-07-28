@@ -18,9 +18,11 @@ def _reset_request_cache_state():
 
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
+    _rc._reset_shared_client_for_tests()
     yield
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
+    _rc._reset_shared_client_for_tests()
 
 
 @pytest.fixture

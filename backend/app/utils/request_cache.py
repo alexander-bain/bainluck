@@ -128,6 +128,16 @@ async def close_shared_async_redis() -> None:
             logger.debug("shared async redis close failed", exc_info=True)
 
 
+def _reset_shared_client_for_tests() -> None:
+    """Drop the cached shared client so a test's patched factory is re-read.
+
+    Sync + reference-drop only (no await) — the cached client in tests is either a
+    fake or an unconnected pool, so there is nothing to close.
+    """
+    global _shared_client
+    _shared_client = None
+
+
 # --- Bounded operation wrapper ------------------------------------------------
 async def bounded_redis_call(
     factory: Callable[[], Awaitable[Any]],
