@@ -27,6 +27,8 @@ struct WatchHomeView: View {
                 VStack(spacing: 10) {
                     if let story = vm.topStory {
                         marqueeCard(story)
+                    } else {
+                        marqueeEmpty
                     }
                     myTeamsSection
                     if let ago = vm.lastUpdated {
@@ -98,6 +100,21 @@ struct WatchHomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// Explicit, stable marquee empty state. L2-200: previously the marquee area
+    /// simply vanished when no item was renderable (no `if-let` else), leaving the
+    /// primary story slot blank. Reuses the established empty-card pattern
+    /// (`emptyTeams`) — factual copy, no new visual language.
+    private var marqueeEmpty: some View {
+        Text("No top story right now")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
     @ViewBuilder
@@ -253,49 +270,9 @@ struct WatchHomeView: View {
     }
 }
 
-// MARK: - View Models / value types
-
-enum WatchStoryBadge {
-    case live, final, soon, none
-}
-
-struct WatchProbSplit {
-    let leftAbbr: String
-    let leftPct: Int
-    let leftColor: String?
-    let rightAbbr: String
-    let rightPct: Int
-    let rightColor: String?
-}
-
-struct WatchTopStory: Identifiable {
-    let id: String
-    let badge: WatchStoryBadge
-    let clock: String?
-    let categoryLabel: String?
-    let title: String
-    let bigLabel: String
-    let bigNumber: Int
-    let headline: String?
-    let split: WatchProbSplit?
-
-    var accentColor: Color {
-        switch badge {
-        case .live: return .green
-        case .final: return .secondary
-        default: return .blue
-        }
-    }
-}
-
-struct WatchTeamGame: Identifiable {
-    let id: Int
-    let matchup: String
-    let split: WatchProbSplit
-    let live: Bool
-    let clock: String?
-    let startText: String?
-}
+// The marquee/my-teams value types (`WatchTopStory`, `WatchProbSplit`,
+// `WatchStoryBadge`, `WatchTeamGame`) live in `WatchMarquee.swift` alongside the
+// pure selection logic (L2-200).
 
 @MainActor
 final class WatchHomeViewModel: ObservableObject {
@@ -316,7 +293,7 @@ final class WatchHomeViewModel: ObservableObject {
 
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 10, forceRefresh: force)
-            topStory = Self.marquee(from: feed.items)
+            topStory = WatchMarquee.marquee(from: feed.items)
             logger.info("Home marquee: \(self.topStory?.title ?? "none")")
             if let t = await WatchAPIClient.shared.lastFetchTime {
                 let ago = Int(Date().timeIntervalSince(t))
@@ -332,7 +309,7 @@ final class WatchHomeViewModel: ObservableObject {
         if signedIn {
             do {
                 if let myFeed = try await WatchAPIClient.shared.fetchMyTeamsFeed(limit: 6) {
-                    myGames = Self.teamGames(from: myFeed.items)
+                    myGames = WatchMarquee.teamGames(from: myFeed.items)
                 }
             } catch {
                 logger.error("My-teams load failed: \(error.localizedDescription)")
@@ -342,119 +319,10 @@ final class WatchHomeViewModel: ObservableObject {
         }
     }
 
-    // MARK: Marquee selection
-
-    /// The top story is the first live game if one is near the top, else the
-    /// feed's #1 ranked item (the server already pins marquee majors to the front).
-    static func marquee(from items: [WatchFeedItem]) -> WatchTopStory? {
-        let topLive = items.first { $0.event?.isLive == true }
-        guard let item = topLive ?? items.first else { return nil }
-
-        if let e = item.event, let home = e.currentOdds?.homeProbability {
-            return eventStory(item, e, homeProb: home)
-        }
-        if let f = item.futures, let leader = f.topOutcomes?.first, let p = leader.probability {
-            let pct = Self.pct(p)
-            return WatchTopStory(
-                id: item.id,
-                badge: .none,
-                clock: nil,
-                categoryLabel: f.llmSportCategory,
-                title: f.name,
-                bigLabel: Self.shortName(leader.name),
-                bigNumber: pct,
-                headline: item.headline,
-                split: nil
-            )
-        }
-        return nil
-    }
-
-    private static func eventStory(_ item: WatchFeedItem, _ e: WatchFeedEvent, homeProb: Double) -> WatchTopStory {
-        let homePct = Self.pct(homeProb)
-        let awayPct = 100 - homePct
-        let homeAbbr = e.homeAbbrev()
-        let awayAbbr = e.awayAbbrev()
-        let homeLeads = homePct >= awayPct
-        let badge: WatchStoryBadge = e.isLive ? .live : (e.isSettled ? .final : .soon)
-
-        return WatchTopStory(
-            id: item.id,
-            badge: badge,
-            clock: e.clockText,
-            categoryLabel: e.sportName ?? e.sport,
-            title: "\(awayAbbr) @ \(homeAbbr)",
-            bigLabel: homeLeads ? homeAbbr : awayAbbr,
-            bigNumber: max(homePct, awayPct),
-            headline: item.headline,
-            split: WatchProbSplit(
-                leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-            )
-        )
-    }
-
-    // MARK: My-teams mapping
-
-    static func teamGames(from items: [WatchFeedItem]) -> [WatchTeamGame] {
-        items.compactMap { item -> WatchTeamGame? in
-            guard let e = item.event, let home = e.currentOdds?.homeProbability else { return nil }
-            let homePct = Self.pct(home)
-            let awayPct = 100 - homePct
-            let homeAbbr = e.homeAbbrev()
-            let awayAbbr = e.awayAbbrev()
-            return WatchTeamGame(
-                id: e.id,
-                matchup: "\(awayAbbr) @ \(homeAbbr)",
-                split: WatchProbSplit(
-                    leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                    rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-                ),
-                live: e.isLive,
-                clock: e.clockText,
-                startText: e.isLive ? nil : Self.startText(e.commenceTime)
-            )
-        }
-    }
-
-    // MARK: Helpers
-
-    static func pct(_ p: Double) -> Int { Int((p * 100).rounded()) }
-
-    static func shortName(_ name: String) -> String {
-        name.count <= 16 ? name : String(name.prefix(15)) + "…"
-    }
-
-    /// Short "today 7:30 PM" / weekday time from an ISO8601 commence time.
-    static func startText(_ iso: String?) -> String? {
-        guard let iso, let date = isoFormatter.date(from: iso) ?? isoFormatterNoFraction.date(from: iso) else {
-            return nil
-        }
-        let cal = Calendar.current
-        let time = timeFormatter.string(from: date)
-        if cal.isDateInToday(date) { return time }
-        if cal.isDateInTomorrow(date) { return "Tmrw \(time)" }
-        return "\(weekdayFormatter.string(from: date)) \(time)"
-    }
-
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let isoFormatterNoFraction: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f
-    }()
-    private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEE"
-        return f
-    }()
+    // MARK: Feed → story selection
+    //
+    // The pure marquee/my-teams selection (`WatchMarquee.marquee`/`teamGames`)
+    // and its value types live in `WatchMarquee.swift` (Foundation + SwiftUI only)
+    // so they compile into the iOS test bundle and are exercised directly (L2-200,
+    // mirroring `WatchGuessPool`). This view model just calls them from `load()`.
 }

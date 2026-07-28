@@ -116,6 +116,7 @@
 				WatchGuessPool.swift,
 				WatchGuessBackend.swift,
 				WatchGuessViewModel.swift,
+				WatchMarquee.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
