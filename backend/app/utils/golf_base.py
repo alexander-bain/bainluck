@@ -340,13 +340,16 @@ async def _singleflight_fill(db, now: datetime, *, stages=None) -> tuple[Optiona
     Guarantees ONE fill per process across concurrent feed response keys: the
     leader builds and publishes; waiters coalesce onto its envelope. A
     dead/cancelled/failed leader resolves+removes only its own future (so it
-    never poisons the slot) and one waiter may take over. A waiter that can
-    neither coalesce nor take over force-owns a fresh build after bounded rounds,
-    so a request can never hang.
+    never poisons the slot).
+
+    Single-owner invariant (Queue 280): a live leader is the sole owner. A
+    waiter whose bounded wait times out NEVER displaces it or starts a second
+    fill (that stampede duplicated the expensive DataGolf/DB pass); it returns a
+    truthful ``unavailable`` and the feed simply skips golf this request. The
+    slot self-heals for the next request once the leader resolves/clears it.
     """
     is_leader, fut = _rc.begin_build(GOLF_BASE_BUILD_KEY)
-    rounds = 0
-    while not is_leader:
+    if not is_leader:
         coalesced = None
         try:
             coalesced = await _rc.run_with_deadline(
@@ -358,12 +361,10 @@ async def _singleflight_fill(db, now: datetime, *, stages=None) -> tuple[Optiona
             coalesced = None
         if isinstance(coalesced, dict) and payload_valid(coalesced):
             return coalesced, PROV_INLINE
-        if rounds >= _rc.MAX_WAITER_TAKEOVER_ROUNDS:
-            fut = _rc.force_build(GOLF_BASE_BUILD_KEY)
-            is_leader = True
-            break
-        rounds += 1
-        is_leader, fut = _rc.takeover_build(GOLF_BASE_BUILD_KEY, fut)
+        # Leader still running (or produced nothing usable) within the bound —
+        # fall back rather than duplicate its fill. Last-good tiers were already
+        # exhausted before this inline tier, so the truthful terminal is empty.
+        return None, PROV_UNAVAILABLE
 
     # --- Leader ownership guard: resolve + clear the slot on EVERY exit. ---
     try:

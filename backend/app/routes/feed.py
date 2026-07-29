@@ -1273,6 +1273,17 @@ async def get_feed(
     _previous_at = _started_at
     _timings: list[dict[str, float | str]] = []
 
+    # --- One absolute request deadline (Queue 280 / #1459) ---
+    # A single monotonic budget measured from THIS admission timestamp. Every
+    # later consumer — the singleflight coalesce wait, cold-compute admission, and
+    # the DB-bound futures scoring pass — draws only the time *remaining* under it
+    # (never a fresh per-round deadline), so the whole request stays below the 30s
+    # Heroku router H12 cutoff. Zero/negative remainder means "no budget": callers
+    # must serve bounded last-good / truthful unavailable instead of launching work.
+    def _feed_budget_remaining_s() -> float:
+        elapsed_ms = (time.perf_counter() - _started_at) * 1000
+        return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
+
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1524,31 +1535,30 @@ async def get_feed(
     # await the leader's payload instead of each paying the full multi-second
     # compute. This is what stops the concurrent-cold-build stampede that tips
     # /api/feed over the 30s router cutoff (#1459). Per-process (not a Redis lock)
-    # so it works even while Redis is the thing that is flaky (#1197). Waiters
-    # bound their wait, so a dead/cancelled leader can never orphan them.
+    # so it works even while Redis is the thing that is flaky (#1197).
+    #
+    # Single-owner invariant (Queue 280): a live leader is the SOLE owner of its
+    # key. A waiter coalesces onto the leader within the time remaining under the
+    # one absolute request budget; if that budget runs out before the leader
+    # finishes, the waiter serves bounded last-good or the truthful degraded
+    # response — it NEVER displaces the still-running leader or starts a second
+    # build (that stampede duplicated the expensive DB/futures pass). The slot
+    # self-heals for the next request once the leader resolves/clears it.
     _sf_future = None
     _is_build_leader = False
     if _cache_key and _cache_status in ("miss", "error"):
         _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
-        # A waiter coalesces onto the leader's completed payload. If the leader
-        # is dead / too slow / produced nothing usable, it recovers in BOUNDED
-        # rounds instead of re-joining a poisoned future: serve last-good, or
-        # atomically take over the stale slot to become the unique replacement
-        # owner (a caller may build ONLY after it owns the replacement), or
-        # coalesce onto whichever other waiter already took over. After a bounded
-        # number of rounds it force-owns a fresh build so the request can never
-        # hang — every outcome is a payload, a bounded fallback, or a build it
-        # uniquely owns.
-        _takeover_rounds = 0
-        while not _is_build_leader:
+        if not _is_build_leader:
             _coalesced = None
-            try:
-                _coalesced = await _rc.run_with_deadline(
-                    asyncio.shield(_sf_future),
-                    deadline_ms=_rc.COMPUTE_DEADLINE_MS,
-                )
-            except Exception:
-                _coalesced = None
+            _wait_s = _feed_budget_remaining_s()
+            if _wait_s > 0:
+                try:
+                    _coalesced = await _rc.run_with_deadline(
+                        asyncio.shield(_sf_future),
+                        deadline_ms=int(_wait_s * 1000),
+                    )
+                except Exception:
+                    _coalesced = None
             if isinstance(_coalesced, dict):
                 out = dict(_coalesced)
                 out["cache"] = build_feed_cache_metadata(
@@ -1570,7 +1580,8 @@ async def get_feed(
                     ),
                 )
                 return out
-            # Leader produced nothing usable — serve last-good if we have it.
+            # Budget exhausted / leader produced nothing usable — serve bounded
+            # process-local last-good before ever paying (or duplicating) a build.
             _lg = _rc.recall_last_good(_cache_key)
             if isinstance(_lg, dict):
                 out = dict(_lg)
@@ -1590,15 +1601,31 @@ async def get_feed(
                     ),
                 )
                 return out
-            if _takeover_rounds >= _rc.MAX_WAITER_TAKEOVER_ROUNDS:
-                # Liveness escape hatch: stop coalescing and own a fresh build.
-                _sf_future = _rc.force_build(_cache_key)
-                _is_build_leader = True
-                break
-            _takeover_rounds += 1
-            _is_build_leader, _sf_future = _rc.takeover_build(
-                _cache_key, _sf_future
+            # No last-good and no budget left: truthful, empty degraded response
+            # below the router cutoff. A waiter never becomes a second build owner.
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "cache_unavailable"
             )
+            _finalize_feed_response(
+                response,
+                cache_status="unavailable",
+                singleflight="waiter_unavailable",
+                timings=_timings,
+                started_at=_started_at,
+                counts=_feed_obs_counts([], total=0, returned=0),
+            )
+            return {
+                "items": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "has_more": False,
+                "cache": build_feed_cache_metadata(
+                    "unavailable",
+                    ttl_seconds=_cache_ttl,
+                    reason="leader_unavailable",
+                ),
+            }
 
     # --- Leader ownership guard (Queue 277 / #1475) ---------------------
     # Only the (original / taken-over / force-owned) build leader reaches
@@ -1736,9 +1763,11 @@ async def get_feed(
         # session mid-statement) and serve the partial feed.
         _is_sports_mode = (mode or "").lower() == "sports"
 
-        def _futures_budget_s() -> float:
-            elapsed_ms = (time.perf_counter() - _started_at) * 1000
-            return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
+        # Futures scoring draws from the SAME one absolute request budget the
+        # singleflight waiter and cold-compute admission consumed above (Queue
+        # 280) — never a fresh deadline — so total elapsed stays below the router
+        # cutoff even after a long coalesce wait.
+        _futures_budget_s = _feed_budget_remaining_s
 
         if include_futures and _futures_budget_s() <= 0.5:
             logger.warning(
@@ -2218,9 +2247,10 @@ async def get_feed(
         return payload
     except BaseException:
         # Release any coalescing waiters (result=None → they fall back to
-        # last-good or a fresh takeover) and remove the exact installed
-        # future; idempotent if the normal path already resolved it.
-        # Cancellation is re-raised, never swallowed.
+        # bounded last-good or the truthful unavailable terminal) and remove the
+        # exact installed future; idempotent if the normal path already resolved
+        # it. Cancellation is re-raised, never swallowed. The slot self-heals for
+        # the next request — a failed leader is never replaced mid-flight.
         if _is_build_leader and _sf_future is not None:
             _rc.finish_build(_cache_key, _sf_future, result=None)
         raise

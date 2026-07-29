@@ -142,6 +142,51 @@ async def test_waiter_last_good_distinguished_from_redis_last_good(client, monke
     assert resp.headers["x-feed-singleflight"] == "waiter_last_good"
 
 
+async def test_waiter_budget_exhausted_serves_unavailable_without_building(
+    client, monkeypatch
+):
+    """Queue 280: when the one absolute request budget is exhausted, a waiter on
+    a still-running leader must NOT start a second build (never labelled leader).
+    With no last-good it returns the truthful empty ``unavailable`` terminal."""
+    _reset_rc()
+    fake = _FakeRedis("miss")
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    live = asyncio.get_event_loop().create_future()  # leader still running
+    monkeypatch.setattr(_rc, "begin_build", lambda key: (False, live))
+    # Zero budget => remaining is 0 => the waiter never awaits or builds.
+    monkeypatch.setattr(_rc, "FEED_TOTAL_BUDGET_MS", 0)
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-feed-cache"] == "unavailable"
+    assert resp.headers["x-feed-singleflight"] == "waiter_unavailable"
+    body = resp.json()
+    assert body["items"] == [] and body["total"] == 0
+    live.cancel()  # silence the never-awaited leader future
+
+
+async def test_waiter_budget_exhausted_prefers_last_good(client, monkeypatch):
+    """With budget exhausted, a waiter serves bounded last-good in preference to
+    the empty unavailable terminal — still without a second build."""
+    _reset_rc()
+    fake = _FakeRedis("miss")
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    live = asyncio.get_event_loop().create_future()
+    monkeypatch.setattr(_rc, "begin_build", lambda key: (False, live))
+    monkeypatch.setattr(_rc, "FEED_TOTAL_BUDGET_MS", 0)
+    monkeypatch.setattr(_rc, "recall_last_good", lambda key, **k: dict(_CACHED_PAYLOAD))
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-feed-cache"] == "last_good"
+    assert resp.headers["x-feed-singleflight"] == "waiter_last_good"
+    live.cancel()
+
+
 async def test_leader_build_is_the_only_leader_labelled_path(client, monkeypatch):
     _reset_rc()
     fake = _FakeRedis("miss")
