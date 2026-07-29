@@ -1,0 +1,27 @@
+{
+  "schema_version": "native-account-isolation/v1",
+  "audited_commit": "e1eb40c2",
+  "opaque_identities": ["anon", "user_a", "user_b"],
+  "implementation_contract": {
+    "pagination": "Capture loadGeneration before the first await; after every await, return before any state or telemetry mutation when it differs from current loadGeneration.",
+    "cache": "Every cached authenticated GET must either include the exact principal in its key or the actor must synchronously clear all responseCache entries on every identity change."
+  },
+  "scenarios": [
+    {"id":"page_same_generation","kind":"pagination","dispatch_identity":"user_a","current_identity":"user_a","captured_generation":7,"current_generation":7,"guard_after_every_await":true,"items_mutated":true,"offset_mutated":true,"has_more_mutated":true,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"page_logout_in_flight","kind":"pagination","dispatch_identity":"user_a","current_identity":"anon","captured_generation":7,"current_generation":8,"guard_after_every_await":true,"items_mutated":false,"offset_mutated":false,"has_more_mutated":false,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"page_anon_login_in_flight","kind":"pagination","dispatch_identity":"anon","current_identity":"user_a","captured_generation":2,"current_generation":3,"guard_after_every_await":true,"items_mutated":false,"offset_mutated":false,"has_more_mutated":false,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"page_a_to_b_in_flight","kind":"pagination","dispatch_identity":"user_a","current_identity":"user_b","captured_generation":9,"current_generation":10,"guard_after_every_await":true,"items_mutated":false,"offset_mutated":false,"has_more_mutated":false,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"page_refresh_supersedes","kind":"pagination","dispatch_identity":"user_a","current_identity":"user_a","captured_generation":11,"current_generation":12,"guard_after_every_await":true,"items_mutated":false,"offset_mutated":false,"has_more_mutated":false,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"page_rapid_pagination_single_owner","kind":"pagination","dispatch_identity":"user_a","current_identity":"user_a","captured_generation":12,"current_generation":12,"guard_after_every_await":true,"items_mutated":true,"offset_mutated":true,"has_more_mutated":true,"error_mutated":false,"analytics_emitted":false,"telemetry_values":[]},
+    {"id":"cache_same_user_my_stuff","kind":"cache","endpoint":"/api/me/team-futures","dispatch_identity":"user_a","current_identity":"user_a","identity_partitioned":true,"identity_change_evicted":false,"cache_hit":true,"telemetry_values":[]},
+    {"id":"cache_logout_my_stuff","kind":"cache","endpoint":"/api/me/team-futures","dispatch_identity":"user_a","current_identity":"anon","identity_partitioned":false,"identity_change_evicted":true,"cache_hit":false,"telemetry_values":[]},
+    {"id":"cache_a_to_b_my_stuff","kind":"cache","endpoint":"/api/me/team-futures","dispatch_identity":"user_a","current_identity":"user_b","identity_partitioned":true,"identity_change_evicted":false,"cache_hit":false,"telemetry_values":[]},
+    {"id":"cache_a_to_b_sports","kind":"cache","endpoint":"/api/feed?sport=basketball","dispatch_identity":"user_a","current_identity":"user_b","identity_partitioned":false,"identity_change_evicted":true,"cache_hit":false,"telemetry_values":[]},
+    {"id":"cache_anon_to_user_generic","kind":"cache","endpoint":"/api/events/faceted","dispatch_identity":"anon","current_identity":"user_a","identity_partitioned":true,"identity_change_evicted":false,"cache_hit":false,"telemetry_values":[]},
+    {"id":"cache_pagination_uncached","kind":"cache","endpoint":"/api/feed?offset=200","dispatch_identity":"user_a","current_identity":"user_b","identity_partitioned":false,"identity_change_evicted":true,"cache_hit":false,"telemetry_values":[]}
+  ],
+  "rejected_counterexamples": [
+    {"id":"reject_stale_append_and_offset","kind":"pagination","dispatch_identity":"user_a","current_identity":"user_b","captured_generation":4,"current_generation":5,"guard_after_every_await":false,"items_mutated":true,"offset_mutated":true,"has_more_mutated":true,"error_mutated":true,"analytics_emitted":true,"telemetry_values":[],"expected_violations":["stale_generation_items_mutation","stale_generation_offset_mutation","stale_generation_has_more_mutation","stale_generation_error_mutation","stale_generation_analytics_mutation","missing_post_await_generation_guard"]},
+    {"id":"reject_path_query_only_cache","kind":"cache","endpoint":"/api/me/team-futures?limit=100","dispatch_identity":"user_a","current_identity":"user_b","identity_partitioned":false,"identity_change_evicted":false,"cache_hit":true,"telemetry_values":[],"expected_violations":["cross_identity_cache_hit","unbound_cache_hit","identity_change_not_isolated"]}
+  ]
+}
