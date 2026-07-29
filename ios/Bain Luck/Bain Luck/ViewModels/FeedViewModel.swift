@@ -56,6 +56,16 @@ final class FeedViewModel: ObservableObject {
     /// content as freshly loaded. Cleared on the next successful main response.
     @Published private(set) var refreshFailed = false
 
+    /// Immutable snapshot of the successful-main generation that FIRST became
+    /// renderable this load (L2-211 Item 2 / C73). Stamped once at data-ready and
+    /// frozen — the on-screen first-render telemetry reads THIS (its frozen count +
+    /// provenance) instead of live `items`, so a later backfill merge, a superseding
+    /// load, a same-card-ID row reuse, or a filter can never make the emitted event
+    /// describe another generation. @Published so the view's generation-keyed
+    /// `onChange` acknowledgement fires even when a same-id refresh retains its rows
+    /// (SwiftUI does not re-run `onAppear` for retained IDs). Nil for an empty main.
+    @Published private(set) var firstRenderGeneration: SportsRenderGeneration?
+
     static let supplementalEventLimit = 200
     static let groupedFeedLimit = 20
     private var refreshTimer: Timer?
@@ -64,6 +74,28 @@ final class FeedViewModel: ObservableObject {
     private let telemetry: (@Sendable (SportsFeedStage) -> Void)?
     private let clock: @Sendable () -> Date
     private let autoRefreshEnabled: Bool
+    /// Wall-clock bound on how long a load waits for its OPTIONAL siblings after the
+    /// main has published (L2-211 Item 1 / C73). Once it elapses the merge is closed
+    /// so a cancellation-IGNORING sibling can never keep the owned load task — and
+    /// therefore the single-load rail — alive indefinitely. Injectable so tests drive
+    /// the deadline_then_join path deterministically without real time.
+    private let siblingDeadline: TimeInterval
+
+    /// The single owned load task (L2-211 Item 1 / C73). Every entry point — the
+    /// view's `.task`, pull-to-refresh, the Retry button, and the live auto-refresh
+    /// timer — routes through `startLoad()`, which cancels AND joins this task before
+    /// installing its replacement, so at most one owned load ever executes and a
+    /// superseded load's work is actually TERMINATED (its main fetch + siblings
+    /// cancelled), not merely discarded by the generation guard.
+    private var loadTask: Task<Void, Never>?
+    /// The current load's in-flight sibling tasks, held so a supersession or a view
+    /// disappearance can cancel them (they are unstructured — not children of
+    /// `loadTask` — so cancellation must be explicit).
+    private var inFlightSiblings: [Task<Void, Never>] = []
+    /// Set by `viewDidStop()` so a refresh-timer callback already queued at the
+    /// moment the view disappeared cannot start a fresh owned load after teardown.
+    /// Cleared by `viewDidStart()` on (re)appearance.
+    private var isStopped = false
 
     /// Monotonic load identity (mirrors `DiscoverViewModel`, L2-201/L2-207). Each
     /// `load()` claims the next value; a load superseded by a newer `load()`
@@ -78,12 +110,14 @@ final class FeedViewModel: ObservableObject {
         client: SportsFeedProviding = APIClient.shared,
         telemetry: (@Sendable (SportsFeedStage) -> Void)? = { AnalyticsService.trackSportsFeedStage($0) },
         clock: @escaping @Sendable () -> Date = { Date() },
-        autoRefreshEnabled: Bool = true
+        autoRefreshEnabled: Bool = true,
+        siblingDeadline: TimeInterval = 10
     ) {
         self.client = client
         self.telemetry = telemetry
         self.clock = clock
         self.autoRefreshEnabled = autoRefreshEnabled
+        self.siblingDeadline = siblingDeadline
     }
 
     var liveNow: [FeedItem] {
@@ -118,8 +152,46 @@ final class FeedViewModel: ObservableObject {
         case grouped(GroupedFeedResponse?)
     }
 
+    /// The single owned-load entry point (L2-211 Item 1 / C73). Cancels the prior
+    /// owned load and installs this one as the sole owner; the replacement JOINS the
+    /// prior (awaits its termination) before running its body, so at most one load
+    /// executes at a time and a superseded load's work is actually terminated rather
+    /// than left running and merely discarded by the generation guard. The view's
+    /// `.task`, `.refreshable`, the Retry button, and the live auto-refresh timer all
+    /// route through here. The generation guard inside `load()` remains a publication
+    /// backstop for any late child that outraces cancellation.
+    @MainActor
+    func startLoad() async {
+        // A refresh-timer callback queued just as the view disappeared must not
+        // resurrect a load after teardown (cancel_and_join_on_disappear).
+        guard !isStopped else { return }
+        let prior = loadTask
+        prior?.cancel()
+        // NOTE: no `await` between reading `loadTask` and reassigning it below — the
+        // synchronous region is atomic on the main actor, so rapid re-entry can never
+        // strand a newer owner. The join happens INSIDE the new task.
+        let task = Task { @MainActor [weak self] in
+            await prior?.value          // join prior ownership before replacement
+            guard let self, !Task.isCancelled else { return }
+            await self.load()
+        }
+        loadTask = task
+        await task.value
+    }
+
+    /// Called by the owning view on (re)appearance so a load can begin again after a
+    /// prior `viewDidStop()` (navigation away then back) — L2-211 Item 1 / C73.
+    @MainActor
+    func viewDidStart() {
+        isStopped = false
+    }
+
     @MainActor
     func load() async {
+        // Cancel any siblings still in flight from a prior load body before this one
+        // launches its own — they are unstructured, so a superseded body's children
+        // are terminated here rather than left to race (L2-211 Item 1 / C73).
+        cancelInFlightSiblings()
         // Claim a load identity so a superseded (older) load discards its late
         // responses instead of overwriting a newer session's feed (L2-207). The
         // owning view ALSO bumps this via `viewDidStop()` on disappear, so a
@@ -131,6 +203,9 @@ final class FeedViewModel: ObservableObject {
         if isInitial { loading = true }
         let loadStart = clock()
         let client = self.client
+        // Re-arm the immutable render-generation token for this load (L2-211 Item 2):
+        // the next successful non-empty main stamps it once, frozen for this load.
+        firstRenderGeneration = nil
 
         // === 1. Main feed — gates first paint ===
         do {
@@ -142,6 +217,18 @@ final class FeedViewModel: ObservableObject {
             refreshFailed = false
             loading = false
             liveCount = liveNow.count
+            // Stamp the immutable render token from THIS main response (L2-211 Item
+            // 2 / C73): frozen generation + start + count, before any sibling merge
+            // can change the live count. An empty main leaves it nil, so an
+            // empty-but-successful main emits no on-screen first-card event.
+            if !items.isEmpty {
+                firstRenderGeneration = SportsRenderGeneration(
+                    generation: generation,
+                    startedAt: loadStart,
+                    provenance: "network",
+                    itemCount: items.count
+                )
+            }
             emit(.main, start: loadStart, count: items.count, success: true)
             // Arm auto-refresh IMMEDIATELY after the main publish (L2-209 Item 2 /
             // C68): a live game must have a refresh timer even while a slow or hung
@@ -170,37 +257,77 @@ final class FeedViewModel: ObservableObject {
             return
         }
 
-        // === 2 & 3. Siblings — STRUCTURED children of this load ===
-        // Owned by a task group rather than detached `Task`s, so a superseded load
-        // or a disappearing view cancels them instead of letting them outlive the
-        // view and mutate state (L2-209 Item 1 / C68). Each result is applied as its
-        // own child completes (`for await`), so grouped is never held behind a slow
-        // 200-event backfill, and the generation guard drops any late/cancelled
-        // child of a superseded load.
-        await withTaskGroup(of: SiblingResult.self) { group in
-            group.addTask {
-                .backfill(await Self.optional {
-                    try await client.fetchSportsEventBackfill(limit: Self.supplementalEventLimit)
-                })
+        // === 2 & 3. Siblings — OWNED, cancellable, deadline-bounded ===
+        // The two supplemental requests run as owned unstructured tasks (tracked in
+        // `inFlightSiblings`) so a superseded load or a disappearing view cancels
+        // them (L2-209 Item 1 / C68), and their results flow through a merge channel
+        // rather than a structured task group. A structured group awaits ALL children
+        // on scope exit, so a single sibling that IGNORES cancellation would keep the
+        // whole owned-load rail alive forever; the channel + a wall-clock deadline
+        // lets this load stop waiting (deadline_then_join) while a runaway sibling is
+        // abandoned — its late delivery after `close()` is dropped, and the
+        // generation guard is the second backstop. Grouped is still applied the
+        // instant it arrives, so it is never held behind a slow 200-event backfill.
+        let merge = SportsSiblingMerge<SiblingResult>()
+        let backfillTask = Task { [merge] in
+            let response = await Self.optional {
+                try await client.fetchSportsEventBackfill(limit: Self.supplementalEventLimit)
             }
-            group.addTask {
-                .grouped(await Self.optional {
-                    try await client.fetchSportsGroupedFeed(limit: Self.groupedFeedLimit)
-                })
+            merge.deliver(.backfill(response))
+        }
+        let groupedTask = Task { [merge] in
+            let response = await Self.optional {
+                try await client.fetchSportsGroupedFeed(limit: Self.groupedFeedLimit)
             }
-            for await result in group {
-                guard generation == loadGeneration else { continue }
+            merge.deliver(.grouped(response))
+        }
+        inFlightSiblings = [backfillTask, groupedTask]
+        let deadlineTask = Task { [merge, siblingDeadline] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, siblingDeadline) * 1_000_000_000))
+            merge.close()
+        }
+
+        // Consume sibling results as they arrive. Cancellation of this load (a
+        // supersession or a view disappearance) closes the merge and cancels the
+        // siblings AT ONCE — so the suspended `next()` wakes immediately and the load
+        // terminates promptly rather than lingering until the deadline (L2-211 Item
+        // 1). The deadline still bounds the NON-cancelled case where a
+        // cancellation-ignoring sibling never returns.
+        await withTaskCancellationHandler {
+            var received = 0
+            while received < 2 {
+                guard let result = await merge.next() else { break }  // closed by deadline/cancel
+                received += 1
+                // Drop a late/cancelled child of a superseded (or stopped) load — the
+                // generation guard is the publication backstop behind termination.
+                guard generation == loadGeneration, !Task.isCancelled else { continue }
                 switch result {
                 case .backfill(let backfill): applyBackfill(backfill, start: loadStart)
                 case .grouped(let grouped): applyGrouped(grouped, start: loadStart)
                 }
             }
+        } onCancel: {
+            backfillTask.cancel()
+            groupedTask.cancel()
+            merge.close()
         }
+        deadlineTask.cancel()
+        inFlightSiblings = []
 
         guard generation == loadGeneration else { return }
         // Recompute the refresh interval after the merges (belt-and-suspenders — the
         // backfill excludes live events, so the live set is already known from main).
         configureAutoRefresh()
+    }
+
+    /// Cancel and drop any sibling tasks still in flight from a prior load body
+    /// (L2-211 Item 1). They are unstructured, so termination must be explicit; a
+    /// cooperative sibling ends promptly, and a cancellation-ignoring one is left to
+    /// finish into a closed merge where its result is discarded.
+    @MainActor
+    private func cancelInFlightSiblings() {
+        for task in inFlightSiblings { task.cancel() }
+        inFlightSiblings = []
     }
 
     /// Run an optional/non-fatal fetch, mapping ANY error — including cancellation —
@@ -284,8 +411,11 @@ final class FeedViewModel: ObservableObject {
         guard hasLiveGames else { refreshArmed = false; return }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
+            // Route the timer through the single owned rail (L2-211 Item 1): the
+            // refresh supersedes (cancels + joins) any prior owned load rather than
+            // running as an overlapping concurrent load.
             Task { @MainActor in
-                await self.load()
+                await self.startLoad()
             }
         }
         refreshArmed = true
@@ -297,13 +427,20 @@ final class FeedViewModel: ObservableObject {
         refreshArmed = false
     }
 
-    /// Called when the owning Sports view stops (disappears) — L2-209 Item 1 / C68.
-    /// Invalidates the current load generation so any request still in flight from a
-    /// timer-driven refresh (which is NOT cancelled by the view's `.task`) can no
-    /// longer mutate published state when it lands, then stops the refresh timer.
+    /// Called when the owning Sports view stops (disappears) — L2-209 Item 1 / C68,
+    /// hardened for L2-211 Item 1 / C73 (cancel_and_join_on_disappear). Terminates
+    /// the owned load and its siblings — cancellation is real, not just a discard —
+    /// stops the refresh timer, and invalidates the current generation as the
+    /// publication backstop so any request that outraces cancellation can no longer
+    /// mutate published state after the tab closes. `isStopped` blocks a refresh-timer
+    /// callback that was already queued at teardown from starting a fresh load.
     @MainActor
     func viewDidStop() {
+        isStopped = true
         loadGeneration &+= 1
+        loadTask?.cancel()
+        loadTask = nil
+        cancelInFlightSiblings()
         stopRefresh()
     }
 

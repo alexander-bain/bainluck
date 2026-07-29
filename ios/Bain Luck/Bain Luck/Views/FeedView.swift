@@ -11,12 +11,13 @@ struct FeedView: View {
     @State private var selectedCategory: String = "all"
     @State private var landscapeColumns = false
     @State private var hoveredItemId: String?
-    // Sports first-render attribution (L2-209 Item 2 / C68): `loadStartedAt` stamps
-    // when a load begins; `firstRenderEmitted` guards a single on-screen
-    // `sports_feed_first_render` per load so a fast model assignment is never
-    // reported as first paint and an empty successful main emits nothing.
-    @State private var loadStartedAt: Date?
-    @State private var firstRenderEmitted = false
+    // Sports first-render attribution (L2-211 Item 2 / C73): the once-only guard keys
+    // on the view model's IMMUTABLE render-generation id — NOT a boolean an `onAppear`
+    // refire could desync — so a same-card-ID refresh (SwiftUI retains the rows and
+    // does not re-fire `onAppear`) still emits its new generation via
+    // `onChange(of:)`, and both the elapsed time and the item count reported come
+    // from the frozen token, never a live `vm.items.count`.
+    @State private var lastEmittedRenderGenerationId: Int?
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -43,8 +44,7 @@ struct FeedView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                         Button("Try Again") {
-                            beginSportsFirstRenderWindow()
-                            Task { await vm.load() }
+                            Task { await vm.startLoad() }
                         }
                         .buttonStyle(.borderedProminent)
                         Spacer()
@@ -62,13 +62,22 @@ struct FeedView: View {
             updateLandscapeColumns()
         }
         .task {
-            beginSportsFirstRenderWindow()
-            await vm.load()
+            // Route every load through the single owned rail (L2-211 Item 1 / C73):
+            // (re)appearance re-arms after a prior stop, then supersedes any prior
+            // owned load.
+            vm.viewDidStart()
+            await vm.startLoad()
+        }
+        .onChange(of: vm.firstRenderGeneration) { _, _ in
+            // Generation-keyed acknowledgement (L2-211 Item 2 / C73): fires when the
+            // view model stamps a new render token even if the refresh retains the
+            // same card IDs (SwiftUI would not re-run `onAppear` for those rows).
+            emitSportsFirstRenderIfNeeded()
         }
         .onDisappear {
-            // Invalidate the load generation + stop the timer so a timer-driven
-            // refresh already in flight can't mutate state after the tab closes
-            // (L2-209 Item 1 / C68).
+            // Cancel + join the owned load and its siblings, invalidate the load
+            // generation, and stop the timer so a timer-driven refresh already in
+            // flight can't mutate state after the tab closes (L2-211 Item 1 / C73).
             vm.viewDidStop()
         }
         #if os(iOS)
@@ -131,8 +140,7 @@ struct FeedView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Retry") {
-                            beginSportsFirstRenderWindow()
-                            Task { await vm.load() }
+                            Task { await vm.startLoad() }
                         }
                         .font(.footnote.weight(.semibold))
                         .buttonStyle(.borderless)
@@ -184,34 +192,33 @@ struct FeedView: View {
         .listStyle(.insetGrouped)
         #endif
         .refreshable {
-            beginSportsFirstRenderWindow()
-            await vm.load()
+            await vm.startLoad()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         }
     }
 
-    /// Open a new Sports first-render measurement window (L2-209 Item 2): stamp the
-    /// load start and re-arm the one-shot so the NEXT first renderable card emits its
-    /// own on-screen render time. Called wherever a load begins (cold task, refresh,
-    /// retry).
-    private func beginSportsFirstRenderWindow() {
-        loadStartedAt = Date()
-        firstRenderEmitted = false
-    }
-
-    /// Emit the on-screen first-render milestone once per load (L2-209 Item 2), when
-    /// the first renderable Sports card actually appears — deliberately distinct from
-    /// the view model's per-stage data-ready milestone so a fast model assignment is
-    /// never reported as a fast first paint, and an empty successful main (no cards →
-    /// no `onAppear`) emits nothing.
+    /// Emit the on-screen first-render milestone once per render generation (L2-211
+    /// Item 2 / C73), when the first renderable Sports card appears OR when the view
+    /// model stamps a new render token (a same-id refresh that retains its rows). The
+    /// once-only guard keys on the token's IMMUTABLE generation id — not a boolean an
+    /// `onAppear` refire could desync — and BOTH the elapsed time and the item count
+    /// reported come from that frozen token, never a live `vm.items.count` a later
+    /// backfill merge or a superseding load could have changed. An empty successful
+    /// main stamps no token, so it emits nothing; the per-stage data-ready milestone
+    /// (model assignment) stays distinct from this on-screen first-card render.
     private func emitSportsFirstRenderIfNeeded() {
-        guard let ms = DiscoverFirstRender.elapsedMsIfShouldEmit(
-            emitted: firstRenderEmitted, loadStartedAt: loadStartedAt, now: Date()
+        guard let decision = SportsFirstRender.generationDecision(
+            generation: vm.firstRenderGeneration,
+            lastEmittedGenerationId: lastEmittedRenderGenerationId,
+            now: Date()
         ) else { return }
-        firstRenderEmitted = true
-        AnalyticsService.trackSportsFirstRender(firstRenderMs: ms, itemCount: vm.items.count)
+        lastEmittedRenderGenerationId = decision.generation.generation
+        AnalyticsService.trackSportsFirstRender(
+            firstRenderMs: decision.ms,
+            itemCount: decision.generation.itemCount
+        )
     }
 
     // MARK: - Section Builder
