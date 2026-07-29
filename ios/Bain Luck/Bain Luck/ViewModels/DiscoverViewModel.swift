@@ -29,6 +29,18 @@ final class DiscoverViewModel: ObservableObject {
     /// with `items`, whose publish already re-runs any dependent view body.
     private(set) var itemsVersion = 0
 
+    /// Provenance of the data that FIRST became renderable for the current load
+    /// (L2-208 Item 2 / C67 P2): `true` when the last-good cache seed produced the
+    /// first renderable cards, `false` when the network did. Captured ONCE per load
+    /// — the moment `items` first goes non-empty — and never flipped by a later
+    /// same-load network replacement, so the view's on-screen first-render event
+    /// reports the source that actually produced first paint rather than whatever
+    /// `isShowingCachedContent` happens to read at `onAppear` time (a fast network
+    /// hit can flip that flag to false before SwiftUI emits the render callback).
+    /// Nil until the first renderable data lands; reset at each `load()` start. Not
+    /// `@Published`: it is read only in the render callback, never drives layout.
+    private(set) var firstDataFromCache: Bool?
+
     @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var loadingMore = false
@@ -119,6 +131,9 @@ final class DiscoverViewModel: ObservableObject {
         loadGeneration &+= 1
         let generation = loadGeneration
         let loadStart = Date()
+        // Re-arm first-render provenance for this load (L2-208 Item 2): the next
+        // data to become renderable — cache seed or network — stamps it once.
+        firstDataFromCache = nil
 
         // Stale-while-revalidate (#1465): on a cold view model, seed the last
         // successful payload from disk so a first card renders immediately instead
@@ -140,6 +155,8 @@ final class DiscoverViewModel: ObservableObject {
                 } else {
                     let mergeStart = Date()
                     items = Self.interleave(renderable)
+                    // First paint provenance: the cache seed produced first paint.
+                    if firstDataFromCache == nil { firstDataFromCache = true }
                     let mergeMs = Self.elapsedMs(since: mergeStart)
                     hasMore = cached.response.hasMore
                     nextOffset = Self.pageBoundary(cached.response, from: 0)
@@ -182,6 +199,12 @@ final class DiscoverViewModel: ObservableObject {
         // transport / 5xx / 429 failures, and only while one shared budget remains.
         let netStart = Date()
         let deadline = Date().addingTimeInterval(retryBudget)
+        // Whether the ONE guaranteed initial attempt has been admitted yet
+        // (L2-208 Item 2 / C67 P1). The first attempt always runs (bounded by the
+        // budget); once admitted, any later loop that finds the budget exhausted
+        // throws `DeadlineExceededError` from `fetchWithinDeadline` instead of
+        // starting a new unbounded request.
+        var admittedFirstAttempt = false
         while true {
             do {
                 // One REAL cancellable deadline for the whole initial load (L2-206
@@ -191,7 +214,9 @@ final class DiscoverViewModel: ObservableObject {
                 // budget cancels a stuck request AT the budget — and because each
                 // attempt is bounded by the time LEFT (not a fresh per-attempt
                 // timeout), a slow request that burns the budget yields no retry.
-                let response = try await fetchWithinDeadline(deadline: deadline)
+                let response = try await fetchWithinDeadline(
+                    deadline: deadline, isFirstAttempt: !admittedFirstAttempt)
+                admittedFirstAttempt = true
                 // A newer load() superseded this one mid-flight (refresh / account
                 // switch) — drop this response rather than overwrite (C42, races).
                 guard generation == loadGeneration else { return }
@@ -199,6 +224,11 @@ final class DiscoverViewModel: ObservableObject {
                 let renderable = Self.renderable(response.items)
                 let mergeStart = Date()
                 items = Self.interleave(renderable)
+                // First paint provenance: only stamp network when the cache seed
+                // did NOT already produce first paint this load — a background
+                // revalidation behind a served cache must not relabel the render
+                // that already happened from cache (C67 P2).
+                if firstDataFromCache == nil { firstDataFromCache = false }
                 let mergeMs = Self.elapsedMs(since: mergeStart)
                 hasMore = response.hasMore
                 // Advance by the SERVER page boundary (offset + limit), not the
@@ -226,6 +256,10 @@ final class DiscoverViewModel: ObservableObject {
                 loading = false
                 return
             } catch {
+                // The attempt ran (and failed) — it counts as admitted, so any
+                // further loop is a retry that must respect the exhausted-budget
+                // throw rather than start a new unbounded request (L2-208 Item 2).
+                admittedFirstAttempt = true
                 // A newer load() owns the feed — stop silently, let it drive state.
                 guard generation == loadGeneration else { return }
                 print("DiscoverView load error: \(error)")
@@ -295,16 +329,24 @@ final class DiscoverViewModel: ObservableObject {
     /// deadline REAL — a suspended request is cancelled at the budget instead of
     /// hanging, and because the sleep uses the time LEFT (not a fresh per-attempt
     /// timeout) the total load can never exceed the budget across retries.
-    private func fetchWithinDeadline(deadline: Date) async throws -> FeedResponse {
+    private func fetchWithinDeadline(deadline: Date, isFirstAttempt: Bool) async throws -> FeedResponse {
         let remaining = deadline.timeIntervalSinceNow
         let client = self.client
-        // Degenerate/exhausted budget: make a single UNBOUNDED attempt rather than
-        // refuse to try — an attempt is not a retry, and the loop's own
-        // `remaining > 0` check already prevents any RETRY after exhaustion, so this
-        // never multiplies into many requests. A real hanging request under the real
-        // production budget never reaches here: the budget starts positive, so the
-        // bounded race below is what actually cancels a stuck request at the deadline.
         guard remaining > 0 else {
+            // Budget already spent. A RETRY reaching here must NEVER start a new
+            // request — a bare `fetchDiscoverFeed` is bounded only by URLSession's
+            // 30/60s timeouts, so admitting one after the deadline recreates exactly
+            // the unbounded hang the total budget exists to prevent (C67 P1 /
+            // L2-208 Item 2). Throw the non-retryable deadline error instead and let
+            // the loop settle to last-good/error.
+            //
+            // Only the very FIRST attempt is admitted with a non-positive budget,
+            // and solely for a degenerate/zero CONFIGURED budget that production
+            // never uses (prod budget is 6s) — so the feed still makes one attempt
+            // rather than refusing to load at all. It cannot multiply into many
+            // requests because the loop only re-enters here on a retry, which now
+            // throws.
+            guard isFirstAttempt else { throw DeadlineExceededError() }
             return try await client.fetchDiscoverFeed(
                 limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
         }

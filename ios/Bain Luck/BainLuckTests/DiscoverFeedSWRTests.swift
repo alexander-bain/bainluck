@@ -231,4 +231,50 @@ final class DiscoverFeedSWRTests: XCTestCase {
         XCTAssertFalse(vm.isShowingCachedContent)
         XCTAssertEqual(vm.items.count, 13)
     }
+
+    // MARK: - First-render provenance frozen at data-ready (L2-208 Item 2 / C67 P2)
+
+    func testFirstDataProvenanceIsCacheEvenAfterFastNetworkReplace() async throws {
+        // The cache seed produces first paint, then a fast network hit replaces
+        // items and flips `isShowingCachedContent` to false. The FROZEN first-paint
+        // provenance must stay `cache` so the view's on-screen first-render event is
+        // not mislabeled network — the exact race C67 P2 flagged (the pre-fix view
+        // read the live `isShowingCachedContent`, already false by `onAppear`).
+        let cache = FakeLastGood(try cached([futuresJSON(1), futuresJSON(2), futuresJSON(3)]))
+        let fresh = try feedResponse((100...112).map(futuresJSON))
+        let vm = DiscoverViewModel(client: FakeClient(.success(fresh)), lastGood: cache, telemetry: nil)
+
+        await vm.load()
+
+        XCTAssertFalse(vm.isShowingCachedContent, "network replaced the seed (live flag flipped)")
+        XCTAssertEqual(vm.firstDataFromCache, true,
+            "first paint came from cache; provenance frozen despite the later network replace")
+    }
+
+    func testFirstDataProvenanceIsNetworkOnColdMiss() async throws {
+        // No cache → the network produces first paint → provenance is network.
+        let fresh = try feedResponse((100...112).map(futuresJSON))
+        let vm = DiscoverViewModel(client: FakeClient(.success(fresh)), lastGood: FakeLastGood(nil), telemetry: nil)
+
+        await vm.load()
+
+        XCTAssertEqual(vm.firstDataFromCache, false,
+            "a cold miss's first paint is network, reported truthfully")
+    }
+
+    func testFirstDataProvenanceResetsPerLoad() async throws {
+        // Provenance is per-load, not sticky. A first load seeds from cache
+        // (provenance cache); a second load runs with items already present, skips
+        // the cache seed, and revalidates via network → provenance re-stamps network.
+        let cache = FakeLastGood(try cached([futuresJSON(1)]))
+        let fresh = try feedResponse((100...112).map(futuresJSON))
+        let vm = DiscoverViewModel(client: FakeClient(.success(fresh)), lastGood: cache, telemetry: nil)
+
+        await vm.load()
+        XCTAssertEqual(vm.firstDataFromCache, true, "first load seeded from cache")
+
+        await vm.load()
+        XCTAssertEqual(vm.firstDataFromCache, false,
+            "second load's first data came from the network revalidation")
+    }
 }

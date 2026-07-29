@@ -78,6 +78,16 @@ final class AuthManager: ObservableObject {
     private func restoreSession() async {
         guard let tokenData = KeychainHelper.load(key: keychainTokenKey),
               String(data: tokenData, encoding: .utf8) != nil else {
+            // No credential — a persisted last-known id must NOT keep the app
+            // optimistically reading a signed-in cache namespace (L2-208 Item 1 /
+            // C67 P2). If the credential store and the last-known-id store diverge
+            // (id present, token gone), the returning-user cold path seeded
+            // `activeFeedUserId = "<id>"` at line 42, so without this the app is
+            // anonymous yet keeps reading `user:<id>` last-good with no transition
+            // to tell Discover to clear it. Treat it as a resolved anonymous
+            // identity: clear the optimistic seed so Discover rebinds before its
+            // first cache read, and evict/clear the APIClient namespace + persisted id.
+            clearOptimisticSignedInIdentity()
             isLoading = false
             return
         }
@@ -272,6 +282,20 @@ final class AuthManager: ObservableObject {
             }
             monitor.start(queue: queue)
         }
+    }
+
+    /// Clear an optimistically-seeded signed-in identity when a launch finds NO
+    /// credential (L2-208 Item 1 / C67 P2). Unlike `clearStoredAuth()` this does
+    /// not delete a (non-existent) session token — it only undoes the cold-launch
+    /// optimism: publishing `activeFeedUserId = nil` fires `DiscoverView`'s rebind
+    /// (clearing any in-memory cards seeded from the stale namespace), and
+    /// `setFeedCacheIdentity(nil)` evicts the signed-in disk namespace and clears
+    /// the persisted last-known id so the next launch starts clean. A no-op when
+    /// there was no optimistic identity to clear (genuine anonymous launch).
+    private func clearOptimisticSignedInIdentity() {
+        guard activeFeedUserId != nil else { return }
+        activeFeedUserId = nil
+        Task { await APIClient.shared.setFeedCacheIdentity(userId: nil) }
     }
 
     private func clearStoredAuth() {

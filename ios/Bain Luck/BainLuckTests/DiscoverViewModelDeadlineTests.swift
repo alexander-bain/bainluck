@@ -38,6 +38,46 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         func loadLastGoodFeed() async -> CachedDiscoverFeed? { payload }
     }
 
+    /// Fails the FIRST call retryably after consuming most of the budget, then
+    /// would return a distinct marker on a SECOND call. Proves the exhausted-budget
+    /// retry path never STARTS that second (unbounded) request (L2-208 Item 2 /
+    /// C67 P1): the pre-fix `fetchWithinDeadline` had a `remaining <= 0` branch that
+    /// returned a bare `client.fetchDiscoverFeed(...)` — bounded only by
+    /// URLSession's 30/60s timeouts — recreating the very hang the total budget
+    /// exists to prevent. On the fixed code the second call is never made
+    /// (`calls == 1`); on the pre-fix code the exhausted branch issued it
+    /// (`calls == 2`, marker data published).
+    private nonisolated final class NearDeadlineFake: DiscoverFeedProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        var calls: Int { lock.withLock { n } }
+        private let firstDelay: TimeInterval
+        private let second: FeedResponse
+        init(firstDelay: TimeInterval, second: FeedResponse) {
+            self.firstDelay = firstDelay; self.second = second
+        }
+        nonisolated func fetchDiscoverFeed(
+            limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+        ) async throws -> FeedResponse {
+            let c = lock.withLock { () -> Int in n += 1; return n }
+            if c == 1 {
+                // Consume most of the budget (well inside it, so the deadline race
+                // does NOT cancel this attempt), then fail RETRYABLY (503).
+                try await Task.sleep(for: .seconds(firstDelay))
+                throw APIError.httpError(statusCode: 503, body: nil)
+            }
+            // A second request must never be started once the budget is exhausted.
+            return second
+        }
+    }
+
+    private func markerResponse() throws -> FeedResponse {
+        let json = """
+        {"items":[\(futuresJSON(999))],"total":1,"limit":50,"offset":0,"has_more":false}
+        """
+        return try Self.decoder().decode(FeedResponse.self, from: Data(json.utf8))
+    }
+
     // MARK: - Fixtures
 
     private static func decoder() -> JSONDecoder {
@@ -98,5 +138,27 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         XCTAssertTrue(vm.isShowingCachedContent)
         XCTAssertTrue(vm.refreshFailedShowingCache)
         XCTAssertEqual(vm.error, "Showing recent markets — couldn't refresh")
+    }
+
+    func testExhaustedRetryBudgetNeverStartsSecondUnboundedRequest() async throws {
+        // budget 0.3s; first call fails retryably at 0.1s (remainder ~0.2s); backoff
+        // 1.0s clamps to the remaining ~0.2s and consumes it → the next loop finds
+        // the budget exhausted. The fixed code THROWS a non-retryable deadline error
+        // there; the pre-fix code started an unbounded second request.
+        let fake = NearDeadlineFake(firstDelay: 0.1, second: try markerResponse())
+        let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(nil),
+                                   telemetry: nil, retryBudget: 0.3, retryBackoff: 1.0)
+
+        let started = Date()
+        await vm.load()
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertEqual(fake.calls, 1,
+            "the exhausted-budget retry must not start a second (unbounded) request")
+        XCTAssertLessThan(elapsed, 3.0, "settled within the total budget — no unbounded hang")
+        XCTAssertTrue(vm.items.isEmpty,
+            "no cache and the retry threw → honest error, never the marker from call 2")
+        XCTAssertEqual(vm.error, "Couldn't load feed")
+        XCTAssertFalse(vm.loading)
     }
 }

@@ -1229,9 +1229,16 @@ struct DiscoverView: View {
             emitted: firstRenderEmitted, loadStartedAt: loadStartedAt, now: Date()
         ) else { return }
         firstRenderEmitted = true
+        // Provenance frozen at data-ready (L2-208 Item 2 / C67 P2): report the
+        // source that FIRST produced renderable items for this load, not the live
+        // `isShowingCachedContent` flag — a fast same-load network hit can flip that
+        // to false before this `onAppear` fires, mislabeling a cache-assisted first
+        // paint as network. Fall back to the live flag only if provenance is
+        // somehow unset (no data yet, in which case this would not emit anyway).
+        let fromCache = vm.firstDataFromCache ?? vm.isShowingCachedContent
         AnalyticsService.trackDiscoverFirstRender(
             firstRenderMs: ms,
-            fromCache: vm.isShowingCachedContent,
+            fromCache: fromCache,
             itemCount: vm.items.count
         )
     }

@@ -77,6 +77,47 @@ actor APIClient {
         return (id?.isEmpty == false) ? id : nil
     }
 
+    /// Persist (or clear) the last-known signed-in user id. A non-empty id is
+    /// stored so the NEXT cold launch resolves the correct cache namespace before
+    /// restore; nil/empty CLEARS it so a signed-out / failed-restore launch never
+    /// reads a stale `user:<id>` namespace (L2-208 Item 1 / C67 P2). Nonisolated
+    /// static — a plain UserDefaults write, safe from any actor and unit-testable
+    /// without touching the singleton's disk cache.
+    static func setPersistedLastKnownUserId(_ userId: String?) {
+        if let userId, !userId.isEmpty {
+            UserDefaults.standard.set(userId, forKey: lastKnownUserIdKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: lastKnownUserIdKey)
+        }
+    }
+
+    /// Whether a just-fetched offset-0 feed body may be persisted as last-good, and
+    /// under which namespace, WITHOUT poisoning a signed-in user's cache
+    /// (L2-208 Item 1 / C67 P1). Pure so the identity-race matrix is unit-testable.
+    ///
+    /// The store is bound to the request's REAL principal, never merely the
+    /// optimistic cold-launch read namespace:
+    ///   • a signed-in (`user:<id>`) namespace may only receive a response the
+    ///     request actually authenticated for (`wasAuthenticated == true`);
+    ///   • an anonymous (`anon:<session>`) namespace may only receive an
+    ///     unauthenticated response.
+    /// It also requires the identity to be UNCHANGED since the request left, so a
+    /// mid-flight login/logout/account switch never commits under the wrong file.
+    /// The returning-user race — a tokenless revalidation firing before auth
+    /// restore installs the provider — therefore resolves to "do not store": the
+    /// anonymous response neither overwrites `user:<id>` last-good nor lands
+    /// anywhere while the optimistic identity is still `user:<id>`.
+    static func shouldPersistFeed(
+        identityAtFetch: String,
+        userIdAtFetch: String?,
+        wasAuthenticated: Bool,
+        currentIdentity: String
+    ) -> Bool {
+        guard identityAtFetch == currentIdentity else { return false }
+        let signedInNamespace = (userIdAtFetch?.isEmpty == false)
+        return signedInNamespace ? wasAuthenticated : !wasAuthenticated
+    }
+
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
@@ -107,11 +148,7 @@ actor APIClient {
         feedCacheUserId = userId
         // Persist the new identity so the NEXT cold launch reads the correct cache
         // namespace before restore completes (L2-206 Item 1). Empty/nil → anonymous.
-        if let userId, !userId.isEmpty {
-            UserDefaults.standard.set(userId, forKey: Self.lastKnownUserIdKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: Self.lastKnownUserIdKey)
-        }
+        Self.setPersistedLastKnownUserId(userId)
         feedCache.evict(keepingOnly: currentFeedIdentity())
     }
 
@@ -209,7 +246,8 @@ actor APIClient {
     ) async throws -> (
         value: T, raw: Data,
         authReadyMs: Double, networkMs: Double, decodeMs: Double,
-        backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int
+        backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int,
+        wasAuthenticated: Bool
     ) {
         var components = URLComponents(string: baseURL + path)
         if !query.isEmpty {
@@ -226,8 +264,15 @@ actor APIClient {
         // provider) waits on nothing and a signed-in fetch reuses the cached
         // credential. Measured so telemetry can prove that, not because it blocks.
         let authStart = Date()
+        // Whether THIS request actually carried a signed-in credential. Bound to
+        // the persisted store namespace below (L2-208 Item 1 / C67 P1): a request
+        // that went out anonymously — because the token provider was not yet
+        // installed on the returning-user cold path — must never have its
+        // (anonymous) response written back under a `user:<id>` namespace.
+        var wasAuthenticated = false
         if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            wasAuthenticated = true
         }
         let authReadyMs = Date().timeIntervalSince(authStart) * 1000
 
@@ -257,7 +302,7 @@ actor APIClient {
         do {
             let value = try decoder.decode(T.self, from: data)
             let decodeMs = Date().timeIntervalSince(decodeStart) * 1000
-            return (value, data, authReadyMs, networkMs, decodeMs, backendElapsedMs, cacheStatus, data.count)
+            return (value, data, authReadyMs, networkMs, decodeMs, backendElapsedMs, cacheStatus, data.count, wasAuthenticated)
         } catch {
             throw APIError.decodingError(underlying: error)
         }
@@ -529,13 +574,17 @@ actor APIClient {
         if let eventPct { q["event_pct"] = String(eventPct) }
 
         // Capture the identity at fetch time so a mid-flight account switch cannot
-        // cause this response to be written under the WRONG namespace (L2-206 Item 2).
+        // cause this response to be written under the WRONG namespace (L2-206 Item 2),
+        // AND the signed-in-ness of that namespace so the store can be bound to the
+        // request's real principal (L2-208 Item 1 / C67 P1).
         let identityAtFetch = currentFeedIdentity()
+        let userIdAtFetch = feedCacheUserId
 
         let result: (
             value: FeedResponse, raw: Data,
             authReadyMs: Double, networkMs: Double, decodeMs: Double,
-            backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int
+            backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int,
+            wasAuthenticated: Bool
         ) = try await fetchRaw("/api/feed", query: q)
 
         // Persist last-good OFF the first-card path (L2-206 Item 2): the decoded
@@ -550,7 +599,17 @@ actor APIClient {
         let net = result
         Task {
             let storeMs: Double?
-            if identityAtFetch == currentFeedIdentity() {
+            // Bind the store to WHO THE REQUEST AUTHENTICATED AS, not merely the
+            // current cache namespace (L2-208 Item 1 / C67 P1): a tokenless
+            // revalidation on the returning-user cold path must never overwrite
+            // `user:<id>` last-good with an anonymous feed, and a mid-flight
+            // identity change suppresses the store entirely.
+            if Self.shouldPersistFeed(
+                identityAtFetch: identityAtFetch,
+                userIdAtFetch: userIdAtFetch,
+                wasAuthenticated: net.wasAuthenticated,
+                currentIdentity: currentFeedIdentity()
+            ) {
                 let t0 = Date()
                 feedCache.store(rawBody: raw, identity: identityAtFetch, storedAt: Date())
                 storeMs = Date().timeIntervalSince(t0) * 1000
