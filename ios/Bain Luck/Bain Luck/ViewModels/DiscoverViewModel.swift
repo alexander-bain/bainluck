@@ -516,6 +516,24 @@ final class DiscoverViewModel: ObservableObject {
         signedInNamespace ? credentialEligibleForRestore : true
     }
 
+    /// Whether a pagination response fetched under `capturedGeneration` may still
+    /// mutate feed state, given the CURRENT load generation (C78 Item 1). The load
+    /// generation is captured before pagination's first await and re-checked after
+    /// every await: a logout, login, account switch, pull-refresh, or superseding
+    /// load bumps `loadGeneration` (see `load()`/`rebindForIdentityChange()`), so a
+    /// response that returns after such a transition belongs to a DEAD generation
+    /// and must be dropped before it appends items, advances the offset, flips
+    /// `hasMore`/`error`, or emits analytics — otherwise a prior identity's page
+    /// would paint into, and advance the paging cursor of, the new identity (the
+    /// `reject_stale_append_and_offset` counterexample). A same-generation response
+    /// (`captured == current`) applies normally.
+    static func shouldApplyPaginationResult(
+        capturedGeneration: Int,
+        currentGeneration: Int
+    ) -> Bool {
+        capturedGeneration == currentGeneration
+    }
+
     /// Whether a failed fetch should be retried (L2-201 / #1472). Only transient
     /// transport failures, 5xx, and 429 can self-heal; decoding/schema failures,
     /// non-retryable 4xx, invalid URLs, and cancellation cannot, so retrying them
@@ -650,6 +668,12 @@ final class DiscoverViewModel: ObservableObject {
         loadingMore = true
         defer { loadingMore = false }
 
+        // Capture the active load generation BEFORE the first await (C78 Item 1).
+        // Re-checked after every await below so a response that returns after an
+        // identity change / refresh / superseding load never mutates the new
+        // generation's paging state.
+        let generation = loadGeneration
+
         var scans = 0
         while hasMore, scans < Self.maxPageScans {
             scans += 1
@@ -667,6 +691,12 @@ final class DiscoverViewModel: ObservableObject {
             } catch let urlError as URLError where urlError.code == .cancelled {
                 return
             } catch {
+                // A response (or failure) from a superseded generation must not
+                // paint an error over the new identity (C78 Item 1) — drop it
+                // silently, exactly as a successful stale page is dropped below.
+                guard Self.shouldApplyPaginationResult(
+                    capturedGeneration: generation, currentGeneration: loadGeneration
+                ) else { return }
                 // Surface a retryable error instead of swallowing it into a
                 // permanent progress state (C26 P2). The view offers a retry
                 // control that calls back into loadMoreIfNeeded.
@@ -674,6 +704,16 @@ final class DiscoverViewModel: ObservableObject {
                 self.error = "Couldn't load more markets"
                 return
             }
+
+            // Drop a response that belongs to a superseded load generation (C78
+            // Item 1): an identity change (rebindForIdentityChange → load),
+            // pull-refresh, or any superseding load bumped loadGeneration while
+            // this page was in flight. Appending, advancing nextOffset, flipping
+            // hasMore/error, or emitting analytics here would corrupt the new
+            // generation's feed — so return before ANY state mutation.
+            guard Self.shouldApplyPaginationResult(
+                capturedGeneration: generation, currentGeneration: loadGeneration
+            ) else { return }
 
             // Advance by the SERVER page boundary FIRST, not the decoded item
             // count. The tolerant FeedResponse decoder silently drops malformed
@@ -730,7 +770,11 @@ final class DiscoverViewModel: ObservableObject {
 
         // Exhausted the scan budget while the server still claims more but keeps
         // returning nothing new: surface a retry instead of spinning forever.
-        if hasMore {
+        // Still gated on the captured generation (C78 Item 1) so a supersession on
+        // the final scan's await never writes a retry error over the new identity.
+        if hasMore, Self.shouldApplyPaginationResult(
+            capturedGeneration: generation, currentGeneration: loadGeneration
+        ) {
             self.error = "Couldn't find fresh markets"
         }
     }

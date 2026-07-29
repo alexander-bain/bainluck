@@ -118,6 +118,27 @@ actor APIClient {
         return signedInNamespace ? wasAuthenticated : !wasAuthenticated
     }
 
+    /// Build the in-memory `responseCache` key for a cached GET, partitioned by the
+    /// EXACT resolved request principal (C78 Item 2). Binding the principal into the
+    /// key makes a cross-identity cache hit impossible BY CONSTRUCTION: user B can
+    /// never read an entry user A stored — nor an anonymous session read a signed-in
+    /// user's — because their keys differ even for an identical path+query. This
+    /// closes the `reject_path_query_only_cache` counterexample, where a
+    /// path+query-only key let account A's cached `/api/me/team-futures` body serve
+    /// account B. Same-principal TTL hits are unaffected: an identical
+    /// `(principal, path, query)` reproduces the same key. The `\u{1F}` unit
+    /// separator can't appear in a principal (`user:<id>` / `anon:<session>`) or a
+    /// URL path, so the principal segment can never be confused with path bytes.
+    static func responseCacheKey(
+        principal: String,
+        path: String,
+        query: [String: String]
+    ) -> String {
+        let sortedQuery = query.sorted(by: { $0.key < $1.key })
+            .map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        return principal + "\u{1F}" + path + "?" + sortedQuery
+    }
+
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
@@ -149,6 +170,12 @@ actor APIClient {
         // Persist the new identity so the NEXT cold launch reads the correct cache
         // namespace before restore completes (L2-206 Item 1). Empty/nil → anonymous.
         Self.setPersistedLastKnownUserId(userId)
+        // Synchronously drop every prior-principal in-memory cached GET on ANY
+        // identity change (C78 Item 2). The principal-partitioned key already makes
+        // a cross-identity hit impossible by construction; this is defense-in-depth
+        // so a superseded identity's entries can't linger and waste memory. Runs on
+        // the actor before any subsequent fetch can observe the cache.
+        responseCache.removeAll()
         feedCache.evict(keepingOnly: currentFeedIdentity())
     }
 
@@ -210,8 +237,11 @@ actor APIClient {
         // Check cache
         let cacheKey: String?
         if let ttl = cacheTTL {
-            let key = path + "?" + query.sorted(by: { $0.key < $1.key })
-                .map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+            // Partition every cached GET by the exact current principal (C78
+            // Item 2) so no anonymous/authenticated or A→B identity transition can
+            // ever surface a prior principal's cached body.
+            let key = Self.responseCacheKey(
+                principal: currentFeedIdentity(), path: path, query: query)
             cacheKey = key
             if let entry = responseCache[key],
                Date().timeIntervalSince(entry.timestamp) < ttl {
