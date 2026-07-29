@@ -1,0 +1,38 @@
+{
+  "schema_version": "feed-credibility/v1",
+  "audited_commit": "12aac732",
+  "ownership": "what may surface and whether one card's displayed probability representations agree",
+  "named_examples": {
+    "taylor_bridesmaids": "live-only; synthetic date-authority equivalent is date_past_taylor_equivalent",
+    "steve_kerr_next_team": "live-only; price alone is explicitly insufficient in near_certain_but_open",
+    "tour_de_france_2026_empty": "live-only; synthetic equivalent is empty_tournament_equivalent",
+    "belgian_gp_empty": "live-only; synthetic equivalent is empty_concept_equivalent",
+    "aig_9_vs_14": "live-only; synthetic equivalent is reject_headline_context_disagreement",
+    "nascar_72_vs_73": "live-only; synthetic equivalent is reject_subtitle_list_disagreement",
+    "nominee_equal_18_bars": "code-confirmed class; synthetic equivalent is reject_equal_rounding_unequal_bars"
+  },
+  "implementation_contract": {
+    "freshness": "Only authoritative lifecycle/date/event evidence settles a card. Probability alone never does.",
+    "empty": "A live prediction card requires at least one rendered outcome with a probability.",
+    "display": "Headline, contextual leader copy, list label, and bar use one declared probability authority; equal rounded labels have equal bar widths."
+  },
+  "scenarios": [
+    {"id":"active_known_future","market_status":"open","resolution_date_relation":"future","linked_event_status":"scheduled","leader_probability":0.62,"rendered_outcomes":[{"name":"A","probability":0.62}],"surface":true},
+    {"id":"date_past_taylor_equivalent","market_status":"open","resolution_date_relation":"past","linked_event_status":null,"leader_probability":0.54,"rendered_outcomes":[{"name":"A","probability":0.54}],"surface":false},
+    {"id":"authoritative_resolved","market_status":"resolved","resolution_date_relation":"past","linked_event_status":null,"leader_probability":1.0,"rendered_outcomes":[{"name":"A","probability":1.0}],"surface":false},
+    {"id":"linked_event_completed","market_status":"open","resolution_date_relation":"unknown","linked_event_status":"completed","leader_probability":0.71,"rendered_outcomes":[{"name":"A","probability":0.71}],"surface":false},
+    {"id":"unknown_date_otherwise_clean","market_status":"open","resolution_date_relation":"unknown","linked_event_status":null,"leader_probability":0.58,"rendered_outcomes":[{"name":"A","probability":0.58}],"surface":true},
+    {"id":"near_certain_but_open","market_status":"open","resolution_date_relation":"future","linked_event_status":"scheduled","leader_probability":0.99,"rendered_outcomes":[{"name":"A","probability":0.99},{"name":"B","probability":0.01}],"surface":true},
+    {"id":"empty_tournament_equivalent","market_status":"open","resolution_date_relation":"future","linked_event_status":"scheduled","leader_probability":0.0,"rendered_outcomes":[],"surface":false},
+    {"id":"empty_concept_equivalent","market_status":"open","resolution_date_relation":"unknown","linked_event_status":null,"leader_probability":0.0,"rendered_outcomes":[{"name":"A","probability":null}],"surface":false},
+    {"id":"display_one_authority","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.724,"rendered_outcomes":[{"name":"A","probability":0.724}],"surface":true,"display_probability_authority":0.724,"headline_pct":72,"subtitle_pct":72,"list_pct":72,"display_outcomes":[{"name":"A","probability":0.724,"bar_width_pct":72}]},
+    {"id":"equal_rounded_equal_bars","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.184,"rendered_outcomes":[{"name":"A","probability":0.184},{"name":"B","probability":0.176}],"surface":true,"display_outcomes":[{"name":"A","probability":0.184,"bar_width_pct":18},{"name":"B","probability":0.176,"bar_width_pct":18}]}
+  ],
+  "rejected_counterexamples": [
+    {"id":"reject_price_only_settlement","market_status":"open","resolution_date_relation":"future","linked_event_status":"scheduled","leader_probability":0.99,"rendered_outcomes":[{"name":"A","probability":0.99}],"surface":false,"expected_violations":["surfacing_decision_mismatch","price_only_settlement"]},
+    {"id":"reject_empty_live_card","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.0,"rendered_outcomes":[],"surface":true,"expected_violations":["surfacing_decision_mismatch"]},
+    {"id":"reject_headline_context_disagreement","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.14,"rendered_outcomes":[{"name":"A","probability":0.14}],"surface":true,"display_probability_authority":0.14,"headline_pct":9,"subtitle_pct":14,"list_pct":14,"expected_violations":["headline_pct_authority_mismatch"]},
+    {"id":"reject_subtitle_list_disagreement","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.73,"rendered_outcomes":[{"name":"A","probability":0.73}],"surface":true,"display_probability_authority":0.73,"headline_pct":73,"subtitle_pct":72,"list_pct":73,"expected_violations":["subtitle_pct_authority_mismatch"]},
+    {"id":"reject_equal_rounding_unequal_bars","market_status":"open","resolution_date_relation":"future","linked_event_status":null,"leader_probability":0.184,"rendered_outcomes":[{"name":"A","probability":0.184},{"name":"B","probability":0.176}],"surface":true,"display_outcomes":[{"name":"A","probability":0.184,"bar_width_pct":100},{"name":"B","probability":0.176,"bar_width_pct":96}],"expected_violations":["equal_label_unequal_bar"]}
+  ]
+}

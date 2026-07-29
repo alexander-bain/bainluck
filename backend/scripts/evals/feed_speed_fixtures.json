@@ -1,0 +1,28 @@
+{
+  "schema_version": "feed-speed/v1",
+  "audited_commit": "12aac732",
+  "ownership": "web request multiplicity, page boundaries, and exact stable-ID render dedup",
+  "initial_page_limit_max": 20,
+  "real_revalidation_triggers": ["refresh_interval", "manual_refresh", "explicit_mutation"],
+  "source_observations": {
+    "initial_limit_200": "confirmed at frontend/app/discover/page.tsx:555-558",
+    "pagination_retries_offset_zero": "confirmed at frontend/app/discover/page.tsx:576-583",
+    "exact_id_render_dedup": "already implemented at frontend/app/discover/page.tsx:667-677",
+    "two_initial_network_calls": "live-only; static source has one SWR mount fetcher, while the pagination effect can issue another offset-zero request when processed rows run low",
+    "same_title_duplicate": "unmeasured; two titles may have different IDs and therefore require semantic/server dedup, not a React-key claim"
+  },
+  "scenarios": [
+    {"id":"bounded_initial_only","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0}],"rendered_ids":["futures-1","event-2"]},
+    {"id":"bounded_initial_and_pages","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"pagination","key":"discover-feed:20","limit":20,"offset":20},{"phase":"pagination","key":"discover-feed:40","limit":20,"offset":40}],"rendered_ids":["futures-1","event-2","futures-3"]},
+    {"id":"overlap_deduped_by_stable_id","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"pagination","key":"discover-feed:20","limit":20,"offset":20}],"page_ids":[["futures-1","futures-2"],["futures-2","futures-3"]],"rendered_ids":["futures-1","futures-2","futures-3"]},
+    {"id":"interval_revalidation","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"revalidation","trigger":"refresh_interval","key":"discover-feed","limit":20,"offset":0}],"rendered_ids":["futures-1","futures-2"]},
+    {"id":"manual_revalidation","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"revalidation","trigger":"manual_refresh","key":"discover-feed","limit":20,"offset":0}],"rendered_ids":["futures-1"]}
+  ],
+  "rejected_counterexamples": [
+    {"id":"reject_two_initial_200","requests":[{"phase":"initial","key":"discover-feed","limit":200,"offset":0},{"phase":"initial","key":"discover-feed","limit":200,"offset":0}],"rendered_ids":["futures-1"],"expected_violations":["initial_request_count","initial_page_unbounded"]},
+    {"id":"reject_offset_zero_pagination","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"pagination","key":"discover-feed:retry-zero","limit":20,"offset":0}],"rendered_ids":["futures-1"],"expected_violations":["non_monotonic_pagination","initial_page_refetched_as_pagination"]},
+    {"id":"reject_overlapping_offsets","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"pagination","key":"discover-feed:20a","limit":20,"offset":20},{"phase":"pagination","key":"discover-feed:20b","limit":20,"offset":20}],"rendered_ids":["futures-1"],"expected_violations":["non_monotonic_pagination"]},
+    {"id":"reject_duplicate_render_id","requests":[{"phase":"initial","key":"discover-feed","limit":20,"offset":0},{"phase":"pagination","key":"discover-feed:20","limit":20,"offset":20}],"rendered_ids":["futures-1","event-2","futures-1"],"expected_violations":["duplicate_render_id"]},
+    {"id":"reject_key_churn_revalidation","requests":[{"phase":"initial","key":"discover-feed:a","limit":20,"offset":0},{"phase":"revalidation","trigger":"key_churn","key":"discover-feed:b","limit":20,"offset":0}],"rendered_ids":["futures-1"],"expected_violations":["spurious_revalidation"]}
+  ]
+}
