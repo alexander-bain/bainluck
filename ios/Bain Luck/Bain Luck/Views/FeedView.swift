@@ -11,6 +11,12 @@ struct FeedView: View {
     @State private var selectedCategory: String = "all"
     @State private var landscapeColumns = false
     @State private var hoveredItemId: String?
+    // Sports first-render attribution (L2-209 Item 2 / C68): `loadStartedAt` stamps
+    // when a load begins; `firstRenderEmitted` guards a single on-screen
+    // `sports_feed_first_render` per load so a fast model assignment is never
+    // reported as first paint and an empty successful main emits nothing.
+    @State private var loadStartedAt: Date?
+    @State private var firstRenderEmitted = false
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -37,6 +43,7 @@ struct FeedView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                         Button("Try Again") {
+                            beginSportsFirstRenderWindow()
                             Task { await vm.load() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -55,10 +62,14 @@ struct FeedView: View {
             updateLandscapeColumns()
         }
         .task {
+            beginSportsFirstRenderWindow()
             await vm.load()
         }
         .onDisappear {
-            vm.stopRefresh()
+            // Invalidate the load generation + stop the timer so a timer-driven
+            // refresh already in flight can't mutate state after the tab closes
+            // (L2-209 Item 1 / C68).
+            vm.viewDidStop()
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
@@ -107,6 +118,29 @@ struct FeedView: View {
 
     private var feedList: some View {
         List {
+            // Non-blocking honest state when a refresh failed but prior content is
+            // still shown (L2-209 Item 2 / C68): the tab stays usable and retryable
+            // rather than silently presenting stale content as freshly loaded.
+            if vm.refreshFailed {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.clockwise.circle")
+                            .foregroundStyle(.secondary)
+                        Text("Showing recent games — couldn't refresh")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Retry") {
+                            beginSportsFirstRenderWindow()
+                            Task { await vm.load() }
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.borderless)
+                    }
+                    .listRowSeparator(.hidden)
+                }
+            }
+
             // League & category chips — navigate to league grids or category pages
             Section {
                 SportFilterChips(selectedCategory: $selectedCategory) { route in
@@ -150,11 +184,34 @@ struct FeedView: View {
         .listStyle(.insetGrouped)
         #endif
         .refreshable {
+            beginSportsFirstRenderWindow()
             await vm.load()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         }
+    }
+
+    /// Open a new Sports first-render measurement window (L2-209 Item 2): stamp the
+    /// load start and re-arm the one-shot so the NEXT first renderable card emits its
+    /// own on-screen render time. Called wherever a load begins (cold task, refresh,
+    /// retry).
+    private func beginSportsFirstRenderWindow() {
+        loadStartedAt = Date()
+        firstRenderEmitted = false
+    }
+
+    /// Emit the on-screen first-render milestone once per load (L2-209 Item 2), when
+    /// the first renderable Sports card actually appears — deliberately distinct from
+    /// the view model's per-stage data-ready milestone so a fast model assignment is
+    /// never reported as a fast first paint, and an empty successful main (no cards →
+    /// no `onAppear`) emits nothing.
+    private func emitSportsFirstRenderIfNeeded() {
+        guard let ms = DiscoverFirstRender.elapsedMsIfShouldEmit(
+            emitted: firstRenderEmitted, loadStartedAt: loadStartedAt, now: Date()
+        ) else { return }
+        firstRenderEmitted = true
+        AnalyticsService.trackSportsFirstRender(firstRenderMs: ms, itemCount: vm.items.count)
     }
 
     // MARK: - Section Builder
@@ -166,12 +223,14 @@ struct FeedView: View {
                 LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                     ForEach(items) { item in
                         gridCard(item)
+                            .onAppear { emitSportsFirstRenderIfNeeded() }
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(items) { item in
                     feedRow(item)
+                        .onAppear { emitSportsFirstRenderIfNeeded() }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             pinSwipeButton(item)
                         }
@@ -207,12 +266,14 @@ struct FeedView: View {
                             .padding(12)
                             .background(Color.cardBackgroundDark)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .onAppear { emitSportsFirstRenderIfNeeded() }
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(vm.groupedItems) { item in
                     groupedRow(item)
+                        .onAppear { emitSportsFirstRenderIfNeeded() }
                 }
             }
         } header: {

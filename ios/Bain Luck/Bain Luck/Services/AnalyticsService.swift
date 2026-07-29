@@ -246,9 +246,25 @@ enum AnalyticsService {
         Analytics.logEvent("sports_feed_stage", parameters: [
             "stage": stage.kind.rawValue,
             "data_ready_ms": stage.dataReadyMs,
-            "first_real_card_ms": stage.firstRealCardMs ?? -1,
             "item_count": stage.itemCount,
             "success": stage.success,
+            "app_build": appBuild(),
+            "surface": "sports",
+        ])
+    }
+
+    /// The on-screen first-render milestone for the native Sports tab (L2-209 Item 2
+    /// / C68). Deliberately distinct from `sports_feed_stage`'s `data_ready_ms`
+    /// (model assignment): this fires from the FIRST renderable Sports card's SwiftUI
+    /// appearance, once per load, and NEVER for an empty successful main — so it
+    /// reflects real first paint rather than a fast model assignment. No PII.
+    nonisolated static func trackSportsFirstRender(
+        firstRenderMs: Double,
+        itemCount: Int
+    ) {
+        Analytics.logEvent("sports_feed_first_render", parameters: [
+            "first_render_ms": firstRenderMs,
+            "item_count": itemCount,
             "app_build": appBuild(),
             "surface": "sports",
         ])

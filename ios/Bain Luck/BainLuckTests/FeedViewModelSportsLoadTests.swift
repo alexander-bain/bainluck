@@ -149,6 +149,30 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
         nonisolated func fetchSportsGroupedFeed(limit: Int) async throws -> GroupedFeedResponse { emptyGrouped }
     }
 
+    /// Returns scripted main replies in order (clamping to the last), with fixed
+    /// events/grouped siblings. Lets one view model be loaded repeatedly with a
+    /// success→failure→success main sequence (refresh-failure lifecycle).
+    private nonisolated final class ScriptedMainClient: SportsFeedProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var index = 0
+        private let mains: [Result<FeedResponse, Error>]
+        private let events: FeedResponse
+        private let grouped: GroupedFeedResponse
+        init(mains: [Result<FeedResponse, Error>], events: FeedResponse, grouped: GroupedFeedResponse) {
+            self.mains = mains; self.events = events; self.grouped = grouped
+        }
+        nonisolated func fetchSportsFeed() async throws -> FeedResponse {
+            let reply = lock.withLock { () -> Result<FeedResponse, Error> in
+                let r = mains[min(index, mains.count - 1)]
+                index += 1
+                return r
+            }
+            return try reply.get()
+        }
+        nonisolated func fetchSportsEventBackfill(limit: Int) async throws -> FeedResponse { events }
+        nonisolated func fetchSportsGroupedFeed(limit: Int) async throws -> GroupedFeedResponse { grouped }
+    }
+
     private nonisolated final class TelemetrySink: @unchecked Sendable {
         private let lock = NSLock()
         private var events: [SportsFeedStage] = []
@@ -396,7 +420,11 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
 
     // MARK: - Item 2: telemetry
 
-    func testTelemetryEmitsThreeStagesWithFirstCardOnlyOnMain() async throws {
+    func testTelemetryEmitsThreeDataReadyStages() async throws {
+        // L2-209 Item 2 / C68: each stage reports a DATA-ready milestone (model
+        // assignment). The misleading model-assignment "first-real-card" field is
+        // gone — the true on-screen first render is a separate view-driven
+        // `sports_feed_first_render` event that never fires for an empty main.
         let sink = TelemetrySink()
         let fake = FakeSportsClient(
             main: .success(try feed([eventJSON(1, status: "scheduled")])),
@@ -409,13 +437,142 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
 
         XCTAssertEqual(Set(sink.kinds), Set([.main, .eventsBackfill, .grouped]),
                        "all three stages report")
+        for stage in sink.all {
+            XCTAssertGreaterThanOrEqual(stage.dataReadyMs, 0, "each stage carries a data-ready milestone")
+        }
+        XCTAssertTrue(try XCTUnwrap(sink.stage(.main)).success)
+    }
+
+    // MARK: - Item 1: structured sibling ownership (C68-P2)
+
+    func testViewDidStopDiscardsInFlightSiblingMerges() async throws {
+        // Main publishes; both siblings are gated (in flight). The view then stops
+        // (disappear). Pre-fix, siblings were unstructured `Task`s and `stopRefresh()`
+        // did NOT bump the generation, so a late backfill/grouped still merged after
+        // the view was gone. Now `viewDidStop()` invalidates the generation, so the
+        // late siblings are dropped by the merge guard.
+        let backfillGate = AsyncGate()
+        let groupedGate = AsyncGate()
+        let fake = FakeSportsClient(
+            main: .success(try feed([eventJSON(1, status: "scheduled")])),
+            backfill: .success(try feed([eventJSON(2, status: "scheduled")])),
+            grouped: .success(try groupedResponse(3)),
+            backfillGate: backfillGate,
+            groupedGate: groupedGate
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+
+        let task = Task { await vm.load() }
+        await waitUntil { !vm.loading && vm.items.count == 1 }
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"], "main published, siblings still gated")
+
+        vm.viewDidStop()               // view disappears → generation invalidated
+
+        backfillGate.open()
+        groupedGate.open()
+        await task.value
+
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"],
+                       "a stopped view's late backfill did not merge")
+        XCTAssertTrue(vm.groupedItems.isEmpty,
+                      "a stopped view's late grouped did not publish")
+    }
+
+    // MARK: - Item 2: refresh armed immediately after main (C68-P2)
+
+    func testAutoRefreshArmsImmediatelyAfterMainEvenWithSlowSiblings() async throws {
+        // A live game must have its refresh timer armed the moment the main feed
+        // publishes — pre-fix, `configureAutoRefresh()` ran only AFTER awaiting both
+        // siblings, so a slow/hung sibling left a live game with no refresh timer.
+        let backfillGate = AsyncGate()
+        let groupedGate = AsyncGate()
+        let fake = FakeSportsClient(
+            main: .success(try feed([eventJSON(1, status: "live")])),
+            backfill: .success(try emptyFeed()),
+            grouped: .success(try emptyGrouped()),
+            backfillGate: backfillGate,
+            groupedGate: groupedGate
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: true)
+
+        let task = Task { await vm.load() }
+        await waitUntil { !vm.loading && vm.items.count == 1 }
+        XCTAssertTrue(vm.refreshArmed,
+                      "auto-refresh armed right after main, not deferred behind slow siblings")
+
+        vm.viewDidStop()               // stop the real timer before it can fire
+        XCTAssertFalse(vm.refreshArmed)
+        backfillGate.open()
+        groupedGate.open()
+        await task.value
+    }
+
+    // MARK: - Item 2: honest non-initial refresh failure (C68-P2)
+
+    func testNonInitialRefreshFailureKeepsContentAndFlagsRefreshFailed() async throws {
+        // Main succeeds, then fails on a refresh (items already present). Pre-fix the
+        // catch path only set an error when `isInitial`, so a refresh failure was
+        // silent — stale content presented as fresh. Now `refreshFailed` surfaces a
+        // non-blocking retryable state while the content is preserved.
+        let fake = ScriptedMainClient(
+            mains: [.success(try feed([eventJSON(1, status: "scheduled")])),
+                    .failure(URLError(.timedOut))],
+            events: try emptyFeed(),
+            grouped: try emptyGrouped()
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+
+        await vm.load()
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"])
+        XCTAssertFalse(vm.refreshFailed)
+
+        await vm.load()   // refresh — main fails
+
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"], "content retained on refresh failure")
+        XCTAssertTrue(vm.refreshFailed, "refresh failure surfaced honestly")
+        XCTAssertNil(vm.error, "no full-screen error while content is present")
+        XCTAssertFalse(vm.loading)
+    }
+
+    func testSuccessfulRefreshClearsRefreshFailed() async throws {
+        let fake = ScriptedMainClient(
+            mains: [.success(try feed([eventJSON(1, status: "scheduled")])),
+                    .failure(URLError(.timedOut)),
+                    .success(try feed([eventJSON(1, status: "scheduled"), eventJSON(5, status: "scheduled")]))],
+            events: try emptyFeed(),
+            grouped: try emptyGrouped()
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+        await vm.load()
+        await vm.load()
+        XCTAssertTrue(vm.refreshFailed)
+        await vm.load()   // recovers
+        XCTAssertFalse(vm.refreshFailed, "a later successful refresh clears the failed state")
+        XCTAssertEqual(vm.items.map(\.id), ["event-1", "event-5"])
+    }
+
+    // MARK: - Item 2: empty successful main (C68-P2)
+
+    func testEmptyMainSuccessEmitsDataReadyWithoutConflatedFirstCard() async throws {
+        // An empty-but-successful main must still report a data-ready stage, but the
+        // (removed) model-assignment first-card metric can no longer fire for zero
+        // cards; the real first render is view-driven and never fires with no cards
+        // to appear.
+        let sink = TelemetrySink()
+        let fake = FakeSportsClient(
+            main: .success(try emptyFeed()),
+            backfill: .success(try emptyFeed()),
+            grouped: .success(try emptyGrouped())
+        )
+        let vm = FeedViewModel(client: fake, telemetry: { sink.record($0) }, autoRefreshEnabled: false)
+
+        await vm.load()
+
         let main = try XCTUnwrap(sink.stage(.main))
-        XCTAssertTrue(main.success)
-        XCTAssertNotNil(main.firstRealCardMs, "first-real-card attributed to the main stage")
+        XCTAssertTrue(main.success, "empty main is a successful response")
+        XCTAssertEqual(main.itemCount, 0)
         XCTAssertGreaterThanOrEqual(main.dataReadyMs, 0)
-        XCTAssertNil(try XCTUnwrap(sink.stage(.eventsBackfill)).firstRealCardMs,
-                     "a sibling can never be mistaken for first paint")
-        XCTAssertNil(try XCTUnwrap(sink.stage(.grouped)).firstRealCardMs)
+        XCTAssertTrue(vm.items.isEmpty)
     }
 
     func testTelemetryMainFailureEmitsOnlyFailedMainStage() async throws {
