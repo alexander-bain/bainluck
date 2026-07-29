@@ -162,15 +162,16 @@ struct DiscoverView: View {
     @EnvironmentObject private var authManager: AuthManager
     @State private var visibleCount = 20
 
-    // First-render attribution (L2-206 Item 3 / L2-210 Item 2): `loadStartedAt`
-    // stamps when a load begins; `lastEmittedRenderGenerationId` guards a single
-    // `discover_feed_first_render` event PER RENDER GENERATION (keyed on the view
-    // model's immutable generation id, not a boolean a same-card-ID row reuse could
-    // leave desynced), so the ON-SCREEN first card time is measured separately from
-    // the data-ready milestone and always attributed to the exact generation that
-    // produced first paint. Monotonic generation ids are never reused, so a new
-    // load never matches the last-emitted id — no per-load reset is needed.
-    @State private var loadStartedAt: Date?
+    // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
+    // `lastEmittedRenderGenerationId` guards a single `discover_feed_first_render`
+    // event PER RENDER GENERATION (keyed on the view model's immutable generation id,
+    // not a boolean a same-card-ID row reuse could leave desynced), so the ON-SCREEN
+    // first card time is measured separately from the data-ready milestone and always
+    // attributed to the exact generation that produced first paint. The elapsed time
+    // is anchored to the frozen token's own `startedAt` — never a mutable view-level
+    // load-start — so a newer load's start can't skew a prior generation's report.
+    // Monotonic generation ids are never reused, so a new load never matches the
+    // last-emitted id — no per-load reset is needed.
     @State private var lastEmittedRenderGenerationId: Int?
     // Soft, decaying dismiss store (#1221): id -> dismissedAt (epoch seconds).
     // Left/right swipe is a downrank input, not a permanent client-side
@@ -992,8 +993,15 @@ struct DiscoverView: View {
                             .id(gi.id)
                             .onAppear {
                                 // The first eligible card actually on screen → the
-                                // true first-render milestone, once per load
-                                // (L2-206 Item 3).
+                                // true first-render milestone, once per generation
+                                // (L2-206 Item 3 / L2-212 Item 2). Acknowledgement is
+                                // ALSO driven by `.onChange(of: vm.firstRenderGeneration)`
+                                // below so a retained same-card-ID refresh (SwiftUI
+                                // would not re-fire this `onAppear`) still emits its new
+                                // generation — this call is the cold-first-paint path,
+                                // not the sole trigger (the C76 `onappear_refire_assumption`
+                                // fix). The shared once-per-generation guard prevents any
+                                // double emit.
                                 if idx == 0 { emitFirstRenderIfNeeded() }
                                 trackImpression(for: gi, rank: idx + 1)
                                 if idx == pageGrouped.count - 3 && visibleCount < grouped.count {
@@ -1121,7 +1129,6 @@ struct DiscoverView: View {
         .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
             if vm.items.isEmpty {
-                beginFirstRenderWindow()
                 await vm.load()
             }
             if resolutions.isEmpty {
@@ -1129,6 +1136,14 @@ struct DiscoverView: View {
                     resolutions = r.resolutions
                 }
             }
+        }
+        .onChange(of: vm.firstRenderGeneration) { _, _ in
+            // Generation-keyed acknowledgement (L2-212 Item 2 / C76): fires when the
+            // view model stamps a new render token even if the refresh retains the
+            // same card IDs (SwiftUI would not re-run the first card's `onAppear` for
+            // those rows). The shared once-per-generation guard means this never
+            // double-emits with the cold-first-paint `onAppear` path.
+            emitFirstRenderIfNeeded()
         }
         // Rebind the feed when the auth identity changes — login, logout, account
         // switch, or a failed restore dropping back to anonymous (L2-206 Item 1).
@@ -1140,7 +1155,6 @@ struct DiscoverView: View {
         .onChange(of: authManager.activeFeedUserId) { _, newId in
             Task {
                 await APIClient.shared.setFeedCacheIdentity(userId: newId)
-                beginFirstRenderWindow()
                 await vm.rebindForIdentityChange()
             }
         }
@@ -1151,7 +1165,6 @@ struct DiscoverView: View {
             dismissedAt.removeAll()
             dismissVersion &+= 1
             seenImpressions.removeAll()
-            beginFirstRenderWindow()
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
                 resolutions = r.resolutions
@@ -1215,34 +1228,28 @@ struct DiscoverView: View {
         }
     }
 
-    /// Open a new first-render measurement window (L2-206 Item 3): stamp the load
-    /// start and re-arm the one-shot so the NEXT populated first card emits its own
-    /// on-screen render time. Called wherever a load begins (cold task, refresh,
-    /// identity rebind).
-    private func beginFirstRenderWindow() {
-        loadStartedAt = Date()
-    }
-
-    /// Emit the on-screen first-render milestone once per load (L2-206 Item 3),
-    /// when the first eligible card actually appears — deliberately distinct from
-    /// the view model's data-ready milestone so a fast model assignment is never
-    /// reported as a fast first paint.
+    /// Emit the on-screen first-render milestone once per RENDER GENERATION (L2-206
+    /// Item 3 / L2-212 Item 2), when the first eligible card actually appears OR when
+    /// the view model stamps a new render generation — deliberately distinct from the
+    /// view model's data-ready milestone so a fast model assignment is never reported
+    /// as a fast first paint.
     private func emitFirstRenderIfNeeded() {
         // Bind the emission to the view model's IMMUTABLE render generation (L2-210
-        // Item 2 / C72): the once-only guard keys on the generation's own id, and
-        // BOTH the provenance and the item count reported come from that frozen
-        // token — never a live `vm.items.count`/`vm.isShowingCachedContent` read
-        // that a later generation, a same-card-ID row reuse, navigation, or a model
-        // mutation could have changed between data-ready and this `onAppear`. An
-        // empty generation (nil / itemCount 0) emits nothing, keeping data-ready
-        // (the model milestone) distinct from the on-screen first-card render.
+        // Item 2 / C72; L2-212 Item 2 / C76): the once-only guard keys on the
+        // generation's own id, and BOTH the provenance and the item count reported
+        // come from that frozen token — never a live `vm.items.count`/
+        // `vm.isShowingCachedContent` read that a later generation, a same-card-ID row
+        // reuse, navigation, or a model mutation could have changed between data-ready
+        // and this callback. The elapsed time is measured from the token's OWN frozen
+        // `startedAt`, never a mutable view-level load-start. An empty generation
+        // (nil / itemCount 0) emits nothing, keeping data-ready (the model milestone)
+        // distinct from the on-screen first-card render.
         guard let decision = DiscoverFirstRender.generationDecision(
             generation: vm.firstRenderGeneration,
             lastEmittedGenerationId: lastEmittedRenderGenerationId,
-            loadStartedAt: loadStartedAt,
             now: Date()
         ) else { return }
-        lastEmittedRenderGenerationId = decision.generation.id
+        lastEmittedRenderGenerationId = decision.generation.generation
         AnalyticsService.trackDiscoverFirstRender(
             firstRenderMs: decision.ms,
             fromCache: decision.generation.fromCache,

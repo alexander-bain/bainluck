@@ -157,6 +157,39 @@ actor APIClient {
         DiscoverFeedCache.identity(userId: feedCacheUserId, sessionId: sessionId)
     }
 
+    /// Actor-isolated read of the current opaque feed principal for the Discover
+    /// publication gate (L2-212 Item 1 / C76). Exposed so the view model can resolve
+    /// the CURRENT identity immediately before publishing a response, binding it to
+    /// the exact dispatch identity rather than a signed-in Boolean parity.
+    func resolvedFeedIdentity() -> String { currentFeedIdentity() }
+
+    /// Actor-isolated read of the optimistic-seed admission context (L2-212 Item 1 /
+    /// C76): whether the current namespace is signed-in and whether a stored session
+    /// credential is eligible for restore. Lets `DiscoverViewModel` serialize the
+    /// no-token divergent cleanup before admitting a signed-in last-good cache while
+    /// a valid returning user (credential present) still paints immediately.
+    func resolvedOptimisticSeedContext() -> DiscoverOptimisticSeedContext {
+        DiscoverOptimisticSeedContext(
+            signedInNamespace: feedCacheUserId?.isEmpty == false,
+            credentialEligibleForRestore: Self.hasRestorableSessionCredential())
+    }
+
+    /// The Keychain key under which the backend session token is stored. Single
+    /// source of truth shared with `AuthManager` so the returning-user credential
+    /// check and the token load can never drift apart (L2-212 Item 1 / C76).
+    nonisolated static let sessionTokenKeychainKey = "com.bainluck.sessionToken"
+
+    /// Whether a stored session credential is eligible for restore — a valid
+    /// returning user's launch (L2-212 Item 1 / C76). A plain Keychain presence
+    /// check: it tells the optimistic-seed gate the persisted signed-in namespace is
+    /// backed by a real credential, distinguishing the valid returning user (seed
+    /// immediately) from the divergent no-token state (id present, token gone → skip
+    /// the seed until the cleanup resolves the namespace to anonymous). Nonisolated
+    /// and thread-safe — a Keychain read is safe from any actor.
+    nonisolated static func hasRestorableSessionCredential() -> Bool {
+        KeychainHelper.load(key: sessionTokenKeychainKey) != nil
+    }
+
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -568,9 +601,12 @@ actor APIClient {
     ) async throws -> DiscoverFeedFetchResult {
         guard offset == 0 else {
             // Pagination pages are transient and ungated — the principal signals are
-            // irrelevant here, so report the neutral publish-always pair.
+            // irrelevant here, so report the neutral publish-always triple (empty
+            // dispatch identity so `identityAtFetch == currentIdentity` at the gate).
             let r = try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
-            return DiscoverFeedFetchResult(response: r, wasAuthenticated: false, expectedSignedIn: false)
+            return DiscoverFeedFetchResult(
+                response: r, identityAtFetch: currentFeedIdentity(),
+                wasAuthenticated: false, expectedSignedIn: false)
         }
 
         var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
@@ -638,6 +674,7 @@ actor APIClient {
         }
         return DiscoverFeedFetchResult(
             response: result.value,
+            identityAtFetch: identityAtFetch,
             wasAuthenticated: result.wasAuthenticated,
             expectedSignedIn: expectedSignedIn
         )

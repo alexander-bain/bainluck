@@ -25,14 +25,34 @@ protocol DiscoverFeedProviding: Sendable {
         eventPct: Double?,
         cacheTTL: TimeInterval?
     ) async throws -> DiscoverFeedFetchResult
+
+    /// The CURRENT opaque feed principal (signed-in user namespace, else anonymous
+    /// session namespace), resolved at the moment of the call (L2-212 Item 1 / C76).
+    /// The view model reads this immediately before in-memory publication so a
+    /// response can be bound to the EXACT dispatch identity that produced it — not a
+    /// signed-in Boolean parity that would let one authenticated account's feed paint
+    /// over another's (the `boolean_only_a_to_b_publish` counterexample).
+    nonisolated func currentFeedPrincipal() async -> String
+
+    /// Whether the optimistic last-good cache seed may be admitted for the CURRENT
+    /// persisted identity before auth restore resolves (L2-212 Item 1 / C76). Reports
+    /// whether the current namespace is signed-in and whether a credential is
+    /// eligible for restore, so the divergent no-token cleanup can be serialized
+    /// before cache admission while a valid returning user still paints immediately.
+    nonisolated func optimisticSeedContext() async -> DiscoverOptimisticSeedContext
 }
 
-/// The result of a principal-resolving initial feed fetch (L2-210 Item 1 / C72):
-/// the decoded page plus the two signals `DiscoverViewModel.shouldPublishFeed`
-/// needs to keep an anonymous response from painting over a signed-in user's
-/// optimistic cache (the returning-user race).
+/// The result of a principal-resolving initial feed fetch (L2-210 Item 1 / C72;
+/// L2-212 Item 1 / C76): the decoded page plus the signals `DiscoverViewModel`'s
+/// publication gate needs to keep a response from painting under the wrong principal.
 struct DiscoverFeedFetchResult: Sendable {
     let response: FeedResponse
+    /// The OPAQUE feed principal that dispatched this request (a `user:<id>` or
+    /// `anon:<session>` namespace). Publication compares this against the CURRENT
+    /// identity so a mid-flight login/logout/account switch — even between two
+    /// authenticated accounts — can never paint one identity's feed under another
+    /// (the C76 `cross_identity_publish`/`cross_identity_store` counterexamples).
+    let identityAtFetch: String
     /// Whether the request that produced `response` actually carried a signed-in
     /// credential (the token provider was installed when it left the client).
     let wasAuthenticated: Bool
@@ -41,10 +61,22 @@ struct DiscoverFeedFetchResult: Sendable {
     let expectedSignedIn: Bool
 }
 
+/// The two signals that decide whether the optimistic last-good cache seed may be
+/// admitted before auth restore resolves (L2-212 Item 1 / C76).
+struct DiscoverOptimisticSeedContext: Sendable {
+    /// Whether the current persisted feed namespace is signed-in (`user:<id>`).
+    let signedInNamespace: Bool
+    /// Whether a credential is eligible for restore for that namespace (a stored
+    /// session credential exists). A valid returning user is `true`; the divergent
+    /// no-token state (signed-in namespace, no restorable credential) is `false`.
+    let credentialEligibleForRestore: Bool
+}
+
 extension DiscoverFeedProviding {
     /// Default: no principal modeled, so report `expected == authenticated` (both
-    /// `false`) and the publication gate always publishes — behaviorally identical
-    /// to pre-L2-210 for fakes that only implement `fetchDiscoverFeed`.
+    /// `false`), an empty dispatch identity, and the publication gate always
+    /// publishes — behaviorally identical to pre-L2-210 for fakes that only
+    /// implement `fetchDiscoverFeed`.
     nonisolated func fetchDiscoverFeedResolvingPrincipal(
         limit: Int,
         offset: Int,
@@ -54,7 +86,19 @@ extension DiscoverFeedProviding {
         let response = try await fetchDiscoverFeed(
             limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
         return DiscoverFeedFetchResult(
-            response: response, wasAuthenticated: false, expectedSignedIn: false)
+            response: response, identityAtFetch: "",
+            wasAuthenticated: false, expectedSignedIn: false)
+    }
+
+    /// Default: the neutral empty identity, so `identityAtFetch == currentIdentity`
+    /// holds for principal-agnostic fakes and the publish/persist gate stays
+    /// publish-always (same behavior as before this seam existed).
+    nonisolated func currentFeedPrincipal() async -> String { "" }
+
+    /// Default: anonymous namespace, seed admissible — an unmodeled fake seeds its
+    /// last-good exactly as before.
+    nonisolated func optimisticSeedContext() async -> DiscoverOptimisticSeedContext {
+        DiscoverOptimisticSeedContext(signedInNamespace: false, credentialEligibleForRestore: true)
     }
 }
 
@@ -93,9 +137,14 @@ final class DiscoverViewModel: ObservableObject {
     /// live `items`/`isShowingCachedContent`, so a later generation, a same-card-ID
     /// row reuse, navigation, or a model mutation between data-ready and the render
     /// callback can never make the emitted event describe another generation. Nil
-    /// until first renderable data lands; reset at each `load()` start. Not
-    /// `@Published`: read only in the render callback, never drives layout.
-    private(set) var firstRenderGeneration: DiscoverRenderGeneration?
+    /// until first renderable data lands; reset at each `load()` start.
+    ///
+    /// `@Published` (L2-212 Item 2 / C76): the view acknowledges the rendered
+    /// generation through `.onChange(of: firstRenderGeneration)`, so a retained
+    /// same-card-ID refresh still emits its new generation without assuming the first
+    /// card's `onAppear` re-fires (SwiftUI does not re-run `onAppear` for retained
+    /// row IDs). Mirrors `FeedViewModel.firstRenderGeneration` (Sports).
+    @Published private(set) var firstRenderGeneration: DiscoverRenderGeneration?
 
     @Published private(set) var loading = true
     @Published private(set) var error: String?
@@ -194,12 +243,30 @@ final class DiscoverViewModel: ObservableObject {
         // data to become renderable stamps it once, frozen for this load.
         firstRenderGeneration = nil
 
+        // Serialize the no-token divergent cleanup before cache admission (L2-212
+        // Item 1 / C76). At cold launch the optimistic namespace is seeded from the
+        // last-known signed-in id BEFORE auth restore resolves. When that id has no
+        // restorable credential (the credential store and last-known-id store
+        // diverged — id present, token gone), painting the `user:<id>` last-good
+        // would surface a signed-in user's personalized cache to someone who is
+        // effectively anonymous, in the window before AuthManager's cleanup flips the
+        // namespace to anonymous. Gate the seed on that resolution: a signed-in
+        // namespace admits its personalized last-good ONLY when a credential is
+        // eligible for restore — the valid returning user still paints immediately,
+        // with no added delay — while the divergent no-token state skips the seed and
+        // lets the cleanup resolve the namespace to anonymous first.
+        let seedContext = await client.optimisticSeedContext()
+        guard generation == loadGeneration else { return }
+        let seedAdmissible = Self.shouldSeedOptimisticCache(
+            signedInNamespace: seedContext.signedInNamespace,
+            credentialEligibleForRestore: seedContext.credentialEligibleForRestore)
+
         // Stale-while-revalidate (#1465): on a cold view model, seed the last
         // successful payload from disk so a first card renders immediately instead
         // of blocking on the 9–13s cold `/api/feed` miss (#1459). The view re-runs
         // its `now`-relative eligibility gate on this content, so nothing here
         // extends how long a settled/aged card may survive.
-        if items.isEmpty, let lastGood {
+        if items.isEmpty, seedAdmissible, let lastGood {
             let t0 = Date()
             let cached = await lastGood.loadLastGoodFeed()
             // A newer load() started while we read the disk cache — its identity
@@ -217,10 +284,14 @@ final class DiscoverViewModel: ObservableObject {
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
                     // Freeze the render-generation token from the cache seed
-                    // (L2-210 Item 2): provenance cache, count = the seeded cards.
+                    // (L2-210 Item 2; L2-212 Item 2 / C76): the canonical token
+                    // {generation, started_at, provenance, item_count}, provenance
+                    // cache, count = the seeded cards, started_at anchored to this
+                    // load's frozen start.
                     if firstRenderGeneration == nil {
                         firstRenderGeneration = DiscoverRenderGeneration(
-                            id: generation, fromCache: true, itemCount: items.count)
+                            generation: generation, startedAt: loadStart,
+                            provenance: "cache", itemCount: items.count)
                     }
                     let mergeMs = Self.elapsedMs(since: mergeStart)
                     hasMore = cached.response.hasMore
@@ -297,9 +368,17 @@ final class DiscoverViewModel: ObservableObject {
                 // restore has resolved to anonymous (expected namespace anon →
                 // publishes). Mirrors `shouldPersistFeed` so the screen and disk
                 // admit under identical principal rules.
+                // Resolve the CURRENT opaque principal immediately before publication
+                // (L2-212 Item 1 / C76) so the gate binds to the EXACT dispatch
+                // identity, not a signed-in Boolean parity that would let one
+                // authenticated account's response paint over another's.
+                let currentIdentity = await client.currentFeedPrincipal()
+                guard generation == loadGeneration else { return }
                 if !Self.shouldPublishFeed(
+                    identityAtFetch: fetch.identityAtFetch,
                     expectedSignedIn: fetch.expectedSignedIn,
-                    wasAuthenticated: fetch.wasAuthenticated
+                    wasAuthenticated: fetch.wasAuthenticated,
+                    currentIdentity: currentIdentity
                 ) {
                     telemetry?(DiscoverFeedTelemetry(
                         outcome: .principalDiscarded,
@@ -324,11 +403,14 @@ final class DiscoverViewModel: ObservableObject {
                 // that already happened from cache (C67 P2).
                 if firstDataFromCache == nil { firstDataFromCache = false }
                 // Freeze the render-generation token from the network (L2-210 Item
-                // 2), but only if the cache seed did not already freeze it — the
-                // generation that FIRST rendered owns the token.
+                // 2; L2-212 Item 2 / C76), but only if the cache seed did not already
+                // freeze it — the generation that FIRST rendered owns the token. The
+                // canonical token {generation, started_at, provenance, item_count}
+                // anchors started_at to this load's frozen start.
                 if firstRenderGeneration == nil {
                     firstRenderGeneration = DiscoverRenderGeneration(
-                        id: generation, fromCache: false, itemCount: items.count)
+                        generation: generation, startedAt: loadStart,
+                        provenance: "network", itemCount: items.count)
                 }
                 let mergeMs = Self.elapsedMs(since: mergeStart)
                 hasMore = response.hasMore
@@ -396,16 +478,42 @@ final class DiscoverViewModel: ObservableObject {
     }
 
     /// Whether a fetched network response may be PUBLISHED to the on-screen feed
-    /// given the current expected principal (L2-210 Item 1 / C72). Mirrors
-    /// `APIClient.shouldPersistFeed`'s principal rule so the screen and the disk
-    /// admit under identical terms: a signed-in namespace admits only an
-    /// authenticated response; an anonymous namespace admits only an unauthenticated
-    /// one. The returning-user race — an anonymous response arriving while the
-    /// expected namespace is still `user:<id>` (the tokenless revalidation fired
-    /// before auth restore installed the provider) — therefore resolves to "do not
-    /// publish", so the anonymous feed never paints over the personalized cache seed.
-    static func shouldPublishFeed(expectedSignedIn: Bool, wasAuthenticated: Bool) -> Bool {
-        expectedSignedIn == wasAuthenticated
+    /// (L2-210 Item 1 / C72; L2-212 Item 1 / C76). Mirrors `APIClient.shouldPersistFeed`
+    /// EXACTLY so the screen and the disk admit under identical terms — publication and
+    /// persistence bind to the same opaque dispatch identity, not a signed-in Boolean:
+    ///   • the dispatch identity must be UNCHANGED since the request left
+    ///     (`identityAtFetch == currentIdentity`), so a mid-flight login/logout/account
+    ///     switch — including a switch between two AUTHENTICATED accounts (the
+    ///     `boolean_only_a_to_b_publish` counterexample) — never paints one identity's
+    ///     feed under another;
+    ///   • a signed-in namespace admits only an authenticated response, an anonymous
+    ///     namespace only an unauthenticated one (`expectedSignedIn == wasAuthenticated`).
+    /// The returning-user race — an anonymous response arriving while the expected
+    /// namespace is still `user:<id>` — therefore resolves to "do not publish", so the
+    /// anonymous feed never paints over the personalized cache seed.
+    static func shouldPublishFeed(
+        identityAtFetch: String,
+        expectedSignedIn: Bool,
+        wasAuthenticated: Bool,
+        currentIdentity: String
+    ) -> Bool {
+        guard identityAtFetch == currentIdentity else { return false }
+        return expectedSignedIn == wasAuthenticated
+    }
+
+    /// Whether the optimistic last-good cache seed may be admitted for the current
+    /// persisted identity before auth restore resolves (L2-212 Item 1 / C76). An
+    /// anonymous namespace always admits its own last-good; a signed-in namespace
+    /// admits its personalized last-good ONLY when a credential is eligible for
+    /// restore — the valid returning user paints immediately with no added delay,
+    /// while the divergent no-token state (signed-in namespace, no restorable
+    /// credential) does not seed, so the cleanup that resolves the namespace to
+    /// anonymous is serialized before any signed-in cache is painted.
+    static func shouldSeedOptimisticCache(
+        signedInNamespace: Bool,
+        credentialEligibleForRestore: Bool
+    ) -> Bool {
+        signedInNamespace ? credentialEligibleForRestore : true
     }
 
     /// Whether a failed fetch should be retried (L2-201 / #1472). Only transient
@@ -698,6 +806,19 @@ extension APIClient: DiscoverFeedProviding {
     ) async throws -> DiscoverFeedFetchResult {
         try await fetchFeedPersistingLastGood(
             limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+    }
+
+    /// The current opaque feed principal (L2-212 Item 1 / C76): resolved on the
+    /// actor so a mid-flight identity change is reflected at publication time.
+    nonisolated func currentFeedPrincipal() async -> String {
+        await resolvedFeedIdentity()
+    }
+
+    /// The optimistic-seed admission context for the current identity (L2-212 Item 1
+    /// / C76): signed-in-ness of the current namespace plus whether a stored session
+    /// credential is eligible for restore.
+    nonisolated func optimisticSeedContext() async -> DiscoverOptimisticSeedContext {
+        await resolvedOptimisticSeedContext()
     }
 }
 

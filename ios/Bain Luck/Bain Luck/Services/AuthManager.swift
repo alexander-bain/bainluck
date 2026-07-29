@@ -12,7 +12,10 @@ import AppKit
 
 private let logger = Logger(subsystem: "com.bainluck", category: "auth")
 
-private let keychainTokenKey = "com.bainluck.sessionToken"
+// Single source of truth shared with `APIClient.hasRestorableSessionCredential()`
+// so the returning-user credential check and the token load can never drift apart
+// (L2-212 Item 1 / C76).
+private let keychainTokenKey = APIClient.sessionTokenKeychainKey
 private let keychainAppleUserIdKey = "com.bainluck.appleUserId"
 
 /// Owns the app's authenticated session state and exchanges provider
