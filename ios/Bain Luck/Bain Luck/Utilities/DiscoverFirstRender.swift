@@ -18,4 +18,51 @@ enum DiscoverFirstRender {
         guard !emitted, let loadStartedAt else { return nil }
         return max(0, now.timeIntervalSince(loadStartedAt) * 1000)
     }
+
+    /// The first-render decision for an IMMUTABLE render generation (L2-210 Item 2
+    /// / C72). Returns the elapsed ms AND the generation to attribute IF an event
+    /// should be emitted for it; otherwise nil.
+    ///
+    /// This supersedes the boolean `elapsedMsIfShouldEmit` guard on the Discover
+    /// surface: the once-only guard is keyed on the generation's IMMUTABLE id
+    /// (`generation.id != lastEmittedGenerationId`), not a flag that a same-card-ID
+    /// row reuse could leave desynced, and the provenance + bounded item count the
+    /// caller reports come from the frozen token — never a live view-model read that
+    /// a later generation, same-ID replacement, navigation, or model mutation could
+    /// have changed between data-ready and the on-screen render callback. Returns
+    /// nil for an empty generation (`itemCount <= 0`) so empty results emit no
+    /// first-card event, and nil when no load-start is known so a render is never
+    /// conflated with plain model assignment. The ms is clamped at 0.
+    static func generationDecision(
+        generation: DiscoverRenderGeneration?,
+        lastEmittedGenerationId: Int?,
+        loadStartedAt: Date?,
+        now: Date
+    ) -> (ms: Double, generation: DiscoverRenderGeneration)? {
+        guard let generation, generation.itemCount > 0 else { return nil }
+        guard generation.id != lastEmittedGenerationId else { return nil }
+        guard let loadStartedAt else { return nil }
+        return (max(0, now.timeIntervalSince(loadStartedAt) * 1000), generation)
+    }
+}
+
+/// Immutable snapshot of the data generation that FIRST became renderable for a
+/// load (L2-210 Item 2 / C72). Captured once, at data-ready, and never mutated by
+/// a later same-load replacement — so the on-screen first-render telemetry always
+/// describes the exact generation that produced first paint rather than whatever
+/// the live view-model state happens to read at the render callback. Between
+/// data-ready and the `onAppear` that emits, a background revalidation can replace
+/// the cache seed (changing item count and flipping the live provenance flag), a
+/// later load can supersede this one, a same-card-ID row can be reused, or the
+/// feed can be filtered/merged — none of which may change what the emitted event
+/// reports, because it reads this frozen token, not `vm.items`/`vm.isShowingCachedContent`.
+struct DiscoverRenderGeneration: Equatable, Sendable {
+    /// The monotonic load identity that produced this renderable data.
+    let id: Int
+    /// Provenance frozen at data-ready: the cache seed (`true`) vs the network
+    /// (`false`) produced the first renderable cards for this load.
+    let fromCache: Bool
+    /// Bounded item count of the generation that first rendered (the count at
+    /// data-ready, not at emit time).
+    let itemCount: Int
 }

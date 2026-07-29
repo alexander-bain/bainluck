@@ -12,6 +12,50 @@ protocol DiscoverFeedProviding: Sendable {
         eventPct: Double?,
         cacheTTL: TimeInterval?
     ) async throws -> FeedResponse
+
+    /// Initial-load fetch that ALSO resolves the request/namespace principal so the
+    /// view model can gate publication on the resolved principal (L2-210 Item 1 /
+    /// C72). Returns the decoded page plus whether THIS request carried a signed-in
+    /// credential and whether the CURRENT expected feed namespace is signed-in.
+    /// Defaulted below to a publish-always result for fakes that do not model a
+    /// principal, so existing pagination/SWR fakes behave exactly as before.
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult
+}
+
+/// The result of a principal-resolving initial feed fetch (L2-210 Item 1 / C72):
+/// the decoded page plus the two signals `DiscoverViewModel.shouldPublishFeed`
+/// needs to keep an anonymous response from painting over a signed-in user's
+/// optimistic cache (the returning-user race).
+struct DiscoverFeedFetchResult: Sendable {
+    let response: FeedResponse
+    /// Whether the request that produced `response` actually carried a signed-in
+    /// credential (the token provider was installed when it left the client).
+    let wasAuthenticated: Bool
+    /// Whether the expected feed namespace at dispatch was signed-in (a `user:<id>`
+    /// namespace, optimistic or resolved), as opposed to anonymous.
+    let expectedSignedIn: Bool
+}
+
+extension DiscoverFeedProviding {
+    /// Default: no principal modeled, so report `expected == authenticated` (both
+    /// `false`) and the publication gate always publishes — behaviorally identical
+    /// to pre-L2-210 for fakes that only implement `fetchDiscoverFeed`.
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        let response = try await fetchDiscoverFeed(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+        return DiscoverFeedFetchResult(
+            response: response, wasAuthenticated: false, expectedSignedIn: false)
+    }
 }
 
 final class DiscoverViewModel: ObservableObject {
@@ -40,6 +84,18 @@ final class DiscoverViewModel: ObservableObject {
     /// Nil until the first renderable data lands; reset at each `load()` start. Not
     /// `@Published`: it is read only in the render callback, never drives layout.
     private(set) var firstDataFromCache: Bool?
+
+    /// Immutable snapshot of the generation that FIRST became renderable for the
+    /// current load (L2-210 Item 2 / C72). Stamped ONCE — the moment `items` first
+    /// goes non-empty, from the cache seed or the network — and never mutated by a
+    /// later same-load replacement. The view's on-screen first-render telemetry
+    /// reads this frozen token (its own provenance + bounded item count) instead of
+    /// live `items`/`isShowingCachedContent`, so a later generation, a same-card-ID
+    /// row reuse, navigation, or a model mutation between data-ready and the render
+    /// callback can never make the emitted event describe another generation. Nil
+    /// until first renderable data lands; reset at each `load()` start. Not
+    /// `@Published`: read only in the render callback, never drives layout.
+    private(set) var firstRenderGeneration: DiscoverRenderGeneration?
 
     @Published private(set) var loading = true
     @Published private(set) var error: String?
@@ -134,6 +190,9 @@ final class DiscoverViewModel: ObservableObject {
         // Re-arm first-render provenance for this load (L2-208 Item 2): the next
         // data to become renderable — cache seed or network — stamps it once.
         firstDataFromCache = nil
+        // Re-arm the immutable render-generation token (L2-210 Item 2): the next
+        // data to become renderable stamps it once, frozen for this load.
+        firstRenderGeneration = nil
 
         // Stale-while-revalidate (#1465): on a cold view model, seed the last
         // successful payload from disk so a first card renders immediately instead
@@ -157,6 +216,12 @@ final class DiscoverViewModel: ObservableObject {
                     items = Self.interleave(renderable)
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
+                    // Freeze the render-generation token from the cache seed
+                    // (L2-210 Item 2): provenance cache, count = the seeded cards.
+                    if firstRenderGeneration == nil {
+                        firstRenderGeneration = DiscoverRenderGeneration(
+                            id: generation, fromCache: true, itemCount: items.count)
+                    }
                     let mergeMs = Self.elapsedMs(since: mergeStart)
                     hasMore = cached.response.hasMore
                     nextOffset = Self.pageBoundary(cached.response, from: 0)
@@ -214,13 +279,42 @@ final class DiscoverViewModel: ObservableObject {
                 // budget cancels a stuck request AT the budget — and because each
                 // attempt is bounded by the time LEFT (not a fresh per-attempt
                 // timeout), a slow request that burns the budget yields no retry.
-                let response = try await fetchWithinDeadline(
+                let fetch = try await fetchWithinDeadline(
                     deadline: deadline, isFirstAttempt: !admittedFirstAttempt)
                 admittedFirstAttempt = true
                 // A newer load() superseded this one mid-flight (refresh / account
                 // switch) — drop this response rather than overwrite (C42, races).
                 guard generation == loadGeneration else { return }
 
+                // Principal publication gate (L2-210 Item 1 / C72): never publish an
+                // anonymous network response over a signed-in user's optimistic
+                // cache. The returning-user race fires a tokenless revalidation
+                // before auth restore installs the provider; its anonymous response
+                // must not paint over the personalized cache seed. When the expected
+                // namespace is signed-in but this response came back anonymous,
+                // discard it and retry within the SAME bounded budget — by the next
+                // attempt the provider is installed (authenticated → publishes) or
+                // restore has resolved to anonymous (expected namespace anon →
+                // publishes). Mirrors `shouldPersistFeed` so the screen and disk
+                // admit under identical principal rules.
+                if !Self.shouldPublishFeed(
+                    expectedSignedIn: fetch.expectedSignedIn,
+                    wasAuthenticated: fetch.wasAuthenticated
+                ) {
+                    telemetry?(DiscoverFeedTelemetry(
+                        outcome: .principalDiscarded,
+                        networkMs: Self.elapsedMs(since: netStart),
+                        itemCount: fetch.response.items.count))
+                    let remaining = deadline.timeIntervalSinceNow
+                    // Budget spent — settle to the optimistic cache (or honest
+                    // error) rather than start a new unbounded request.
+                    guard remaining > 0 else { break }
+                    try? await Task.sleep(for: .seconds(min(retryBackoff, remaining)))
+                    guard generation == loadGeneration else { return }
+                    continue
+                }
+
+                let response = fetch.response
                 let renderable = Self.renderable(response.items)
                 let mergeStart = Date()
                 items = Self.interleave(renderable)
@@ -229,6 +323,13 @@ final class DiscoverViewModel: ObservableObject {
                 // revalidation behind a served cache must not relabel the render
                 // that already happened from cache (C67 P2).
                 if firstDataFromCache == nil { firstDataFromCache = false }
+                // Freeze the render-generation token from the network (L2-210 Item
+                // 2), but only if the cache seed did not already freeze it — the
+                // generation that FIRST rendered owns the token.
+                if firstRenderGeneration == nil {
+                    firstRenderGeneration = DiscoverRenderGeneration(
+                        id: generation, fromCache: false, itemCount: items.count)
+                }
                 let mergeMs = Self.elapsedMs(since: mergeStart)
                 hasMore = response.hasMore
                 // Advance by the SERVER page boundary (offset + limit), not the
@@ -294,6 +395,19 @@ final class DiscoverViewModel: ObservableObject {
         }
     }
 
+    /// Whether a fetched network response may be PUBLISHED to the on-screen feed
+    /// given the current expected principal (L2-210 Item 1 / C72). Mirrors
+    /// `APIClient.shouldPersistFeed`'s principal rule so the screen and the disk
+    /// admit under identical terms: a signed-in namespace admits only an
+    /// authenticated response; an anonymous namespace admits only an unauthenticated
+    /// one. The returning-user race — an anonymous response arriving while the
+    /// expected namespace is still `user:<id>` (the tokenless revalidation fired
+    /// before auth restore installed the provider) — therefore resolves to "do not
+    /// publish", so the anonymous feed never paints over the personalized cache seed.
+    static func shouldPublishFeed(expectedSignedIn: Bool, wasAuthenticated: Bool) -> Bool {
+        expectedSignedIn == wasAuthenticated
+    }
+
     /// Whether a failed fetch should be retried (L2-201 / #1472). Only transient
     /// transport failures, 5xx, and 429 can self-heal; decoding/schema failures,
     /// non-retryable 4xx, invalid URLs, and cancellation cannot, so retrying them
@@ -329,7 +443,7 @@ final class DiscoverViewModel: ObservableObject {
     /// deadline REAL — a suspended request is cancelled at the budget instead of
     /// hanging, and because the sleep uses the time LEFT (not a fresh per-attempt
     /// timeout) the total load can never exceed the budget across retries.
-    private func fetchWithinDeadline(deadline: Date, isFirstAttempt: Bool) async throws -> FeedResponse {
+    private func fetchWithinDeadline(deadline: Date, isFirstAttempt: Bool) async throws -> DiscoverFeedFetchResult {
         let remaining = deadline.timeIntervalSinceNow
         let client = self.client
         guard remaining > 0 else {
@@ -347,12 +461,12 @@ final class DiscoverViewModel: ObservableObject {
             // requests because the loop only re-enters here on a retry, which now
             // throws.
             guard isFirstAttempt else { throw DeadlineExceededError() }
-            return try await client.fetchDiscoverFeed(
+            return try await client.fetchDiscoverFeedResolvingPrincipal(
                 limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
         }
-        return try await withThrowingTaskGroup(of: FeedResponse.self) { group in
+        return try await withThrowingTaskGroup(of: DiscoverFeedFetchResult.self) { group in
             group.addTask {
-                try await client.fetchDiscoverFeed(
+                try await client.fetchDiscoverFeedResolvingPrincipal(
                     limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
             }
             group.addTask {
@@ -568,7 +682,22 @@ extension APIClient: DiscoverFeedProviding {
         eventPct: Double?,
         cacheTTL: TimeInterval?
     ) async throws -> FeedResponse {
-        try await fetchFeedPersistingLastGood(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL).response
+    }
+
+    /// Principal-resolving initial fetch (L2-210 Item 1 / C72): returns the decoded
+    /// page plus the real request/namespace principal signals so the view model can
+    /// gate publication. The offset-0 persist path already computes both; pagination
+    /// offsets report the neutral publish-always pair.
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
     }
 }
 

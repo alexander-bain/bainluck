@@ -181,6 +181,12 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
         case revalidateFailedKeptCache = "revalidate_failed_kept_cache"
         /// Revalidation failed with nothing to fall back to (honest error state).
         case revalidateFailedNoCache = "revalidate_failed_no_cache"
+        /// A network response was NOT published because its principal did not match
+        /// the current expected feed namespace (L2-210 Item 1 / C72) — e.g. an
+        /// anonymous response arriving while a signed-in user's optimistic cache is
+        /// showing (the returning-user race). The response is discarded and the
+        /// bounded retry budget re-fetches under the resolved principal.
+        case principalDiscarded = "principal_discarded"
     }
 
     let outcome: Outcome

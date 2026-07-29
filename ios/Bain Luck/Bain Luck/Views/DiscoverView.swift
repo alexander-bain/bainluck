@@ -162,12 +162,16 @@ struct DiscoverView: View {
     @EnvironmentObject private var authManager: AuthManager
     @State private var visibleCount = 20
 
-    // First-render attribution (L2-206 Item 3): `loadStartedAt` stamps when a load
-    // begins; `firstRenderEmitted` guards a single `discover_feed_first_render`
-    // event per load so the ON-SCREEN first card time is measured separately from
-    // the view model's data-ready milestone (never conflated with model assignment).
+    // First-render attribution (L2-206 Item 3 / L2-210 Item 2): `loadStartedAt`
+    // stamps when a load begins; `lastEmittedRenderGenerationId` guards a single
+    // `discover_feed_first_render` event PER RENDER GENERATION (keyed on the view
+    // model's immutable generation id, not a boolean a same-card-ID row reuse could
+    // leave desynced), so the ON-SCREEN first card time is measured separately from
+    // the data-ready milestone and always attributed to the exact generation that
+    // produced first paint. Monotonic generation ids are never reused, so a new
+    // load never matches the last-emitted id — no per-load reset is needed.
     @State private var loadStartedAt: Date?
-    @State private var firstRenderEmitted = false
+    @State private var lastEmittedRenderGenerationId: Int?
     // Soft, decaying dismiss store (#1221): id -> dismissedAt (epoch seconds).
     // Left/right swipe is a downrank input, not a permanent client-side
     // blackhole — entries expire after `dismissTTL` (matching web's 14-day
@@ -1217,7 +1221,6 @@ struct DiscoverView: View {
     /// identity rebind).
     private func beginFirstRenderWindow() {
         loadStartedAt = Date()
-        firstRenderEmitted = false
     }
 
     /// Emit the on-screen first-render milestone once per load (L2-206 Item 3),
@@ -1225,21 +1228,25 @@ struct DiscoverView: View {
     /// the view model's data-ready milestone so a fast model assignment is never
     /// reported as a fast first paint.
     private func emitFirstRenderIfNeeded() {
-        guard let ms = DiscoverFirstRender.elapsedMsIfShouldEmit(
-            emitted: firstRenderEmitted, loadStartedAt: loadStartedAt, now: Date()
+        // Bind the emission to the view model's IMMUTABLE render generation (L2-210
+        // Item 2 / C72): the once-only guard keys on the generation's own id, and
+        // BOTH the provenance and the item count reported come from that frozen
+        // token — never a live `vm.items.count`/`vm.isShowingCachedContent` read
+        // that a later generation, a same-card-ID row reuse, navigation, or a model
+        // mutation could have changed between data-ready and this `onAppear`. An
+        // empty generation (nil / itemCount 0) emits nothing, keeping data-ready
+        // (the model milestone) distinct from the on-screen first-card render.
+        guard let decision = DiscoverFirstRender.generationDecision(
+            generation: vm.firstRenderGeneration,
+            lastEmittedGenerationId: lastEmittedRenderGenerationId,
+            loadStartedAt: loadStartedAt,
+            now: Date()
         ) else { return }
-        firstRenderEmitted = true
-        // Provenance frozen at data-ready (L2-208 Item 2 / C67 P2): report the
-        // source that FIRST produced renderable items for this load, not the live
-        // `isShowingCachedContent` flag — a fast same-load network hit can flip that
-        // to false before this `onAppear` fires, mislabeling a cache-assisted first
-        // paint as network. Fall back to the live flag only if provenance is
-        // somehow unset (no data yet, in which case this would not emit anyway).
-        let fromCache = vm.firstDataFromCache ?? vm.isShowingCachedContent
+        lastEmittedRenderGenerationId = decision.generation.id
         AnalyticsService.trackDiscoverFirstRender(
-            firstRenderMs: ms,
-            fromCache: fromCache,
-            itemCount: vm.items.count
+            firstRenderMs: decision.ms,
+            fromCache: decision.generation.fromCache,
+            itemCount: decision.generation.itemCount
         )
     }
 

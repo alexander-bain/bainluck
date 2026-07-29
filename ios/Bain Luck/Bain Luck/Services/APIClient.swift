@@ -565,9 +565,12 @@ actor APIClient {
         offset: Int,
         eventPct: Double?,
         cacheTTL: TimeInterval?
-    ) async throws -> FeedResponse {
+    ) async throws -> DiscoverFeedFetchResult {
         guard offset == 0 else {
-            return try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+            // Pagination pages are transient and ungated — the principal signals are
+            // irrelevant here, so report the neutral publish-always pair.
+            let r = try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+            return DiscoverFeedFetchResult(response: r, wasAuthenticated: false, expectedSignedIn: false)
         }
 
         var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
@@ -579,6 +582,12 @@ actor APIClient {
         // request's real principal (L2-208 Item 1 / C67 P1).
         let identityAtFetch = currentFeedIdentity()
         let userIdAtFetch = feedCacheUserId
+        // The expected feed namespace at dispatch (L2-210 Item 1 / C72): signed-in
+        // when an optimistic-or-resolved `user:<id>` namespace is active. Bound into
+        // the returned result so the view model can gate publication on the resolved
+        // principal — a tokenless (anonymous) response arriving while this is `true`
+        // is the returning-user race and must not paint over the personalized cache.
+        let expectedSignedIn = (userIdAtFetch?.isEmpty == false)
 
         let result: (
             value: FeedResponse, raw: Data,
@@ -627,7 +636,11 @@ actor APIClient {
                 cacheStoreMs: storeMs
             )
         }
-        return result.value
+        return DiscoverFeedFetchResult(
+            response: result.value,
+            wasAuthenticated: result.wasAuthenticated,
+            expectedSignedIn: expectedSignedIn
+        )
     }
 
     /// Read the last-good Discover payload for the current identity (#1465), or
