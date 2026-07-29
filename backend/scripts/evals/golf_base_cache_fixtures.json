@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "kind": "golf_base_cache",
+  "description": "Five-minute feed-golf freshness, base-payload, failure, and ownership contracts from C70.",
+  "fixtures": [
+    {
+      "name": "fresh_precomputed_process_cold",
+      "primary": {"status": "ok", "age_s": 299, "payload": {"tournaments": [{"key": "open", "golfers": [{"name": "A", "probability": 0.31, "rank": 1, "movement_24h": 0.02}], "market_ids": [11, 12], "market_sources": ["polymarket", "datagolf"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "scheduled"}]}},
+      "last_good": {"status": "miss", "age_s": 0, "max_age_s": 300, "payload": null},
+      "inline_fallback": {"status": "not_called", "provider_status": "not_called", "payload": null},
+      "ownership_events": [],
+      "expected": {"selection": {"action": "serve_primary", "payload": {"tournaments": [{"key": "open", "golfers": [{"name": "A", "probability": 0.31, "rank": 1, "movement_24h": 0.02}], "market_ids": [11, 12], "market_sources": ["polymarket", "datagolf"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "scheduled"}]}}, "ownership": {"launches": [], "actions": [], "owner": null, "waiters": [], "slot_clean": true}}
+    },
+    {
+      "name": "stale_301_not_fresh_uses_bounded_last_good",
+      "primary": {"status": "ok", "age_s": 301, "payload": {"tournaments": [{"key": "old", "golfers": [], "market_ids": [], "market_sources": [], "h2h_matchups": [], "prop_markets": [], "schedule_status": "scheduled"}]}},
+      "last_good": {"status": "ok", "age_s": 250, "max_age_s": 300, "payload": {"tournaments": [{"key": "last_good", "golfers": [], "market_ids": [21], "market_sources": ["kalshi"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "live"}]}},
+      "inline_fallback": {"status": "not_called", "provider_status": "not_called", "payload": null},
+      "ownership_events": [],
+      "expected": {"selection": {"action": "serve_last_good", "payload": {"tournaments": [{"key": "last_good", "golfers": [], "market_ids": [21], "market_sources": ["kalshi"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "live"}]}}, "ownership": {"launches": [], "actions": [], "owner": null, "waiters": [], "slot_clean": true}}
+    },
+    {
+      "name": "redis_timeout_inline_provider_success",
+      "primary": {"status": "timeout", "age_s": 0, "payload": null},
+      "last_good": {"status": "miss", "age_s": 0, "max_age_s": 300, "payload": null},
+      "inline_fallback": {"status": "success", "provider_status": "success", "payload": {"tournaments": [{"key": "fresh", "golfers": [], "market_ids": [31], "market_sources": ["datagolf"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "live"}]}},
+      "ownership_events": [{"op": "claim", "actor": "discover"}, {"op": "complete", "actor": "discover"}],
+      "expected": {"selection": {"action": "serve_inline", "payload": {"tournaments": [{"key": "fresh", "golfers": [], "market_ids": [31], "market_sources": ["datagolf"], "h2h_matchups": [], "prop_markets": [], "schedule_status": "live"}]}}, "ownership": {"launches": ["discover"], "actions": ["discover:owner", "discover:complete"], "owner": null, "waiters": [], "slot_clean": true}}
+    },
+    {
+      "name": "provider_timeout_without_cache_is_unavailable",
+      "primary": {"status": "miss", "age_s": 0, "payload": null},
+      "last_good": {"status": "error", "age_s": 0, "max_age_s": 300, "payload": null},
+      "inline_fallback": {"status": "timeout", "provider_status": "timeout", "payload": null},
+      "ownership_events": [{"op": "claim", "actor": "sports"}, {"op": "fail", "actor": "sports"}],
+      "expected": {"selection": {"action": "unavailable", "payload": null}, "ownership": {"launches": ["sports"], "actions": ["sports:owner", "sports:fail"], "owner": null, "waiters": [], "slot_clean": true}}
+    },
+    {
+      "name": "two_response_keys_one_shared_fill",
+      "primary": {"status": "miss", "age_s": 0, "payload": null},
+      "last_good": {"status": "miss", "age_s": 0, "max_age_s": 300, "payload": null},
+      "inline_fallback": {"status": "success", "provider_status": "success", "payload": {"tournaments": []}},
+      "ownership_events": [{"op": "claim", "actor": "discover-limit-50"}, {"op": "claim", "actor": "sports-limit-200"}, {"op": "complete", "actor": "discover-limit-50"}],
+      "expected": {"selection": {"action": "serve_inline", "payload": {"tournaments": []}}, "ownership": {"launches": ["discover-limit-50"], "actions": ["discover-limit-50:owner", "sports-limit-200:wait:discover-limit-50", "discover-limit-50:complete"], "owner": null, "waiters": ["sports-limit-200"], "slot_clean": true}}
+    },
+    {
+      "name": "cancelled_owner_clean_replacement_rejects_personalized_base",
+      "primary": {"status": "ok", "age_s": 20, "payload": {"personalized": true, "tournaments": []}},
+      "last_good": {"status": "miss", "age_s": 0, "max_age_s": 300, "payload": null},
+      "inline_fallback": {"status": "error", "provider_status": "error", "payload": null},
+      "ownership_events": [{"op": "claim", "actor": "anon-a"}, {"op": "claim", "actor": "anon-b"}, {"op": "cancel", "actor": "anon-a"}, {"op": "claim", "actor": "anon-b"}, {"op": "complete", "actor": "anon-b"}],
+      "expected": {"selection": {"action": "unavailable", "payload": null}, "ownership": {"launches": ["anon-a", "anon-b"], "actions": ["anon-a:owner", "anon-b:wait:anon-a", "anon-a:cancel", "anon-b:owner", "anon-b:complete"], "owner": null, "waiters": ["anon-b"], "slot_clean": true}}
+    }
+  ]
+}

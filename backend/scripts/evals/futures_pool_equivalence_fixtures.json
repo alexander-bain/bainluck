@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "futures_pool_equivalence",
+  "description": "Ordered pool union, ORM restoration, joins, thin merge, and telemetry contracts from C70.",
+  "fixtures": [
+    {
+      "name": "overlapping_pools_restore_orm_order",
+      "pool_order": ["external_curator", "sports", "sports_postseason", "sports_editorial", "nonsports_volume", "nonsports_movement", "nonsports_enriched", "nonsports_editorial", "nonsports_timely"],
+      "pools": {
+        "external_curator": {"limit": 2, "rows": [{"id": 9, "sort": [null, 10]}, {"id": 2, "sort": [1, 9]}]},
+        "sports": {"limit": 3, "rows": [{"id": 2, "sort": [1, null]}, {"id": 3, "sort": [1, 2]}, {"id": 4, "sort": [2, 1]}]},
+        "sports_postseason": {"limit": 2, "rows": [{"id": 4, "sort": [null, 5]}, {"id": 5, "sort": [null, 4]}]},
+        "sports_editorial": {"limit": 1, "rows": [{"id": 6, "sort": [1, 100]}, {"id": 7, "sort": [1, 99]}]},
+        "nonsports_volume": {"limit": 2, "rows": [{"id": 7, "sort": [500, 1]}, {"id": 8, "sort": [400, null]}]},
+        "nonsports_movement": {"limit": 2, "rows": [{"id": 8, "sort": [0.2, 400]}, {"id": 10, "sort": [0.1, 300]}]},
+        "nonsports_enriched": {"limit": 1, "rows": [{"id": 11, "sort": [null, 12]}]},
+        "nonsports_editorial": {"limit": 2, "rows": [{"id": 9, "sort": [1, 10]}, {"id": 12, "sort": [2, 9]}]},
+        "nonsports_timely": {"limit": 2, "rows": [{"id": 13, "sort": [1, 50]}, {"id": 3, "sort": [2, 40]}]}
+      },
+      "orm_rows": [{"id": 13}, {"id": 12}, {"id": 11}, {"id": 10}, {"id": 9}, {"id": 8}, {"id": 7}, {"id": 6}, {"id": 5}, {"id": 4}, {"id": 3}, {"id": 2}],
+      "canonical_counts": {"2": 2, "9": 3, "13": 1},
+      "interestingness": {"2": 71, "9": 88, "13": 45},
+      "primary_items": [{"id": 9, "score": 90}, {"id": 2, "score": 80}],
+      "relaxed_items": [],
+      "relaxed_outcome": "not_run",
+      "timings": {"parent_ms": 15, "primary": {"futures.candidate_queries": 9, "futures.market_load": 4, "futures.canonical_counts": 2}, "relaxed": {}},
+      "expected": {
+        "candidate_ids": [9, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13],
+        "restored_ids": [9, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13],
+        "joined": [{"id": 9, "canonical_count": 3, "interestingness": 88}, {"id": 2, "canonical_count": 2, "interestingness": 71}, {"id": 3, "canonical_count": null, "interestingness": null}, {"id": 4, "canonical_count": null, "interestingness": null}, {"id": 5, "canonical_count": null, "interestingness": null}, {"id": 6, "canonical_count": null, "interestingness": null}, {"id": 7, "canonical_count": null, "interestingness": null}, {"id": 8, "canonical_count": null, "interestingness": null}, {"id": 10, "canonical_count": null, "interestingness": null}, {"id": 11, "canonical_count": null, "interestingness": null}, {"id": 12, "canonical_count": null, "interestingness": null}, {"id": 13, "canonical_count": 1, "interestingness": 45}],
+        "merged_items": [{"id": 9, "score": 90}, {"id": 2, "score": 80}],
+        "timing_contract": {"thin_pass": false, "names_separate": true, "raw_child_sum": 15, "non_overlapping_sum": 6, "parent_covers_non_overlapping": true}
+      }
+    },
+    {
+      "name": "thin_merge_preserves_primary_scores_and_namespaces",
+      "pool_order": ["external_curator", "sports", "sports_postseason", "sports_editorial", "nonsports_volume", "nonsports_movement", "nonsports_enriched", "nonsports_editorial", "nonsports_timely"],
+      "pools": {"external_curator": {"limit": 1, "rows": [{"id": 1, "sort": [null]}]}, "sports": {"limit": 1, "rows": [{"id": 2, "sort": [1]}]}, "sports_postseason": {"limit": 1, "rows": [{"id": 2, "sort": [2]}]}, "sports_editorial": {"limit": 1, "rows": [{"id": 3, "sort": [3]}]}, "nonsports_volume": {"limit": 1, "rows": [{"id": 4, "sort": [4]}]}, "nonsports_movement": {"limit": 1, "rows": [{"id": 4, "sort": [5]}]}, "nonsports_enriched": {"limit": 1, "rows": [{"id": 5, "sort": [6]}]}, "nonsports_editorial": {"limit": 1, "rows": [{"id": 5, "sort": [7]}]}, "nonsports_timely": {"limit": 1, "rows": [{"id": 6, "sort": [8]}]}},
+      "orm_rows": [{"id": 6}, {"id": 5}, {"id": 4}, {"id": 3}, {"id": 2}, {"id": 1}],
+      "canonical_counts": {"1": 2, "6": 1},
+      "interestingness": {"1": 90, "6": 30},
+      "primary_items": [{"id": 1, "score": 77, "reason": "primary"}, {"id": 2, "score": 66, "reason": "primary"}],
+      "relaxed_items": [{"id": 2, "score": 1, "reason": "relaxed duplicate"}, {"id": 7, "score": 55, "reason": "relaxed new"}, {"id": 8, "score": 44, "reason": "relaxed new"}],
+      "relaxed_outcome": "success",
+      "timings": {"parent_ms": 28, "primary": {"futures.candidate_queries": 10, "futures.market_load": 4}, "relaxed": {"futures.relaxed.candidate_queries": 8, "futures.relaxed.market_load": 3}},
+      "expected": {"candidate_ids": [1, 2, 3, 4, 5, 6], "restored_ids": [1, 2, 3, 4, 5, 6], "joined": [{"id": 1, "canonical_count": 2, "interestingness": 90}, {"id": 2, "canonical_count": null, "interestingness": null}, {"id": 3, "canonical_count": null, "interestingness": null}, {"id": 4, "canonical_count": null, "interestingness": null}, {"id": 5, "canonical_count": null, "interestingness": null}, {"id": 6, "canonical_count": 1, "interestingness": 30}], "merged_items": [{"id": 1, "score": 77, "reason": "primary"}, {"id": 2, "score": 66, "reason": "primary"}, {"id": 7, "score": 55, "reason": "relaxed new"}, {"id": 8, "score": 44, "reason": "relaxed new"}], "timing_contract": {"thin_pass": true, "names_separate": true, "raw_child_sum": 25, "non_overlapping_sum": 7, "parent_covers_non_overlapping": true}}
+    },
+    {
+      "name": "relaxed_timeout_keeps_primary",
+      "pool_order": ["external_curator", "sports", "sports_postseason", "sports_editorial", "nonsports_volume", "nonsports_movement", "nonsports_enriched", "nonsports_editorial", "nonsports_timely"],
+      "pools": {"external_curator": {"limit": 0, "rows": []}, "sports": {"limit": 1, "rows": [{"id": 20, "sort": [null, 1]}]}, "sports_postseason": {"limit": 0, "rows": []}, "sports_editorial": {"limit": 0, "rows": []}, "nonsports_volume": {"limit": 1, "rows": [{"id": 21, "sort": [null, 2]}]}, "nonsports_movement": {"limit": 0, "rows": []}, "nonsports_enriched": {"limit": 0, "rows": []}, "nonsports_editorial": {"limit": 0, "rows": []}, "nonsports_timely": {"limit": 0, "rows": []}},
+      "orm_rows": [{"id": 21}, {"id": 20}],
+      "canonical_counts": {},
+      "interestingness": {},
+      "primary_items": [{"id": 20, "score": 60}, {"id": 21, "score": 50}],
+      "relaxed_items": [{"id": 22, "score": 40}],
+      "relaxed_outcome": "timeout",
+      "timings": {"parent_ms": 20, "primary": {"futures.candidate_queries": 6, "futures.market_load": 3}, "relaxed": {"futures.relaxed.candidate_queries": 8}},
+      "expected": {"candidate_ids": [20, 21], "restored_ids": [20, 21], "joined": [{"id": 20, "canonical_count": null, "interestingness": null}, {"id": 21, "canonical_count": null, "interestingness": null}], "merged_items": [{"id": 20, "score": 60}, {"id": 21, "score": 50}], "timing_contract": {"thin_pass": true, "names_separate": true, "raw_child_sum": 17, "non_overlapping_sum": 3, "parent_covers_non_overlapping": true}}
+    }
+  ]
+}
