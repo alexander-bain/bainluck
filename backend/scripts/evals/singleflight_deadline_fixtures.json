@@ -1,0 +1,124 @@
+{
+  "schema_version": "singleflight-deadline/v1",
+  "audited_commit": "fa42a733077a7229ba278867333616d35699981b",
+  "policy": {
+    "request_budget_ms": 25000,
+    "router_cutoff_ms": 30000,
+    "terminal_states": ["payload", "last_good", "unavailable", "owned_build"]
+  },
+  "scenarios": [
+    {
+      "id": "original_success",
+      "waits_ms": [],
+      "compute_ms": 8000,
+      "compute_admitted_at_ms": 0,
+      "owner_counts": [1, 1, 0],
+      "displaced_owner": "none",
+      "terminal": "payload"
+    },
+    {
+      "id": "original_failure_bounded_unavailable",
+      "waits_ms": [],
+      "compute_ms": 5000,
+      "compute_admitted_at_ms": 0,
+      "owner_counts": [1, 0],
+      "displaced_owner": "none",
+      "terminal": "unavailable"
+    },
+    {
+      "id": "original_cancellation_exact_cleanup",
+      "waits_ms": [],
+      "compute_ms": 3000,
+      "compute_admitted_at_ms": 0,
+      "owner_counts": [1, 0],
+      "displaced_owner": "cancelled_and_joined",
+      "terminal": "unavailable"
+    },
+    {
+      "id": "two_waiters_one_slow_owner",
+      "waits_ms": [12000],
+      "compute_ms": 0,
+      "compute_admitted_at_ms": null,
+      "owner_counts": [1, 1, 1, 0],
+      "displaced_owner": "remains_owner",
+      "terminal": "payload"
+    },
+    {
+      "id": "late_original_cancel_join_before_replacement",
+      "waits_ms": [10000],
+      "compute_ms": 7000,
+      "compute_admitted_at_ms": 11000,
+      "owner_counts": [1, 1, 0, 1, 1, 0],
+      "displaced_owner": "cancelled_and_joined",
+      "terminal": "payload"
+    },
+    {
+      "id": "replacement_failure_uses_last_good",
+      "waits_ms": [9000],
+      "compute_ms": 6000,
+      "compute_admitted_at_ms": 10000,
+      "owner_counts": [1, 0, 1, 0],
+      "displaced_owner": "cancelled_and_joined",
+      "terminal": "last_good"
+    },
+    {
+      "id": "cancellation_ignoring_owner_remains_owner",
+      "waits_ms": [22000],
+      "compute_ms": 0,
+      "compute_admitted_at_ms": null,
+      "owner_counts": [1, 1, 1],
+      "displaced_owner": "remains_owner",
+      "terminal": "unavailable"
+    },
+    {
+      "id": "total_budget_exhausted_no_compute",
+      "waits_ms": [22000, 3000],
+      "compute_ms": 0,
+      "compute_admitted_at_ms": null,
+      "owner_counts": [1, 1, 1],
+      "displaced_owner": "remains_owner",
+      "terminal": "unavailable"
+    },
+    {
+      "id": "simultaneous_force_boundary_one_owner",
+      "waits_ms": [24000],
+      "compute_ms": 0,
+      "compute_admitted_at_ms": null,
+      "owner_counts": [1, 1, 1, 1],
+      "displaced_owner": "remains_owner",
+      "terminal": "last_good"
+    }
+  ],
+  "rejected_counterexamples": [
+    {
+      "id": "legacy_22s_four_rounds_then_compute",
+      "waits_ms": [22000, 22000, 22000, 22000],
+      "compute_ms": 8000,
+      "compute_admitted_at_ms": 88000,
+      "owner_counts": [1, 1, 1, 1, 1],
+      "displaced_owner": "remains_owner",
+      "terminal": "payload",
+      "expected_violations": ["request_budget_exceeded", "compute_admitted_after_deadline", "router_cutoff_exceeded"]
+    },
+    {
+      "id": "unconditional_force_overwrites_live_owner",
+      "waits_ms": [22000],
+      "compute_ms": 1000,
+      "compute_admitted_at_ms": 22000,
+      "owner_counts": [1, 2, 1, 0],
+      "displaced_owner": "orphaned",
+      "terminal": "payload",
+      "expected_violations": ["multiple_executing_owners", "displaced_owner_orphaned"]
+    },
+    {
+      "id": "compute_starts_at_exhausted_budget",
+      "waits_ms": [25000],
+      "compute_ms": 1,
+      "compute_admitted_at_ms": 25000,
+      "owner_counts": [1, 0, 1],
+      "displaced_owner": "cancelled_and_joined",
+      "terminal": "payload",
+      "expected_violations": ["request_budget_exceeded", "compute_admitted_after_deadline"]
+    }
+  ]
+}
