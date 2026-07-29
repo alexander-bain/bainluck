@@ -212,6 +212,11 @@ class _FakeDB:
         ]
 
     async def execute(self, statement):
+        # Queue 274: the beat arms a `SET LOCAL statement_timeout` on its session
+        # before the compute; that non-result statement must not consume one of the
+        # queued query results (it would shift the whole sequence by one).
+        if "statement_timeout" in str(statement).lower():
+            return _Result()
         if not self._results:
             return _Result()
         return self._results.pop(0)
