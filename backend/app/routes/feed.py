@@ -19,7 +19,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -343,6 +343,10 @@ def _emit_feed_stage_observability(
         response.headers["X-Feed-Counts"] = ",".join(
             f"{k}={int(v)}" for k, v in sorted(counts.items())
         )[:400]
+        # One explicit, machine-readable count scope on every path so a debugger
+        # never has to guess whether type_*/returned are page- or full-scoped
+        # (Queue 277 / #1475). Counts are page-scoped everywhere → fixed "page".
+        response.headers["X-Feed-Count-Scope"] = "page"
         response.headers["X-Feed-Singleflight"] = singleflight or "none"
         if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
             random.random() < _feed_stage_sample_rate()
@@ -361,27 +365,49 @@ def _emit_feed_stage_observability(
         pass
 
 
-def _feed_obs_counts(
-    items: list[dict] | None,
-    *,
-    total: int,
-    returned: int,
-) -> dict[str, int]:
-    """Build the identity-free per-card-type coverage counter for a feed return.
+def _coerce_count_int(value: Any) -> int:
+    """Best-effort int coercion for a diagnostic count; never raises."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
-    ``items`` supplies the ``type_*`` breakdown. On a BUILT response this is the
-    full ranked ``feed_items`` list; on a CACHED/last-good/coalesced response it
-    is the payload's already-paginated ``items`` — a safe cached count, never a
-    re-run of the build. ``total``/``returned`` are the payload's own numbers, so
-    no current-build timing is ever fabricated for a served-from-cache path."""
-    counts: dict[str, int] = {
-        f"type_{ctype}": n
-        for ctype, n in Counter(
-            str(it.get("type") or "unknown") for it in (items or [])
-        ).items()
-    }
-    counts["total"] = int(total)
-    counts["returned"] = int(returned)
+
+def _feed_obs_counts(
+    items: Any,
+    *,
+    total: Any,
+    returned: Any,
+) -> dict[str, int]:
+    """Build the identity-free, PAGE-scoped per-card-type coverage counter.
+
+    ``items`` is the returned page (``paginated`` on a built response; the
+    payload's already-paginated ``items`` on a cached/last-good/coalesced one),
+    so ``type_*`` is page-scoped on EVERY path and ``sum(type_*) == returned``
+    is comparable leader-vs-hit by contract; ``total`` carries the full count.
+
+    Queue 277 (#1475): this is deliberately INERT — it never raises on a
+    malformed or old cached payload (``items=[None]``, a non-list ``items``, a
+    null ``total``). An observability helper must not be able to throw out of
+    the argument position and divert a cache-hit response into a cold build (the
+    C69 observer effect). Every emitted value is a plain ``int`` so the header
+    formatter downstream cannot throw either."""
+    counts: dict[str, int] = {}
+    try:
+        seq = items if isinstance(items, list) else []
+        by_type: Counter = Counter()
+        for it in seq:
+            try:
+                ctype = it.get("type") if isinstance(it, dict) else None
+            except Exception:
+                ctype = None
+            by_type[str(ctype or "unknown")] += 1
+        for ctype, n in by_type.items():
+            counts[f"type_{ctype}"] = int(n)
+    except Exception:  # pragma: no cover - belt-and-suspenders; loop is guarded
+        counts = {}
+    counts["total"] = _coerce_count_int(total)
+    counts["returned"] = _coerce_count_int(returned)
     return counts
 
 
@@ -1504,7 +1530,17 @@ async def get_feed(
     _is_build_leader = False
     if _cache_key and _cache_status in ("miss", "error"):
         _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
-        if not _is_build_leader:
+        # A waiter coalesces onto the leader's completed payload. If the leader
+        # is dead / too slow / produced nothing usable, it recovers in BOUNDED
+        # rounds instead of re-joining a poisoned future: serve last-good, or
+        # atomically take over the stale slot to become the unique replacement
+        # owner (a caller may build ONLY after it owns the replacement), or
+        # coalesce onto whichever other waiter already took over. After a bounded
+        # number of rounds it force-owns a fresh build so the request can never
+        # hang — every outcome is a payload, a bounded fallback, or a build it
+        # uniquely owns.
+        _takeover_rounds = 0
+        while not _is_build_leader:
             _coalesced = None
             try:
                 _coalesced = await _rc.run_with_deadline(
@@ -1534,7 +1570,7 @@ async def get_feed(
                     ),
                 )
                 return out
-            # Leader produced nothing usable — try last-good, else lead a build.
+            # Leader produced nothing usable — serve last-good if we have it.
             _lg = _rc.recall_last_good(_cache_key)
             if isinstance(_lg, dict):
                 out = dict(_lg)
@@ -1554,613 +1590,638 @@ async def get_feed(
                     ),
                 )
                 return out
-            _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
-
-    # Load personalization context (one DB query for all user data)
-    try:
-        ctx = await _load_personalization_context(
-            db,
-            feed_user,
-            session_id=feed_session_id,
-            config=discover_config,
-        )
-    except Exception:
-        logger.exception("Personalization context failed — falling back to anonymous")
-        ctx = PersonalizationContext()
-    _previous_at = _record_feed_timing(
-        _timings, _started_at, _previous_at, "personalization"
-    )
-
-    # Build team name set once (used by both scoring functions + response).
-    # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
-    # alternate_names (short forms like "Bears", "Brown") which cause false
-    # positives: "bears" matching "chicago bears", "brown" matching "browns".
-    my_team_names: list[str] = []
-    # Map team name -> set of sport categories the user follows that team in.
-    # Used by futures matching (BR53) to prevent cross-sport false positives
-    # like "Aliya Boston" (WNBA) matching "Boston Bruins" (NHL).
-    my_team_sport_categories: dict[str, set[str]] = {}
-    if my_teams_only and feed_user and ctx.team_relations:
-        team_ids = list(ctx.team_relations.keys())
-        team_name_result = await db.execute(
-            select(Team.name, Sport.key)
-            .where(Team.id.in_(team_ids))
-            .join(Sport, Team.sport_id == Sport.id)
-        )
-        for name, sport_key in team_name_result.all():
-            if name:
-                my_team_names.append(name)
-                cat = _personalization_category_from_sport_key(sport_key)
-                if cat:
-                    my_team_sport_categories.setdefault(name, set()).add(cat)
-
-    feed_items = []
-
-    # === SCORE EVENTS ===
-    if include_events:
-        try:
-            event_items = await _score_events(
-                db,
-                now,
-                sport,
-                ctx,
-                my_teams_only=my_teams_only,
-                my_team_names=my_team_names,
-                tag_filter=dynamic_tag_filter or None,
-                static_tag_filter=static_tag_filter or None,
+            if _takeover_rounds >= _rc.MAX_WAITER_TAKEOVER_ROUNDS:
+                # Liveness escape hatch: stop coalescing and own a fresh build.
+                _sf_future = _rc.force_build(_cache_key)
+                _is_build_leader = True
+                break
+            _takeover_rounds += 1
+            _is_build_leader, _sf_future = _rc.takeover_build(
+                _cache_key, _sf_future
             )
-            feed_items.extend(event_items)
-        except Exception as e:
-            logger.error("Feed: event scoring failed, returning partial feed: %s", e)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
 
-    # === ENRICH EVENTS WITH TEAM DATA ===
-    # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
-    if feed_items:
-        all_team_names = []
-        for item in feed_items:
-            if item["type"] == "event":
-                d = item["data"]
-                all_team_names.append(d["home_team"])
-                all_team_names.append(d["away_team"])
-        if all_team_names:
-            team_lookup = await _build_team_lookup(db, all_team_names)
+    # --- Leader ownership guard (Queue 277 / #1475) ---------------------
+    # Only the (original / taken-over / force-owned) build leader reaches
+    # here; waiters returned above. Guarantee the singleflight slot is
+    # resolved and removed on EVERY exit — success, exception, AND
+    # cancellation — so a dead leader can never leave an unresolved future
+    # that poisons the slot and hangs the next request.
+    try:
+        # Load personalization context (one DB query for all user data)
+        try:
+            ctx = await _load_personalization_context(
+                db,
+                feed_user,
+                session_id=feed_session_id,
+                config=discover_config,
+            )
+        except Exception:
+            logger.exception("Personalization context failed — falling back to anonymous")
+            ctx = PersonalizationContext()
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "personalization"
+        )
+
+        # Build team name set once (used by both scoring functions + response).
+        # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
+        # alternate_names (short forms like "Bears", "Brown") which cause false
+        # positives: "bears" matching "chicago bears", "brown" matching "browns".
+        my_team_names: list[str] = []
+        # Map team name -> set of sport categories the user follows that team in.
+        # Used by futures matching (BR53) to prevent cross-sport false positives
+        # like "Aliya Boston" (WNBA) matching "Boston Bruins" (NHL).
+        my_team_sport_categories: dict[str, set[str]] = {}
+        if my_teams_only and feed_user and ctx.team_relations:
+            team_ids = list(ctx.team_relations.keys())
+            team_name_result = await db.execute(
+                select(Team.name, Sport.key)
+                .where(Team.id.in_(team_ids))
+                .join(Sport, Team.sport_id == Sport.id)
+            )
+            for name, sport_key in team_name_result.all():
+                if name:
+                    my_team_names.append(name)
+                    cat = _personalization_category_from_sport_key(sport_key)
+                    if cat:
+                        my_team_sport_categories.setdefault(name, set()).add(cat)
+
+        feed_items = []
+
+        # === SCORE EVENTS ===
+        if include_events:
+            try:
+                event_items = await _score_events(
+                    db,
+                    now,
+                    sport,
+                    ctx,
+                    my_teams_only=my_teams_only,
+                    my_team_names=my_team_names,
+                    tag_filter=dynamic_tag_filter or None,
+                    static_tag_filter=static_tag_filter or None,
+                )
+                feed_items.extend(event_items)
+            except Exception as e:
+                logger.error("Feed: event scoring failed, returning partial feed: %s", e)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
+
+        # === ENRICH EVENTS WITH TEAM DATA ===
+        # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
+        if feed_items:
+            all_team_names = []
             for item in feed_items:
                 if item["type"] == "event":
                     d = item["data"]
-                    home_team = team_lookup.get(d["home_team"])
-                    away_team = team_lookup.get(d["away_team"])
-                    if home_team:
-                        d["home_team_data"] = _format_team_data(home_team)
-                    if away_team:
-                        d["away_team_data"] = _format_team_data(away_team)
-    _previous_at = _record_feed_timing(
-        _timings, _started_at, _previous_at, "team_enrichment"
-    )
-
-    # === SCORE GOLF TOURNAMENTS ===
-    # Skip golf tournaments if a non-golf sport tag is active
-    _skip_golf = not include_events
-    if static_tag_filter:
-        sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
-        if sport_tags and "sport:golf" not in sport_tags:
-            _skip_golf = True
-    if not _skip_golf:
-        try:
-            tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
-            if tournament_items:
-                feed_items.extend(tournament_items)
-        except Exception as e:
-            logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
-
-    # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
-    # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
-    # rankable concepts (the "UFC 329 wasn't bubbling" gap). Gated on
-    # include_events, so the futures-only feed audit never sees them.
-    _skip_concepts = not include_events
-    if static_tag_filter:
-        _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
-        # Concepts exist for combat cards (mma) + motorsports GPs (f1). A sport
-        # filter for anything else means the concept streams have nothing to add.
-        _concept_allowed = {"sport:mma", "sport:motorsports", "sport:f1"}
-        if _concept_sport_tags and not (set(_concept_sport_tags) & _concept_allowed):
-            _skip_concepts = True
-    if not _skip_concepts:
-        try:
-            concept_items = await _score_event_concepts(db, now, sport, ctx)
-            if concept_items:
-                feed_items.extend(concept_items)
-        except Exception as e:
-            logger.error("Feed: event-concept scoring failed, partial feed: %s", e)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
-
-    # === SCORE FUTURES ===
-    # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
-    # cold build. Bound it to the time remaining under the total request budget so
-    # a pathological build degrades to the valid events-only feed rather than a 30s
-    # Heroku router H12. On timeout we roll back (the cancelled query may leave the
-    # session mid-statement) and serve the partial feed.
-    _is_sports_mode = (mode or "").lower() == "sports"
-
-    def _futures_budget_s() -> float:
-        elapsed_ms = (time.perf_counter() - _started_at) * 1000
-        return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
-
-    if include_futures and _futures_budget_s() <= 0.5:
-        logger.warning(
-            "Feed: no time budget left for futures scoring — serving events-only "
-            "partial feed (#1459)"
+                    all_team_names.append(d["home_team"])
+                    all_team_names.append(d["away_team"])
+            if all_team_names:
+                team_lookup = await _build_team_lookup(db, all_team_names)
+                for item in feed_items:
+                    if item["type"] == "event":
+                        d = item["data"]
+                        home_team = team_lookup.get(d["home_team"])
+                        away_team = team_lookup.get(d["away_team"])
+                        if home_team:
+                            d["home_team_data"] = _format_team_data(home_team)
+                        if away_team:
+                            d["away_team_data"] = _format_team_data(away_team)
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "team_enrichment"
         )
-    elif include_futures:
-        try:
-            if _is_sports_mode:
-                # Sports mode: skip the expensive Discover scoring pipeline
-                # (10 candidate pool queries + editorial recall + interestingness
-                # cache). Instead, run a single fast query for top sports futures.
-                futures_items = await asyncio.wait_for(
-                    _score_sports_mode_futures(
-                        db,
-                        now,
-                        sport,
-                        ctx,
-                        my_teams_only=my_teams_only,
-                        my_team_names=my_team_names,
-                        my_team_sport_categories=my_team_sport_categories,
-                    ),
-                    timeout=_futures_budget_s(),
+
+        # === SCORE GOLF TOURNAMENTS ===
+        # Skip golf tournaments if a non-golf sport tag is active
+        _skip_golf = not include_events
+        if static_tag_filter:
+            sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
+            if sport_tags and "sport:golf" not in sport_tags:
+                _skip_golf = True
+        if not _skip_golf:
+            try:
+                tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
+                if tournament_items:
+                    feed_items.extend(tournament_items)
+            except Exception as e:
+                logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
+
+        # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
+        # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
+        # rankable concepts (the "UFC 329 wasn't bubbling" gap). Gated on
+        # include_events, so the futures-only feed audit never sees them.
+        _skip_concepts = not include_events
+        if static_tag_filter:
+            _concept_sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
+            # Concepts exist for combat cards (mma) + motorsports GPs (f1). A sport
+            # filter for anything else means the concept streams have nothing to add.
+            _concept_allowed = {"sport:mma", "sport:motorsports", "sport:f1"}
+            if _concept_sport_tags and not (set(_concept_sport_tags) & _concept_allowed):
+                _skip_concepts = True
+        if not _skip_concepts:
+            try:
+                concept_items = await _score_event_concepts(db, now, sport, ctx)
+                if concept_items:
+                    feed_items.extend(concept_items)
+            except Exception as e:
+                logger.error("Feed: event-concept scoring failed, partial feed: %s", e)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
+
+        # === SCORE FUTURES ===
+        # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
+        # cold build. Bound it to the time remaining under the total request budget so
+        # a pathological build degrades to the valid events-only feed rather than a 30s
+        # Heroku router H12. On timeout we roll back (the cancelled query may leave the
+        # session mid-statement) and serve the partial feed.
+        _is_sports_mode = (mode or "").lower() == "sports"
+
+        def _futures_budget_s() -> float:
+            elapsed_ms = (time.perf_counter() - _started_at) * 1000
+            return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
+
+        if include_futures and _futures_budget_s() <= 0.5:
+            logger.warning(
+                "Feed: no time budget left for futures scoring — serving events-only "
+                "partial feed (#1459)"
+            )
+        elif include_futures:
+            try:
+                if _is_sports_mode:
+                    # Sports mode: skip the expensive Discover scoring pipeline
+                    # (10 candidate pool queries + editorial recall + interestingness
+                    # cache). Instead, run a single fast query for top sports futures.
+                    futures_items = await asyncio.wait_for(
+                        _score_sports_mode_futures(
+                            db,
+                            now,
+                            sport,
+                            ctx,
+                            my_teams_only=my_teams_only,
+                            my_team_names=my_team_names,
+                            my_team_sport_categories=my_team_sport_categories,
+                        ),
+                        timeout=_futures_budget_s(),
+                    )
+                else:
+                    futures_items = await asyncio.wait_for(
+                        _score_futures(
+                            db,
+                            now,
+                            sport,
+                            ctx,
+                            my_teams_only=my_teams_only,
+                            my_team_names=my_team_names,
+                            my_team_sport_categories=my_team_sport_categories,
+                            tag_filter=dynamic_tag_filter or None,
+                            static_tag_filter=static_tag_filter or None,
+                            timing_records=_timings,
+                            timing_started_at=_started_at,
+                            config=discover_config,
+                        ),
+                        timeout=_futures_budget_s(),
+                    )
+
+                    # #1090: broaden recall when the post-filter pool collapses. The
+                    # Open golf week + summer break strands real, open markets behind
+                    # the freshness/no-movement filters that keep the feed lively
+                    # in-season, so after seen-suppression the user hits "all caught
+                    # up" in ~a dozen cards (mostly golf). When the pool is thin,
+                    # re-score ONCE with relaxed no-movement / no-resolution windows
+                    # and merge in only the NEW markets — existing ones keep their
+                    # original, un-penalized score. Fires only when thin, so the
+                    # in-season pipeline is untouched.
+                    if len(futures_items) < _THIN_FUTURES_POOL_FLOOR:
+                        relaxed = dict(discover_config or {})
+                        relaxed["stale_no_movement_days"] = max(
+                            float(relaxed.get("stale_no_movement_days", 2)) * 3, 7
+                        )
+                        relaxed["no_resolution_stale_days"] = max(
+                            float(relaxed.get("no_resolution_stale_days", 5)) * 2, 14
+                        )
+                        seen_ids = {
+                            (it.get("data") or {}).get("id") for it in futures_items
+                        }
+                        # The broaden pass is best-effort: if it exceeds the remaining
+                        # budget, keep the primary futures rather than losing them.
+                        try:
+                            broadened = await asyncio.wait_for(
+                                _score_futures(
+                                    db,
+                                    now,
+                                    sport,
+                                    ctx,
+                                    my_teams_only=my_teams_only,
+                                    my_team_names=my_team_names,
+                                    my_team_sport_categories=my_team_sport_categories,
+                                    tag_filter=dynamic_tag_filter or None,
+                                    static_tag_filter=static_tag_filter or None,
+                                    config=relaxed,
+                                ),
+                                timeout=_futures_budget_s(),
+                            )
+                        except asyncio.TimeoutError:
+                            broadened = []
+                            logger.warning(
+                                "Feed #1090 broaden: exceeded remaining budget — "
+                                "keeping primary futures (#1459)"
+                            )
+                        added = [
+                            it
+                            for it in broadened
+                            if (it.get("data") or {}).get("id") not in seen_ids
+                        ]
+                        if added:
+                            base_n = len(futures_items)
+                            futures_items = futures_items + added
+                            logger.info(
+                                "Feed #1090 broaden: thin pool %d < %d, relaxed pass "
+                                "added %d markets",
+                                base_n,
+                                _THIN_FUTURES_POOL_FLOOR,
+                                len(added),
+                            )
+
+                feed_items.extend(_dedupe_futures_by_canonical(futures_items))
+            except asyncio.TimeoutError:
+                # Primary futures scoring exceeded the request budget — serve the
+                # events feed we already built rather than a 30s router H12 (#1459).
+                logger.warning(
+                    "Feed: futures scoring exceeded the %dms request budget — serving "
+                    "events-only partial feed (#1459)",
+                    _rc.FEED_TOTAL_BUDGET_MS,
+                )
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(
+                    "Feed: futures scoring failed, returning partial feed: %s",
+                    e,
+                    exc_info=True,
+                )
+                import sentry_sdk
+
+                sentry_sdk.capture_exception(e)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
+
+        await _apply_manual_review_decisions(db, feed_items)
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "review_decisions"
+        )
+
+        # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
+        # A card whose every outcome reads 0% is never interesting (stale/settled
+        # markets that leaked with status='open'). Applied in every mode, before
+        # ranking, so no client can be served a dead card.
+        feed_items, _zero_dropped = _suppress_zero_probability_cards(feed_items)
+        if _zero_dropped:
+            logger.info("Feed: suppressed %d all-0%% probability card(s)", _zero_dropped)
+
+        # === RANK AND PAGINATE ===
+        # Sort by score descending, then by recency as tiebreaker
+        feed_items.sort(key=_rank_key, reverse=True)
+
+        # === DIVERSITY GUARANTEE ===
+        # Ensure the feed has a mix of events and futures.
+        # Without this, futures can dominate (they get "resolving soon" + "multi source"
+        # bonuses that events don't have).
+        # For anonymous users, enforce a stronger event bias (events are the core product).
+        # Skip diversity enforcement for my_teams_only — show everything matching.
+        # When event_pct is low (Discover mode), demote ordinary events so
+        # interesting futures can compete. A routine playoff game scores 100
+        # from live+close+tier but isn't more interesting than "Will China
+        # invade Taiwan?" for a Discover audience. Only truly exceptional
+        # events (strong EI or top-tier exception keywords) keep their score.
+        if event_pct is not None and event_pct < 0.3:
+            _demote_non_exceptional_discover_events(feed_items)
+            feed_items = _filter_discover_event_noise(feed_items)
+            # Re-sort after demotion so demoted events fall below high-scoring futures
+            feed_items.sort(
+                key=_rank_key, reverse=True
+            )
+            feed_items = balance_discover_event_category_mix(feed_items)
+
+        if not my_teams_only:
+            if event_pct is not None and event_pct < 0.2:
+                pass  # Discover mode: let scores decide, no artificial event promotion
+            else:
+                _epct = 0.6 if not ctx.is_authenticated else 0.4
+                feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
+
+        if not my_teams_only and (
+            (event_pct is not None and event_pct < 0.3) or not include_events
+        ):
+            _is_cold_start = not ctx.discover_category_affinities
+            feed_items = diversify_discover_first_page(
+                feed_items, first_page_size=min(20, limit),
+                cold_start=_is_cold_start,
+            )
+            feed_items = backfill_discover_editorial_tail(
+                feed_items,
+                window_size=min(50, len(feed_items)),
+                preserve_top=min(20, len(feed_items)),
+            )
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
+
+        reviewed_filter = None
+        if exclude_reviewed:
+            # Resolve reviewer: when "native" and authenticated via Bearer token,
+            # use the admin's email for per-user reviewed state.
+            effective_reviewer = reviewer
+            if reviewer == "native":
+                admin_email = await _resolve_admin_email(request, db)
+                if admin_email:
+                    effective_reviewer = admin_email
+
+            reviewed_keys = await _load_reviewed_ranking_keys(
+                db,
+                reviewer=effective_reviewer,
+                surface=reviewed_surface,
+            )
+            feed_items, reviewed_filtered_count = _filter_reviewed_feed_items(
+                feed_items,
+                reviewed_keys,
+            )
+            reviewed_filter = {
+                "enabled": True,
+                "reviewer": effective_reviewer,
+                "surface": reviewed_surface,
+                "reviewed_key_count": len(reviewed_keys),
+                "filtered_count": reviewed_filtered_count,
+            }
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "reviewed_filter"
+        )
+
+        if not my_teams_only and (
+            (event_pct is not None and event_pct < 0.3) or not include_events
+        ):
+            feed_items = assemble_discover_comparison_bundles(feed_items)
+            feed_items = assemble_geopolitics_theme_bundles(feed_items)
+            feed_items = assemble_awards_theme_bundles(feed_items)
+            # #948 (slice 6): fold the biggest guarded 24h movers into one
+            # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
+            feed_items = assemble_swings_theme_bundles(feed_items)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
+
+        # === MARQUEE PINNING (Queue #223 Item 2) ===
+        # Calendar-flagged marquee concepts/tournaments that are IN PROGRESS pin to the
+        # very top — the last word on ordering, after every score/diversity/bundle pass,
+        # so The Open / World Cup top-slot failure class dies. Pure stable reorder: it
+        # touches no score and can never empty the feed (gotcha #42/#43).
+        feed_items = _pin_marquee_items(feed_items)
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "marquee_pin")
+
+        total = len(feed_items)
+        paginated = feed_items[offset : offset + limit]
+
+        debug_payload = None
+        if debug:
+            email_ground_truth_items: list[dict] = []
+            external_curator_items: list[dict] = []
+            ground_truth_items = load_default_ground_truth_items()
+            if debug_ground_truth:
+                email_ground_truth_report = await asyncio.to_thread(
+                    load_polymarket_email_ground_truth_report_from_env,
+                    now=now,
+                )
+                external_curator_report = await asyncio.to_thread(
+                    load_external_curator_ground_truth_report_from_env,
+                    now=now,
+                )
+                persisted_external_curator_report = (
+                    await load_persisted_external_curator_ground_truth_report(db, now=now)
+                )
+                external_curator_report = merge_external_curator_ground_truth_reports(
+                    [external_curator_report, persisted_external_curator_report],
+                    now=now,
+                )
+                email_ground_truth_items = email_ground_truth_report["items"]
+                external_curator_items = external_curator_report["items"]
+                ground_truth_items = (
+                    ground_truth_items + email_ground_truth_items + external_curator_items
+                )
+            debug_payload = build_feed_quality_debug(
+                paginated,
+                ground_truth_items=ground_truth_items,
+                top_n=min(20, len(paginated)),
+            )
+            if debug_ground_truth:
+                await _attach_missing_ground_truth_traces(
+                    db, debug_payload["missing_ground_truth"], now
+                )
+                debug_payload["missing_ground_truth_summary"] = (
+                    apply_db_trace_missing_ground_truth_triage(
+                        debug_payload["missing_ground_truth"]
+                    )
+                )
+                email_missing_ground_truth = find_missing_ground_truth_items(
+                    debug_payload["items"],
+                    email_ground_truth_items,
+                    limit=80,
+                )
+                await _attach_missing_ground_truth_traces(
+                    db, email_missing_ground_truth, now
+                )
+                email_missing_ground_truth_summary = (
+                    apply_db_trace_missing_ground_truth_triage(email_missing_ground_truth)
+                )
+                email_metadata = email_ground_truth_report["metadata"]
+                email_summary = summarize_polymarket_email_ground_truth(
+                    debug_payload["items"],
+                    email_ground_truth_items,
+                )
+                debug_payload["email_ground_truth"] = {
+                    **email_metadata,
+                    "total": email_summary["total"],
+                    "top20_hits": email_summary["top20_hits"],
+                    "top50_hits": email_summary["top50_hits"],
+                    "missing": email_summary["missing"],
+                    "hit_rate_50": email_summary["hit_rate_50"],
+                    "hits": email_summary["hits"][:20],
+                    "missing_items": email_summary["missing_items"][:50],
+                    "db_trace_bucket_counts": email_missing_ground_truth_summary[
+                        "bucket_counts"
+                    ],
+                }
+                debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
+                external_curator_missing = find_missing_ground_truth_items(
+                    debug_payload["items"],
+                    external_curator_items,
+                    limit=80,
+                )
+                await _attach_missing_ground_truth_traces(db, external_curator_missing, now)
+                external_curator_missing_summary = (
+                    apply_db_trace_missing_ground_truth_triage(external_curator_missing)
+                )
+                external_summary = summarize_polymarket_email_ground_truth(
+                    debug_payload["items"],
+                    external_curator_items,
+                )
+                debug_payload["external_curator_ground_truth"] = {
+                    **external_curator_report["metadata"],
+                    "total": external_summary["total"],
+                    "top20_hits": external_summary["top20_hits"],
+                    "top50_hits": external_summary["top50_hits"],
+                    "missing": external_summary["missing"],
+                    "hit_rate_50": external_summary["hit_rate_50"],
+                    "hits": external_summary["hits"][:20],
+                    "missing_items": external_summary["missing_items"][:50],
+                    "db_trace_bucket_counts": external_curator_missing_summary[
+                        "bucket_counts"
+                    ],
+                }
+                debug_payload["external_curator_ground_truth_misses"] = (
+                    external_curator_missing
                 )
             else:
-                futures_items = await asyncio.wait_for(
-                    _score_futures(
-                        db,
-                        now,
-                        sport,
-                        ctx,
-                        my_teams_only=my_teams_only,
-                        my_team_names=my_team_names,
-                        my_team_sport_categories=my_team_sport_categories,
-                        tag_filter=dynamic_tag_filter or None,
-                        static_tag_filter=static_tag_filter or None,
-                        timing_records=_timings,
-                        timing_started_at=_started_at,
-                        config=discover_config,
-                    ),
-                    timeout=_futures_budget_s(),
-                )
+                empty_ground_truth = {
+                    "total": 0,
+                    "top20_hits": 0,
+                    "top50_hits": 0,
+                    "missing": 0,
+                    "hit_rate_50": 0,
+                    "hits": [],
+                    "missing_items": [],
+                    "db_trace_bucket_counts": {},
+                    "skipped": True,
+                }
+                debug_payload["email_ground_truth"] = empty_ground_truth
+                debug_payload["email_ground_truth_misses"] = []
+                debug_payload["external_curator_ground_truth"] = empty_ground_truth
+                debug_payload["external_curator_ground_truth_misses"] = []
+        _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
-                # #1090: broaden recall when the post-filter pool collapses. The
-                # Open golf week + summer break strands real, open markets behind
-                # the freshness/no-movement filters that keep the feed lively
-                # in-season, so after seen-suppression the user hits "all caught
-                # up" in ~a dozen cards (mostly golf). When the pool is thin,
-                # re-score ONCE with relaxed no-movement / no-resolution windows
-                # and merge in only the NEW markets — existing ones keep their
-                # original, un-penalized score. Fires only when thin, so the
-                # in-season pipeline is untouched.
-                if len(futures_items) < _THIN_FUTURES_POOL_FLOOR:
-                    relaxed = dict(discover_config or {})
-                    relaxed["stale_no_movement_days"] = max(
-                        float(relaxed.get("stale_no_movement_days", 2)) * 3, 7
-                    )
-                    relaxed["no_resolution_stale_days"] = max(
-                        float(relaxed.get("no_resolution_stale_days", 5)) * 2, 14
-                    )
-                    seen_ids = {
-                        (it.get("data") or {}).get("id") for it in futures_items
-                    }
-                    # The broaden pass is best-effort: if it exceeds the remaining
-                    # budget, keep the primary futures rather than losing them.
-                    try:
-                        broadened = await asyncio.wait_for(
-                            _score_futures(
-                                db,
-                                now,
-                                sport,
-                                ctx,
-                                my_teams_only=my_teams_only,
-                                my_team_names=my_team_names,
-                                my_team_sport_categories=my_team_sport_categories,
-                                tag_filter=dynamic_tag_filter or None,
-                                static_tag_filter=static_tag_filter or None,
-                                config=relaxed,
-                            ),
-                            timeout=_futures_budget_s(),
-                        )
-                    except asyncio.TimeoutError:
-                        broadened = []
-                        logger.warning(
-                            "Feed #1090 broaden: exceeded remaining budget — "
-                            "keeping primary futures (#1459)"
-                        )
-                    added = [
-                        it
-                        for it in broadened
-                        if (it.get("data") or {}).get("id") not in seen_ids
-                    ]
-                    if added:
-                        base_n = len(futures_items)
-                        futures_items = futures_items + added
-                        logger.info(
-                            "Feed #1090 broaden: thin pool %d < %d, relaxed pass "
-                            "added %d markets",
-                            base_n,
-                            _THIN_FUTURES_POOL_FLOOR,
-                            len(added),
-                        )
+        # Remove internal sort/debug keys
+        for item in paginated:
+            item.pop("_sort_time", None)
+            item.pop("_rank_score", None)
+            item.pop("_quality_class", None)
+            item.pop("_quality_family_key", None)
+            item.pop("_quality_story_key", None)
+            item.pop("_review_decision", None)
+            item.pop("_review_decision_scope", None)
+            item.pop("_review_decision_scope_key", None)
+            item.pop("_review_decision_penalty", None)
+            item.pop("_grouped_members", None)
 
-            feed_items.extend(_dedupe_futures_by_canonical(futures_items))
-        except asyncio.TimeoutError:
-            # Primary futures scoring exceeded the request budget — serve the
-            # events feed we already built rather than a 30s router H12 (#1459).
-            logger.warning(
-                "Feed: futures scoring exceeded the %dms request budget — serving "
-                "events-only partial feed (#1459)",
-                _rc.FEED_TOTAL_BUDGET_MS,
-            )
+        payload = {
+            "items": paginated,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total,
+        }
+
+        if my_teams_only:
+            payload["my_teams_only"] = True
+            if my_team_names:
+                payload["matched_teams"] = my_team_names
+
+        # Include personalization metadata if authenticated
+        if ctx.is_authenticated:
+            payload["personalized"] = True
+            payload["personalization"] = {
+                "team_count": len(ctx.team_relations),
+                "sport_affinities_count": len(ctx.sport_affinities),
+                "discover_category_affinities_count": len(ctx.discover_category_affinities),
+                "pinned_events": len(ctx.pinned_event_ids),
+                "pinned_futures": len(ctx.pinned_futures_ids),
+            }
+
+        if debug_payload is not None:
+            payload["debug_global"] = debug_global
+            if reviewed_filter is not None:
+                payload["reviewed_filter"] = reviewed_filter
+            payload["debug_summary"] = debug_payload["summary"]
+            payload["debug_items"] = debug_payload["items"]
+            payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
+            payload["missing_ground_truth_summary"] = debug_payload[
+                "missing_ground_truth_summary"
+            ]
+            payload["email_ground_truth"] = debug_payload["email_ground_truth"]
+            payload["email_ground_truth_misses"] = debug_payload[
+                "email_ground_truth_misses"
+            ]
+            payload["external_curator_ground_truth"] = debug_payload[
+                "external_curator_ground_truth"
+            ]
+            payload["external_curator_ground_truth_misses"] = debug_payload[
+                "external_curator_ground_truth_misses"
+            ]
+            payload["debug_timing"] = {
+                "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
+                "stages": _timings,
+            }
+
+        payload["cache"] = build_feed_cache_metadata(
+            _cache_status,
+            ttl_seconds=_cache_ttl if _cache_key else None,
+            stale_ttl_seconds=(
+                FEED_RESPONSE_STALE_TTL_SECONDS
+                if _cache_key or _cache_status == "miss"
+                else None
+            ),
+        )
+
+        # --- Publish the freshly built payload (Queue 271) ---
+        # Leader: record process-local last-good and hand the payload to any coalesced
+        # waiters BEFORE returning, so a Redis-down waiter still gets a real payload.
+        if _cache_key:
+            _rc.remember_last_good(_cache_key, payload)
+        if _is_build_leader and _sf_future is not None:
+            _rc.finish_build(_cache_key, _sf_future, result=payload)
+
+        # Redis publication runs detached so a slow/hung write never delays THIS
+        # response (the cache-write-stall seam). Both the fresh + :stale mirrors are
+        # written under a bounded op on the shared client.
+        if _cache_key and _shared_redis is not None:
             try:
-                await db.rollback()
+                _payload_json = _json_module.dumps(payload, default=str)
+
+                async def _publish_feed_cache(
+                    _client=_shared_redis, _json=_payload_json, _key=_cache_key
+                ):
+                    await _rc.bounded_redis_call(
+                        lambda: _client.setex(_key, _cache_ttl, _json)
+                    )
+                    await _rc.bounded_redis_call(
+                        lambda: _client.setex(
+                            f"{_key}:stale", FEED_RESPONSE_STALE_TTL_SECONDS, _json
+                        )
+                    )
+
+                _rc.schedule_background(_publish_feed_cache())
             except Exception:
                 pass
-        except Exception as e:
-            logger.error(
-                "Feed: futures scoring failed, returning partial feed: %s",
-                e,
-                exc_info=True,
-            )
-            import sentry_sdk
 
-            sentry_sdk.capture_exception(e)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
-
-    await _apply_manual_review_decisions(db, feed_items)
-    _previous_at = _record_feed_timing(
-        _timings, _started_at, _previous_at, "review_decisions"
-    )
-
-    # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
-    # A card whose every outcome reads 0% is never interesting (stale/settled
-    # markets that leaked with status='open'). Applied in every mode, before
-    # ranking, so no client can be served a dead card.
-    feed_items, _zero_dropped = _suppress_zero_probability_cards(feed_items)
-    if _zero_dropped:
-        logger.info("Feed: suppressed %d all-0%% probability card(s)", _zero_dropped)
-
-    # === RANK AND PAGINATE ===
-    # Sort by score descending, then by recency as tiebreaker
-    feed_items.sort(key=_rank_key, reverse=True)
-
-    # === DIVERSITY GUARANTEE ===
-    # Ensure the feed has a mix of events and futures.
-    # Without this, futures can dominate (they get "resolving soon" + "multi source"
-    # bonuses that events don't have).
-    # For anonymous users, enforce a stronger event bias (events are the core product).
-    # Skip diversity enforcement for my_teams_only — show everything matching.
-    # When event_pct is low (Discover mode), demote ordinary events so
-    # interesting futures can compete. A routine playoff game scores 100
-    # from live+close+tier but isn't more interesting than "Will China
-    # invade Taiwan?" for a Discover audience. Only truly exceptional
-    # events (strong EI or top-tier exception keywords) keep their score.
-    if event_pct is not None and event_pct < 0.3:
-        _demote_non_exceptional_discover_events(feed_items)
-        feed_items = _filter_discover_event_noise(feed_items)
-        # Re-sort after demotion so demoted events fall below high-scoring futures
-        feed_items.sort(
-            key=_rank_key, reverse=True
+        # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
+        # card-type-coverage export on the built (cold/degraded) response so an
+        # ordinary slow request localizes the contributing stage without the
+        # router-killing debug path. Queue 277 (#1475): counts are PAGE-scoped
+        # (over ``paginated``, the returned page) on every path — leader and a
+        # subsequent immediate hit are comparable by contract, sum(type_*) ==
+        # returned, with ``total`` carrying the full ranked count. This is the
+        # only path that may report singleflight=leader.
+        _finalize_feed_response(
+            response,
+            cache_status=_cache_status,
+            singleflight="leader" if _is_build_leader else "none",
+            timings=_timings,
+            started_at=_started_at,
+            counts=_feed_obs_counts(
+                paginated, total=total, returned=len(paginated)
+            ),
         )
-        feed_items = balance_discover_event_category_mix(feed_items)
-
-    if not my_teams_only:
-        if event_pct is not None and event_pct < 0.2:
-            pass  # Discover mode: let scores decide, no artificial event promotion
-        else:
-            _epct = 0.6 if not ctx.is_authenticated else 0.4
-            feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
-
-    if not my_teams_only and (
-        (event_pct is not None and event_pct < 0.3) or not include_events
-    ):
-        _is_cold_start = not ctx.discover_category_affinities
-        feed_items = diversify_discover_first_page(
-            feed_items, first_page_size=min(20, limit),
-            cold_start=_is_cold_start,
-        )
-        feed_items = backfill_discover_editorial_tail(
-            feed_items,
-            window_size=min(50, len(feed_items)),
-            preserve_top=min(20, len(feed_items)),
-        )
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
-
-    reviewed_filter = None
-    if exclude_reviewed:
-        # Resolve reviewer: when "native" and authenticated via Bearer token,
-        # use the admin's email for per-user reviewed state.
-        effective_reviewer = reviewer
-        if reviewer == "native":
-            admin_email = await _resolve_admin_email(request, db)
-            if admin_email:
-                effective_reviewer = admin_email
-
-        reviewed_keys = await _load_reviewed_ranking_keys(
-            db,
-            reviewer=effective_reviewer,
-            surface=reviewed_surface,
-        )
-        feed_items, reviewed_filtered_count = _filter_reviewed_feed_items(
-            feed_items,
-            reviewed_keys,
-        )
-        reviewed_filter = {
-            "enabled": True,
-            "reviewer": effective_reviewer,
-            "surface": reviewed_surface,
-            "reviewed_key_count": len(reviewed_keys),
-            "filtered_count": reviewed_filtered_count,
-        }
-    _previous_at = _record_feed_timing(
-        _timings, _started_at, _previous_at, "reviewed_filter"
-    )
-
-    if not my_teams_only and (
-        (event_pct is not None and event_pct < 0.3) or not include_events
-    ):
-        feed_items = assemble_discover_comparison_bundles(feed_items)
-        feed_items = assemble_geopolitics_theme_bundles(feed_items)
-        feed_items = assemble_awards_theme_bundles(feed_items)
-        # #948 (slice 6): fold the biggest guarded 24h movers into one
-        # "Today's biggest swings" bundle (Discover-mode only; in-feed fold).
-        feed_items = assemble_swings_theme_bundles(feed_items)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "bundles")
-
-    # === MARQUEE PINNING (Queue #223 Item 2) ===
-    # Calendar-flagged marquee concepts/tournaments that are IN PROGRESS pin to the
-    # very top — the last word on ordering, after every score/diversity/bundle pass,
-    # so The Open / World Cup top-slot failure class dies. Pure stable reorder: it
-    # touches no score and can never empty the feed (gotcha #42/#43).
-    feed_items = _pin_marquee_items(feed_items)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "marquee_pin")
-
-    total = len(feed_items)
-    paginated = feed_items[offset : offset + limit]
-
-    debug_payload = None
-    if debug:
-        email_ground_truth_items: list[dict] = []
-        external_curator_items: list[dict] = []
-        ground_truth_items = load_default_ground_truth_items()
-        if debug_ground_truth:
-            email_ground_truth_report = await asyncio.to_thread(
-                load_polymarket_email_ground_truth_report_from_env,
-                now=now,
-            )
-            external_curator_report = await asyncio.to_thread(
-                load_external_curator_ground_truth_report_from_env,
-                now=now,
-            )
-            persisted_external_curator_report = (
-                await load_persisted_external_curator_ground_truth_report(db, now=now)
-            )
-            external_curator_report = merge_external_curator_ground_truth_reports(
-                [external_curator_report, persisted_external_curator_report],
-                now=now,
-            )
-            email_ground_truth_items = email_ground_truth_report["items"]
-            external_curator_items = external_curator_report["items"]
-            ground_truth_items = (
-                ground_truth_items + email_ground_truth_items + external_curator_items
-            )
-        debug_payload = build_feed_quality_debug(
-            paginated,
-            ground_truth_items=ground_truth_items,
-            top_n=min(20, len(paginated)),
-        )
-        if debug_ground_truth:
-            await _attach_missing_ground_truth_traces(
-                db, debug_payload["missing_ground_truth"], now
-            )
-            debug_payload["missing_ground_truth_summary"] = (
-                apply_db_trace_missing_ground_truth_triage(
-                    debug_payload["missing_ground_truth"]
-                )
-            )
-            email_missing_ground_truth = find_missing_ground_truth_items(
-                debug_payload["items"],
-                email_ground_truth_items,
-                limit=80,
-            )
-            await _attach_missing_ground_truth_traces(
-                db, email_missing_ground_truth, now
-            )
-            email_missing_ground_truth_summary = (
-                apply_db_trace_missing_ground_truth_triage(email_missing_ground_truth)
-            )
-            email_metadata = email_ground_truth_report["metadata"]
-            email_summary = summarize_polymarket_email_ground_truth(
-                debug_payload["items"],
-                email_ground_truth_items,
-            )
-            debug_payload["email_ground_truth"] = {
-                **email_metadata,
-                "total": email_summary["total"],
-                "top20_hits": email_summary["top20_hits"],
-                "top50_hits": email_summary["top50_hits"],
-                "missing": email_summary["missing"],
-                "hit_rate_50": email_summary["hit_rate_50"],
-                "hits": email_summary["hits"][:20],
-                "missing_items": email_summary["missing_items"][:50],
-                "db_trace_bucket_counts": email_missing_ground_truth_summary[
-                    "bucket_counts"
-                ],
-            }
-            debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
-            external_curator_missing = find_missing_ground_truth_items(
-                debug_payload["items"],
-                external_curator_items,
-                limit=80,
-            )
-            await _attach_missing_ground_truth_traces(db, external_curator_missing, now)
-            external_curator_missing_summary = (
-                apply_db_trace_missing_ground_truth_triage(external_curator_missing)
-            )
-            external_summary = summarize_polymarket_email_ground_truth(
-                debug_payload["items"],
-                external_curator_items,
-            )
-            debug_payload["external_curator_ground_truth"] = {
-                **external_curator_report["metadata"],
-                "total": external_summary["total"],
-                "top20_hits": external_summary["top20_hits"],
-                "top50_hits": external_summary["top50_hits"],
-                "missing": external_summary["missing"],
-                "hit_rate_50": external_summary["hit_rate_50"],
-                "hits": external_summary["hits"][:20],
-                "missing_items": external_summary["missing_items"][:50],
-                "db_trace_bucket_counts": external_curator_missing_summary[
-                    "bucket_counts"
-                ],
-            }
-            debug_payload["external_curator_ground_truth_misses"] = (
-                external_curator_missing
-            )
-        else:
-            empty_ground_truth = {
-                "total": 0,
-                "top20_hits": 0,
-                "top50_hits": 0,
-                "missing": 0,
-                "hit_rate_50": 0,
-                "hits": [],
-                "missing_items": [],
-                "db_trace_bucket_counts": {},
-                "skipped": True,
-            }
-            debug_payload["email_ground_truth"] = empty_ground_truth
-            debug_payload["email_ground_truth_misses"] = []
-            debug_payload["external_curator_ground_truth"] = empty_ground_truth
-            debug_payload["external_curator_ground_truth_misses"] = []
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
-
-    # Remove internal sort/debug keys
-    for item in paginated:
-        item.pop("_sort_time", None)
-        item.pop("_rank_score", None)
-        item.pop("_quality_class", None)
-        item.pop("_quality_family_key", None)
-        item.pop("_quality_story_key", None)
-        item.pop("_review_decision", None)
-        item.pop("_review_decision_scope", None)
-        item.pop("_review_decision_scope_key", None)
-        item.pop("_review_decision_penalty", None)
-        item.pop("_grouped_members", None)
-
-    payload = {
-        "items": paginated,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": (offset + limit) < total,
-    }
-
-    if my_teams_only:
-        payload["my_teams_only"] = True
-        if my_team_names:
-            payload["matched_teams"] = my_team_names
-
-    # Include personalization metadata if authenticated
-    if ctx.is_authenticated:
-        payload["personalized"] = True
-        payload["personalization"] = {
-            "team_count": len(ctx.team_relations),
-            "sport_affinities_count": len(ctx.sport_affinities),
-            "discover_category_affinities_count": len(ctx.discover_category_affinities),
-            "pinned_events": len(ctx.pinned_event_ids),
-            "pinned_futures": len(ctx.pinned_futures_ids),
-        }
-
-    if debug_payload is not None:
-        payload["debug_global"] = debug_global
-        if reviewed_filter is not None:
-            payload["reviewed_filter"] = reviewed_filter
-        payload["debug_summary"] = debug_payload["summary"]
-        payload["debug_items"] = debug_payload["items"]
-        payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
-        payload["missing_ground_truth_summary"] = debug_payload[
-            "missing_ground_truth_summary"
-        ]
-        payload["email_ground_truth"] = debug_payload["email_ground_truth"]
-        payload["email_ground_truth_misses"] = debug_payload[
-            "email_ground_truth_misses"
-        ]
-        payload["external_curator_ground_truth"] = debug_payload[
-            "external_curator_ground_truth"
-        ]
-        payload["external_curator_ground_truth_misses"] = debug_payload[
-            "external_curator_ground_truth_misses"
-        ]
-        payload["debug_timing"] = {
-            "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
-            "stages": _timings,
-        }
-
-    payload["cache"] = build_feed_cache_metadata(
-        _cache_status,
-        ttl_seconds=_cache_ttl if _cache_key else None,
-        stale_ttl_seconds=(
-            FEED_RESPONSE_STALE_TTL_SECONDS
-            if _cache_key or _cache_status == "miss"
-            else None
-        ),
-    )
-
-    # --- Publish the freshly built payload (Queue 271) ---
-    # Leader: record process-local last-good and hand the payload to any coalesced
-    # waiters BEFORE returning, so a Redis-down waiter still gets a real payload.
-    if _cache_key:
-        _rc.remember_last_good(_cache_key, payload)
-    if _is_build_leader and _sf_future is not None:
-        _rc.finish_build(_cache_key, _sf_future, result=payload)
-
-    # Redis publication runs detached so a slow/hung write never delays THIS
-    # response (the cache-write-stall seam). Both the fresh + :stale mirrors are
-    # written under a bounded op on the shared client.
-    if _cache_key and _shared_redis is not None:
-        try:
-            _payload_json = _json_module.dumps(payload, default=str)
-
-            async def _publish_feed_cache(
-                _client=_shared_redis, _json=_payload_json, _key=_cache_key
-            ):
-                await _rc.bounded_redis_call(
-                    lambda: _client.setex(_key, _cache_ttl, _json)
-                )
-                await _rc.bounded_redis_call(
-                    lambda: _client.setex(
-                        f"{_key}:stale", FEED_RESPONSE_STALE_TTL_SECONDS, _json
-                    )
-                )
-
-            _rc.schedule_background(_publish_feed_cache())
-        except Exception:
-            pass
-
-    # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
-    # card-type-coverage export on the built (cold/degraded) response so an
-    # ordinary slow request localizes the contributing stage without the
-    # router-killing debug path. Counts run over the FULL ranked feed_items
-    # (not the paginated page) so type coverage reflects the whole build. This is
-    # the only path that may report singleflight=leader.
-    _finalize_feed_response(
-        response,
-        cache_status=_cache_status,
-        singleflight="leader" if _is_build_leader else "none",
-        timings=_timings,
-        started_at=_started_at,
-        counts=_feed_obs_counts(
-            feed_items, total=total, returned=len(paginated)
-        ),
-    )
-    return payload
+        return payload
+    except BaseException:
+        # Release any coalescing waiters (result=None → they fall back to
+        # last-good or a fresh takeover) and remove the exact installed
+        # future; idempotent if the normal path already resolved it.
+        # Cancellation is re-raised, never swallowed.
+        if _is_build_leader and _sf_future is not None:
+            _rc.finish_build(_cache_key, _sf_future, result=None)
+        raise
 
 
 def _apply_manual_review_decision_map(

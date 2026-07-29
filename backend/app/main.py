@@ -122,10 +122,10 @@ app.add_middleware(
     # per-request by routes/feed.py (_set_feed_timing_header /
     # _set_feed_cache_status / _finalize_feed_response) and power browser-visible
     # latency telemetry.
-    # Queue 275 (#1475): X-Feed-Stages / X-Feed-Counts / X-Feed-Singleflight are
-    # the identity-free stage/coverage/singleflight diagnostics emitted on EVERY
-    # feed return path; expose them so a browser field debugger can read all
-    # seven feed/request headers cross-origin.
+    # Queue 275/277 (#1475): X-Feed-Stages / X-Feed-Counts / X-Feed-Count-Scope /
+    # X-Feed-Singleflight are the identity-free stage/coverage/scope/singleflight
+    # diagnostics emitted on EVERY feed return path; expose them so a browser
+    # field debugger can read all feed/request headers cross-origin.
     expose_headers=[
         "X-Response-Time",
         "X-Request-ID",
@@ -133,6 +133,7 @@ app.add_middleware(
         "X-Feed-Cache",
         "X-Feed-Stages",
         "X-Feed-Counts",
+        "X-Feed-Count-Scope",
         "X-Feed-Singleflight",
     ],
 )

@@ -68,3 +68,60 @@ def test_finalizer_none_cache_status_leaves_x_feed_cache_unset():
     assert "X-Feed-Cache" not in resp.headers
     assert resp.headers["X-Feed-Singleflight"] == "none"
     assert "X-Feed-Counts" in resp.headers
+
+
+# --- Queue 277 (#1475): inert, comparable diagnostics ------------------------
+import pytest
+
+
+@pytest.mark.parametrize(
+    "items,total,returned",
+    [
+        ([None], 1, 1),  # element is None → it.get would AttributeError
+        ([{"type": "event"}, 5, "x"], 3, 3),  # mixed non-dict elements
+        ({"not": "a list"}, 2, 2),  # items is a dict, not a list
+        (5, 1, 1),  # items is an int
+        ([{"type": "event"}], None, None),  # total/returned null
+        ([{"type": "event"}], "3", "1"),  # numeric strings
+    ],
+)
+def test_feed_obs_counts_never_throws_on_malformed_payload(items, total, returned):
+    """Count extraction must be independently non-throwing: a malformed or old
+    cached payload can never raise out of the diagnostics path and divert the
+    response into a cold build (the C69 observer effect)."""
+    counts = _feed_obs_counts(items, total=total, returned=returned)
+    assert isinstance(counts, dict)
+    # total/returned are always coerced to ints, never left as None/str.
+    assert isinstance(counts["total"], int)
+    assert isinstance(counts["returned"], int)
+    # every emitted value is a plain int so the header formatter cannot throw.
+    assert all(isinstance(v, int) for v in counts.values())
+
+
+def test_feed_obs_counts_scope_is_comparable_leader_vs_hit():
+    """Leader and immediate-hit counts must be comparable by contract: type_*
+    breakdown is page-scoped on every path, so sum(type_*) == returned even when
+    total > returned (a paginated feed)."""
+    page = [{"type": "event"}, {"type": "futures"}, {"type": "event"}]
+    # Leader: full feed has 100 items, page returned 3.
+    leader = _feed_obs_counts(page, total=100, returned=3)
+    # Immediate hit reading the same cached page.
+    hit = _feed_obs_counts(page, total=100, returned=3)
+    assert leader == hit
+    type_sum = sum(v for k, v in leader.items() if k.startswith("type_"))
+    assert type_sum == leader["returned"] == 3
+    assert leader["total"] == 100  # total > returned preserved
+
+
+def test_finalizer_emits_fixed_count_scope_header():
+    resp = _Resp()
+    _finalize_feed_response(
+        resp,
+        cache_status="leader",
+        singleflight="leader",
+        timings=[],
+        started_at=__import__("time").perf_counter(),
+        counts=_feed_obs_counts([{"type": "event"}], total=10, returned=1),
+    )
+    # One explicit, machine-readable scope indicator on every path.
+    assert resp.headers["X-Feed-Count-Scope"] == "page"

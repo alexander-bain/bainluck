@@ -217,15 +217,22 @@ def _reset_last_good_for_tests() -> None:
 # a user boundary.
 _inflight: dict[str, "asyncio.Future[Any]"] = {}
 
+# A waiter that can neither coalesce nor serve last-good takes over the stale
+# slot. This bounds how many take-over/coalesce rounds it attempts before it
+# force-owns a fresh build, so a pathological churn of dying leaders can never
+# spin the request instead of returning.
+MAX_WAITER_TAKEOVER_ROUNDS = _env_int("REQUEST_MAX_TAKEOVER_ROUNDS", 3)
+
 
 def begin_build(key: str) -> tuple[bool, "asyncio.Future[Any]"]:
     """Claim or join the build for ``key``.
 
-    Returns ``(is_leader, future)``. The leader MUST later call
-    ``finish_build(key, future, ...)`` exactly once. Waiters await ``future``
-    (the caller bounds the wait so a dead/cancelled leader can never orphan
-    them — an unresolved future simply times out on the waiter side and it
-    becomes a leader).
+    Returns ``(is_leader, future)``. The leader MUST later resolve its slot
+    exactly once via ``finish_build(key, future, ...)`` on EVERY exit — success,
+    exception, AND cancellation — so a dead leader never leaves an unresolved
+    future installed. Waiters await ``future`` (the caller bounds the wait); a
+    waiter whose wait times out on a stale/dead leader recovers via
+    ``takeover_build`` rather than re-joining the same poisoned future.
     """
     fut = _inflight.get(key)
     if fut is not None and not fut.done():
@@ -236,6 +243,50 @@ def begin_build(key: str) -> tuple[bool, "asyncio.Future[Any]"]:
     return True, fut
 
 
+def takeover_build(
+    key: str, prior: "asyncio.Future[Any]"
+) -> tuple[bool, "asyncio.Future[Any]"]:
+    """Atomically claim leadership after a bounded wait on ``prior`` timed out.
+
+    Compare-and-takeover: this runs synchronously (single-threaded event loop),
+    so the read-then-swap cannot interleave with another caller.
+
+    * If the slot still holds ``prior`` (the future we waited on), or holds a
+      done/absent future, install a FRESH future and return ``(True, new)`` —
+      the caller now owns the replacement and may build.
+    * If the slot holds a DIFFERENT live future (another waiter already took
+      over), return ``(False, that_future)`` — the caller becomes a waiter on
+      the new owner instead of starting a duplicate build.
+
+    Guarantees at most one current owner per process/key. The abandoned
+    ``prior`` future is never resolved or removed here; a late original leader
+    that eventually completes touches only its own (now-orphaned) future via
+    ``finish_build``'s identity guard, never the replacement's slot.
+    """
+    current = _inflight.get(key)
+    if current is not None and current is not prior and not current.done():
+        return False, current
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    _inflight[key] = fut
+    return True, fut
+
+
+def force_build(key: str) -> "asyncio.Future[Any]":
+    """Unconditionally install a fresh future and return it as the owner.
+
+    Liveness escape hatch for a waiter that could neither coalesce nor take over
+    within its bounded rounds: it guarantees the caller can build and return a
+    fresh payload rather than hang. Any pre-existing future is abandoned (a late
+    original leader touches only its own future via ``finish_build``'s identity
+    guard), so the invariant "the installed future has exactly one owner" holds.
+    """
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    _inflight[key] = fut
+    return fut
+
+
 def finish_build(
     key: str,
     future: "asyncio.Future[Any]",
@@ -243,7 +294,14 @@ def finish_build(
     result: Any = None,
     exc: Optional[BaseException] = None,
 ) -> None:
-    """Resolve the leader's future and clear the in-flight slot."""
+    """Resolve ``future`` once and clear the slot iff it still holds ``future``.
+
+    Safe to call on every leader exit path (success/exception/cancellation) and
+    idempotent: a second call after the future is already resolved is a no-op.
+    The slot is popped ONLY when ``_inflight[key]`` is still the exact
+    ``future`` passed in — so a late original leader can never remove a
+    replacement owner's slot after a takeover.
+    """
     if future is not None and not future.done():
         if exc is not None:
             future.set_exception(exc)
