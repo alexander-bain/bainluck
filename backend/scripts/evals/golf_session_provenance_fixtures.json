@@ -1,0 +1,27 @@
+{
+  "schema_version": "golf-session-provenance/v1",
+  "audited_commit": "2b46d6798f1b540262fd7477f0d216e58fae3bbc",
+  "allowed_provenance": ["fresh", "last_good", "inline", "unavailable"],
+  "scenarios": [
+    {"id":"l0_fresh","tier":"l0_fresh","provenance":"fresh","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"redis_fresh","tier":"redis_fresh","provenance":"fresh","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"redis_301s","tier":"redis_stale","provenance":"last_good","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"durable_last_good","tier":"durable_last_good","provenance":"last_good","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"warm_process_last_good","tier":"process_last_good","provenance":"last_good","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"inline_success_request_session","tier":"inline","provenance":"inline","observable":true,"session_state":"clean","db_mutated":true,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"inline_provider_error_before_db","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"inline_sql_timeout_rollback","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"rolled_back","db_mutated":true,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"inline_sql_timeout_isolated_session","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"isolated_fill_session","db_mutated":true,"later_queries":true,"signal_fields":["provenance"]},
+    {"id":"caller_cancel_rollback_then_reraise","tier":"cancelled","provenance":"unavailable","observable":true,"session_state":"rolled_back","db_mutated":true,"later_queries":false,"signal_fields":["provenance"]},
+    {"id":"rollback_failure_stops_feed_db","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"rollback_failed","db_mutated":true,"later_queries":false,"signal_fields":["provenance"]},
+    {"id":"unavailable_no_db_attempt","tier":"unavailable","provenance":"unavailable","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"]}
+  ],
+  "rejected_counterexamples": [
+    {"id":"timeout_continue_without_rollback","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"statement_cancelled","db_mutated":true,"later_queries":true,"signal_fields":["provenance"],"expected_violations":["dirty_session_reused"]},
+    {"id":"rollback_failed_but_continue","tier":"inline_error","provenance":"unavailable","observable":true,"session_state":"rollback_failed","db_mutated":true,"later_queries":true,"signal_fields":["provenance"],"expected_violations":["rollback_failure_reused"]},
+    {"id":"inline_labeled_fresh","tier":"inline","provenance":"fresh","observable":true,"session_state":"clean","db_mutated":true,"later_queries":true,"signal_fields":["provenance"],"expected_violations":["provenance_tier_mismatch"]},
+    {"id":"stale_labeled_fresh","tier":"redis_stale","provenance":"fresh","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance"],"expected_violations":["provenance_tier_mismatch"]},
+    {"id":"l0_provenance_hidden","tier":"l0_fresh","provenance":"fresh","observable":false,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":[],"expected_violations":["provenance_not_observable"]},
+    {"id":"identity_bearing_signal","tier":"redis_fresh","provenance":"fresh:user_42","observable":true,"session_state":"clean","db_mutated":false,"later_queries":true,"signal_fields":["provenance","user_id"],"expected_violations":["invalid_provenance","identity_bearing_signal"]}
+  ]
+}
