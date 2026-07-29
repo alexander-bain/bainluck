@@ -57,8 +57,23 @@ class TestSuppressZeroProbabilityCards:
         assert dropped == 0
         assert len(kept) == 1
 
-    def test_keeps_card_with_no_evaluable_outcomes(self):
+    def test_drops_open_card_with_no_evaluable_outcomes(self):
+        # Queue 282 / C79: an open futures card with no renderable outcome
+        # predicts nothing and must be dropped (previously it was kept).
         items = [{"type": "futures", "data": {"outcomes": []}}]
+        kept, dropped = _suppress_zero_probability_cards(items)
+        assert dropped == 1
+        assert len(kept) == 0
+
+    def test_keeps_settled_result_first_card_with_no_live_line(self):
+        # A resolved envelope renders its winner, not a live probability — it is
+        # never suppressed for lacking a live outcome (C79).
+        items = [
+            {
+                "type": "futures",
+                "data": {"outcomes": [], "resolved": True, "winner": "Team A"},
+            }
+        ]
         kept, dropped = _suppress_zero_probability_cards(items)
         assert dropped == 0
         assert len(kept) == 1

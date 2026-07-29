@@ -249,17 +249,36 @@ async def test_google_access_token_rejects_invalid_token(client, monkeypatch):
     assert "Invalid Google access token" in resp.json()["detail"]
 
 
+# A valid same-project (bainluck-26a47) OAuth client id — passes the deploy-safe
+# audience default without needing GOOGLE_OAUTH_CLIENT_IDS set (Queue 282).
+_VALID_GOOGLE_AUD = "899260594814-web.apps.googleusercontent.com"
+
+
+def _tokeninfo_ok(aud=_VALID_GOOGLE_AUD):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"aud": aud, "azp": aud}
+    return resp
+
+
+def _dispatch_google_get(tokeninfo_resp, userinfo_resp):
+    """Return an async httpx.get stub that routes tokeninfo vs userinfo."""
+    async def _mock_get(url, *args, **kwargs):
+        return tokeninfo_resp if "tokeninfo" in url else userinfo_resp
+    return _mock_get
+
+
 @pytest.mark.asyncio
 async def test_google_access_token_rejects_missing_email(client, monkeypatch):
     """Access token exchange should return 400 when Google response has no email."""
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"name": "Test", "sub": "123"}  # no email
+    userinfo = MagicMock()
+    userinfo.status_code = 200
+    userinfo.json.return_value = {"name": "Test", "sub": "123"}  # no email
 
-    async def _mock_get(*args, **kwargs):
-        return mock_response
-
-    with patch("httpx.AsyncClient.get", side_effect=_mock_get):
+    with patch(
+        "httpx.AsyncClient.get",
+        side_effect=_dispatch_google_get(_tokeninfo_ok(), userinfo),
+    ):
         resp = await client.post(
             "/api/auth/google-access-token",
             json={"access_token": "no-email-token"},
@@ -270,18 +289,58 @@ async def test_google_access_token_rejects_missing_email(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_google_access_token_rejects_wrong_audience(client, monkeypatch):
+    """A token minted for a different GCP project (confused deputy) is 401."""
+    userinfo = MagicMock()
+    userinfo.status_code = 200
+    userinfo.json.return_value = {"email": "a@b.com", "email_verified": True}
+
+    with patch(
+        "httpx.AsyncClient.get",
+        side_effect=_dispatch_google_get(
+            _tokeninfo_ok(aud="111111111111-other.apps.googleusercontent.com"),
+            userinfo,
+        ),
+    ):
+        resp = await client.post(
+            "/api/auth/google-access-token",
+            json={"access_token": "cross-project-token"},
+        )
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_google_access_token_rejects_unverified_email(client, monkeypatch):
+    """An unverified Google email cannot become account identity (401)."""
+    userinfo = MagicMock()
+    userinfo.status_code = 200
+    userinfo.json.return_value = {"email": "a@b.com", "email_verified": False}
+
+    with patch(
+        "httpx.AsyncClient.get",
+        side_effect=_dispatch_google_get(_tokeninfo_ok(), userinfo),
+    ):
+        resp = await client.post(
+            "/api/auth/google-access-token",
+            json={"access_token": "unverified-token"},
+        )
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_google_access_token_success(client, mock_db, monkeypatch):
     """Successful access-token exchange returns custom_token and user shape."""
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
+    userinfo = MagicMock()
+    userinfo.status_code = 200
+    userinfo.json.return_value = {
         "email": "test@example.com",
+        "email_verified": True,
         "name": "Test User",
         "picture": "https://example.com/photo.jpg",
     }
-
-    async def _mock_get(*args, **kwargs):
-        return mock_response
+    _mock_get = _dispatch_google_get(_tokeninfo_ok(), userinfo)
 
     user = _make_user()
     mock_db.execute.return_value = _make_mock_result(scalar_one_or_none_value=user)

@@ -986,34 +986,57 @@ def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
 
 
 def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict], int]:
-    """Drop futures/comparison cards whose entire outcome set reads 0% — a
-    guaranteed-interesting violation (#240 Item 4). These are typically stale or
-    settled markets that leaked into the feed with status still 'open' (gotcha
-    #33): e.g. post-tournament golf FIELD markets where every non-winner outcome
-    settled to 0 but the market was never marked resolved. A card with no positive
-    probability tells the reader nothing (Alex's "3 consecutive golf cards at 0%").
+    """Drop non-predictive futures/comparison cards — a guaranteed-interesting
+    violation (#240 Item 4; extended by Queue 282 / C79).
+
+    A LIVE prediction card must have at least one card-renderable outcome carrying
+    a non-null, positive probability. Two failure modes are suppressed:
+
+    * ALL-0% cards (#240 Item 4): typically stale/settled markets that leaked with
+      status still 'open' (gotcha #33) — e.g. post-tournament golf FIELD markets
+      where every non-winner outcome settled to 0 (Alex's "3 consecutive golf
+      cards at 0%").
+    * EMPTY / all-null cards (C79): an open tournament/concept envelope with no
+      outcomes, or outcomes whose probabilities are all null, renders as a bare
+      live card that predicts nothing. These are now dropped too (previously an
+      unevaluable card was kept).
+
+    Result-first SETTLED envelopes are preserved: a resolved concept/tournament
+    intentionally renders its winner rather than a live probability, so a card
+    marked ``resolved``/carrying a ``winner`` is never suppressed here. We do NOT
+    treat a near-100% price as settlement authority — only the explicit resolved
+    signal counts (C79 reject_price_only_settlement).
 
     Events are never suppressed here — a game at 0% home probability is a
-    near-certain away win, still a real story. Only futures/comparison cards whose
-    known outcomes are ALL zero/None are dropped; a card we can't evaluate (no
-    outcomes present) is kept.
+    near-certain away win, still a real story.
     """
     kept: list[dict] = []
     dropped = 0
     for item in feed_items:
         if item.get("type") in ("futures", "comparison"):
             data = item.get("data") or {}
-            outcomes = data.get("outcomes") or []
+            # Result-first settled envelopes render a winner, not a live line.
+            if data.get("resolved") or data.get("winner"):
+                kept.append(item)
+                continue
+            # Probabilities live under either "outcomes" (comparison cards) or
+            # "top_outcomes" (the standard futures serialization) — check both so
+            # a valid top_outcomes card is never mistaken for empty.
+            renderable = (data.get("outcomes") or []) + (
+                data.get("top_outcomes") or []
+            )
             leader = data.get("leader_probability")
             probs = [
                 o.get("probability")
-                for o in outcomes
+                for o in renderable
                 if isinstance(o, dict) and o.get("probability") is not None
             ]
             has_positive = any((p or 0) > 0 for p in probs) or (
                 leader is not None and leader > 0
             )
-            if outcomes and not has_positive:
+            # An open card with no renderable positive-probability outcome —
+            # whether all-0%, all-null, or empty — predicts nothing: drop it.
+            if not has_positive:
                 dropped += 1
                 continue
         kept.append(item)

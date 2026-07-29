@@ -62,6 +62,76 @@ class UpdateProfileRequest(BaseModel):
     display_name: Optional[str] = None
 
 
+# --- Google access-token audience validation (Queue 282 / C78) ---
+#
+# The confused-deputy fix. Google's userinfo endpoint accepts an access token
+# minted for ANY Google OAuth client, so verifying a token with userinfo alone
+# lets a token issued to a third party's app mint a Bain Luck session. Before any
+# Firebase/DB/token side effect we introspect the token server-side (tokeninfo,
+# which — unlike userinfo — returns the client binding aud/azp) and require the
+# audience to belong to one of our own OAuth clients.
+#
+# Preferred source of truth is the server-owned GOOGLE_OAUTH_CLIENT_IDS allowlist
+# (comma-separated web + iOS client IDs). When that is unset we fall back to a
+# deploy-safe default: accept only client IDs from our own Google Cloud project
+# (the project-number prefix below, sourced from the committed
+# ios/.../GoogleService-Info.plist CLIENT_ID). That still rejects every
+# cross-project (confused-deputy) token while keeping sign-in working before the
+# allowlist is configured. A request-supplied client ID is NEVER trusted.
+_GOOGLE_PROJECT_CLIENT_PREFIX = "899260594814-"
+_GOOGLE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
+_GOOGLE_HTTP_TIMEOUT = 8.0  # seconds; bounds each Google introspection call
+
+
+def _google_oauth_client_allowlist() -> set[str]:
+    """Server-owned set of accepted Google OAuth client IDs (may be empty)."""
+    raw = os.getenv("GOOGLE_OAUTH_CLIENT_IDS", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _google_client_id_trusted(client_id: Optional[str]) -> bool:
+    """True only when ``client_id`` is one of our own OAuth clients.
+
+    Uses the explicit allowlist when configured; otherwise falls back to the
+    same-project prefix default. Never accepts a missing/empty client id.
+    """
+    if not client_id or not isinstance(client_id, str):
+        return False
+    allowlist = _google_oauth_client_allowlist()
+    if allowlist:
+        return client_id in allowlist
+    return client_id.startswith(_GOOGLE_PROJECT_CLIENT_PREFIX) and client_id.endswith(
+        _GOOGLE_CLIENT_ID_SUFFIX
+    )
+
+
+def _google_audience_ok(aud: Optional[str], azp: Optional[str]) -> bool:
+    """Validate the introspected client binding.
+
+    The token's audience (``aud``) must be one of our clients, and when the
+    authorized party (``azp``) is present it must be one of ours too — an
+    ``azp`` naming a different client is a mismatch even if ``aud`` is ours.
+    """
+    if not _google_client_id_trusted(aud):
+        return False
+    if azp and not _google_client_id_trusted(azp):
+        return False
+    return True
+
+
+def _google_email_verified(userinfo: dict) -> bool:
+    """Whether Google reports the profile email as verified.
+
+    v3 userinfo returns ``email_verified`` as a bool; tolerate the string form.
+    """
+    val = userinfo.get("email_verified")
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in {"1", "true", "yes"}
+    return False
+
+
 # --- Endpoints ---
 
 class EmailSignInRequest(BaseModel):
@@ -301,11 +371,70 @@ async def google_access_token_sign_in(
     """
     import httpx
 
-    # Verify the access token with Google's userinfo endpoint
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {body.access_token}"},
+    access_token = body.access_token
+
+    # === Step 1: introspect the access token audience BEFORE any side effect ===
+    # (Queue 282 / C78 confused-deputy fix). tokeninfo returns the client binding
+    # (aud/azp); userinfo does not. Reject a token that was not minted for one of
+    # our own OAuth clients before touching Firebase, the database, or any token
+    # mint. Never log the raw token or the introspection payload.
+    try:
+        async with httpx.AsyncClient(timeout=_GOOGLE_HTTP_TIMEOUT) as client:
+            tok_resp = await client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"access_token": access_token},
+            )
+    except httpx.HTTPError:
+        # Transport failure reaching Google — retryable, no side effect taken.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify Google token",
+        )
+
+    if tok_resp.status_code != 200:
+        # Non-2xx from tokeninfo means the token is invalid/expired/revoked.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google access token",
+        )
+
+    try:
+        tokeninfo = tok_resp.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google access token",
+        )
+
+    if not isinstance(tokeninfo, dict) or tokeninfo.get("error") or tokeninfo.get(
+        "error_description"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google access token",
+        )
+
+    if not _google_audience_ok(tokeninfo.get("aud"), tokeninfo.get("azp")):
+        # Do not leak the offending client id — just refuse the confused deputy.
+        logger.warning(
+            "Google access-token rejected: audience not in server allowlist"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token audience not recognized",
+        )
+
+    # === Step 2: fetch the profile and require a verified email ===
+    try:
+        async with httpx.AsyncClient(timeout=_GOOGLE_HTTP_TIMEOUT) as client:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify Google token",
         )
 
     if resp.status_code != 200:
@@ -314,7 +443,19 @@ async def google_access_token_sign_in(
             detail="Invalid Google access token",
         )
 
-    userinfo = resp.json()
+    try:
+        userinfo = resp.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google access token",
+        )
+    if not isinstance(userinfo, dict):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google access token",
+        )
+
     email = userinfo.get("email")
     name = userinfo.get("name")
     picture = userinfo.get("picture")
@@ -323,6 +464,14 @@ async def google_access_token_sign_in(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google token missing email",
+        )
+
+    # Email is account identity here — only trust Google's verified signal.
+    if not _google_email_verified(userinfo):
+        logger.warning("Google access-token rejected: email not verified")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google email not verified",
         )
 
     # Get or create Firebase user (uses email lookup to match existing accounts)

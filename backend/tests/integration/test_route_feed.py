@@ -250,11 +250,23 @@ class TestFeedMockedDataContract:
     async def test_mocked_items_are_sorted_and_paginated_after_scoring(self, client, monkeypatch):
         from app.routes import feed
 
+        # Each stub carries a renderable positive probability so it is a valid
+        # live card (Queue 282 / C79: an open futures card with no renderable
+        # probability is suppressed before ranking).
+        def _stub(id, score, reason, headline):
+            return {
+                "type": "futures",
+                "score": score,
+                "reason": reason,
+                "headline": headline,
+                "data": {"id": id, "top_outcomes": [{"name": "Yes", "probability": 0.6}]},
+            }
+
         async def fake_score_futures(*args, **kwargs):
             return [
-                {"type": "futures", "score": 10, "reason": "low", "headline": "Low", "data": {"id": 1}},
-                {"type": "futures", "score": 90, "reason": "high", "headline": "High", "data": {"id": 2}},
-                {"type": "futures", "score": 50, "reason": "mid", "headline": "Mid", "data": {"id": 3}},
+                _stub(1, 10, "low", "Low"),
+                _stub(2, 90, "high", "High"),
+                _stub(3, 50, "mid", "Mid"),
             ]
 
         async def fake_apply_review_decisions(*args, **kwargs):
