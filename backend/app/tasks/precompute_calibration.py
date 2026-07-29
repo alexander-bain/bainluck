@@ -47,6 +47,24 @@ _MAIN_KEY = "bainluck:calibration:main"
 # beat is fully retired.
 _MAIN_LAST_GOOD_TTL = 604800
 
+# Queue 274 (#1479): DB-level statement_timeout for the main compute session.
+# The beat's ONLY prior bound was Celery's hard time_limit=1560s, whose SIGKILL of
+# the worker BYPASSES get_task_session()'s finally (rollback/close/dispose), so the
+# Postgres backend running the heavy CTE is ORPHANED (client-disconnect is not
+# detected — client_connection_check_interval=0) and runs unbounded. A measured
+# 28h41m orphan (pid 3537972, 2026-07-28) pinned the global xmin horizon
+# (backend_xmin 13755940, ~29,200 txns behind the next holder) so autovacuum could
+# not reclaim dead tuples: futures_markets reached 663K dead > 591K live (>52%
+# bloat), roughly DOUBLING every scan and pushing the healthy ~905s compute past
+# the 1500s window. This SET LOCAL is the DB-level backstop the horizon precompute
+# and backfill_winners already carry (gotchas #38/#39 — a native asyncpg socket
+# read can outlive a Python-level signal). Set at the soft limit (< the 1560s hard
+# limit) so a wedged statement is cancelled by Postgres — RELEASING its xmin — well
+# before Celery SIGKILLs the worker into an orphan. A healthy sub-limit compute is
+# unaffected and byte-identical; a cancelled one raises QueryCanceledError mid-CTE
+# -> unpublishable -> fail-closed (last-good preserved), never a partial publish.
+_MAIN_COMPUTE_STMT_TIMEOUT_MS = 1500 * 1000
+
 
 def _main_payload_is_publishable(response: Any) -> bool:
     """True if a computed calibration payload is complete enough to publish (Queue 272).
@@ -2701,6 +2719,16 @@ async def _precompute_calibration_main():
 
     t0 = time.monotonic()
     async with get_task_session() as db:
+        # Queue 274 (#1479): bound EVERY query of this compute at the DB level so a
+        # wedged/bloat-slow statement self-cancels at ~the Celery soft limit and
+        # RELEASES its xmin, instead of being SIGKILLed at the hard limit into an
+        # orphaned backend that pins autovacuum and drives the bloat spiral that
+        # broke organic recurrence. SET LOCAL scopes to this session's transaction
+        # (the fresh per-task engine/session from get_task_session), so it covers
+        # compute_calibration_payload's 11 sequential reads and nothing else.
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = {_MAIN_COMPUTE_STMT_TIMEOUT_MS}")
+        )
         response = await compute_calibration_payload(db)
     compute_ms = round((time.monotonic() - t0) * 1000)
 

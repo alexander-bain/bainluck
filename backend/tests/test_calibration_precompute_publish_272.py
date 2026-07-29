@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -48,9 +48,12 @@ def _payload(*, buckets=1, outcomes=635464):
 class _FakeCM:
     def __init__(self, response):
         self._response = response
+        # Queue 274: the beat now arms a DB-level statement_timeout on this
+        # session before computing, so the session must support `await execute`.
+        self.db = AsyncMock()
 
     async def __aenter__(self):
-        return MagicMock()
+        return self.db
 
     async def __aexit__(self, *a):
         return False
@@ -237,6 +240,37 @@ async def test_precompute_repeated_beat_is_idempotent():
     written = [c.args[0] for c in rc.set.call_args_list]
     assert written.count(_MAIN_KEY) == 2
     assert written.count(_MAIN_LAST_GOOD_KEY) == 2
+
+
+# ---------------------------------------------------------------------------
+# Queue 274 (#1479): DB-level statement_timeout backstop against orphaned scans
+# ---------------------------------------------------------------------------
+def test_statement_timeout_fires_before_celery_hard_limit():
+    """The DB must cancel a wedged statement (releasing its xmin) BEFORE Celery's
+    hard time_limit SIGKILLs the worker — a SIGKILL orphans the backend, which is
+    what pinned autovacuum and drove the bloat spiral (#1479)."""
+    # precompute_calibration_main is registered soft=1500 / hard=1560 (seconds).
+    assert pc._MAIN_COMPUTE_STMT_TIMEOUT_MS < 1560 * 1000
+    # ...but not so low it kills a healthy compute (last success measured ~905s).
+    assert pc._MAIN_COMPUTE_STMT_TIMEOUT_MS >= 1000 * 1000
+
+
+async def test_precompute_arms_statement_timeout_before_compute():
+    """The beat issues a SET LOCAL statement_timeout on its session before the
+    canonical compute runs — the DB-level backstop for gotchas #38/#39."""
+    rc = MagicMock()
+    payload = _payload()
+    cm = _FakeCM(payload)
+
+    with patch("app.tasks.base.get_task_session", return_value=cm), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=rc
+    ), patch.object(pc, "compute_calibration_payload", _patch_compute(payload)):
+        summary = await _precompute_calibration_main()
+
+    assert summary["status"] == "ok"  # healthy compute still publishes normally
+    executed = [str(c.args[0]).lower() for c in cm.db.execute.call_args_list]
+    assert any("set local statement_timeout" in s for s in executed), executed
+    assert any(str(pc._MAIN_COMPUTE_STMT_TIMEOUT_MS) in s for s in executed), executed
 
 
 # ---------------------------------------------------------------------------
