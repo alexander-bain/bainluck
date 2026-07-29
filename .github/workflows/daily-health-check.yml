@@ -9,6 +9,13 @@ permissions:
   contents: read
   issues: write
 
+# Serialize runs so a scheduled tick and a manual dispatch can never both reach the
+# zero-owner cold-start create path concurrently and file duplicate canonical cards
+# (Queue 279 / C72). The filer also re-reads owners immediately before POST.
+concurrency:
+  group: daily-health-check
+  cancel-in-progress: false
+
 jobs:
   health-check:
     name: Production health check

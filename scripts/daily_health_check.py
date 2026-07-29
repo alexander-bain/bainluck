@@ -14,8 +14,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -47,6 +49,25 @@ DEFAULT_CANONICAL_ISSUE = 869
 # and never replaces area:* / type:* (beyond additively ensuring type:ops) /
 # routing / human priority — see ``_merge_labels``.
 FILER_LIFECYCLE_LABELS = ("type:ops", "needs-agent")
+# A brand-new canonical card is a FRESH ALERT. Per the ratified alert-intake
+# filing default (Queue 279 / C72) it is born at ``priority:p2`` + ``needs-triage``
+# with alert/area/type ownership and is NEVER auto-escalated from the report's
+# worst_priority — a human triager promotes it with the body evidence in hand.
+COLD_CREATE_LABELS = (
+    "type:ops",
+    "area:infra",
+    "alert-intake",
+    "needs-triage",
+    "priority:p2",
+)
+# Stable evidence fingerprint marker (Queue 279 / C72 P1). Distinct token from the
+# ownership marker so it can never be mistaken for one. It lets a same-count-but-
+# different-evidence run (e.g. calibration→Redis) still update the canonical card
+# while a true no-op (identical findings, only the timestamp advanced) stays inert.
+HEALTH_EVIDENCE_MARKER = "bainluck-health-evidence:v1"
+_EVIDENCE_RE = re.compile(
+    r"<!--\s*" + re.escape(HEALTH_EVIDENCE_MARKER) + r"\s+([0-9a-f]+)\s*-->"
+)
 # Bounded, strongly-consistent open-issue scan (oldest-first so the stable
 # canonical card is always inside the window). A full final page ⇒ TRUNCATED ⇒
 # fail closed, never a false "empty".
@@ -408,11 +429,15 @@ def _github_request(method: str, path: str, *, data: dict = None, token: str) ->
 
 
 def _declares_health_marker(body: str | None) -> bool:
-    """True only when ``HEALTH_MARKER`` appears on a REAL body line — not inside a
-    fenced code block, blockquote (``>``), indented code block, or Markdown table
-    row. Mirrors ``sentinel_filing.declared_fingerprints`` so a cleanup/meta issue
-    that merely QUOTES the marker (e.g. #1477's forensic archive) is never a
-    phantom owner. This is the ONE ownership key — no title fallback."""
+    """True only when a body line is the EXACT hidden marker declaration — a
+    standalone HTML comment ``<!-- … bainluck-health-check-filer:v1 … -->`` — not
+    prose that merely mentions the marker, not inline code, and not a fenced /
+    quoted / indented / table quotation of it. Mirrors
+    ``sentinel_filing.declared_fingerprints`` so a cleanup/meta issue (e.g. #1477's
+    forensic archive) that references the marker in a sentence is never a phantom
+    owner. This is the ONE ownership key — no title fallback. (Queue 279 / C72:
+    the old ``HEALTH_MARKER in raw`` substring test blessed ordinary prose such as
+    "the `bainluck-health-check-filer:v1` marker must be repaired" as an owner.)"""
     in_fence = False
     for raw in (body or "").splitlines():
         stripped = raw.strip()
@@ -427,9 +452,48 @@ def _declares_health_marker(body: str | None) -> bool:
             continue
         if stripped.startswith("|"):  # table row — evidence, not ownership
             continue
-        if HEALTH_MARKER in raw:
+        # Require the WHOLE line to be a standalone HTML comment carrying the
+        # marker token — a prose sentence, inline-code span, or malformed
+        # (unterminated) comment does NOT own the card.
+        if (
+            stripped.startswith("<!--")
+            and stripped.endswith("-->")
+            and HEALTH_MARKER in stripped
+        ):
             return True
     return False
+
+
+def _evidence_fingerprint(report: HealthReport) -> str:
+    """A stable 16-hex digest of the report's EVIDENCE — the summary line plus each
+    check's name/status/value/threshold/priority — deliberately EXCLUDING the
+    timestamp. A re-run with identical findings therefore fingerprints identically
+    (true no-op), but a same-count change (calibration→Redis), a changed value, or a
+    changed threshold shifts the fingerprint and forces an update. (Queue 279 / C72
+    P1: the old no-op keyed on the title's counts alone, silently discarding
+    materially changed evidence.)"""
+    payload = json.dumps(
+        {
+            "summary": report.summary_line(),
+            "checks": sorted(
+                [c.name, c.status, c.value, c.threshold, c.priority]
+                for c in report.checks
+            ),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _evidence_marker_line(fingerprint: str) -> str:
+    return f"<!-- {HEALTH_EVIDENCE_MARKER} {fingerprint} -->"
+
+
+def _extract_fingerprint(body: str | None) -> str | None:
+    """The evidence fingerprint embedded in a canonical body, or ``None`` if absent
+    (e.g. the pre-fix bootstrap card) so the first stamping run always writes."""
+    m = _EVIDENCE_RE.search(body or "")
+    return m.group(1) if m else None
 
 
 def _label_names(issue: dict) -> list[str]:
@@ -500,20 +564,32 @@ def _update_owner(
     body: str,
     priority: str,
     comment: str,
+    fingerprint: str,
     repo: str,
     token: str,
 ) -> str:
     """PATCH the canonical card in place, merging labels (never replacing), then
-    comment. Skips the write only when the card already declares the marker AND
-    the title is unchanged — so a bootstrap PATCH (marker not yet present) always
-    runs, and a steady-state run with an unchanged report is a true no-op."""
+    comment. Skips the write ONLY when the card already declares the marker AND the
+    title is unchanged AND the embedded evidence fingerprint matches AND the label
+    merge is a no-op. So a bootstrap PATCH (marker not yet present), a same-count
+    but materially changed report (fingerprint differs), or a run that must add an
+    owned label all still write; a steady-state run whose only change is the
+    timestamp is a true no-op. (Queue 279 / C72 P1.)"""
     number = issue["number"]
     url = f"https://github.com/{repo}/issues/{number}"
     already_owned = _declares_health_marker(issue.get("body"))
-    if already_owned and issue.get("title", "") == title:
+    existing_labels = _label_names(issue)
+    labels = _merge_labels(existing_labels, priority)
+    labels_unchanged = set(labels) == set(existing_labels)
+    evidence_unchanged = _extract_fingerprint(issue.get("body")) == fingerprint
+    if (
+        already_owned
+        and issue.get("title", "") == title
+        and evidence_unchanged
+        and labels_unchanged
+    ):
         print(f"Health check unchanged ({title}); skipping update of #{number}")
         return url
-    labels = _merge_labels(_label_names(issue), priority)
     _github_request(
         "PATCH",
         f"/repos/{repo}/issues/{number}",
@@ -545,7 +621,12 @@ def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str |
     A failed/truncated open-issue read is an explicit UNKNOWN no-op."""
     priority = report.worst_priority or "p1"
     title = f"{TITLE_PREFIX} {report.summary_line()}"
-    body = report.to_markdown() + "\n\n" + HEALTH_MARKER_LINE
+    fingerprint = _evidence_fingerprint(report)
+    body = (
+        report.to_markdown()
+        + "\n\n" + HEALTH_MARKER_LINE
+        + "\n" + _evidence_marker_line(fingerprint)
+    )
     comment = f"Updated {report.timestamp}\n\n{report.to_markdown()}"
 
     issues, err, truncated = _list_open_issues(repo, token)
@@ -565,16 +646,32 @@ def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str |
     if len(owners) == 1:
         return _update_owner(
             owners[0], title=title, body=body, priority=priority,
-            comment=comment, repo=repo, token=token,
+            comment=comment, fingerprint=fingerprint, repo=repo, token=token,
         )
 
     # Zero marker owners → bootstrap the explicit pin, or cold-start create.
+    # (Queue 279 / C72) Only an EXPLICIT empty / "0" pin authorizes a cold-start
+    # create. Any other malformed value (e.g. "869x") is a typo that must NOT be
+    # silently coerced into create mode — it fails closed.
     pin_raw = os.getenv(CANONICAL_ISSUE_ENV)
     if pin_raw is None:
         pin_num = DEFAULT_CANONICAL_ISSUE
+        cold_start_authorized = False
     else:
         pin_raw = pin_raw.strip()
-        pin_num = int(pin_raw) if pin_raw.isdigit() else 0
+        if pin_raw in ("", "0"):
+            pin_num = 0
+            cold_start_authorized = True
+        elif pin_raw.isdigit():
+            pin_num = int(pin_raw)
+            cold_start_authorized = False
+        else:
+            print(
+                f"Health filer: {CANONICAL_ISSUE_ENV}={pin_raw!r} is malformed "
+                f"(expected an issue number, or '' / '0' to authorize a cold-start "
+                f"create); no-op (fail-closed)."
+            )
+            return None
 
     if pin_num:
         candidates = [
@@ -586,7 +683,7 @@ def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str |
             print(f"Health filer: bootstrapping canonical marker into #{pin_num}")
             return _update_owner(
                 candidates[0], title=title, body=body, priority=priority,
-                comment=comment, repo=repo, token=token,
+                comment=comment, fingerprint=fingerprint, repo=repo, token=token,
             )
         print(
             f"Health filer: canonical pin #{pin_num} not found as an open "
@@ -595,10 +692,30 @@ def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str |
         )
         return None
 
+    if not cold_start_authorized:  # defensive — unreachable given the parse above
+        return None
+
     # Pin explicitly unset → genuine cold start → create a fresh canonical card.
-    labels = list(FILER_LIFECYCLE_LABELS)
-    if priority:
-        labels.append(f"priority:{priority}")
+    # A final, strongly-consistent owner re-read immediately before POST closes the
+    # window where two concurrent runs both saw zero owners and would each create a
+    # duplicate canonical card (Queue 279 / C72; the workflow also serializes runs
+    # via a ``concurrency`` group as defense in depth).
+    recheck, recheck_err, recheck_truncated = _list_open_issues(repo, token)
+    if recheck_err or recheck_truncated:
+        print(
+            "Health filer: pre-create owner re-read unavailable "
+            f"({recheck_err or 'truncated'}); no-op (fail-closed)."
+        )
+        return None
+    if any(_declares_health_marker(i.get("body")) for i in recheck):
+        print(
+            "Health filer: a canonical marker owner appeared during cold start "
+            "(concurrent run won the create); no-op."
+        )
+        return None
+
+    # New canonical card is a fresh alert: P2 + needs-triage, never auto-escalated.
+    labels = list(COLD_CREATE_LABELS)
     result = _github_request(
         "POST",
         f"/repos/{repo}/issues",
