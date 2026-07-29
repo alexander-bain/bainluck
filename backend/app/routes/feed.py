@@ -14,8 +14,10 @@ import inspect
 import json as _json_module
 import logging
 import os
+import random
 import re
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -275,6 +277,90 @@ def _set_feed_cache_status(response: Response, status: str) -> None:
     response.headers["X-Feed-Cache"] = status
 
 
+# --- Item 1 (Queue 273 / #1475): production-safe stage observability ---------
+# Ordinary slow /api/feed requests — not just the admin `debug=true` path, which
+# is unusable on a cold build because it exceeds the 30s router cutoff — must be
+# able to self-report which stage consumed the budget, the candidate/returned
+# card-type coverage, and the cache/singleflight outcome. The export is strictly
+# identity-free: fixed stage-name strings + integers + a coarse cache status. It
+# never carries market text, user/session identity, auth state beyond a coarse
+# signed-in/anonymous signal, or user-supplied query parameters. It is
+# non-blocking (a header build + at most one sampled log line) and adds no Redis
+# dependency to the request path.
+FEED_STAGE_ALWAYS_LOG_MS = 2000.0
+
+
+def _feed_stage_sample_rate() -> float:
+    """Fraction of ordinary requests that emit a structured stage log line.
+
+    Slow requests (>= FEED_STAGE_ALWAYS_LOG_MS) always log regardless, so a real
+    cold/degraded miss is never sampled away. Set FEED_STAGE_SAMPLE_RATE=0 to
+    turn sampled logging off entirely (headers still emit)."""
+    try:
+        rate = float(os.environ.get("FEED_STAGE_SAMPLE_RATE", "0.02"))
+    except (TypeError, ValueError):
+        return 0.02
+    return max(0.0, min(1.0, rate))
+
+
+def _summarize_feed_stages(
+    timings: list[dict[str, float | str]] | None,
+) -> dict[str, float]:
+    """Collapse the raw per-stage timing list into an identity-free {stage: ms}
+    map. Futures sub-stages (``futures.pool_*``) are preserved because they
+    localize the exact candidate-pool contributor."""
+    out: dict[str, float] = {}
+    for rec in timings or []:
+        stage = str(rec.get("stage", ""))
+        if not stage:
+            continue
+        ms = rec.get("ms", 0.0)
+        out[stage] = ms if isinstance(ms, (int, float)) else 0.0
+    return out
+
+
+def _emit_feed_stage_observability(
+    response: Response,
+    *,
+    timings: list[dict[str, float | str]] | None,
+    cache_status: str,
+    singleflight: str,
+    counts: dict[str, int],
+    started_at: float,
+) -> None:
+    """Attach identity-free stage headers and emit a sampled structured log line.
+
+    Best-effort: any failure here must never affect the response."""
+    try:
+        total_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        stages = _summarize_feed_stages(timings)
+        top = sorted(
+            stages.items(),
+            key=lambda kv: kv[1] if isinstance(kv[1], (int, float)) else 0.0,
+            reverse=True,
+        )[:8]
+        response.headers["X-Feed-Stages"] = ",".join(f"{s}={ms}" for s, ms in top)[:900]
+        response.headers["X-Feed-Counts"] = ",".join(
+            f"{k}={int(v)}" for k, v in sorted(counts.items())
+        )[:400]
+        response.headers["X-Feed-Singleflight"] = singleflight or "none"
+        if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
+            random.random() < _feed_stage_sample_rate()
+        ):
+            logger.info(
+                "feed_stage_observability total_ms=%s cache=%s singleflight=%s "
+                "counts=%s stages=%s",
+                total_ms,
+                cache_status,
+                singleflight or "none",
+                counts,
+                stages,
+            )
+    except Exception:
+        # Observability must never break the feed.
+        pass
+
+
 from app.routes.admin_utils import _check_admin_secret  # noqa
 
 def _discover_runtime_config_defaults() -> dict[str, float | bool]:
@@ -495,21 +581,6 @@ def _discover_editorial_recall_filter():
     replacing the old 44-ILIKE scan.
     """
     return FuturesMarket.is_editorial_recall.is_(True)
-
-
-async def _get_editorial_recall_ids(db) -> list[int]:
-    """Get editorial recall market IDs using precomputed column.
-
-    Polling tasks set `is_editorial_recall=True` at ingest time so this
-    is a simple indexed boolean filter instead of the old 44-ILIKE scan.
-    """
-    result = await db.execute(
-        select(FuturesMarket.id).where(
-            FuturesMarket.status.in_(["open", "active"]),
-            FuturesMarket.is_editorial_recall.is_(True),
-        )
-    )
-    return [r[0] for r in result.all()]
 
 
 def _discover_sports_editorial_recall_filter():
@@ -1943,6 +2014,26 @@ async def get_feed(
 
     _set_feed_cache_status(response, _cache_status)
     _set_feed_timing_header(response, _started_at)
+
+    # Item 1 (Queue 273): identity-free per-stage + card-type-coverage export on
+    # the built (cold/degraded) response so an ordinary slow request localizes
+    # the contributing stage without the router-killing debug path.
+    _obs_counts: dict[str, int] = {
+        f"type_{ctype}": n
+        for ctype, n in Counter(
+            str(it.get("type") or "unknown") for it in feed_items
+        ).items()
+    }
+    _obs_counts["total"] = total
+    _obs_counts["returned"] = len(paginated)
+    _emit_feed_stage_observability(
+        response,
+        timings=_timings,
+        cache_status=_cache_status,
+        singleflight="leader" if _is_build_leader else "none",
+        counts=_obs_counts,
+        started_at=_started_at,
+    )
     return payload
 
 
@@ -5369,19 +5460,24 @@ async def _score_futures(
         .limit(100)
     )
 
-    # Pool 2d: high-texture editorial recall. Uses a 5-minute cached ID list
-    # instead of running 44 ILIKE patterns (~580-1870ms) on every request.
-    _editorial_ids = await _get_editorial_recall_ids(db)
+    # Pool 2d: high-texture editorial recall. The `is_editorial_recall` boolean
+    # is set at ingest time (replacing the old 44-ILIKE scan). Queue 273 (#1475):
+    # the flag is folded directly into this pool's WHERE instead of first
+    # materializing EVERY open/active editorial ID via a helper that seq-scanned
+    # the 1.6GB / 588K-row futures_markets table (no matching index, no LIMIT) on
+    # every cold build — the single largest measured cold-feed query (it could not
+    # complete within the DB statement timeout; every other pool is sub-second).
+    # Equivalence: the helper's `status IN ('open','active')` intersects with
+    # base_filters' `status='open'` down to `status='open' AND is_editorial_recall`,
+    # so the candidate id set + order + LIMIT are byte-for-byte identical (proven
+    # against live production data). Folded query is bounded (~0.6s) via the
+    # existing ix_fm_feed_open_* partial indexes.
     nonsports_editorial_recall_query = (
         select(FuturesMarket.id)
         .where(
             *id_filters,
             non_sports_filter,
-            (
-                FuturesMarket.id.in_(_editorial_ids)
-                if _editorial_ids
-                else FuturesMarket.id == -1
-            ),
+            _discover_editorial_recall_filter(),
         )
         .order_by(
             FuturesMarket.market_tier.asc().nulls_last(),
