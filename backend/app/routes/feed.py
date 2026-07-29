@@ -1698,7 +1698,9 @@ async def get_feed(
                 _skip_golf = True
         if not _skip_golf:
             try:
-                tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
+                tournament_items = await _score_golf_tournaments(
+                    db, now, sport, ctx, stages=_timings
+                )
                 if tournament_items:
                     feed_items.extend(tournament_items)
             except Exception as e:
@@ -6765,10 +6767,11 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
 # Golf Tournament Feed Items
 # ============================================================================
 
-# In-memory cache for golf tournament data (avoids re-querying every feed call)
-_golf_cache: dict[str, tuple[float, list[dict]]] = {}
-_GOLF_CACHE_TTL = 300  # 5 minutes
-
+# Golf tournament data is now consumed from the shared, freshness-tagged golf
+# base in Redis via ``app.utils.golf_base.get_golf_base`` (Queue 278). The 300s
+# feed-golf freshness boundary lives there as ``GOLF_BASE_FRESH_SECONDS`` — the
+# old process-local ``_golf_cache`` + inline ``get_golf`` rebuild is retired so a
+# dyno restart no longer pays the ~8.9s cold rebuild on the request path.
 
 _DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})
 
@@ -6814,38 +6817,32 @@ async def _score_golf_tournaments(
     now: datetime,
     sport_filter: Optional[str],
     ctx=None,
+    stages=None,
 ) -> list[dict]:
     """Score golf tournaments for the unified feed.
 
-    Calls the golf landing page endpoint internally to get tournament data,
-    caches the result, and scores each tournament for feed ranking.
-    Returns feed items with type="tournament".
+    Consumes the user-independent golf listing base (Queue 278) and scores each
+    tournament for feed ranking. Returns feed items with type="tournament".
+
+    The heavy DB + DataGolf rebuild (``get_golf``) no longer runs on the ordinary
+    request path: ``get_golf_base`` reads a bounded, freshness-tagged base from
+    Redis (fresh <=300s, else truthfully-labeled last-good) so a dyno restart
+    never pays the ~8.9s inline rebuild (#1475/#1459). Per-user tour filtering,
+    scoring, headline/reason, and marquee pinning stay request-side below.
     """
     # If sport filter is set and doesn't match golf, skip
     if sport_filter and sport_filter not in ("golf", "all"):
         return []
 
-    import time as _time
+    from app.utils.golf_base import get_golf_base
 
-    # Cache raw tournament data (shared across users), filter per-user below
-    cache_key = "golf_tournaments_raw"
-    tournaments = None
-    if cache_key in _golf_cache:
-        cached_at, cached_data = _golf_cache[cache_key]
-        if _time.time() - cached_at < _GOLF_CACHE_TTL:
-            tournaments = cached_data
-
-    if tournaments is None:
-        try:
-            from app.routes.golf import get_golf
-
-            golf_data = await get_golf(db=db)
-        except Exception as e:
-            logger.warning("Feed: failed to load golf tournaments: %s", e)
-            return []
-
-        tournaments = golf_data.get("tournaments", [])
-        _golf_cache[cache_key] = (_time.time(), tournaments)
+    try:
+        tournaments, _golf_provenance = await get_golf_base(db, now, stages=stages)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning("Feed: failed to load golf base: %s", e)
+        return []
 
     if not tournaments:
         return []

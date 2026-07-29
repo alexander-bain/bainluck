@@ -111,17 +111,35 @@ async def _precompute_weather():
 
 
 async def _precompute_golf():
-    """Build the golf response and cache it."""
+    """Build the golf response and cache the category page + the feed base.
+
+    In addition to the category-page cache, this publishes the user-independent
+    golf listing *base* (Queue 278) so ``GET /api/feed`` reads it from Redis on
+    process-cold rather than paying the ~8.9s inline ``get_golf`` rebuild
+    (#1475/#1459). Keeping this on the worker means the web dyno never runs the
+    heavy rebuild after a restart — Redis already holds a servable base.
+    """
+    from datetime import datetime, timezone
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
     from app.routes.golf import get_golf
+    from app.utils.golf_base import build_envelope, publish_envelope_sync
 
     async with get_task_session() as db:
         response = await get_golf(db)
 
     rc = get_redis_client()
     rc.set(f"{CACHE_PREFIX}golf", json.dumps(response, default=str), ex=CACHE_TTL)
-    logger.info("Cached golf category page")
+
+    # Publish the freshness-tagged feed base (fresh + last-good keys).
+    envelope = build_envelope(
+        datetime.now(timezone.utc), response.get("tournaments", [])
+    )
+    publish_envelope_sync(rc, envelope)
+    logger.info(
+        "Cached golf category page + published feed base (%d tournaments)",
+        len(envelope["tournaments"]),
+    )
     return "ok"
 
 
