@@ -471,6 +471,14 @@ actor APIClient {
     // MARK: - Feed
 
     /// Fetches the main Discover feed with optional sport, tag, and content-type filters.
+    ///
+    /// `mode` selects the backend feed contract (L2-207 / #1480): pass `"sports"`
+    /// for the native Sports tab's fast path (`_score_sports_mode_futures` — a
+    /// single top-sports-futures query, skipping the ~10-query editorial Discover
+    /// pipeline). When nil, an unparameterized main-feed request is normalized to
+    /// Discover server-side (`feed.py` Discover-default guard). Only the
+    /// backend's allowlisted values are meaningful; any other string falls through
+    /// to the server's default handling.
     func fetchFeed(
         sport: String? = nil,
         limit: Int = 50,
@@ -479,6 +487,7 @@ actor APIClient {
         includeFutures: Bool = true,
         includeEvents: Bool = true,
         eventPct: Double? = nil,
+        mode: String? = nil,
         tags: [String]? = nil,
         cacheTTL: TimeInterval? = 30
     ) async throws -> FeedResponse {
@@ -491,6 +500,7 @@ actor APIClient {
         if !includeFutures { q["include_futures"] = "false" }
         if !includeEvents { q["include_events"] = "false" }
         if let eventPct { q["event_pct"] = String(eventPct) }
+        if let mode { q["mode"] = mode }
         if let tags, !tags.isEmpty,
            let data = try? JSONSerialization.data(withJSONObject: tags),
            let str = String(data: data, encoding: .utf8) {

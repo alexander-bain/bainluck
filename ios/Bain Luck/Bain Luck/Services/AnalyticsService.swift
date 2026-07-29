@@ -232,6 +232,28 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - Sports Feed Latency (L2-207 / #1480 — progressive first-card)
+
+    /// One progressive-load milestone for the native Sports tab. The Sports tab
+    /// issues three independent requests (main fast `mode=sports` feed, events
+    /// backfill, grouped futures); each reports its data-ready under a stable
+    /// `stage` label (`sports_main` / `sports_events_backfill` / `sports_grouped`)
+    /// so first paint (the main stage) can be told apart from the siblings that
+    /// merge in afterward. `first_real_card_ms` is only set on the main stage — the
+    /// moment the skeleton is removed. Carries no PII, token, session, market text,
+    /// or raw query — only opaque timings, a stage label, and a count.
+    nonisolated static func trackSportsFeedStage(_ stage: SportsFeedStage) {
+        Analytics.logEvent("sports_feed_stage", parameters: [
+            "stage": stage.kind.rawValue,
+            "data_ready_ms": stage.dataReadyMs,
+            "first_real_card_ms": stage.firstRealCardMs ?? -1,
+            "item_count": stage.itemCount,
+            "success": stage.success,
+            "app_build": appBuild(),
+            "surface": "sports",
+        ])
+    }
+
     // MARK: - Predictions
 
     nonisolated static func trackPredictionSubmit(
