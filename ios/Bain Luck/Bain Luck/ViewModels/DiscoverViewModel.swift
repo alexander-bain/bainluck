@@ -153,7 +153,7 @@ final class DiscoverViewModel: ObservableObject {
                         itemCount: renderable.count,
                         cacheAgeSeconds: cached.age(now: Date()),
                         mergeMs: mergeMs,
-                        firstCardMs: Self.elapsedMs(since: loadStart)))
+                        dataReadyMs: Self.elapsedMs(since: loadStart)))
                 }
             } else {
                 telemetry?(DiscoverFeedTelemetry(
@@ -169,8 +169,9 @@ final class DiscoverViewModel: ObservableObject {
             error = nil
         }
         // Whether a first card is already on screen from the cache seed. When
-        // false, the network success below is what produces first paint, so its
-        // `firstCardMs` is the true cold time-to-first-card.
+        // false, the network success below is what makes the data ready, so its
+        // `dataReadyMs` is the cold time-to-data-ready (the on-screen first render
+        // is tracked separately by the view — L2-206 Item 3).
         let seededFromCache = !items.isEmpty
 
         // One bounded first-page fetch with deadline-aware, classified retries
@@ -183,8 +184,14 @@ final class DiscoverViewModel: ObservableObject {
         let deadline = Date().addingTimeInterval(retryBudget)
         while true {
             do {
-                let response = try await client.fetchDiscoverFeed(
-                    limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
+                // One REAL cancellable deadline for the whole initial load (L2-206
+                // Item 2). The bare `fetchDiscoverFeed` is only bounded by
+                // URLSession's 30/60s timeouts, so a suspended request would hang
+                // far past the nominal budget. Racing it against the remaining
+                // budget cancels a stuck request AT the budget — and because each
+                // attempt is bounded by the time LEFT (not a fresh per-attempt
+                // timeout), a slow request that burns the budget yields no retry.
+                let response = try await fetchWithinDeadline(deadline: deadline)
                 // A newer load() superseded this one mid-flight (refresh / account
                 // switch) — drop this response rather than overwrite (C42, races).
                 guard generation == loadGeneration else { return }
@@ -210,7 +217,7 @@ final class DiscoverViewModel: ObservableObject {
                     outcome: .revalidateSuccess,
                     networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
                     mergeMs: mergeMs,
-                    firstCardMs: seededFromCache ? nil : Self.elapsedMs(since: loadStart)))
+                    dataReadyMs: seededFromCache ? nil : Self.elapsedMs(since: loadStart)))
                 return
             } catch is CancellationError {
                 loading = false
@@ -273,7 +280,71 @@ final class DiscoverViewModel: ObservableObject {
         if let url = error as? URLError {
             return url.code != .cancelled
         }
+        if error is DeadlineExceededError { return false }
         return false
+    }
+
+    /// Thrown when the total initial-load budget elapses before a response
+    /// arrives (L2-206 Item 2). Non-retryable: the deadline is the whole-load
+    /// budget, so once it fires there is no time left to retry.
+    struct DeadlineExceededError: Error {}
+
+    /// Run one bounded fetch of the offset-0 first page, cancelled at `deadline`
+    /// (L2-206 Item 2). The bare fetch is only bounded by URLSession's 30/60s
+    /// timeouts; racing it against the remaining budget makes the six-second
+    /// deadline REAL — a suspended request is cancelled at the budget instead of
+    /// hanging, and because the sleep uses the time LEFT (not a fresh per-attempt
+    /// timeout) the total load can never exceed the budget across retries.
+    private func fetchWithinDeadline(deadline: Date) async throws -> FeedResponse {
+        let remaining = deadline.timeIntervalSinceNow
+        let client = self.client
+        // Degenerate/exhausted budget: make a single UNBOUNDED attempt rather than
+        // refuse to try — an attempt is not a retry, and the loop's own
+        // `remaining > 0` check already prevents any RETRY after exhaustion, so this
+        // never multiplies into many requests. A real hanging request under the real
+        // production budget never reaches here: the budget starts positive, so the
+        // bounded race below is what actually cancels a stuck request at the deadline.
+        guard remaining > 0 else {
+            return try await client.fetchDiscoverFeed(
+                limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
+        }
+        return try await withThrowingTaskGroup(of: FeedResponse.self) { group in
+            group.addTask {
+                try await client.fetchDiscoverFeed(
+                    limit: Self.firstPageLimit, offset: 0, eventPct: 0.15, cacheTTL: nil)
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(remaining))
+                throw DeadlineExceededError()
+            }
+            // Cancel the loser on exit: when the deadline wins, cancelAll() cancels
+            // the stuck fetch (its URLSession task is cancelled); when the fetch
+            // wins, it cancels the pending sleep.
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw DeadlineExceededError() }
+            return first
+        }
+    }
+
+    /// Rebind the feed to a NEW auth identity (login, logout, account switch, or a
+    /// failed restore that drops back to anonymous) — L2-206 Item 1. The caller
+    /// (DiscoverView) has already rebound `APIClient`'s cache namespace; this
+    /// clears the prior identity's in-memory cards and resets load state BEFORE
+    /// reloading, so another account's items are never presented under the new
+    /// identity. `load()` then claims a fresh generation (superseding any in-flight
+    /// load — its late response is discarded, never overwriting the new identity)
+    /// and seeds the new identity's own last-good cache.
+    @MainActor
+    func rebindForIdentityChange() async {
+        items = []
+        nextOffset = 0
+        hasMore = true
+        isShowingCachedContent = false
+        refreshFailedShowingCache = false
+        lastGoodStoredAt = nil
+        error = nil
+        loading = true
+        await load()
     }
 
     /// Cards the feed can actually render, admitted through ONE shared

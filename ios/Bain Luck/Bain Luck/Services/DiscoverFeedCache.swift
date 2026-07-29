@@ -192,13 +192,13 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
     /// Age of the served/kept cached payload, when one was involved.
     let cacheAgeSeconds: Double?
 
-    // MARK: - First-card attribution milestones (L2-201 / #1472)
+    // MARK: - Latency-attribution milestones (L2-201 / L2-206 · #1472)
     //
     // These optional fields let one trace attribute perceived latency to a
-    // specific stage — auth, network+backend, decode, merge, or UI — rather than
-    // reporting a single opaque total (C42 P2). All are nil for observations
-    // where the stage did not run (e.g. a cache seed has no network milestones).
-    // No PII, token, payload, or market question is ever carried.
+    // specific stage — auth, network+backend, decode, merge/data-ready, or cache
+    // store — rather than reporting a single opaque total (C42 P2). All are nil
+    // for observations where the stage did not run (e.g. a cache seed has no
+    // network milestones). No PII, token, payload, or market question is carried.
 
     /// Milliseconds to resolve the local auth token before the request left the
     /// client (Keychain read; nil when anonymous or not measured).
@@ -207,8 +207,17 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
     let backendElapsedMs: Double?
     /// Milliseconds to interleave/merge the decoded page into presentation order.
     let mergeMs: Double?
-    /// Milliseconds from load start to the first card becoming renderable.
-    let firstCardMs: Double?
+    /// Milliseconds from load start to the feed's DATA being ready (the decoded/
+    /// interleaved page assigned to `items`). This is the model-assignment
+    /// milestone, NOT the on-screen first render — the true first-card render is a
+    /// separate, view-driven `discover_feed_first_render` event so the two are
+    /// never conflated (L2-206 / #1472, Item 3). Nil when this observation did not
+    /// produce first paint (e.g. a background revalidate behind a cache seed).
+    let dataReadyMs: Double?
+    /// Milliseconds to persist the raw last-good body to disk (best-effort, off the
+    /// first-card path — reported for observability, never on the render critical
+    /// path). Nil when no store happened for this observation (L2-206 Item 2/3).
+    let cacheStoreMs: Double?
     /// Server cache status header (`X-Feed-Cache`), an opaque status string.
     let cacheStatus: String?
 
@@ -221,7 +230,8 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
         authReadyMs: Double? = nil,
         backendElapsedMs: Double? = nil,
         mergeMs: Double? = nil,
-        firstCardMs: Double? = nil,
+        dataReadyMs: Double? = nil,
+        cacheStoreMs: Double? = nil,
         cacheStatus: String? = nil
     ) {
         self.outcome = outcome
@@ -232,7 +242,8 @@ nonisolated struct DiscoverFeedTelemetry: Sendable {
         self.authReadyMs = authReadyMs
         self.backendElapsedMs = backendElapsedMs
         self.mergeMs = mergeMs
-        self.firstCardMs = firstCardMs
+        self.dataReadyMs = dataReadyMs
+        self.cacheStoreMs = cacheStoreMs
         self.cacheStatus = cacheStatus
     }
 }

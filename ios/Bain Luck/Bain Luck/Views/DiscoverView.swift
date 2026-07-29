@@ -159,7 +159,15 @@ enum NativeDiscoverDebugState {
 
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
+    @EnvironmentObject private var authManager: AuthManager
     @State private var visibleCount = 20
+
+    // First-render attribution (L2-206 Item 3): `loadStartedAt` stamps when a load
+    // begins; `firstRenderEmitted` guards a single `discover_feed_first_render`
+    // event per load so the ON-SCREEN first card time is measured separately from
+    // the view model's data-ready milestone (never conflated with model assignment).
+    @State private var loadStartedAt: Date?
+    @State private var firstRenderEmitted = false
     // Soft, decaying dismiss store (#1221): id -> dismissedAt (epoch seconds).
     // Left/right swipe is a downrank input, not a permanent client-side
     // blackhole — entries expire after `dismissTTL` (matching web's 14-day
@@ -979,6 +987,10 @@ struct DiscoverView: View {
                             }
                             .id(gi.id)
                             .onAppear {
+                                // The first eligible card actually on screen → the
+                                // true first-render milestone, once per load
+                                // (L2-206 Item 3).
+                                if idx == 0 { emitFirstRenderIfNeeded() }
                                 trackImpression(for: gi, rank: idx + 1)
                                 if idx == pageGrouped.count - 3 && visibleCount < grouped.count {
                                     visibleCount += 20
@@ -1105,12 +1117,27 @@ struct DiscoverView: View {
         .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
             if vm.items.isEmpty {
+                beginFirstRenderWindow()
                 await vm.load()
             }
             if resolutions.isEmpty {
                 if let r = try? await APIClient.shared.fetchResolutions() {
                     resolutions = r.resolutions
                 }
+            }
+        }
+        // Rebind the feed when the auth identity changes — login, logout, account
+        // switch, or a failed restore dropping back to anonymous (L2-206 Item 1).
+        // `activeFeedUserId` fires even on the nil→nil `user` restore-failure case
+        // that `onChange(of: user)` would miss. Order matters: rebind APIClient's
+        // cache namespace FIRST, then clear + reload in-memory so another
+        // identity's cards are never presented (on disk OR in memory) under the new
+        // one, and a late in-flight response cannot overwrite the new identity.
+        .onChange(of: authManager.activeFeedUserId) { _, newId in
+            Task {
+                await APIClient.shared.setFeedCacheIdentity(userId: newId)
+                beginFirstRenderWindow()
+                await vm.rebindForIdentityChange()
             }
         }
         .refreshable {
@@ -1120,6 +1147,7 @@ struct DiscoverView: View {
             dismissedAt.removeAll()
             dismissVersion &+= 1
             seenImpressions.removeAll()
+            beginFirstRenderWindow()
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
                 resolutions = r.resolutions
@@ -1181,6 +1209,31 @@ struct DiscoverView: View {
             withAnimation { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
         }
+    }
+
+    /// Open a new first-render measurement window (L2-206 Item 3): stamp the load
+    /// start and re-arm the one-shot so the NEXT populated first card emits its own
+    /// on-screen render time. Called wherever a load begins (cold task, refresh,
+    /// identity rebind).
+    private func beginFirstRenderWindow() {
+        loadStartedAt = Date()
+        firstRenderEmitted = false
+    }
+
+    /// Emit the on-screen first-render milestone once per load (L2-206 Item 3),
+    /// when the first eligible card actually appears — deliberately distinct from
+    /// the view model's data-ready milestone so a fast model assignment is never
+    /// reported as a fast first paint.
+    private func emitFirstRenderIfNeeded() {
+        guard let ms = DiscoverFirstRender.elapsedMsIfShouldEmit(
+            emitted: firstRenderEmitted, loadStartedAt: loadStartedAt, now: Date()
+        ) else { return }
+        firstRenderEmitted = true
+        AnalyticsService.trackDiscoverFirstRender(
+            firstRenderMs: ms,
+            fromCache: vm.isShowingCachedContent,
+            itemCount: vm.items.count
+        )
     }
 
     private static func loadDismissed() -> [String: TimeInterval] {

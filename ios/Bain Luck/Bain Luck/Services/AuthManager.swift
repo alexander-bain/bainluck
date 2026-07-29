@@ -26,9 +26,20 @@ final class AuthManager: ObservableObject {
     @Published var user: AuthUser? {
         didSet {
             let userId = user.map { String($0.id) }
+            activeFeedUserId = userId
             Task { await APIClient.shared.setFeedCacheIdentity(userId: userId) }
         }
     }
+
+    /// The identity the Discover feed cache should currently be bound to
+    /// (`String(user.id)` when signed in, nil when anonymous). This is a SEPARATE
+    /// signal from `user` because the returning-user cold path optimistically binds
+    /// to the last-known persisted id BEFORE `restoreSession()` resolves — so on a
+    /// failed restore the effective identity changes from `"<id>"` back to `nil`
+    /// even though `user` was `nil` the whole time (an `onChange(of: user)` would
+    /// miss it). `DiscoverView` observes this to rebind in-memory feed state and
+    /// never leave one identity's cards presented under another (L2-206 Item 1).
+    @Published private(set) var activeFeedUserId: String? = APIClient.persistedLastKnownUserId()
     /// True while launch-time Keychain restore or token validation is running.
     @Published var isLoading = true
     /// Last user-facing sign-in error for auth screens to present.
@@ -266,8 +277,16 @@ final class AuthManager: ObservableObject {
     private func clearStoredAuth() {
         KeychainHelper.delete(key: keychainTokenKey)
         KeychainHelper.delete(key: keychainAppleUserIdKey)
+        // Rebind the feed identity to anonymous (L2-206 Item 1): a failed restore
+        // must not leave the optimistically-seeded signed-in cache — on disk OR
+        // in memory — presented as current. Publishing `activeFeedUserId = nil`
+        // fires `DiscoverView`'s rebind (clearing in-memory cards) even though
+        // `user` was nil throughout; `setFeedCacheIdentity(nil)` evicts the
+        // signed-in disk namespace and clears the persisted last-known id.
+        activeFeedUserId = nil
         Task {
             await APIClient.shared.setAuthTokenProvider(nil)
+            await APIClient.shared.setFeedCacheIdentity(userId: nil)
         }
     }
 

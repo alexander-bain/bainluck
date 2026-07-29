@@ -56,7 +56,26 @@ actor APIClient {
 
     /// Backend user id of the signed-in account, or nil when anonymous. Pushed by
     /// `AuthManager` on sign-in/out/restore; partitions the feed cache namespace.
-    private var feedCacheUserId: String?
+    /// Seeded at init from the last-known persisted id so a returning signed-in
+    /// user's cache namespace is ready BEFORE async session restore
+    /// (`fetchProfile()`) completes — otherwise the first cold cache read lands in
+    /// the anonymous namespace and misses the user's last-good feed (L2-206 Item 1).
+    private var feedCacheUserId: String? = APIClient.persistedLastKnownUserId()
+
+    /// UserDefaults key for the last-known signed-in backend user id. Stores ONLY
+    /// the public user id (never a token/credential) — it merely tells the client
+    /// which last-good cache file to read at cold launch; a valid session token is
+    /// still required for every network call. Cleared on sign-out / failed restore.
+    private static let lastKnownUserIdKey = "bainluck_last_known_user_id"
+
+    /// The last-known signed-in user id from the previous session, or nil. Read at
+    /// cold launch (by `APIClient` and `AuthManager`) so the feed-cache namespace is
+    /// resolved before async session restore completes (L2-206 Item 1). Nonisolated
+    /// static — a plain UserDefaults read, safe from any actor.
+    static func persistedLastKnownUserId() -> String? {
+        let id = UserDefaults.standard.string(forKey: lastKnownUserIdKey)
+        return (id?.isEmpty == false) ? id : nil
+    }
 
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
@@ -86,6 +105,13 @@ actor APIClient {
     func setFeedCacheIdentity(userId: String?) {
         guard userId != feedCacheUserId else { return }
         feedCacheUserId = userId
+        // Persist the new identity so the NEXT cold launch reads the correct cache
+        // namespace before restore completes (L2-206 Item 1). Empty/nil → anonymous.
+        if let userId, !userId.isEmpty {
+            UserDefaults.standard.set(userId, forKey: Self.lastKnownUserIdKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.lastKnownUserIdKey)
+        }
         feedCache.evict(keepingOnly: currentFeedIdentity())
     }
 
@@ -492,22 +518,46 @@ actor APIClient {
         var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
         if let eventPct { q["event_pct"] = String(eventPct) }
 
+        // Capture the identity at fetch time so a mid-flight account switch cannot
+        // cause this response to be written under the WRONG namespace (L2-206 Item 2).
+        let identityAtFetch = currentFeedIdentity()
+
         let result: (
             value: FeedResponse, raw: Data,
             authReadyMs: Double, networkMs: Double, decodeMs: Double,
             backendElapsedMs: Double?, cacheStatus: String?, responseBytes: Int
         ) = try await fetchRaw("/api/feed", query: q)
 
-        feedCache.store(rawBody: result.raw, identity: currentFeedIdentity(), storedAt: Date())
-        AnalyticsService.trackDiscoverFeedNetwork(
-            networkMs: result.networkMs,
-            decodeMs: result.decodeMs,
-            itemCount: result.value.items.count,
-            authReadyMs: result.authReadyMs,
-            backendElapsedMs: result.backendElapsedMs,
-            responseBytes: result.responseBytes,
-            cacheStatus: result.cacheStatus
-        )
+        // Persist last-good OFF the first-card path (L2-206 Item 2): the decoded
+        // value returns immediately so the view publishes a first card without
+        // waiting on file I/O. This unstructured `Task` inherits the APIClient
+        // actor's isolation, so it runs AFTER this method returns (never blocking
+        // the caller) and serializes with `setFeedCacheIdentity`'s eviction: the
+        // identity re-check plus eviction-on-switch guarantees a superseded
+        // identity's bytes never persist (either the guard fails, or a later evict
+        // removes them). Store time is reported for observability only.
+        let raw = result.raw
+        let net = result
+        Task {
+            let storeMs: Double?
+            if identityAtFetch == currentFeedIdentity() {
+                let t0 = Date()
+                feedCache.store(rawBody: raw, identity: identityAtFetch, storedAt: Date())
+                storeMs = Date().timeIntervalSince(t0) * 1000
+            } else {
+                storeMs = nil
+            }
+            AnalyticsService.trackDiscoverFeedNetwork(
+                networkMs: net.networkMs,
+                decodeMs: net.decodeMs,
+                itemCount: net.value.items.count,
+                authReadyMs: net.authReadyMs,
+                backendElapsedMs: net.backendElapsedMs,
+                responseBytes: net.responseBytes,
+                cacheStatus: net.cacheStatus,
+                cacheStoreMs: storeMs
+            )
+        }
         return result.value
     }
 

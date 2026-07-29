@@ -356,7 +356,7 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         XCTAssertEqual(e.outcome, .revalidateSuccess)
         XCTAssertNotNil(e.networkMs, "network round-trip attributed")
         XCTAssertNotNil(e.mergeMs, "merge/interleave attributed")
-        XCTAssertNotNil(e.firstCardMs, "cold load: the network produced first paint")
+        XCTAssertNotNil(e.dataReadyMs, "cold load: the network produced data-ready")
     }
 
     func testFirstCardAttributedToCacheNotNetworkWhenSeeded() async throws {
@@ -370,10 +370,10 @@ final class DiscoverViewModelLoadTests: XCTestCase {
 
         XCTAssertEqual(sink.outcomes, [.cacheHitServed, .revalidateSuccess])
         let hit = try XCTUnwrap(sink.all.first)
-        XCTAssertNotNil(hit.firstCardMs, "the cache seed produced first paint")
+        XCTAssertNotNil(hit.dataReadyMs, "the cache seed produced data-ready")
         XCTAssertNotNil(hit.mergeMs)
         let reval = try XCTUnwrap(sink.all.last)
-        XCTAssertNil(reval.firstCardMs, "the later network revalidate was NOT first paint — no double-count")
+        XCTAssertNil(reval.dataReadyMs, "the later network revalidate was NOT first paint — no double-count")
         XCTAssertNotNil(reval.networkMs)
     }
 }

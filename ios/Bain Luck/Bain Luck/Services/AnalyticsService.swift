@@ -156,15 +156,48 @@ enum AnalyticsService {
             "network_ms": telemetry.networkMs ?? -1,
             "item_count": telemetry.itemCount,
             "cache_age_seconds": telemetry.cacheAgeSeconds ?? -1,
-            // First-card attribution milestones (L2-201 / #1472). -1 marks a stage
-            // that did not run for this observation. Opaque status string only.
+            // Latency-attribution milestones (L2-201 / L2-206 · #1472). -1 marks a
+            // stage that did not run for this observation. `data_ready_ms` is the
+            // model-assignment milestone (NOT the on-screen first render — that is
+            // the separate `discover_feed_first_render` event). Opaque status only.
             "auth_ready_ms": telemetry.authReadyMs ?? -1,
             "backend_elapsed_ms": telemetry.backendElapsedMs ?? -1,
             "merge_ms": telemetry.mergeMs ?? -1,
-            "first_card_ms": telemetry.firstCardMs ?? -1,
+            "data_ready_ms": telemetry.dataReadyMs ?? -1,
+            "cache_store_ms": telemetry.cacheStoreMs ?? -1,
             "cache_status": telemetry.cacheStatus ?? "unknown",
+            "app_build": appBuild(),
             "surface": "discover",
         ])
+    }
+
+    /// The on-screen first-render milestone (L2-206 / #1472, Item 3): the elapsed
+    /// time from Discover load start to the FIRST eligible card's `onAppear`. This
+    /// is deliberately distinct from `data_ready_ms` (model assignment) so a fast
+    /// data-ready can never be mistaken for a fast first paint. Emitted once per
+    /// load by the view. Carries no PII, token, or market content.
+    nonisolated static func trackDiscoverFirstRender(
+        firstRenderMs: Double,
+        fromCache: Bool,
+        itemCount: Int
+    ) {
+        Analytics.logEvent("discover_feed_first_render", parameters: [
+            "first_render_ms": firstRenderMs,
+            "from_cache": fromCache,
+            "item_count": itemCount,
+            "app_build": appBuild(),
+            "surface": "discover",
+        ])
+    }
+
+    /// Non-PII build reachability tag for latency traces (L2-206 Item 3): the
+    /// short version + build number (e.g. `1.4.2 (231)`), so a trace can be mapped
+    /// to the exact archive/TestFlight build it came from. No user data.
+    nonisolated static func appBuild() -> String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
     }
 
     /// The server-side split of an offset-0 feed fetch, milestone-attributed
@@ -180,7 +213,8 @@ enum AnalyticsService {
         authReadyMs: Double? = nil,
         backendElapsedMs: Double? = nil,
         responseBytes: Int? = nil,
-        cacheStatus: String? = nil
+        cacheStatus: String? = nil,
+        cacheStoreMs: Double? = nil
     ) {
         Analytics.logEvent("discover_feed_network", parameters: [
             "network_ms": networkMs,
@@ -189,7 +223,11 @@ enum AnalyticsService {
             "auth_ready_ms": authReadyMs ?? -1,
             "backend_elapsed_ms": backendElapsedMs ?? -1,
             "response_bytes": responseBytes ?? -1,
+            // Cache-store time is measured off the first-card path and reported for
+            // observability only (L2-206 Item 2/3); -1 when not yet measured.
+            "cache_store_ms": cacheStoreMs ?? -1,
             "cache_status": cacheStatus ?? "unknown",
+            "app_build": appBuild(),
             "surface": "discover",
         ])
     }
