@@ -18,13 +18,40 @@ import json
 import os
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 API_BASE = "https://api.bainluck.com"
 SENTRY_API = "https://us.sentry.io/api/0"
+
+# --- Daily Health Check issue-filing ownership (Queue 276) ---------------------
+# The filer identifies its OWN canonical card by a stable, versioned hidden body
+# marker — NOT by fuzzy-matching ``[Health Check]`` in a title. The old title
+# search (GitHub ``in:title`` + ``per_page=1``) hijacked #1477, whose title merely
+# CONTAINED the ``[Health Check]`` substring, replacing its title/body/labels.
+HEALTH_MARKER = "bainluck-health-check-filer:v1"
+HEALTH_MARKER_LINE = (
+    f"<!-- {HEALTH_MARKER} · canonical daily production health card · "
+    "the Daily Health Check workflow (scripts/daily_health_check.py) updates ONLY "
+    "the issue bearing this marker · do not remove -->"
+)
+TITLE_PREFIX = "[Health Check]"
+# Explicit, bounded bootstrap pin: the pre-marker canonical card (#869). On the
+# first post-fix run there are zero marker owners, so the filer stamps the marker
+# into THIS issue number only — never a title lookalike. Set the env to "" / "0"
+# to permit a genuine cold-start create (no canonical card exists yet).
+CANONICAL_ISSUE_ENV = "HEALTH_CHECK_CANONICAL_ISSUE"
+DEFAULT_CANONICAL_ISSUE = 869
+# The only labels the filer OWNS and may ADD on merge. It never removes a label
+# and never replaces area:* / type:* (beyond additively ensuring type:ops) /
+# routing / human priority — see ``_merge_labels``.
+FILER_LIFECYCLE_LABELS = ("type:ops", "needs-agent")
+# Bounded, strongly-consistent open-issue scan (oldest-first so the stable
+# canonical card is always inside the window). A full final page ⇒ TRUNCATED ⇒
+# fail closed, never a false "empty".
+_LIST_MAX_PAGES = 10
+_LIST_PER_PAGE = 100
 
 
 @dataclass
@@ -380,48 +407,205 @@ def _github_request(method: str, path: str, *, data: dict = None, token: str) ->
         return json.loads(text) if text else None
 
 
-def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str | None:
-    title_prefix = "[Health Check]"
-    search_q = f"repo:{repo} is:issue is:open in:title \"{title_prefix}\""
-    search_url = f"/search/issues?q={urllib.parse.quote(search_q)}&per_page=1"
-    search_result = _github_request("GET", search_url, token=token)
+def _declares_health_marker(body: str | None) -> bool:
+    """True only when ``HEALTH_MARKER`` appears on a REAL body line — not inside a
+    fenced code block, blockquote (``>``), indented code block, or Markdown table
+    row. Mirrors ``sentinel_filing.declared_fingerprints`` so a cleanup/meta issue
+    that merely QUOTES the marker (e.g. #1477's forensic archive) is never a
+    phantom owner. This is the ONE ownership key — no title fallback."""
+    in_fence = False
+    for raw in (body or "").splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if stripped.startswith(">"):  # blockquote — a quote, not ownership
+            continue
+        if raw.startswith("    ") or raw.startswith("\t"):  # indented code
+            continue
+        if stripped.startswith("|"):  # table row — evidence, not ownership
+            continue
+        if HEALTH_MARKER in raw:
+            return True
+    return False
 
-    priority = report.worst_priority
-    labels = ["type:ops", "needs-agent"]
+
+def _label_names(issue: dict) -> list[str]:
+    """Existing label names on an issue dict (REST list shape: list of
+    ``{"name": ...}``; tolerates bare strings for test fixtures)."""
+    out: list[str] = []
+    for lab in issue.get("labels", []) or []:
+        if isinstance(lab, dict) and lab.get("name"):
+            out.append(lab["name"])
+        elif isinstance(lab, str):
+            out.append(lab)
+    return out
+
+
+def _merge_labels(existing: list[str], priority: str) -> list[str]:
+    """Additive union: preserve EVERY existing label (``area:*``, ``type:*``,
+    routing, human ``priority:*``, ``parked`` …) and add only the filer's owned
+    lifecycle labels when absent. Priority is SEEDED only when the issue carries
+    no ``priority:*`` label at all, so a human's priority is never overridden or
+    duplicated. NEVER removes a label — this is the r306 fix (PATCH must merge,
+    not replace)."""
+    merged = list(existing)
+    seen = set(existing)
+    for lab in FILER_LIFECYCLE_LABELS:
+        if lab not in seen:
+            merged.append(lab)
+            seen.add(lab)
+    if priority and not any(l.startswith("priority:") for l in existing):
+        merged.append(f"priority:{priority}")
+    return merged
+
+
+def _list_open_issues(repo: str, token: str) -> tuple[list[dict], str | None, bool]:
+    """Strongly-consistent REST list of OPEN issues (oldest-first so the stable
+    canonical card is always inside the bounded window), NOT the eventually-
+    consistent ``/search`` index the old filer used. Returns
+    ``(issues, error, truncated)``. A failed read yields ``error`` set; a full
+    final page at the cap yields ``truncated=True`` — either way the caller fails
+    closed and never files or patches blind (the sentinel-rail C37 contract)."""
+    issues: list[dict] = []
+    last_full = False
+    for page in range(1, _LIST_MAX_PAGES + 1):
+        path = (
+            f"/repos/{repo}/issues?state=open&per_page={_LIST_PER_PAGE}"
+            f"&page={page}&sort=created&direction=asc"
+        )
+        try:
+            batch = _github_request("GET", path, token=token)
+        except Exception as exc:  # HTTP/timeout/parse — treat as UNKNOWN
+            return issues, f"open-issue list failed: {str(exc)[:160]}", False
+        if not isinstance(batch, list) or not batch:
+            last_full = False
+            break
+        issues.extend(i for i in batch if isinstance(i, dict) and "pull_request" not in i)
+        if len(batch) < _LIST_PER_PAGE:
+            last_full = False
+            break
+        last_full = True
+    if last_full:
+        return issues, f"open-issue list truncated at {_LIST_MAX_PAGES} pages", True
+    return issues, None, False
+
+
+def _update_owner(
+    issue: dict,
+    *,
+    title: str,
+    body: str,
+    priority: str,
+    comment: str,
+    repo: str,
+    token: str,
+) -> str:
+    """PATCH the canonical card in place, merging labels (never replacing), then
+    comment. Skips the write only when the card already declares the marker AND
+    the title is unchanged — so a bootstrap PATCH (marker not yet present) always
+    runs, and a steady-state run with an unchanged report is a true no-op."""
+    number = issue["number"]
+    url = f"https://github.com/{repo}/issues/{number}"
+    already_owned = _declares_health_marker(issue.get("body"))
+    if already_owned and issue.get("title", "") == title:
+        print(f"Health check unchanged ({title}); skipping update of #{number}")
+        return url
+    labels = _merge_labels(_label_names(issue), priority)
+    _github_request(
+        "PATCH",
+        f"/repos/{repo}/issues/{number}",
+        data={"title": title, "body": body, "labels": labels},
+        token=token,
+    )
+    _github_request(
+        "POST",
+        f"/repos/{repo}/issues/{number}/comments",
+        data={"body": comment},
+        token=token,
+    )
+    return url
+
+
+def create_or_update_issue(report: HealthReport, repo: str, token: str) -> str | None:
+    """Reconcile the single canonical ``[Health Check]`` card by stable body
+    marker, fail-closed on any ambiguity.
+
+    Ownership resolution (no title fallback — that is what hijacked #1477):
+      * **1 marker owner**  → update it in place (merge labels).
+      * **>1 marker owners** → AMBIGUOUS → no-op with a clear error (never PATCH
+        an arbitrary issue).
+      * **0 marker owners**  → bootstrap the explicit pin (#869 by NUMBER, gated
+        on the ``[Health Check]`` title as a safety check) if it is open; else, if
+        the pin is unset, cold-start create; else fail closed (pin set but not an
+        open health card → refuse to create a dup or patch a lookalike).
+
+    A failed/truncated open-issue read is an explicit UNKNOWN no-op."""
+    priority = report.worst_priority or "p1"
+    title = f"{TITLE_PREFIX} {report.summary_line()}"
+    body = report.to_markdown() + "\n\n" + HEALTH_MARKER_LINE
+    comment = f"Updated {report.timestamp}\n\n{report.to_markdown()}"
+
+    issues, err, truncated = _list_open_issues(repo, token)
+    if err:
+        print(f"Health filer: open-issue read unavailable ({err}); no-op (fail-closed)")
+        return None
+
+    owners = [i for i in issues if _declares_health_marker(i.get("body"))]
+    if len(owners) > 1:
+        nums = ", ".join(f"#{i.get('number')}" for i in owners)
+        print(
+            f"Health filer: AMBIGUOUS — {len(owners)} open issues declare the "
+            f"marker ({nums}); no-op (fail-closed). Reconcile to a single canonical card."
+        )
+        return None
+
+    if len(owners) == 1:
+        return _update_owner(
+            owners[0], title=title, body=body, priority=priority,
+            comment=comment, repo=repo, token=token,
+        )
+
+    # Zero marker owners → bootstrap the explicit pin, or cold-start create.
+    pin_raw = os.getenv(CANONICAL_ISSUE_ENV)
+    if pin_raw is None:
+        pin_num = DEFAULT_CANONICAL_ISSUE
+    else:
+        pin_raw = pin_raw.strip()
+        pin_num = int(pin_raw) if pin_raw.isdigit() else 0
+
+    if pin_num:
+        candidates = [
+            i for i in issues
+            if i.get("number") == pin_num
+            and str(i.get("title") or "").startswith(TITLE_PREFIX)
+        ]
+        if len(candidates) == 1:
+            print(f"Health filer: bootstrapping canonical marker into #{pin_num}")
+            return _update_owner(
+                candidates[0], title=title, body=body, priority=priority,
+                comment=comment, repo=repo, token=token,
+            )
+        print(
+            f"Health filer: canonical pin #{pin_num} not found as an open "
+            f"health card ({len(candidates)} candidates); no-op (fail-closed). "
+            f"Unset {CANONICAL_ISSUE_ENV} to allow a cold-start create."
+        )
+        return None
+
+    # Pin explicitly unset → genuine cold start → create a fresh canonical card.
+    labels = list(FILER_LIFECYCLE_LABELS)
     if priority:
         labels.append(f"priority:{priority}")
-
-    title = f"{title_prefix} {report.summary_line()}"
-    body = report.to_markdown()
-
-    existing = search_result.get("items", []) if search_result else []
-    if existing:
-        issue_number = existing[0]["number"]
-        existing_title = existing[0].get("title", "")
-        if existing_title == title:
-            print(f"Health check unchanged ({report.summary_line()}), skipping update")
-            return f"https://github.com/{repo}/issues/{issue_number}"
-        _github_request(
-            "PATCH",
-            f"/repos/{repo}/issues/{issue_number}",
-            data={"title": title, "body": body, "labels": labels},
-            token=token,
-        )
-        _github_request(
-            "POST",
-            f"/repos/{repo}/issues/{issue_number}/comments",
-            data={"body": f"Updated {report.timestamp}\n\n{body}"},
-            token=token,
-        )
-        return f"https://github.com/{repo}/issues/{issue_number}"
-    else:
-        result = _github_request(
-            "POST",
-            f"/repos/{repo}/issues",
-            data={"title": title, "body": body, "labels": labels},
-            token=token,
-        )
-        return result.get("html_url") if result else None
+    result = _github_request(
+        "POST",
+        f"/repos/{repo}/issues",
+        data={"title": title, "body": body, "labels": labels},
+        token=token,
+    )
+    return result.get("html_url") if result else None
 
 
 def main() -> None:
