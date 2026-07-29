@@ -118,14 +118,22 @@ app.add_middleware(
     allow_headers=["*"],
     # L2-189: expose feed timing/cache headers so the browser can read them
     # cross-origin (bainluck.com → api.bainluck.com). CORS hides any
-    # non-safelisted response header unless it is listed here; these two are
-    # set per-request by routes/feed.py (_set_feed_timing_header /
-    # _set_feed_cache_status) and power browser-visible latency telemetry.
+    # non-safelisted response header unless it is listed here; these are set
+    # per-request by routes/feed.py (_set_feed_timing_header /
+    # _set_feed_cache_status / _finalize_feed_response) and power browser-visible
+    # latency telemetry.
+    # Queue 275 (#1475): X-Feed-Stages / X-Feed-Counts / X-Feed-Singleflight are
+    # the identity-free stage/coverage/singleflight diagnostics emitted on EVERY
+    # feed return path; expose them so a browser field debugger can read all
+    # seven feed/request headers cross-origin.
     expose_headers=[
         "X-Response-Time",
         "X-Request-ID",
         "X-Feed-Elapsed-Ms",
         "X-Feed-Cache",
+        "X-Feed-Stages",
+        "X-Feed-Counts",
+        "X-Feed-Singleflight",
     ],
 )
 

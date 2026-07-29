@@ -361,6 +361,68 @@ def _emit_feed_stage_observability(
         pass
 
 
+def _feed_obs_counts(
+    items: list[dict] | None,
+    *,
+    total: int,
+    returned: int,
+) -> dict[str, int]:
+    """Build the identity-free per-card-type coverage counter for a feed return.
+
+    ``items`` supplies the ``type_*`` breakdown. On a BUILT response this is the
+    full ranked ``feed_items`` list; on a CACHED/last-good/coalesced response it
+    is the payload's already-paginated ``items`` — a safe cached count, never a
+    re-run of the build. ``total``/``returned`` are the payload's own numbers, so
+    no current-build timing is ever fabricated for a served-from-cache path."""
+    counts: dict[str, int] = {
+        f"type_{ctype}": n
+        for ctype, n in Counter(
+            str(it.get("type") or "unknown") for it in (items or [])
+        ).items()
+    }
+    counts["total"] = int(total)
+    counts["returned"] = int(returned)
+    return counts
+
+
+def _finalize_feed_response(
+    response: Response,
+    *,
+    cache_status: str | None,
+    singleflight: str,
+    timings: list[dict[str, float | str]] | None,
+    started_at: float,
+    counts: dict[str, int],
+) -> None:
+    """Single truthful finalizer for EVERY successful /api/feed return path.
+
+    Queue 275 (#1475): before this, only the leader-built response emitted the
+    stage/counts/singleflight observability headers, so a cache hit, stale hit,
+    Redis-error last-good, coalesced waiter, or waiter last-good returned WITHOUT
+    them — the very fast paths a field debugger most needs to distinguish. This
+    centralizes finalization so all of them report cache + singleflight truth.
+
+    - ``cache_status`` is written to X-Feed-Cache when non-None; passing None
+      leaves the header exactly as the caller left it (byte-for-byte preserved
+      for the requires-auth empty return, which never set it).
+    - ``singleflight`` is a fixed string (``leader``/``coalesced``/
+      ``waiter_last_good``/``none``); an early return is NEVER labelled leader.
+    - ``timings`` carries only this request's real stage records (cache-path
+      timings on a served-from-cache return — never a fabricated build).
+    """
+    if cache_status is not None:
+        _set_feed_cache_status(response, cache_status)
+    _set_feed_timing_header(response, started_at)
+    _emit_feed_stage_observability(
+        response,
+        timings=timings,
+        cache_status=cache_status or "n/a",
+        singleflight=singleflight,
+        counts=counts,
+        started_at=started_at,
+    )
+
+
 from app.routes.admin_utils import _check_admin_secret  # noqa
 
 def _discover_runtime_config_defaults() -> dict[str, float | bool]:
@@ -1275,8 +1337,18 @@ async def get_feed(
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_hit"
                     )
-                    _set_feed_cache_status(response, "hit")
-                    _set_feed_timing_header(response, _started_at)
+                    _finalize_feed_response(
+                        response,
+                        cache_status="hit",
+                        singleflight="none",
+                        timings=_timings,
+                        started_at=_started_at,
+                        counts=_feed_obs_counts(
+                            payload.get("items"),
+                            total=payload.get("total", 0),
+                            returned=len(payload.get("items") or []),
+                        ),
+                    )
                     return payload
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
@@ -1293,8 +1365,18 @@ async def get_feed(
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_stale_hit"
                     )
-                    _set_feed_cache_status(response, "stale_hit")
-                    _set_feed_timing_header(response, _started_at)
+                    _finalize_feed_response(
+                        response,
+                        cache_status="stale_hit",
+                        singleflight="none",
+                        timings=_timings,
+                        started_at=_started_at,
+                        counts=_feed_obs_counts(
+                            payload.get("items"),
+                            total=payload.get("total", 0),
+                            returned=len(payload.get("items") or []),
+                        ),
+                    )
                     return payload
             if _fresh.is_failure or _stale.is_failure:
                 # Redis stalled/errored (NOT a clean miss). Serve process-local
@@ -1312,8 +1394,18 @@ async def get_feed(
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_last_good"
                     )
-                    _set_feed_cache_status(response, "last_good")
-                    _set_feed_timing_header(response, _started_at)
+                    _finalize_feed_response(
+                        response,
+                        cache_status="last_good",
+                        singleflight="none",
+                        timings=_timings,
+                        started_at=_started_at,
+                        counts=_feed_obs_counts(
+                            out.get("items"),
+                            total=out.get("total", 0),
+                            returned=len(out.get("items") or []),
+                        ),
+                    )
                     return out
         except Exception:
             _cache_status = "error"
@@ -1323,8 +1415,18 @@ async def get_feed(
                 out["cache"] = build_feed_cache_metadata(
                     "last_good", ttl_seconds=_cache_ttl, reason="redis_unavailable"
                 )
-                _set_feed_cache_status(response, "last_good")
-                _set_feed_timing_header(response, _started_at)
+                _finalize_feed_response(
+                    response,
+                    cache_status="last_good",
+                    singleflight="none",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        out.get("items"),
+                        total=out.get("total", 0),
+                        returned=len(out.get("items") or []),
+                    ),
+                )
                 return out
     elif debug:
         _cache_status = "disabled_debug"
@@ -1370,7 +1472,17 @@ async def get_feed(
 
     # my_teams_only requires authentication
     if my_teams_only and not feed_user:
-        _set_feed_timing_header(response, _started_at)
+        # Observability only: cache_status=None keeps X-Feed-Cache byte-for-byte
+        # unset on this empty early return (it never set it), while still
+        # reporting an honest empty coverage + singleflight=none.
+        _finalize_feed_response(
+            response,
+            cache_status=None,
+            singleflight="none",
+            timings=_timings,
+            started_at=_started_at,
+            counts=_feed_obs_counts([], total=0, returned=0),
+        )
         return {
             "items": [],
             "total": 0,
@@ -1409,8 +1521,18 @@ async def get_feed(
                 _previous_at = _record_feed_timing(
                     _timings, _started_at, _previous_at, "cache_coalesced"
                 )
-                _set_feed_cache_status(response, "coalesced")
-                _set_feed_timing_header(response, _started_at)
+                _finalize_feed_response(
+                    response,
+                    cache_status="coalesced",
+                    singleflight="coalesced",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        out.get("items"),
+                        total=out.get("total", 0),
+                        returned=len(out.get("items") or []),
+                    ),
+                )
                 return out
             # Leader produced nothing usable — try last-good, else lead a build.
             _lg = _rc.recall_last_good(_cache_key)
@@ -1419,8 +1541,18 @@ async def get_feed(
                 out["cache"] = build_feed_cache_metadata(
                     "last_good", ttl_seconds=_cache_ttl, reason="leader_unavailable"
                 )
-                _set_feed_cache_status(response, "last_good")
-                _set_feed_timing_header(response, _started_at)
+                _finalize_feed_response(
+                    response,
+                    cache_status="last_good",
+                    singleflight="waiter_last_good",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        out.get("items"),
+                        total=out.get("total", 0),
+                        returned=len(out.get("items") or []),
+                    ),
+                )
                 return out
             _is_build_leader, _sf_future = _rc.begin_build(_cache_key)
 
@@ -2012,27 +2144,21 @@ async def get_feed(
         except Exception:
             pass
 
-    _set_feed_cache_status(response, _cache_status)
-    _set_feed_timing_header(response, _started_at)
-
-    # Item 1 (Queue 273): identity-free per-stage + card-type-coverage export on
-    # the built (cold/degraded) response so an ordinary slow request localizes
-    # the contributing stage without the router-killing debug path.
-    _obs_counts: dict[str, int] = {
-        f"type_{ctype}": n
-        for ctype, n in Counter(
-            str(it.get("type") or "unknown") for it in feed_items
-        ).items()
-    }
-    _obs_counts["total"] = total
-    _obs_counts["returned"] = len(paginated)
-    _emit_feed_stage_observability(
+    # Item 1 (Queue 273 → centralized Queue 275): identity-free per-stage +
+    # card-type-coverage export on the built (cold/degraded) response so an
+    # ordinary slow request localizes the contributing stage without the
+    # router-killing debug path. Counts run over the FULL ranked feed_items
+    # (not the paginated page) so type coverage reflects the whole build. This is
+    # the only path that may report singleflight=leader.
+    _finalize_feed_response(
         response,
-        timings=_timings,
         cache_status=_cache_status,
         singleflight="leader" if _is_build_leader else "none",
-        counts=_obs_counts,
+        timings=_timings,
         started_at=_started_at,
+        counts=_feed_obs_counts(
+            feed_items, total=total, returned=len(paginated)
+        ),
     )
     return payload
 
