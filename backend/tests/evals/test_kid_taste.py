@@ -12,15 +12,15 @@ FIXTURE = Path(__file__).parent / "fixtures/kid_taste.json"
 
 def test_planted_taste_patterns_and_scorer_divergence_are_recovered():
     report = analyze(json.loads(FIXTURE.read_text()))
-    alex = next(profile for profile in report["profiles"] if profile["kid"] == "kid:alex")
+    fixture_a = next(profile for profile in report["profiles"] if profile["kid"] == "kid:a")
 
     assert report["kids"] == 2
     assert report["interaction_rows"] == 6
-    assert alex["likes"] == 2
-    assert alex["dislikes"] == 1
-    assert alex["categories"][0]["category"] in {"baseball", "music", "weather"}
-    assert alex["scorer_agreement"]["pearson"] < -0.9
-    assert alex["scorer_agreement"]["hardest_divergences"][0]["item_name"] in {
+    assert fixture_a["likes"] == 2
+    assert fixture_a["dislikes"] == 1
+    assert fixture_a["categories"][0]["category"] in {"baseball", "music", "weather"}
+    assert fixture_a["scorer_agreement"]["pearson"] < -0.9
+    assert fixture_a["scorer_agreement"]["hardest_divergences"][0]["item_name"] in {
         "Album winner",
         "Rain tomorrow",
     }
@@ -28,12 +28,12 @@ def test_planted_taste_patterns_and_scorer_divergence_are_recovered():
 
 def test_streaks_namespace_flags_and_inter_kid_agreement():
     report = analyze(json.loads(FIXTURE.read_text()))
-    alex = next(profile for profile in report["profiles"] if profile["kid"] == "kid:alex")
+    fixture_a = next(profile for profile in report["profiles"] if profile["kid"] == "kid:a")
 
-    assert alex["predictions"]["accuracy"] == 0.8
-    assert alex["predictions"]["best_streak"] == 2
-    assert alex["predictions"]["current_streak"] == 2
-    assert alex["predictions"]["namespace_flags"] == {
+    assert fixture_a["predictions"]["accuracy"] == 0.8
+    assert fixture_a["predictions"]["best_streak"] == 2
+    assert fixture_a["predictions"]["current_streak"] == 2
+    assert fixture_a["predictions"]["namespace_flags"] == {
         "definite_missing_market": 1,
         "unverifiable_legacy": 2,
         "verified_futures": 2,

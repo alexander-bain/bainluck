@@ -1,0 +1,21 @@
+{
+  "schema_version": "degraded-feed-publication/v1",
+  "audited_commit": "fa15d6ab",
+  "degraded_build_states": ["futures_timeout", "futures_skipped_budget", "futures_error", "events_only_partial"],
+  "mechanical_default": "Return a marked partial payload to the current leader and already-coalesced waiters, but skip process last-good and both Redis publications. The next independent request rebuilds.",
+  "degraded_signal": {"field":"build_quality","value":"degraded","reason_field":"degraded_reason","allowed_reasons":["futures_timeout","futures_skipped_budget","futures_error"]},
+  "scenarios": [
+    {"id":"complete_leader_publish","build_state":"complete","degraded_marker":false,"returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":true,"redis_publish_status":"success","redis_fresh_written":true,"redis_stale_written":true,"next_same_key_action":"cache_hit"},
+    {"id":"complete_redis_publish_failure","build_state":"complete","degraded_marker":false,"returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":true,"redis_publish_status":"failure","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"process_last_good_or_rebuild"},
+    {"id":"futures_timeout_leader","build_state":"futures_timeout","degraded_marker":true,"degraded_reason":"futures_timeout","returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":false,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild"},
+    {"id":"futures_skipped_no_budget","build_state":"futures_skipped_budget","degraded_marker":true,"degraded_reason":"futures_skipped_budget","returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":false,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild"},
+    {"id":"futures_exception_partial","build_state":"futures_error","degraded_marker":true,"degraded_reason":"futures_error","returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":false,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild"},
+    {"id":"events_only_partial_waiter","build_state":"events_only_partial","degraded_marker":true,"degraded_reason":"futures_timeout","returned_to_current_request":false,"shared_with_inflight_waiters":true,"process_last_good_written":false,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild"},
+    {"id":"failed_leader_no_payload","build_state":"failed","degraded_marker":false,"returned_to_current_request":false,"shared_with_inflight_waiters":false,"process_last_good_written":false,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild"}
+  ],
+  "rejected_counterexamples": [
+    {"id":"reject_unmarked_timeout_publish_all","build_state":"futures_timeout","degraded_marker":false,"returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":true,"redis_publish_status":"success","redis_fresh_written":true,"redis_stale_written":true,"next_same_key_action":"cache_hit","expected_violations":["degraded_marker_mismatch","degraded_process_last_good","degraded_redis_fresh","degraded_redis_stale","degraded_blocks_recovery","unmarked_degraded_response"]},
+    {"id":"reject_degraded_last_good_only","build_state":"futures_skipped_budget","degraded_marker":true,"returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":true,"redis_publish_status":"skipped","redis_fresh_written":false,"redis_stale_written":false,"next_same_key_action":"rebuild","expected_violations":["degraded_process_last_good"]},
+    {"id":"reject_complete_missing_mirror","build_state":"complete","degraded_marker":false,"returned_to_current_request":true,"shared_with_inflight_waiters":true,"process_last_good_written":true,"redis_publish_status":"success","redis_fresh_written":true,"redis_stale_written":false,"next_same_key_action":"cache_hit","expected_violations":["complete_missing_redis_mirror"]}
+  ]
+}
