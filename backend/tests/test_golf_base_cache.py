@@ -310,6 +310,126 @@ async def test_unavailable_when_redis_empty_and_rebuild_fails(monkeypatch):
     assert rc.inflight_count() == 0  # slot cleared on failure
 
 
+# --- Queue 281 (#1475): inline-fill session isolation -------------------------
+class _FakeFillSession:
+    """An async-context-manager stand-in for the isolated fill session."""
+
+    def __init__(self):
+        self.entered = False
+        self.exited = False
+
+    async def __aenter__(self):
+        self.entered = True
+        return self
+
+    async def __aexit__(self, *exc):
+        self.exited = True
+        return False  # never suppress
+
+
+class _PoisonRequestDB:
+    """A request session that fails LOUDLY if the golf fill ever touches it."""
+
+    async def execute(self, *a, **k):  # pragma: no cover - must never run
+        raise AssertionError("golf fill used the request session")
+
+    async def rollback(self):  # pragma: no cover - must never run
+        raise AssertionError("golf fill rolled back the request session")
+
+
+def _install_fill_session(monkeypatch):
+    sessions: list[_FakeFillSession] = []
+
+    def _factory():
+        s = _FakeFillSession()
+        sessions.append(s)
+        return s
+
+    monkeypatch.setattr(gb, "_fill_session_factory", _factory)
+    return sessions
+
+
+async def test_inline_fill_runs_on_isolated_session_not_request_session(monkeypatch):
+    """C76 inline_success_request_session / inline_sql_timeout_isolated_session:
+    the fill's SQL runs on an OWNED session, never the request session."""
+    client = _FakeRedis({})
+    _install(monkeypatch, client)
+    sessions = _install_fill_session(monkeypatch)
+
+    seen = {}
+
+    async def _get_golf(db):
+        seen["db"] = db
+        return {"tournaments": [_tournament(key="masters")]}
+
+    monkeypatch.setattr("app.routes.golf.get_golf", _get_golf)
+
+    tours, prov = await gb.get_golf_base(_PoisonRequestDB(), NOW)
+
+    assert prov == gb.PROV_INLINE
+    assert tours[0]["key"] == "masters"
+    assert sessions and sessions[0].entered and sessions[0].exited
+    assert seen["db"] is sessions[0]  # ran on the isolated session, not request db
+
+
+async def test_inline_fill_timeout_leaves_request_session_untouched(monkeypatch):
+    """C76 timeout_continue_without_rollback is prevented by isolation: a fill
+    statement timeout taints only the throwaway session; the request session is
+    never used, so later feed stages inherit a clean session."""
+    client = _FakeRedis({})
+    _install(monkeypatch, client)
+    sessions = _install_fill_session(monkeypatch)
+
+    async def _timeout_get_golf(db):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr("app.routes.golf.get_golf", _timeout_get_golf)
+
+    tours, prov = await gb.get_golf_base(_PoisonRequestDB(), NOW)
+
+    assert prov == gb.PROV_UNAVAILABLE
+    assert tours == []
+    assert sessions[0].exited  # isolated session cleaned up on failure
+    assert rc.inflight_count() == 0
+
+
+async def test_inline_fill_cancel_reraises_without_touching_request_session(monkeypatch):
+    """C76 caller_cancel_rollback_then_reraise: caller cancellation propagates
+    (re-raised, never swallowed); the isolated fill session is closed and the
+    request session is never touched."""
+    client = _FakeRedis({})
+    _install(monkeypatch, client)
+    sessions = _install_fill_session(monkeypatch)
+
+    async def _hang_get_golf(db):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr("app.routes.golf.get_golf", _hang_get_golf)
+
+    task = asyncio.ensure_future(gb.get_golf_base(_PoisonRequestDB(), NOW))
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert sessions[0].exited  # isolated session cleaned up on cancellation
+    assert rc.inflight_count() == 0  # slot cleared
+
+
+async def test_inline_success_provenance_is_allowlisted(monkeypatch):
+    """Every inline return carries one allowlisted provenance value."""
+    client = _FakeRedis({})
+    _install(monkeypatch, client)
+    _install_fill_session(monkeypatch)
+
+    async def _get_golf(db):
+        return {"tournaments": [_tournament(key="masters")]}
+
+    monkeypatch.setattr("app.routes.golf.get_golf", _get_golf)
+    _, prov = await gb.get_golf_base(None, NOW)
+    assert prov in {gb.PROV_FRESH, gb.PROV_LAST_GOOD, gb.PROV_INLINE, gb.PROV_UNAVAILABLE}
+
+
 # --- L0 read throttle --------------------------------------------------------
 async def test_l0_throttles_redis_round_trips(monkeypatch):
     client = _FakeRedis({gb.GOLF_BASE_FRESH_KEY: json.dumps(_envelope(age_s=10))})

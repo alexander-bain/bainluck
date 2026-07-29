@@ -126,6 +126,9 @@ app.add_middleware(
     # X-Feed-Singleflight are the identity-free stage/coverage/scope/singleflight
     # diagnostics emitted on EVERY feed return path; expose them so a browser
     # field debugger can read all feed/request headers cross-origin.
+    # Queue 281 (#1475): X-Feed-Golf-Provenance is the one bounded, allowlisted
+    # golf-base publisher signal (fresh/last_good/inline/unavailable) — identity-
+    # free, so Ops can positively verify the shared golf base cross-origin.
     expose_headers=[
         "X-Response-Time",
         "X-Request-ID",
@@ -135,6 +138,7 @@ app.add_middleware(
         "X-Feed-Counts",
         "X-Feed-Count-Scope",
         "X-Feed-Singleflight",
+        "X-Feed-Golf-Provenance",
     ],
 )
 

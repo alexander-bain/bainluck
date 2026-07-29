@@ -200,6 +200,93 @@ async def test_leader_build_is_the_only_leader_labelled_path(client, monkeypatch
     assert "returned=0" in resp.headers["x-feed-counts"]
 
 
+async def test_leader_emits_golf_provenance_header(client, monkeypatch):
+    """Queue 281: the golf-base tier that served the leader build is surfaced as
+    one allowlisted X-Feed-Golf-Provenance value so Ops can verify the publisher."""
+    _reset_rc()
+    fake = _FakeRedis("miss")
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    async def _fresh_base(db, now, stages=None):
+        return ([], "fresh")
+
+    monkeypatch.setattr("app.utils.golf_base.get_golf_base", _fresh_base)
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-feed-singleflight"] == "leader"
+    assert resp.headers["x-feed-golf-provenance"] == "fresh"
+
+
+async def test_every_allowlisted_golf_provenance_reaches_the_header(client, monkeypatch):
+    """All four allowlisted golf-base tiers (the 12 accepted C76 rows collapse to
+    fresh/last_good/inline/unavailable) surface verbatim on the header."""
+    for prov in ("fresh", "last_good", "inline", "unavailable"):
+        _reset_rc()
+        fake = _FakeRedis("miss")
+        monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+        async def _base(db, now, stages=None, _p=prov):
+            return ([], _p)
+
+        monkeypatch.setattr("app.utils.golf_base.get_golf_base", _base)
+
+        resp = await client.get("/api/feed?limit=5")
+        assert resp.status_code == 200
+        assert resp.headers["x-feed-golf-provenance"] == prov
+
+
+async def test_leader_golf_unavailable_provenance_on_base_failure(client, monkeypatch):
+    """A golf-base failure reports the truthful ``unavailable`` provenance, not a
+    missing/opaque signal — the feed still serves its other cards."""
+    _reset_rc()
+    fake = _FakeRedis("miss")
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    async def _boom_base(db, now, stages=None):
+        raise RuntimeError("golf base down")
+
+    monkeypatch.setattr("app.utils.golf_base.get_golf_base", _boom_base)
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-feed-golf-provenance"] == "unavailable"
+
+
+async def test_golf_provenance_allowlist_blocks_freeform_or_identity(client, monkeypatch):
+    """A free-form / identity-bearing provenance value can never reach the header
+    (the C76 identity_bearing_signal / invalid_provenance guard)."""
+    _reset_rc()
+    fake = _FakeRedis("miss")
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    async def _identity_base(db, now, stages=None):
+        return ([], "fresh:user_42")
+
+    monkeypatch.setattr("app.utils.golf_base.get_golf_base", _identity_base)
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert "x-feed-golf-provenance" not in resp.headers
+
+
+async def test_cache_hit_does_not_emit_golf_provenance(client, monkeypatch):
+    """Golf isn't consulted on a served-from-cache path, so no golf provenance is
+    fabricated there — the header appears only where golf actually ran."""
+    _reset_rc()
+    fake = _FakeRedis("fresh", _CACHED_PAYLOAD)
+    monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
+
+    resp = await client.get("/api/feed?limit=5")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-feed-cache"] == "hit"
+    assert "x-feed-golf-provenance" not in resp.headers
+
+
 async def test_requires_auth_early_return_reports_diagnostics(client, monkeypatch):
     _reset_rc()
     fake = _FakeRedis("miss")
@@ -232,9 +319,10 @@ async def test_no_pii_in_cached_path_headers(client, monkeypatch):
         assert banned not in blob
 
 
-async def test_cors_exposes_all_seven_feed_headers(client, monkeypatch):
-    """A browser on an allowed origin must be able to read all seven
-    feed/request diagnostic headers cross-origin (Item 2)."""
+async def test_cors_exposes_all_feed_headers(client, monkeypatch):
+    """A browser on an allowed origin must be able to read all feed/request
+    diagnostic headers cross-origin, including the golf-provenance signal
+    (Item 2 / Queue 281)."""
     _reset_rc()
     fake = _FakeRedis("fresh", _CACHED_PAYLOAD)
     monkeypatch.setattr(_rc, "get_shared_async_redis", lambda: _async(fake))
@@ -252,6 +340,8 @@ async def test_cors_exposes_all_seven_feed_headers(client, monkeypatch):
         "x-feed-cache",
         "x-feed-stages",
         "x-feed-counts",
+        "x-feed-count-scope",
         "x-feed-singleflight",
+        "x-feed-golf-provenance",
     ):
         assert header in exposed, f"CORS does not expose {header}"

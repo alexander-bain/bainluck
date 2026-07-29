@@ -319,6 +319,9 @@ def _summarize_feed_stages(
     return out
 
 
+_ALLOWED_GOLF_PROVENANCE = frozenset({"fresh", "last_good", "inline", "unavailable"})
+
+
 def _emit_feed_stage_observability(
     response: Response,
     *,
@@ -327,6 +330,7 @@ def _emit_feed_stage_observability(
     singleflight: str,
     counts: dict[str, int],
     started_at: float,
+    golf_provenance: str | None = None,
 ) -> None:
     """Attach identity-free stage headers and emit a sampled structured log line.
 
@@ -348,6 +352,13 @@ def _emit_feed_stage_observability(
         # (Queue 277 / #1475). Counts are page-scoped everywhere → fixed "page".
         response.headers["X-Feed-Count-Scope"] = "page"
         response.headers["X-Feed-Singleflight"] = singleflight or "none"
+        # Queue 281 (#1475): one bounded, allowlisted golf-base provenance value so
+        # Ops can positively verify the shared publisher (fresh vs last_good vs
+        # inline vs unavailable) — never a raw source string, key, ID, or identity.
+        # Only emitted when golf was consulted this request AND the value is in the
+        # allowlist, so a free-form / identity-bearing value can never leak.
+        if golf_provenance in _ALLOWED_GOLF_PROVENANCE:
+            response.headers["X-Feed-Golf-Provenance"] = golf_provenance
         if total_ms >= FEED_STAGE_ALWAYS_LOG_MS or (
             random.random() < _feed_stage_sample_rate()
         ):
@@ -419,6 +430,7 @@ def _finalize_feed_response(
     timings: list[dict[str, float | str]] | None,
     started_at: float,
     counts: dict[str, int],
+    golf_provenance: str | None = None,
 ) -> None:
     """Single truthful finalizer for EVERY successful /api/feed return path.
 
@@ -446,6 +458,7 @@ def _finalize_feed_response(
         singleflight=singleflight,
         counts=counts,
         started_at=started_at,
+        golf_provenance=golf_provenance,
     )
 
 
@@ -1284,6 +1297,11 @@ async def get_feed(
         elapsed_ms = (time.perf_counter() - _started_at) * 1000
         return max(0.0, (_rc.FEED_TOTAL_BUDGET_MS - elapsed_ms) / 1000.0)
 
+    # Queue 281 (#1475): the golf-base tier that served this request, surfaced as
+    # ONE identity-free provenance value on the observability rail (see the leader
+    # finalizer). None until the golf stage runs (skipped / non-leader paths).
+    _golf_provenance: str | None = None
+
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1725,9 +1743,12 @@ async def get_feed(
                 _skip_golf = True
         if not _skip_golf:
             try:
+                _golf_prov_sink: dict = {}
                 tournament_items = await _score_golf_tournaments(
-                    db, now, sport, ctx, stages=_timings
+                    db, now, sport, ctx, stages=_timings,
+                    provenance_sink=_golf_prov_sink,
                 )
+                _golf_provenance = _golf_prov_sink.get("golf")
                 if tournament_items:
                     feed_items.extend(tournament_items)
             except Exception as e:
@@ -2243,6 +2264,7 @@ async def get_feed(
             counts=_feed_obs_counts(
                 paginated, total=total, returned=len(paginated)
             ),
+            golf_provenance=_golf_provenance,
         )
         return payload
     except BaseException:
@@ -6848,6 +6870,7 @@ async def _score_golf_tournaments(
     sport_filter: Optional[str],
     ctx=None,
     stages=None,
+    provenance_sink: Optional[dict] = None,
 ) -> list[dict]:
     """Score golf tournaments for the unified feed.
 
@@ -6859,6 +6882,12 @@ async def _score_golf_tournaments(
     Redis (fresh <=300s, else truthfully-labeled last-good) so a dyno restart
     never pays the ~8.9s inline rebuild (#1475/#1459). Per-user tour filtering,
     scoring, headline/reason, and marquee pinning stay request-side below.
+
+    Queue 281 (#1475): when ``provenance_sink`` is passed, the golf-base tier that
+    served this request (``fresh``/``last_good``/``inline``/``unavailable``) is
+    recorded under ``provenance_sink["golf"]`` so the caller can surface ONE
+    identity-free provenance value on the feed observability rail — Ops positively
+    verifies the shared publisher without exposing keys/IDs/user/session data.
     """
     # If sport filter is set and doesn't match golf, skip
     if sport_filter and sport_filter not in ("golf", "all"):
@@ -6872,7 +6901,15 @@ async def _score_golf_tournaments(
         raise
     except Exception as e:
         logger.warning("Feed: failed to load golf base: %s", e)
+        # The base could not be consulted at all — a truthful, allowlisted signal.
+        if provenance_sink is not None:
+            provenance_sink["golf"] = "unavailable"
         return []
+
+    # Record the base tier BEFORE any per-user filtering — provenance describes the
+    # shared publisher, not whether this user happens to see golf cards.
+    if provenance_sink is not None:
+        provenance_sink["golf"] = _golf_provenance
 
     if not tournaments:
         return []

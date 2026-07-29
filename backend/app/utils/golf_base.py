@@ -317,18 +317,39 @@ def _record_stage(stages, name: str, t0: float) -> None:
 
 
 # --- Rebuild (fill) + singleflight ownership ----------------------------------
+def _fill_session_factory():
+    """Return an async-context-manager DB session OWNED by the inline fill.
+
+    Session isolation (Queue 281 / #1475): the rare inline rebuild runs its SQL
+    on an INDEPENDENT session, never the request's ``db``. So a fill statement
+    timeout, provider error, or caller cancellation can taint only this throwaway
+    session — it can never leave the request session mid-statement for the later
+    concepts / futures / manual-review queries to trip over (the
+    ``dirty_session_reused`` / ``rollback_failure_reused`` failure classes). The
+    ``async with`` exit rolls back + closes the isolated session unconditionally.
+    Patchable in tests.
+    """
+    from app.services.database import async_session_maker
+
+    return async_session_maker()
+
+
 async def _build_fresh_envelope(db, now: datetime, *, stages=None) -> dict:
     """Rebuild the base from source (the expensive DB + DataGolf path).
 
     Only reached on a genuine Redis outage / empty cache. Bounded by
-    ``GOLF_BASE_FILL_DEADLINE_MS`` so it can never run to the router cutoff.
+    ``GOLF_BASE_FILL_DEADLINE_MS`` so it can never run to the router cutoff. The
+    fill runs on its OWN isolated session (``_fill_session_factory``); the passed
+    ``db`` (the request session) is intentionally NOT used for the fill, so a
+    timeout/cancel here cannot poison the caller's later DB work.
     """
     from app.routes.golf import get_golf
 
     t0 = time.perf_counter()
-    response = await _rc.run_with_deadline(
-        get_golf(db), deadline_ms=GOLF_BASE_FILL_DEADLINE_MS
-    )
+    async with _fill_session_factory() as fill_db:
+        response = await _rc.run_with_deadline(
+            get_golf(fill_db), deadline_ms=GOLF_BASE_FILL_DEADLINE_MS
+        )
     _record_stage(stages, "golf.base_fill_build", t0)
     tournaments = response.get("tournaments", []) if isinstance(response, dict) else []
     return build_envelope(now, tournaments)
