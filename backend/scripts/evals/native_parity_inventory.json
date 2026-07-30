@@ -1,0 +1,197 @@
+{
+  "schema_version": "native-parity-inventory/v1",
+  "audited_commit": "95fdf87f",
+  "priority_order": ["reliability", "discover", "event_pages", "search", "concept_hubs", "multi_platform"],
+  "allowed_statuses": ["confirmed", "partial", "refuted", "intentional-platform-difference", "already-fixed", "unmeasured"],
+  "allowed_actions": ["fix-now", "verify-existing-fix", "product-decision", "parked", "not-a-defect", "measure-first", "dependency-gated"],
+  "capabilities": [
+    {
+      "id": "discover_first_card_latency",
+      "journey": "Discover first card",
+      "dimension": "observability-parity",
+      "product_priority": "reliability",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1472 / L2-206,L2-208,L2-210,L2-212",
+      "evidence": ["ios/Bain Luck/Bain Luck/Services/APIClient.swift:294-368", "ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift:160-245"],
+      "reason": "Native parses X-Feed-Elapsed-Ms/X-Feed-Cache and emits network, data-ready, first-render, cache, and build telemetry."
+    },
+    {
+      "id": "discover_offline_last_good",
+      "journey": "Discover repeat/offline launch",
+      "dimension": "core-user-journey",
+      "product_priority": "reliability",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1465/#1472",
+      "evidence": ["ios/Bain Luck/Bain Luck/Services/APIClient.swift:620-690", "ios/Bain Luck/Bain Luck/Services/DiscoverFeedCache.swift:169-227"],
+      "reason": "Offset-zero raw payload is identity-partitioned and persisted as last-good off the render path."
+    },
+    {
+      "id": "discover_recycling_starvation",
+      "journey": "Heavy-user Discover exhaustion",
+      "dimension": "core-user-journey",
+      "product_priority": "discover",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1221/#1455",
+      "evidence": ["ios/Bain Luck/Bain Luck/Views/DiscoverView.swift:239-267", ".claude/handoff/REVIEW-VERIFY-AUDIT.md:78"],
+      "reason": "Native now fail-closes lifecycle-stale rows and has no all-stale restoration path; installed-device/session verification remains."
+    },
+    {
+      "id": "sports_first_card_latency",
+      "journey": "Sports first card",
+      "dimension": "observability-parity",
+      "product_priority": "reliability",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1480 / L2-207,L2-209,L2-211",
+      "evidence": ["ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift:249-284", "ios/Bain Luck/Bain Luck/ViewModels/FeedViewModel.swift:149-345"],
+      "reason": "Sports progressively loads and emits separate data-ready and on-screen first-render telemetry."
+    },
+    {
+      "id": "my_stuff_latency",
+      "journey": "My Stuff first card",
+      "dimension": "observability-parity",
+      "product_priority": "reliability",
+      "status": "unmeasured",
+      "action": "measure-first",
+      "canonical_owner": null,
+      "evidence": ["ios/Bain Luck/Bain Luck/ViewModels/MyStuffViewModel.swift:1-90"],
+      "reason": "Cancellation exists, but the supplied report contains no measured My Stuff trace and no parity contract equivalent to Discover/Sports."
+    },
+    {
+      "id": "event_chart_primary_axis",
+      "journey": "Live event win probability",
+      "dimension": "platform-presentation",
+      "product_priority": "event_pages",
+      "status": "confirmed",
+      "action": "fix-now",
+      "canonical_owner": "#240/#678 / L2-216",
+      "evidence": ["ios/Bain Luck/Bain Luck/Components/OddsChartView.swift:629-676", "ios/Bain Luck/Bain Luck/Components/OddsChartView.swift:912-949"],
+      "reason": "Primary chart still uses mirrored delta coordinates and shows secondary source lines by default; interpolation is already linear."
+    },
+    {
+      "id": "event_chart_smoothing",
+      "journey": "Live event win probability",
+      "dimension": "platform-presentation",
+      "product_priority": "event_pages",
+      "status": "refuted",
+      "action": "not-a-defect",
+      "canonical_owner": "#240 historical claim",
+      "evidence": ["ios/Bain Luck/Bain Luck/Components/OddsChartView.swift:642-646"],
+      "reason": "The primary OddsChart line uses .linear; the report's .monotone citation is stale."
+    },
+    {
+      "id": "native_search_race",
+      "journey": "Instant Answers search",
+      "dimension": "core-user-journey",
+      "product_priority": "search",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1469 / L2-198",
+      "evidence": ["ios/Bain Luck/Bain Luck/ViewModels/SearchViewModel.swift:18-110"],
+      "reason": "Native has debounce cancellation and a generation guard that drops stale full-search responses."
+    },
+    {
+      "id": "team_core_page",
+      "journey": "Team page overview",
+      "dimension": "core-user-journey",
+      "product_priority": "event_pages",
+      "status": "partial",
+      "action": "dependency-gated",
+      "canonical_owner": "#241/L2-164 team-page program",
+      "evidence": ["ios/Bain Luck/Bain Luck/Views/TeamDetailView.swift:35-137", ".claude/handoff/READY-FIXES.md:408-416"],
+      "reason": "Native has hero, championship path, upcoming/recent, and futures; journey chart, division race, prop families, and explicit season labels remain in the existing program."
+    },
+    {
+      "id": "play_and_challenges",
+      "journey": "Human labeling and challenges",
+      "dimension": "core-user-journey",
+      "product_priority": "discover",
+      "status": "partial",
+      "action": "product-decision",
+      "canonical_owner": "DailyChallengeView/FriendChallengeView; no approved native /play parity issue",
+      "evidence": ["ios/Bain Luck/Bain Luck/Views/Route.swift:23-24", "ios/Bain Luck/Bain Luck/Views/Route.swift:51-52"],
+      "reason": "Native challenges exist; a general /play browsing surface does not. Feature-count parity alone does not establish that it belongs in native navigation."
+    },
+    {
+      "id": "hub_surface",
+      "journey": "Competition hub",
+      "dimension": "optional-web-tooling",
+      "product_priority": "concept_hubs",
+      "status": "intentional-platform-difference",
+      "action": "product-decision",
+      "canonical_owner": "concept-hub strategy",
+      "evidence": ["frontend/app/hub/[competition]/page.tsx", "ios/Bain Luck/Bain Luck/Views/Route.swift:4-27"],
+      "reason": "Web has a dynamic hub route; native has league/grid/tournament routes. A missing route name is not evidence that a core journey fails."
+    },
+    {
+      "id": "kernels_preview",
+      "journey": "Internal design preview",
+      "dimension": "optional-web-tooling",
+      "product_priority": "discover",
+      "status": "intentional-platform-difference",
+      "action": "not-a-defect",
+      "canonical_owner": null,
+      "evidence": ["frontend/app/kernels-preview/page.tsx"],
+      "reason": "A preview/workbench route is not a user-facing native parity requirement."
+    },
+    {
+      "id": "native_card_formats",
+      "journey": "Discover card comprehension",
+      "dimension": "platform-presentation",
+      "product_priority": "discover",
+      "status": "partial",
+      "action": "dependency-gated",
+      "canonical_owner": "#829/#823; #820/#822 closed",
+      "evidence": ["docs/github-issues-export.json:#829", "docs/github-issues-export.json:#823", "docs/github-issues-export.json:#820", "docs/github-issues-export.json:#822"],
+      "reason": "Threshold and multi-outcome cards shipped; native archetype and comparison-bundle work remains under existing issues. Component-name differences are not separate defects."
+    },
+    {
+      "id": "watch_app_shipping",
+      "journey": "Watch glance",
+      "dimension": "shipping-target-membership",
+      "product_priority": "multi_platform",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1080 follow-up / commit 1f0352c1",
+      "evidence": ["ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj:261-303", "git:1f0352c1"],
+      "reason": "Watch app target and embedded Watch content exist; current installed/shipping status still needs archive evidence."
+    },
+    {
+      "id": "widget_and_complication_targets",
+      "journey": "Widget and complication",
+      "dimension": "shipping-target-membership",
+      "product_priority": "multi_platform",
+      "status": "already-fixed",
+      "action": "verify-existing-fix",
+      "canonical_owner": "#1080 follow-up / commit 1f0352c1",
+      "evidence": ["ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj:305-395", "git:1f0352c1"],
+      "reason": "Widget and complication targets now exist and are embedded; CLAUDE/completed-features claims that they are unwired are stale documentation."
+    },
+    {
+      "id": "futures_navigation",
+      "journey": "Browse futures",
+      "dimension": "platform-presentation",
+      "product_priority": "multi_platform",
+      "status": "intentional-platform-difference",
+      "action": "parked",
+      "canonical_owner": "#444 / explicit navigation hold",
+      "evidence": ["ios/Bain Luck/Bain Luck/Views/MainTabView.swift:102-148", "docs/github-issues-export.json:#444"],
+      "reason": "Futures and category destinations exist but are deliberately not primary navigation entries; reopening is a product/navigation decision."
+    },
+    {
+      "id": "native_accessibility_parity",
+      "journey": "Accessible core journeys",
+      "dimension": "platform-presentation",
+      "product_priority": "reliability",
+      "status": "unmeasured",
+      "action": "measure-first",
+      "canonical_owner": null,
+      "evidence": ["ios/Bain Luck/Bain Luck/Views"],
+      "reason": "The supplied report offers no VoiceOver, Dynamic Type, contrast, or switch-control evidence."
+    }
+  ],
+  "new_issue_packets": []
+}
