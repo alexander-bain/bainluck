@@ -352,6 +352,22 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     }
 
     @MainActor
+    func testWrappedCancellationLeavesStateClean() async throws {
+        // Production cancellation shape: pagination's fetch wraps URLSession errors,
+        // so a torn-down scroll task surfaces cancellation as APIError.networkError.
+        // It must not paint "Couldn't load more markets" (L2-214 Item 2).
+        let (vm, _) = try await loadedVM([
+            .fail(APIError.networkError(underlying: URLError(.cancelled))),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertNil(vm.error, "wrapped cancellation is not a user-facing error")
+        XCTAssertTrue(vm.hasMore, "cancellation leaves pagination retryable")
+        XCTAssertEqual(vm.items.count, 12)
+        XCTAssertFalse(vm.loadingMore)
+    }
+
+    @MainActor
     func testConcurrentCallsIssueSingleRequest() async throws {
         let (vm, fake) = try await loadedVM([
             .ok(try Self.response(ids: [500], offset: 12, hasMore: true)),

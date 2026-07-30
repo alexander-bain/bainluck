@@ -2,9 +2,10 @@
 
 // L2-176 — THE PLAY PAGE (/play). A kid-safe rating game for Alex's kids.
 // Unlisted from nav; rides existing feed + prediction APIs. FRONTEND-ONLY.
-//   • Pick-your-player (emoji + name + "things you love") → deterministic kid:<slug> id
-//   • Game 1: "Cool or Boring?" swipe cards (like/unlike under the kid id)
-//   • Game 2: "Higher or Lower?" (Today's Challenge mechanic under the kid id)
+//   • Pick-your-player (emoji + name + "things you love") — name is LOCAL display
+//     only; votes ride an opaque device-scoped id `kid_device:<random>` (L2-214)
+//   • Game 1: "Cool or Boring?" swipe cards (like/unlike under the opaque device id)
+//   • Game 2: "Higher or Lower?" (Today's Challenge mechanic under the opaque device id)
 //   • Two-player leaderboard (rating COUNT + best streak = the score)
 
 import { useCallback, useEffect, useMemo, useState } from "react";

@@ -432,10 +432,10 @@ final class DiscoverViewModel: ObservableObject {
                     mergeMs: mergeMs,
                     dataReadyMs: seededFromCache ? nil : Self.elapsedMs(since: loadStart)))
                 return
-            } catch is CancellationError {
-                loading = false
-                return
-            } catch let urlError as URLError where urlError.code == .cancelled {
+            } catch let cancel where Self.isCancellation(cancel) {
+                // Raw OR wrapped cancellation (task teardown, superseded generation,
+                // or the deadline race cancelling the loser): abandon quietly — keep
+                // prior content, no error banner, no failure telemetry (L2-214 Item 2).
                 loading = false
                 return
             } catch {
@@ -539,6 +539,19 @@ final class DiscoverViewModel: ObservableObject {
     /// non-retryable 4xx, invalid URLs, and cancellation cannot, so retrying them
     /// only multiplies work (C42 P3). Handles both `APIError` (production) and the
     /// raw `URLError`/`CancellationError` deterministic fakes throw in tests.
+    /// True for every cancellation form — a raw `CancellationError`, a
+    /// `URLError.cancelled`, or a cancellation WRAPPED as `APIError.networkError`
+    /// (feed requests wrap URLSession errors, so a torn-down `.task`/`.refreshable`
+    /// or a superseded deadline race surfaces cancellation wrapped, bypassing the
+    /// raw checks). Cancellation is not a failure: callers route it to a quiet exit
+    /// — no error banner, no failure telemetry — never the error path (L2-214 Item 2).
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let url = error as? URLError { return url.code == .cancelled }
+        if let api = error as? APIError { return api.isCancellation }
+        return false
+    }
+
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
         if let api = error as? APIError {
@@ -686,9 +699,9 @@ final class DiscoverViewModel: ObservableObject {
                     eventPct: 0.15,
                     cacheTTL: nil
                 )
-            } catch is CancellationError {
-                return
-            } catch let urlError as URLError where urlError.code == .cancelled {
+            } catch let cancel where Self.isCancellation(cancel) {
+                // Raw OR wrapped cancellation — pagination was abandoned; keep
+                // content, no "couldn't load more" banner, no failure event (L2-214).
                 return
             } catch {
                 // A response (or failure) from a superseded generation must not

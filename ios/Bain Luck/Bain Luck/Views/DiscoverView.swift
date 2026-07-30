@@ -237,20 +237,15 @@ struct DiscoverView: View {
     }
 
     /// Pure, testable staleness predicate powering the Discover stale gate
-    /// (L2-191). Terminal/date/extreme rot judged per card type, independent of
-    /// content: resolved/closed futures, past-resolution futures, expired FINAL
-    /// games, and near-decided/extreme probabilities. `now` is injectable so
-    /// tests are deterministic and don't straddle a date boundary (gotcha #44).
+    /// (L2-191). Only AUTHORITATIVE lifecycle/date evidence settles a card:
+    /// resolved/closed futures, past-resolution futures, and expired FINAL games.
+    /// Probability alone NEVER settles a card (L2-214) — a near-certain but open
+    /// market at 0.99 with a future resolution date is still a valid prediction;
+    /// inferring settlement from price produced false "stale" hides. Unknown
+    /// authority stays unknown (surfaces). `now` is injectable so tests are
+    /// deterministic and don't straddle a date boundary (gotcha #44).
     static func isStaleItem(_ item: FeedItem, now: Date = Date()) -> Bool {
         if let f = item.futures {
-            if let leader = f.topOutcomes?.first {
-                let probability = leader.probability ?? 0
-                if probability >= 0.98 { return true }
-                if probability <= 0.02 { return true }
-                if probability >= 0.90 {
-                    if leader.movement == nil || abs(leader.movement ?? 0) < 0.005 { return true }
-                }
-            }
             if f.status == "closed" || f.status == "resolved" { return true }
             if let rd = f.resolutionDate, let d = rd.asDate, d < now { return true }
         }

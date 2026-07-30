@@ -1,11 +1,13 @@
 // L2-176 — THE PLAY PAGE per-kid identity, leaderboard, and vote plumbing.
 //
-// The kid identity is deliberately kept OFF the parent's real Discover session
+// The Play identity is deliberately kept OFF the parent's real Discover session
 // (`bainluck_session_id`) so a kid's swipes never pollute the grown-up feed's
-// personalization. Every kid interaction is tagged with a deterministic session
-// id `kid:<slug>` — this IS the rater tag the downstream eval workshop extracts
-// (see the "data note" in the report). No schema work: votes ride the existing
-// /api/feed/interactions and /api/predictions endpoints, just under the kid id.
+// personalization. Every Play interaction is tagged with an OPAQUE, device-scoped
+// session id `kid_device:<random>` — the entered display name NEVER enters the
+// session id, transport, server persistence, or telemetry (L2-214 Item 3). The
+// name stays local presentation data only. No schema work: votes ride the
+// existing /api/feed/interactions and /api/predictions endpoints, under the
+// opaque device id. The display name still keys LOCAL-only leaderboard stats.
 
 import { getDiscoverItemAnalytics } from "@/lib/discoverInteractions";
 import type { DiscoverAction } from "@/lib/discoverInteractions";
@@ -16,6 +18,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const PLAYERS_KEY = "bainluck_play_players_v1";
 const ACTIVE_KEY = "bainluck_play_active_v1";
 const STATS_KEY = "bainluck_play_stats_v1";
+const DEVICE_ID_KEY = "bainluck_play_device_id_v1";
+const DEVICE_ID_PREFIX = "kid_device:";
 
 export interface KidPlayer {
   name: string;
@@ -42,9 +46,55 @@ export function kidSlug(name: string): string {
   );
 }
 
-/** Deterministic, separable rater tag. Same name → same session, always. */
-export function kidSessionId(name: string): string {
-  return `kid:${kidSlug(name)}`;
+// Per-page fallback when localStorage is unavailable (private mode / quota):
+// votes still transmit under a stable-for-this-page opaque id, never persisted.
+let ephemeralDeviceId: string | null = null;
+
+/** An opaque, name-free random token. Contains no display-name material. */
+function randomOpaqueToken(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID().replace(/-/g, "");
+    }
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    /* fall through to the non-crypto fallback */
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+}
+
+/**
+ * Device-scoped, opaque Play identifier. Generated once per device (browser
+ * storage) and reused, so: the same device is STABLE across renames; two devices
+ * NEVER collide even with the same display name; clearing storage rotates it. The
+ * entered display name never enters this id, transport, persistence, or telemetry.
+ * (L2-214 Item 3 — supersedes the old name-derived `kid:<slug>` rater tag.)
+ */
+export function playDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const existing = localStorage.getItem(DEVICE_ID_KEY);
+    if (existing && existing.startsWith(DEVICE_ID_PREFIX)) return existing;
+    const id = `${DEVICE_ID_PREFIX}${randomOpaqueToken()}`;
+    localStorage.setItem(DEVICE_ID_KEY, id);
+    return id;
+  } catch {
+    if (!ephemeralDeviceId) ephemeralDeviceId = `${DEVICE_ID_PREFIX}${randomOpaqueToken()}`;
+    return ephemeralDeviceId;
+  }
+}
+
+/**
+ * Opaque, device-scoped rater tag for Play votes. Name-free by construction —
+ * the display name is intentionally NOT a parameter. Legacy `kid:<name>` session
+ * ids are never written again.
+ */
+export function kidSessionId(): string {
+  return playDeviceId();
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +202,7 @@ export function sendKidInteraction(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-session-id": kidSessionId(name),
+        "x-session-id": kidSessionId(),
       },
       body: JSON.stringify({
         interactions: [
@@ -192,7 +242,7 @@ export function sendKidPrediction(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-session-id": kidSessionId(name),
+        "x-session-id": kidSessionId(),
       },
       body: JSON.stringify(payload),
       keepalive: true,

@@ -3,10 +3,11 @@ import XCTest
 
 /// L2-191 — native Discover must never refill with settled cards. These tests
 /// pin the pure staleness gate (`DiscoverView.isStaleItem` / `eligibleItems`)
-/// that backs the "settled means settled" rule: every terminal/date/extreme
+/// that backs the "settled means settled" rule: every AUTHORITATIVE terminal/date
 /// class is dropped, and an all-stale payload collapses to `[]` (no restoration
 /// path) so the view falls to its graceful end state instead of resurrecting
-/// resolved markets or minting a guess slot from them.
+/// resolved markets or minting a guess slot from them. L2-214: probability alone
+/// NEVER settles a card — a near-certain but OPEN market still surfaces.
 ///
 /// SwiftUI bodies aren't unit-rendered here, so these verify the exact contract
 /// the view relies on. `now` is injected for determinism (gotcha #44).
@@ -108,25 +109,29 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
             try futures(resolutionDate: "\"2026-12-01T00:00:00Z\""), now: now))
     }
 
-    // MARK: - Futures: extreme / near-decided probability
+    // MARK: - Futures: probability alone NEVER settles a card (L2-214)
 
-    func testExtremeHighProbabilityIsStale() throws {
-        XCTAssertTrue(DiscoverView.isStaleItem(try futures(probability: 0.99), now: now))
+    func testExtremeHighProbabilityStillEligible() throws {
+        // 0.99 but OPEN with no terminal/date evidence → still a valid prediction.
+        // Price is not settlement authority (L2-214).
+        XCTAssertFalse(DiscoverView.isStaleItem(try futures(probability: 0.99), now: now))
     }
 
-    func testExtremeLowProbabilityIsStale() throws {
-        XCTAssertTrue(DiscoverView.isStaleItem(try futures(probability: 0.01), now: now))
+    func testExtremeLowProbabilityStillEligible() throws {
+        XCTAssertFalse(DiscoverView.isStaleItem(try futures(probability: 0.01), now: now))
     }
 
-    func testNearDecidedWithoutMovementIsStale() throws {
-        XCTAssertTrue(DiscoverView.isStaleItem(
+    func testNearDecidedWithoutMovementStillEligible() throws {
+        // Previously hidden as "effectively resolved" from price alone; the client
+        // no longer infers settlement — only authoritative status/date does.
+        XCTAssertFalse(DiscoverView.isStaleItem(
             try futures(probability: 0.92, movement: "null"), now: now))
     }
 
-    func testNearDecidedWithMovementIsEligible() throws {
-        // A ≥0.90 leader that is still MOVING is a live story, not rot.
-        XCTAssertFalse(DiscoverView.isStaleItem(
-            try futures(probability: 0.92, movement: "0.03"), now: now))
+    func testNearCertainButResolvedIsStale() throws {
+        // Authoritative status STILL settles it, independent of probability.
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try futures(status: "resolved", probability: 0.99), now: now))
     }
 
     // MARK: - Events: expired FINAL
@@ -154,7 +159,7 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
         let allStale = [
             try futures(id: 1, status: "resolved"),
             try futures(id: 2, status: "closed"),
-            try futures(id: 3, probability: 0.99),
+            try futures(id: 3, resolutionDate: "\"2026-07-01T00:00:00Z\""), // past resolution (authoritative)
             try event(id: 100, status: "completed", commenceTime: "\"2026-07-27T00:00:00Z\""),
         ]
         // The removed fallback would have returned the full set here — the whole
@@ -168,14 +173,14 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
             try futures(id: 1),                                  // fresh
             try futures(id: 2, status: "resolved"),             // drop
             try futures(id: 3, resolutionDate: "\"2026-07-01T00:00:00Z\""), // drop (past)
-            try futures(id: 4, probability: 0.99),              // drop (extreme)
+            try futures(id: 4, probability: 0.99),              // KEEP — near-certain but OPEN (L2-214: price never settles)
             try event(id: 100, status: "scheduled",
                       commenceTime: "\"2026-07-28T00:00:00Z\""), // fresh
             try event(id: 101, status: "completed",
                       commenceTime: "\"2026-07-27T00:00:00Z\""), // drop (old FINAL)
         ]
         let kept = DiscoverView.eligibleItems(mixed, now: now)
-        XCTAssertEqual(kept.map(\.id), ["futures-1", "event-100"])
+        XCTAssertEqual(kept.map(\.id), ["futures-1", "futures-4", "event-100"])
     }
 
     func testEmptyInputStaysEmpty() throws {
@@ -296,18 +301,18 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
             futuresChildJSON(id: 1),                                        // fresh
             futuresChildJSON(id: 2, status: "resolved"),                    // drop
             futuresChildJSON(id: 3, resolutionDate: "\"2026-07-01T00:00:00Z\""), // drop (past)
-            futuresChildJSON(id: 4, probability: 0.99),                     // drop (extreme)
+            futuresChildJSON(id: 4, probability: 0.99),                     // KEEP — open, price never settles (L2-214)
             futuresChildJSON(id: 5),                                        // fresh
         ])
         let kept = DiscoverView.eligibleBundleItems(b, now: now)
-        XCTAssertEqual(kept.map(\.id), ["futures-1", "futures-5"])
+        XCTAssertEqual(kept.map(\.id), ["futures-1", "futures-4", "futures-5"])
     }
 
     func testAllStaleBundleCollapsesToEmpty() throws {
         let b = try bundle(children: [
             futuresChildJSON(id: 1, status: "resolved"),
             futuresChildJSON(id: 2, status: "closed"),
-            futuresChildJSON(id: 3, probability: 0.01),
+            futuresChildJSON(id: 3, resolutionDate: "\"2026-07-01T00:00:00Z\""), // past resolution (authoritative)
         ])
         // An all-stale bundle yields [] so groupedItems drops the whole card —
         // no stale comparison renders ("settled means settled").

@@ -22,6 +22,8 @@ import {
   sendDiscoverInteraction,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
+import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import { isStale } from "@/lib/discover/feedFreshness";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -175,27 +177,6 @@ function applyLocalPersonalization(
   }
 
   return result;
-}
-
-function isStale(item: FeedItem): boolean {
-  if (item.type === "futures") {
-    const fd = item.data as FeedFuturesData;
-    const leader = fd.top_outcomes?.[0];
-    if (fd.status === "closed" || fd.status === "resolved") return true;
-    if (leader && (leader.probability ?? 0) >= 0.95) return true;
-    // Leader ≥90% with zero movement = effectively resolved
-    if (leader && (leader.probability ?? 0) >= 0.90 && (!leader.movement || Math.abs(leader.movement) < 0.005)) return true;
-    // Resolution date in the past
-    if (fd.resolution_date && new Date(fd.resolution_date) < new Date()) return true;
-  }
-  if (item.type === "event") {
-    const ed = item.data as FeedEventData;
-    if (ed.status === "completed" || ed.status === "closed") {
-      const hoursAgo = (Date.now() - new Date(ed.commence_time).getTime()) / (1000 * 60 * 60);
-      if (hoursAgo > 8) return true;
-    }
-  }
-  return false;
 }
 
 /** Interleave items so the default feed does not cluster into one sport or topic. */
@@ -554,7 +535,12 @@ export default function DiscoverPage() {
 
   const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
     "discover-feed",
-    () => fetchFeed({ limit: 200, event_pct: 0.15 }),
+    () => {
+      // One bounded initial (offset-zero) request. SWR owns this single fetch;
+      // background revalidation reuses the same key/shape (no duplicate initial).
+      const { limit, offset } = initialFeedRequest();
+      return fetchFeed({ limit, offset, event_pct: 0.15 });
+    },
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
@@ -568,24 +554,20 @@ export default function DiscoverPage() {
     if (data) setHasMore(data.has_more);
   }, [data]);
 
-  // Load more pages from the API when client-side items run out
+  // Load the next page from the API when client-side items run out. Exactly one
+  // request, advancing monotonically from the returned page boundary — it never
+  // re-requests offset zero (that is the SWR-owned initial fetch's job).
   const loadNextPage = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
       const loadedItems = [...(data?.items ?? []), ...allItems];
       const loadedIds = new Set(loadedItems.map(getItemId));
-      const offsets = Array.from(new Set([0, loadedItems.length]));
-      let sawMore = false;
-      let added = false;
+      const { limit, offset } = nextFeedRequest(loadedItems.length);
+      const resp = await fetchFeed({ limit, offset, event_pct: 0.15 });
+      const freshItems = resp.items.filter((item) => !loadedIds.has(getItemId(item)));
 
-      for (const offset of offsets) {
-        const resp = await fetchFeed({ limit: 200, offset, event_pct: 0.15 });
-        sawMore = sawMore || resp.has_more;
-        const freshItems = resp.items.filter((item) => !loadedIds.has(getItemId(item)));
-        if (freshItems.length === 0) continue;
-
-        for (const item of freshItems) loadedIds.add(getItemId(item));
+      if (freshItems.length > 0) {
         setAllItems((prev) => {
           const prevIds = new Set([...(data?.items ?? []), ...prev].map(getItemId));
           return [
@@ -593,11 +575,9 @@ export default function DiscoverPage() {
             ...freshItems.filter((item) => !prevIds.has(getItemId(item))),
           ];
         });
-        added = true;
-        break;
       }
 
-      if (!added && !sawMore) {
+      if (!resp.has_more) {
         setHasMore(false);
       }
     } catch { }
@@ -667,14 +647,9 @@ export default function DiscoverPage() {
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
     const firstPage = data?.items ?? [];
     const raw = [...firstPage, ...allItems];
-    // Deduplicate by item ID across pages
-    const seen = new Set<string>();
-    const unique = raw.filter((item) => {
-      const id = getItemId(item);
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
+    // Deduplicate by stable item ID across pages (defense in depth — a paging
+    // hiccup can never render the same card twice).
+    const unique = dedupeById(raw, getItemId);
     const fresh = unique.filter((item) => !isStale(item));
     const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
     const filtered = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS

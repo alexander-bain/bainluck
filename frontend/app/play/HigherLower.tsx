@@ -98,7 +98,7 @@ export default function HigherLower({
   // displayed comparison or the correctness already recorded for it (L2-195 P1).
   const questions = useMemo<Question[]>(() => {
     const out: Question[] = [];
-    const sid = kidSessionId(playerName);
+    const sid = kidSessionId();
     for (const item of deck) {
       const u = usableProb(item);
       if (!u) continue;

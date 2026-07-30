@@ -300,6 +300,59 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         XCTAssertFalse(vm.loading)
     }
 
+    func testWrappedCancellationDuringLoadIsQuietExit() async throws {
+        // The PRODUCTION cancellation shape: feed requests wrap URLSession errors,
+        // so a torn-down .task / superseded deadline race surfaces cancellation
+        // WRAPPED as APIError.networkError — bypassing the raw CancellationError /
+        // URLError.cancelled checks. It must take the quiet exit: no error banner,
+        // no failure telemetry, not "Couldn't load feed" (L2-214 Item 2).
+        let sink = TelemetrySink()
+        let wrapped = APIError.networkError(underlying: URLError(.cancelled))
+        let fake = RecordingFakeClient([.fail(wrapped)])
+        let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: sink.record, retryBudget: 5)
+
+        await vm.load()
+
+        XCTAssertEqual(fake.callCount, 1, "wrapped cancellation is terminal, not retried")
+        XCTAssertNil(vm.error, "wrapped cancellation is not a user-facing error")
+        XCTAssertFalse(vm.loading)
+        XCTAssertFalse(sink.outcomes.contains(.revalidateFailedNoCache),
+                       "cancellation must not emit a failure event")
+        XCTAssertFalse(sink.outcomes.contains(.revalidateFailedKeptCache))
+    }
+
+    func testWrappedCancellationKeepsCachedContentWithoutFailureBanner() async throws {
+        // With last-good content on screen, a wrapped cancellation must leave that
+        // content in place and NOT flip the "Showing recent markets — couldn't
+        // refresh" banner or emit a kept-cache failure event (L2-214 Item 2).
+        let sink = TelemetrySink()
+        let wrapped = APIError.networkError(underlying: URLError(.cancelled))
+        let fake = RecordingFakeClient([.fail(wrapped)])
+        let vm = DiscoverViewModel(
+            client: fake, lastGood: FakeLastGood(try cached([1, 2, 3])),
+            telemetry: sink.record, retryBudget: 5)
+
+        await vm.load()
+
+        XCTAssertFalse(vm.items.isEmpty, "cached content is kept on cancellation")
+        XCTAssertNil(vm.error)
+        XCTAssertFalse(vm.refreshFailedShowingCache, "no false refresh-failed banner")
+        XCTAssertFalse(sink.outcomes.contains(.revalidateFailedKeptCache))
+    }
+
+    func testCancellationClassificationMatrix() {
+        // Every cancellation form — raw, URLError, and WRAPPED — is recognized so
+        // it routes to the quiet exit; genuine failures are not (L2-214 Item 2).
+        XCTAssertTrue(DiscoverViewModel.isCancellation(CancellationError()))
+        XCTAssertTrue(DiscoverViewModel.isCancellation(URLError(.cancelled)))
+        XCTAssertTrue(DiscoverViewModel.isCancellation(APIError.networkError(underlying: URLError(.cancelled))),
+                      "wrapped cancellation must be recognized")
+        XCTAssertFalse(DiscoverViewModel.isCancellation(URLError(.timedOut)))
+        XCTAssertFalse(DiscoverViewModel.isCancellation(APIError.networkError(underlying: URLError(.timedOut))))
+        XCTAssertFalse(DiscoverViewModel.isCancellation(APIError.httpError(statusCode: 500, body: nil)))
+        XCTAssertFalse(DiscoverViewModel.isCancellation(DiscoverViewModel.DeadlineExceededError()))
+    }
+
     func testRetryableClassificationMatrix() {
         // transient / 5xx / 429 self-heal; decode, non-429 4xx, invalid URL, and
         // cancellation do not.
