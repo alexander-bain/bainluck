@@ -1,0 +1,104 @@
+{
+  "schema_version": "concept-envelope-authority/v1",
+  "audited_commit": "3df4ca19",
+  "minimum_hub_fields": ["key", "name", "domain"],
+  "minimum_prediction_fields": ["key", "name", "probabilities_or_winner"],
+  "scenarios": [
+    {
+      "id": "predictive_concept_with_probabilities",
+      "presentation": "prediction",
+      "key": "event:synthetic:forecast",
+      "name": "Synthetic forecast",
+      "domain": "synthetic",
+      "probabilities": [0.6, 0.4],
+      "status": "upcoming",
+      "expected": {"surface": true, "live": false}
+    },
+    {
+      "id": "result_first_champion",
+      "presentation": "prediction",
+      "key": "event:synthetic:final",
+      "name": "Synthetic final",
+      "domain": "synthetic",
+      "winner": "Candidate A",
+      "status": "settled",
+      "expected": {"surface": true, "live": false}
+    },
+    {
+      "id": "meaningful_probability_free_hub",
+      "presentation": "navigation_hub",
+      "key": "event:synthetic:series",
+      "name": "Synthetic series",
+      "domain": "synthetic",
+      "entry_count": 12,
+      "status": "upcoming",
+      "expected": {"surface": true, "live": false}
+    },
+    {
+      "id": "empty_predictive_envelope",
+      "presentation": "prediction",
+      "key": "event:synthetic:empty",
+      "name": "Synthetic empty",
+      "domain": "synthetic",
+      "status": "upcoming",
+      "expected": {"surface": false, "live": false}
+    },
+    {
+      "id": "unknown_type_fails_closed",
+      "presentation": "unknown",
+      "key": "event:synthetic:unknown",
+      "name": "Synthetic unknown",
+      "domain": "synthetic",
+      "expected": {"surface": false, "live": false}
+    },
+    {
+      "id": "future_authoritative_start",
+      "presentation": "navigation_hub",
+      "key": "event:synthetic:future",
+      "name": "Synthetic future event",
+      "domain": "synthetic",
+      "entry_count": 8,
+      "status": "live",
+      "start_authority": "calendar",
+      "start_relation": "future",
+      "expected": {"surface": true, "live": false}
+    },
+    {
+      "id": "active_authoritative_start",
+      "presentation": "navigation_hub",
+      "key": "event:synthetic:active",
+      "name": "Synthetic active event",
+      "domain": "synthetic",
+      "entry_count": 8,
+      "status": "live",
+      "start_authority": "calendar",
+      "start_relation": "past",
+      "end_relation": "future",
+      "expected": {"surface": true, "live": true}
+    },
+    {
+      "id": "resolution_date_only_is_not_start",
+      "presentation": "navigation_hub",
+      "key": "event:synthetic:resolution-only",
+      "name": "Synthetic resolution-only event",
+      "domain": "synthetic",
+      "entry_count": 8,
+      "status": "live",
+      "start_authority": "resolution_date_proxy",
+      "start_relation": "unknown",
+      "expected": {"surface": true, "live": false}
+    },
+    {
+      "id": "conflicting_start_authority",
+      "presentation": "navigation_hub",
+      "key": "event:synthetic:conflict",
+      "name": "Synthetic conflicting event",
+      "domain": "synthetic",
+      "entry_count": 8,
+      "status": "live",
+      "start_authority": "conflicting",
+      "start_relation": "unknown",
+      "expected": {"surface": true, "live": false}
+    }
+  ]
+}

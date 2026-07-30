@@ -1,0 +1,135 @@
+{
+  "schema_version": "feed-cardinality-integrity/v1",
+  "audited_commit": "3df4ca19",
+  "stage_order": ["events", "tournaments", "concepts", "futures", "quality", "diversity", "bundles", "pagination"],
+  "scenarios": [
+    {
+      "id": "complete_limit_20",
+      "limit": 20,
+      "offset": 0,
+      "cache_key_limit": 20,
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 20,
+      "total": 68,
+      "cache_fresh_written": true,
+      "cache_stale_written": true
+    },
+    {
+      "id": "complete_limit_60",
+      "limit": 60,
+      "offset": 0,
+      "cache_key_limit": 60,
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 60,
+      "total": 68,
+      "cache_fresh_written": true,
+      "cache_stale_written": true
+    },
+    {
+      "id": "complete_limit_200_candidate_exhaustion",
+      "limit": 200,
+      "offset": 0,
+      "cache_key_limit": 200,
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 68,
+      "total": 68,
+      "cache_fresh_written": true,
+      "cache_stale_written": true
+    },
+    {
+      "id": "futures_timeout_returns_precursor_pool",
+      "limit": 200,
+      "offset": 0,
+      "cache_key_limit": 200,
+      "stage_counts": {"events": 0, "tournaments": 6, "concepts": 16, "futures": 0, "quality": 22, "diversity": 22, "bundles": 22},
+      "build_quality": "degraded",
+      "degraded_reason": "futures_timeout",
+      "returned": 22,
+      "total": 22,
+      "cache_fresh_written": false,
+      "cache_stale_written": false
+    },
+    {
+      "id": "futures_error_returns_precursor_pool",
+      "limit": 60,
+      "offset": 0,
+      "cache_key_limit": 60,
+      "stage_counts": {"events": 5, "tournaments": 4, "concepts": 8, "futures": 0, "quality": 17, "diversity": 17, "bundles": 17},
+      "build_quality": "degraded",
+      "degraded_reason": "futures_error",
+      "returned": 17,
+      "total": 17,
+      "cache_fresh_written": false,
+      "cache_stale_written": false
+    },
+    {
+      "id": "complete_caps_can_shrink_pool",
+      "limit": 200,
+      "offset": 0,
+      "cache_key_limit": 200,
+      "stage_counts": {"events": 6, "tournaments": 4, "concepts": 12, "futures": 30, "quality": 40, "diversity": 31, "bundles": 24},
+      "build_quality": "complete",
+      "returned": 24,
+      "total": 24,
+      "cache_fresh_written": true,
+      "cache_stale_written": true
+    },
+    {
+      "id": "page_two_uses_same_total",
+      "limit": 20,
+      "offset": 20,
+      "cache_key_limit": 20,
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 20,
+      "total": 68,
+      "cache_fresh_written": true,
+      "cache_stale_written": true
+    },
+    {
+      "id": "stale_hit_preserves_declared_quality",
+      "limit": 60,
+      "offset": 0,
+      "cache_key_limit": 60,
+      "cache_status": "stale_hit",
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 60,
+      "total": 68,
+      "cache_fresh_written": false,
+      "cache_stale_written": false
+    }
+  ],
+  "rejected_counterexamples": [
+    {
+      "id": "degraded_masquerades_complete",
+      "limit": 200,
+      "offset": 0,
+      "cache_key_limit": 200,
+      "stage_counts": {"events": 0, "tournaments": 6, "concepts": 16, "futures": 0, "quality": 22, "diversity": 22, "bundles": 22},
+      "build_quality": "complete",
+      "degraded_reason": "futures_timeout",
+      "returned": 22,
+      "total": 22,
+      "cache_fresh_written": true,
+      "cache_stale_written": true,
+      "expected_violations": ["degraded_reason_on_complete", "degraded_cached"]
+    },
+    {
+      "id": "wrong_limit_cache_identity",
+      "limit": 200,
+      "offset": 0,
+      "cache_key_limit": 60,
+      "stage_counts": {"events": 8, "tournaments": 4, "concepts": 10, "futures": 58, "quality": 76, "diversity": 76, "bundles": 68},
+      "build_quality": "complete",
+      "returned": 68,
+      "total": 68,
+      "cache_fresh_written": true,
+      "cache_stale_written": true,
+      "expected_violations": ["limit_not_in_cache_identity"]
+    }
+  ]
+}
