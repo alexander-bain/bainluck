@@ -32,6 +32,13 @@ _REPAIRS = {
     "inverted-events": ("scripts.repair_inverted_completed_at", "repair"),
     "tt-retag": ("scripts.retag_table_tennis", "repair"),
     "team-identity-merge": ("app.utils.team_merge", "run_team_identity_merge"),
+    # Dry-run-ONLY census of shape drift on resolved markets (#284 Item 2). It
+    # never writes — ``apply`` is ignored; a real resolved rewrite is a separate
+    # CALIBRATION_POPULATION_VERSION-bumped queue.
+    "resolved-shape-census": (
+        "app.tasks.backfill_market_shapes",
+        "census_resolved_market_shapes",
+    ),
 }
 
 

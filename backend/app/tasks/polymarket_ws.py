@@ -29,6 +29,12 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     snapshot pipeline. An outcome already settled by an authoritative source
     (tier 3) is left untouched — a bare websocket push must not downgrade it.
 
+    Queue #284 Item 1: every applied winner write stamps its registered tier-3
+    ``resolution_source`` (``clob_authoritative``) in the SAME UPDATE — winner and
+    provenance are atomic, so a failed/partial write can never leave a graded
+    outcome with a NULL source (which the authority ladder treats as tier -1,
+    silently overwritable by a later guess).
+
     Module-level (not a closure) so the leakage contract is unit-testable.
     Returns the number of outcome winner-writes applied.
     """
@@ -36,6 +42,14 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
 
     from app.models.models import FuturesMarket, FuturesOutcome
     from app.utils.resolution_authority import is_authoritative
+
+    # A CLOB `market_resolved` push is the venue's own settlement delivered over
+    # the socket — the same authority as the CLOB REST resolver
+    # (`clob_resolve.py`). Stamp its registered tier-3 source so the winner write
+    # carries audit-grade provenance, survives the authority ladder (a later
+    # guess-family pass can no longer silently overwrite a NULL-source winner),
+    # and is calibration-truth eligible. Do NOT invent a new source string.
+    _WS_RESOLUTION_SOURCE = "clob_authoritative"
 
     outcome_ids = [oid for oid, _ in outcomes]
     existing_sources: dict = {}
@@ -65,11 +79,14 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
             (winning_outcome.lower() == "yes" and ext.endswith("_yes"))
             or (winning_outcome.lower() == "no" and ext.endswith("_no"))
         )
-        # Deliberately NOT setting calibration_probability here (Queue #261).
+        # Winner AND provenance in the SAME statement (Queue #284 Item 1): an
+        # atomic write means a failed/partial apply can never leave is_winner set
+        # with a NULL resolution_source. Deliberately NOT setting
+        # calibration_probability here (Queue #261) — no price self-grading.
         await session.execute(
             update(FuturesOutcome)
             .where(FuturesOutcome.id == oid)
-            .values(is_winner=is_winner)
+            .values(is_winner=is_winner, resolution_source=_WS_RESOLUTION_SOURCE)
         )
         written += 1
     return written

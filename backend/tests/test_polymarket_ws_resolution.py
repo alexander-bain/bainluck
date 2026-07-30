@@ -60,6 +60,45 @@ async def test_resolution_never_writes_calibration_probability():
 
 
 @pytest.mark.asyncio
+async def test_winner_write_stamps_authoritative_source_atomically():
+    """Queue #284 Item 1: every applied winner write sets ``resolution_source`` in
+    the SAME UPDATE statement as ``is_winner`` (a registered tier-3 source,
+    ``clob_authoritative``) — so a failed/partial write can never leave a graded
+    outcome with a NULL source (tier -1, silently overwritable by a later guess),
+    and the WS-settled winner is calibration-truth eligible."""
+    from app.utils.resolution_authority import (
+        is_authoritative,
+        is_calibration_truth_eligible,
+    )
+
+    session, captured = _make_session([_Row(1, None), _Row(2, None)])
+    written = await _apply_ws_resolution(
+        session, market_id=10,
+        outcomes=[(1, "0xabc_yes"), (2, "0xabc_no")],
+        winning_outcome="yes",
+    )
+    assert written == 2
+
+    # Every outcome UPDATE that writes is_winner also writes resolution_source,
+    # and every such statement carries the SAME registered source value.
+    winner_updates = [
+        s for s in captured
+        if "futures_outcomes" in str(s) and "is_winner" in str(s)
+    ]
+    assert winner_updates, [str(s) for s in captured]
+    for stmt in winner_updates:
+        text = str(stmt)
+        assert "resolution_source" in text, text
+        params = stmt.compile().params
+        assert params.get("resolution_source") == "clob_authoritative"
+
+    # The stamped source is authoritative (tier 3) and eligible to grade the
+    # published calibration curve.
+    assert is_authoritative("clob_authoritative")
+    assert is_calibration_truth_eligible("clob_authoritative")
+
+
+@pytest.mark.asyncio
 async def test_authoritative_existing_resolution_is_not_rewritten():
     # Outcome 1 already settled authoritatively (api_settlement) → skipped;
     # outcome 2 unresolved → graded. A bare websocket push must not downgrade

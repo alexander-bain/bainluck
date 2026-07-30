@@ -361,3 +361,81 @@ async def test_route_bust_skips_durable_last_good(monkeypatch):
     calibration._cache["data"] = None
     calibration._cache["timestamp"] = 0
     rc._reset_last_good_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# Queue #284 Item 3 — the memoized stale copy stays honestly marked
+# ---------------------------------------------------------------------------
+async def test_stale_last_good_memoized_copy_stays_marked_across_requests(monkeypatch):
+    """First AND second same-dyno responses on a persistent main-key miss must
+    both be ``cache.status=stale``: the copy stored in the in-process cache is
+    marked BEFORE it is memoized, so a later Tier-1 hit can't serve it as fresh."""
+    from app.routes import calibration
+    from app.utils import request_cache as rc
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+    payload = _payload(buckets=1572)
+    client = _RouteRedis(main=None, last_good=json.dumps(payload))
+    monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
+
+    async def _boom(db):
+        raise AssertionError("cold compute ran despite a durable last-good")
+
+    monkeypatch.setattr(
+        "app.tasks.precompute_calibration.compute_calibration_payload", _boom
+    )
+
+    first = await calibration.public_calibration(db=object(), bust=0)
+    assert first["cache"] == {"status": "stale", "reason": "main_key_absent"}
+    # THE contract: the memoized copy itself carries the stale marker.
+    assert calibration._cache["data"].get("cache", {}).get("status") == "stale"
+
+    # A second same-dyno request (main still absent) is ALSO stale — never a
+    # falsely-fresh memoized copy.
+    second = await calibration.public_calibration(db=object(), bust=0)
+    assert second["cache"] == {"status": "stale", "reason": "main_key_absent"}
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+
+async def test_recovered_fresh_main_replaces_stale_memoized_copy(monkeypatch):
+    """Once the fresh ``main`` key returns, the same-dyno route replaces the
+    stale-marked memoized copy with fresh metadata (no TTL/compute change)."""
+    from app.routes import calibration
+    from app.utils import request_cache as rc
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()
+
+    stale_payload = _payload(buckets=1572)
+    client = _RouteRedis(main=None, last_good=json.dumps(stale_payload))
+    monkeypatch.setattr(rc, "get_shared_async_redis", _fake_getter(client))
+
+    async def _boom(db):
+        raise AssertionError("cold compute ran unexpectedly")
+
+    monkeypatch.setattr(
+        "app.tasks.precompute_calibration.compute_calibration_payload", _boom
+    )
+
+    stale = await calibration.public_calibration(db=object(), bust=0)
+    assert stale["cache"]["status"] == "stale"
+
+    # Main recovers: the fresh key is now present.
+    fresh_payload = _payload(buckets=3)
+    client._store["bainluck:calibration:main"] = json.dumps(fresh_payload)
+
+    out = await calibration.public_calibration(db=object(), bust=0)
+    assert out["buckets"] == fresh_payload["buckets"]
+    assert "cache" not in out
+    assert calibration._cache["data"].get("cache") is None
+
+    calibration._cache["data"] = None
+    calibration._cache["timestamp"] = 0
+    rc._reset_last_good_for_tests()

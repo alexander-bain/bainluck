@@ -790,9 +790,18 @@ async def public_calibration(
 
     _lg_key = "calibration:main"
 
-    # 1. In-process cache (survives between requests on same dyno)
+    # 1. In-process cache (survives between requests on same dyno). A
+    #    stale-marked copy (Tier 2b, main key absent) is deliberately NOT served
+    #    from here: it stays honestly marked on every response, but each request
+    #    re-attempts Redis main so a later fresh-main read replaces it promptly
+    #    (Queue #284 Item 3). TTL and compute behavior are unchanged.
     now = time.time()
-    if not bust and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
+    if (
+        not bust
+        and isinstance(_cache["data"], dict)
+        and (now - _cache["timestamp"]) < CACHE_TTL
+        and _cache["data"].get("cache", {}).get("status") != "stale"
+    ):
         return _cache["data"]
 
     # 2. Redis precomputed cache (survives deploys) — shared async client + a
@@ -828,11 +837,15 @@ async def public_calibration(
             if lg.is_ok:
                 data = _json.loads(lg.value)
                 if isinstance(data, dict):
-                    _cache["data"] = data
-                    _cache["timestamp"] = now
-                    _rc.remember_last_good(_lg_key, data)
+                    # Queue #284 Item 3: build the stale-marked copy BEFORE it is
+                    # memoized, so a later same-dyno Tier-1 hit cannot serve an
+                    # unmarked (falsely-fresh) copy. The process cache and the
+                    # durable last-good both store the marked payload.
                     degraded = dict(data)
                     degraded["cache"] = {"status": "stale", "reason": "main_key_absent"}
+                    _cache["data"] = degraded
+                    _cache["timestamp"] = now
+                    _rc.remember_last_good(_lg_key, degraded)
                     return degraded
         except Exception:
             pass
