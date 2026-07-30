@@ -60,9 +60,13 @@ final class DiscoverFeedSWRTests: XCTestCase {
         """
     }
 
+    // L2-215 Item 1 (#1486): a concept is a probability-free hub card, so it is
+    // renderable only when it leads with an authoritative result (WHAT-HIT window +
+    // a winner). A live/upcoming concept with nothing to predict is now failed
+    // closed, so this fixture models the settled marquee case that still seeds.
     private func conceptJSON(_ key: String) -> String {
         """
-        {"type":"concept","score":90,"data":{"key":"\(key)","name":"Tour","domain":"golf","status":"live"}}
+        {"type":"concept","score":90,"data":{"key":"\(key)","name":"Tour","domain":"golf","status":"completed","marquee_whathit":true,"winner":"Tadej Pogačar"}}
         """
     }
 

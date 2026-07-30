@@ -344,6 +344,106 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
         XCTAssertFalse(vm.loading)
     }
 
+    // MARK: - L2-215 Item 2: quiet cancellation parity (mirrors DiscoverViewModel L2-214)
+
+    /// A cancellation WRAPPED as `APIError.networkError(NSURLErrorCancelled)` — what a
+    /// torn-down `.task`/`.refreshable` or a superseded `startLoad()` actually throws
+    /// on the Sports feed request.
+    private func wrappedCancellation() -> APIError {
+        APIError.networkError(underlying: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+    }
+
+    /// Cold load, every cancellation form: no error/retry screen, no `refreshFailed`,
+    /// and NO `.main` failure stage is emitted (the load returns before `emit`).
+    func testCancellationDuringColdMainIsQuietExitNoFailureTelemetry() async throws {
+        let forms: [(String, Error)] = [
+            ("raw CancellationError", CancellationError()),
+            ("URLError.cancelled", URLError(.cancelled)),
+            ("wrapped APIError.networkError(cancelled)", wrappedCancellation()),
+        ]
+        for (label, err) in forms {
+            let sink = TelemetrySink()
+            let fake = FakeSportsClient(
+                main: .failure(err),
+                backfill: .success(try feed([eventJSON(2, status: "scheduled")])),
+                grouped: .success(try groupedResponse(2))
+            )
+            let vm = FeedViewModel(client: fake, telemetry: { sink.record($0) }, autoRefreshEnabled: false)
+
+            await vm.load()
+
+            XCTAssertNil(vm.error, "\(label): cancellation is not surfaced as an error")
+            XCTAssertFalse(vm.refreshFailed, "\(label): cancellation is not a refresh failure")
+            XCTAssertTrue(vm.items.isEmpty, "\(label): sibling content is not published on a cancelled main")
+            XCTAssertFalse(vm.loading, "\(label): loading resolved")
+            XCTAssertNil(sink.stage(.main), "\(label): no false success:false main stage emitted")
+        }
+    }
+
+    /// A genuine transport failure WRAPPED as `APIError.networkError` (non-cancel)
+    /// must STILL surface — the predicate only swallows cancellation, not real errors.
+    func testWrappedNonCancellationTransportFailureStillSurfaces() async throws {
+        let sink = TelemetrySink()
+        let realFailure = APIError.networkError(
+            underlying: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        let fake = FakeSportsClient(
+            main: .failure(realFailure),
+            backfill: .success(try emptyFeed()),
+            grouped: .success(try emptyGrouped())
+        )
+        let vm = FeedViewModel(client: fake, telemetry: { sink.record($0) }, autoRefreshEnabled: false)
+
+        await vm.load()
+
+        XCTAssertNotNil(vm.error, "a real wrapped transport failure is still surfaced")
+        XCTAssertEqual(sink.stage(.main)?.success, false, "real failure still emits a success:false stage")
+    }
+
+    /// On a REFRESH (content already on screen), a wrapped cancellation preserves the
+    /// existing cards and raises neither an error banner nor `refreshFailed` — the
+    /// cached-content case, distinct from a genuine refresh failure.
+    func testWrappedCancellationOnRefreshPreservesContentNoBanner() async throws {
+        let fake = ScriptedMainClient(
+            mains: [
+                .success(try feed([eventJSON(1, status: "scheduled")])),  // initial load
+                .failure(wrappedCancellation()),                          // refresh cancelled
+            ],
+            events: try emptyFeed(),
+            grouped: try emptyGrouped()
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+
+        await vm.load()
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"], "initial content present")
+
+        await vm.load()  // refresh — main throws wrapped cancellation
+
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"], "cancelled refresh preserves cached content")
+        XCTAssertNil(vm.error, "cancelled refresh raises no error banner")
+        XCTAssertFalse(vm.refreshFailed, "cancelled refresh is not a refresh failure")
+    }
+
+    /// Contrast: a GENUINE refresh failure (non-cancel) DOES set `refreshFailed` while
+    /// keeping content — proving the parity change did not swallow real failures.
+    func testGenuineRefreshFailureStillFlagsRefreshFailed() async throws {
+        let fake = ScriptedMainClient(
+            mains: [
+                .success(try feed([eventJSON(1, status: "scheduled")])),
+                .failure(URLError(.badServerResponse)),
+            ],
+            events: try emptyFeed(),
+            grouped: try emptyGrouped()
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+
+        await vm.load()
+        await vm.load()
+
+        XCTAssertEqual(vm.items.map(\.id), ["event-1"], "content preserved on refresh failure")
+        XCTAssertTrue(vm.refreshFailed, "a real refresh failure is honestly flagged")
+        XCTAssertNil(vm.error, "refresh failure keeps content, no cold error screen")
+    }
+
     // MARK: - Item 1: grouped failure honest + non-fatal
 
     func testGroupedFailureIsNonFatal() async throws {

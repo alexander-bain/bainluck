@@ -395,6 +395,9 @@ final class DiscoverViewModel: ObservableObject {
 
                 let response = fetch.response
                 let renderable = Self.renderable(response.items)
+                // L2-215 Item 1 (#1486): count the empty predictive envelopes this
+                // page dropped, identity-free, on the network path only.
+                reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
                 items = Self.interleave(renderable)
                 // First paint provenance: only stamp network when the cache seed
@@ -654,14 +657,80 @@ final class DiscoverViewModel: ObservableObject {
         items.filter(isRenderable)
     }
 
-    private static func isRenderable(_ item: FeedItem) -> Bool {
-        if item.event != nil || item.futures != nil || item.tournament != nil || item.concept != nil {
-            return true
+    static func isRenderable(_ item: FeedItem) -> Bool {
+        suppressionReason(item) == nil
+    }
+
+    /// L2-215 Item 1 (#1486) — fail-closed empty-envelope classifier. Returns an
+    /// identity-free machine reason when a card is an empty predictive envelope
+    /// (a bare colored tile + title + Like/Share, nothing to predict), or `nil`
+    /// when it carries a renderable outcome/probability OR an authoritative result.
+    /// Mirrors the web `feedItemSuppressionReason` rules so both surfaces admit the
+    /// same cards:
+    ///  - `event`: always renderable — a real matchup + status/score, never a bare tile.
+    ///  - `futures`: needs ≥1 outcome row OR a settled status; else `empty_futures`.
+    ///  - `tournament`: needs ≥1 golfer (the native payload carries no whathit field);
+    ///    else `empty_tournament`.
+    ///  - `concept`: a probability-free hub card, renderable ONLY with an authoritative
+    ///    result (WHAT-HIT + a winner/summary); else `empty_concept` (the TdF / Belgian
+    ///    GP class). Previously a live/upcoming concept was admitted (L2-166) — #1486
+    ///    fails it closed until it can render a real outcome.
+    ///  - `bundle`: needs ≥1 renderable member; else `empty_bundle`.
+    ///  - unknown shape → `unknown_type`.
+    static func suppressionReason(_ item: FeedItem, depth: Int = 0) -> String? {
+        if item.event != nil { return nil }
+        if let futures = item.futures {
+            if let outcomes = futures.topOutcomes, !outcomes.isEmpty { return nil }
+            if futuresIsSettled(futures) { return nil }
+            return "empty_futures"
+        }
+        if let tournament = item.tournament {
+            // The native tournament payload carries no whathit/result field, so it is
+            // renderable purely on its golfer field (which #1486 confirmed is always
+            // present); an empty-field tournament is the empty-envelope case.
+            if let golfers = tournament.golfers, !golfers.isEmpty { return nil }
+            return "empty_tournament"
+        }
+        if let concept = item.concept {
+            // Renderable only in the post-settlement WHAT-HIT window (a "FINAL / see
+            // the recap" result framing; a graded winner when present, #1219). A
+            // live/upcoming concept has nothing to predict → the #1486 empty tile.
+            return concept.marqueeWhathit == true ? nil : "empty_concept"
         }
         if let bundle = item.bundle {
-            return bundle.items.contains(where: isRenderable)
+            // Recursion backstop — bundles are not expected to nest.
+            if depth > 3 { return "empty_bundle" }
+            let anyRenderable = bundle.items.contains { suppressionReason($0, depth: depth + 1) == nil }
+            return anyRenderable ? nil : "empty_bundle"
         }
-        return false
+        return "unknown_type"
+    }
+
+    private static let settledStatuses: Set<String> = [
+        "resolved", "closed", "settled", "finalized", "final",
+    ]
+
+    private static func futuresIsSettled(_ d: FeedFuturesData) -> Bool {
+        settledStatuses.contains((d.status ?? "").lowercased())
+    }
+
+    /// Emit identity-free suppression telemetry (card type + machine reason + count,
+    /// surface `discover`) for the empty predictive envelopes dropped from a fetched
+    /// page. Fired only on the network publish path so a served cache seed does not
+    /// double-count. Carries no ids, names, sessions, or market text (L2-215 Item 1).
+    private func reportSuppressedEnvelopes(_ items: [FeedItem]) {
+        var counts: [String: Int] = [:]
+        for item in items {
+            if let reason = Self.suppressionReason(item) {
+                counts["\(item.type):\(reason)", default: 0] += 1
+            }
+        }
+        for (key, count) in counts {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            AnalyticsService.trackFeedEnvelopeSuppressed(
+                type: parts[0], reason: parts[1], count: count, surface: "discover")
+        }
     }
 
     private static func elapsedMs(since start: Date) -> Double {

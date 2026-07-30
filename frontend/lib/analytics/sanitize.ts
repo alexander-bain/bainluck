@@ -101,6 +101,7 @@ export const KNOWN_EVENT_NAMES: ReadonlySet<AnalyticsEventName> = new Set<Analyt
   'feed_card_impression',
   'feed_card_action',
   'feed_refresh',
+  'feed_card_suppressed',
   'theme_bundle_expand',
   // Funnel events
   'streak_continued',
@@ -194,6 +195,10 @@ export const ALLOWED_PARAM_KEYS: ReadonlySet<string> = new Set<string>([
   'section_name',
   'sport_category',
   'item_count',
+  // Empty-envelope suppression (L2-215 Item 1 / #1486) — identity-free
+  'card_type',
+  'suppression_reason',
+  'count',
   // Charts
   'chart_type',
   'range',

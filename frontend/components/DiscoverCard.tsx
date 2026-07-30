@@ -7,7 +7,7 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedBundleData, FeedConceptData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
-import { isTrending, suppressBareZeroFuturesCard, feedItemHref } from "./discover/utils";
+import { isTrending, suppressBareZeroFuturesCard, feedItemHasRenderableContent, feedItemHref } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
 import { EventCard } from "./discover/EventCard";
 import { FuturesCard } from "./discover/FuturesCard";
@@ -113,6 +113,12 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   // card here (not just the number) so no empty swipe wrapper is left behind; the
   // authoritative ranking-side suppression is #240's backend job.
   if (suppressBareZeroFuturesCard(item)) return null;
+
+  // L2-215 Item 1: fail-closed defense-in-depth (#1486). The shared eligibility
+  // boundary in the feed pages already drops empty predictive envelopes, but guard
+  // the leaf too so a concept/bundle/tournament/futures with neither a renderable
+  // probability nor an authoritative result can never render as a bare tile.
+  if (!feedItemHasRenderableContent(item)) return null;
 
   return (
     <div

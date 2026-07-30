@@ -143,6 +143,20 @@ enum AnalyticsService {
         ])
     }
 
+    /// L2-215 Item 1 (#1486): an empty predictive envelope (concept/bundle/tournament/
+    /// futures with neither a renderable probability nor an authoritative result) was
+    /// failed closed at the client eligibility boundary. Carries ONLY the card type,
+    /// the machine reason, a count, and the surface — no ids, names, sessions, or
+    /// market text.
+    nonisolated static func trackFeedEnvelopeSuppressed(type: String, reason: String, count: Int, surface: String) {
+        Analytics.logEvent("feed_card_suppressed", parameters: [
+            "card_type": type,
+            "suppression_reason": reason,
+            "count": count,
+            "surface": surface,
+        ])
+    }
+
     // MARK: - Discover Feed Latency (#1465 — stale-while-revalidate last-good cache)
 
     /// A stale-while-revalidate cache observation from `DiscoverViewModel`.

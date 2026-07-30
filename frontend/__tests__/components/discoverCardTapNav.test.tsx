@@ -38,13 +38,18 @@ import { feedItemHref } from "../../components/discover/utils";
 import DiscoverCard from "../../components/DiscoverCard";
 
 function conceptItem(): FeedItem {
+  // L2-215 Item 1 (#1486): a live/upcoming concept is now failed closed (it carries
+  // no outcome to predict), so the clickable-affordance guard uses a RENDERABLE
+  // concept — a settled WHAT-HIT card, which still surfaces and must stay clickable.
   return {
     type: "concept",
     data: {
       key: "event:cycling:tour-de-france-2026",
       name: "Tour de France 2026",
       domain: "cycling",
-      status: "live",
+      status: "completed",
+      marquee_whathit: true,
+      winner: "Tadej Pogačar",
     } as FeedConceptData,
   } as FeedItem;
 }

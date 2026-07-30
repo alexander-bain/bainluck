@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "framer-motion";
@@ -16,6 +16,8 @@ import ErrorMessage from "@/components/ErrorMessage";
 import SportsEmptySlate from "@/components/SportsEmptySlate";
 import { getCategoryForLeague } from "@/lib/sportCategories";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
+import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
+import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
 import {
@@ -126,7 +128,32 @@ export default function SportsPage() {
 
   const feedSections = useMemo(() => {
     if (!feedData || feedData.items.length === 0) return [];
-    return groupFeedIntoSections(feedData.items);
+    // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the Sports
+    // dispatcher (FeedCard) has no per-card empty guard, so drop any card with
+    // neither a renderable probability nor an authoritative result before sectioning.
+    const renderable = feedData.items.filter((item) => feedItemHasRenderableContent(item));
+    return groupFeedIntoSections(renderable);
+  }, [feedData]);
+
+  // L2-215 Item 1 — suppression telemetry (identity-free: type + machine reason
+  // only), fired once per distinct suppression signature.
+  const suppressedSigRef = useRef("");
+  useEffect(() => {
+    if (!feedData) return;
+    const suppressed = collectSuppressedEnvelopes(feedData.items);
+    if (suppressed.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const e of suppressed) {
+      const key = `${e.type}:${e.reason}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === suppressedSigRef.current) return;
+    suppressedSigRef.current = sig;
+    for (const [key, count] of counts) {
+      const [card_type, suppression_reason] = key.split(":");
+      trackEvent("feed_card_suppressed", { card_type, suppression_reason, count, surface: "sports" });
+    }
   }, [feedData]);
 
   // #1102 information architecture: games LEAD the page. Split the game sections

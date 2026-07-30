@@ -12,6 +12,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -22,6 +23,11 @@ interface FeedCardProps {
 }
 
 export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: FeedCardProps) {
+  // L2-215 Item 1: fail-closed defense-in-depth (#1486). The Sports page filters
+  // empty predictive envelopes at its section boundary; guard the leaf too so an
+  // empty concept/futures/tournament can never render as a bare tile.
+  if (!feedItemHasRenderableContent(item)) return null;
+
   if (item.type === "event") {
     return (
       <EventFeedCard

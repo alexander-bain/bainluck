@@ -138,11 +138,13 @@ describe("ConceptFeedCard (Sports tab) WHAT-HIT", () => {
     expect(html).toContain("by 3:24");
   });
 
-  test("non-marquee settled concept is unchanged — no FINAL chip, reason kept", () => {
+  test("non-marquee live concept is failed closed — nothing to predict (#1486)", () => {
+    // L2-215 Item 1: a live/upcoming concept carries no outcome, so the FeedCard
+    // dispatcher now suppresses it at the eligibility boundary rather than rendering
+    // a bare reason-only tile. Only WHAT-HIT (settled result) concepts surface.
     const html = renderToStaticMarkup(
       <FeedCard item={conceptItem({ status: "live", marquee_whathit: false })} />,
     );
-    expect(html).not.toContain("FINAL");
-    expect(html).toContain("184 riders in the peloton");
+    expect(html).toBe("");
   });
 });

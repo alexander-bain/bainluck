@@ -4,6 +4,7 @@ import type {
   FeedFuturesData,
   FeedConceptData,
   FeedTournamentData,
+  FeedBundleData,
 } from "@/lib/types";
 import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
 
@@ -92,6 +93,119 @@ export function suppressBareZeroFuturesCard(
   const settledByDate =
     !!data.resolution_date && new Date(data.resolution_date).getTime() < now;
   return !(settledByState || settledByDate);
+}
+
+// L2-215 Item 1 — fail-closed empty-envelope guard (#1486). A card presented as a
+// prediction must carry EITHER a renderable outcome/probability OR an authoritative
+// result; otherwise it renders as a bare tile (colored image + title + Like/Share,
+// nothing to predict) — the concept/bundle "empty envelope" class Alex flagged
+// (Tour de France 2026, Belgian GP Winner). This is the SHARED client eligibility
+// boundary consumed by both the Discover and Sports feed dispatchers.
+//
+// It NEVER fabricates a percentage/label — it only keeps or drops. It sits ABOVE
+// the leaf render (unlike `suppressBareZeroFuturesCard`, which is a per-card
+// sub-1%-hero display fix) so an empty envelope contributes no card, group slot,
+// or bundle member.
+const _SETTLED_STATUSES = new Set([
+  "resolved",
+  "closed",
+  "settled",
+  "finalized",
+  "final",
+]);
+
+function _futuresIsSettled(d: FeedFuturesData, now: number): boolean {
+  const status = (d.status || "").toLowerCase();
+  if (d.resolved === true || !!d.winner || _SETTLED_STATUSES.has(status)) return true;
+  return !!d.resolution_date && new Date(d.resolution_date).getTime() < now;
+}
+
+/**
+ * Returns a short, identity-free machine reason when a feed card should be
+ * SUPPRESSED as an empty predictive envelope, or `null` when it carries renderable
+ * content. Rules (fail closed — an unknown/empty card is dropped, never shown bare):
+ *  - `event`: always kept — an event card shows a real matchup + status/score, never
+ *    a bare tile.
+ *  - `futures`: kept when it carries ≥1 outcome row OR an authoritative result
+ *    (resolved / named winner / settled status / past resolution_date). A
+ *    zero-outcome, unsettled futures → `"empty_futures"`.
+ *  - `tournament`: kept when it carries ≥1 golfer OR a settled marquee result;
+ *    otherwise → `"empty_tournament"`.
+ *  - `concept`: hub cards carry NO inline outcomes by design, so a concept is kept
+ *    ONLY when it leads with an authoritative result (WHAT-HIT window + a
+ *    winner/result summary). A live/upcoming concept with nothing to predict →
+ *    `"empty_concept"` (this is the #1486 TdF / Belgian GP class).
+ *  - `bundle`: kept when ≥1 member is itself renderable; an all-empty bundle →
+ *    `"empty_bundle"`.
+ *  - unknown type → `"unknown_type"`.
+ */
+export function feedItemSuppressionReason(
+  item: FeedItem,
+  now: number = Date.now(),
+  depth = 0,
+): string | null {
+  switch (item?.type) {
+    case "event":
+      return null;
+    case "futures": {
+      const d = item.data as FeedFuturesData;
+      if ((d.top_outcomes?.length ?? 0) > 0) return null;
+      if (_futuresIsSettled(d, now)) return null;
+      return "empty_futures";
+    }
+    case "tournament": {
+      const d = item.data as FeedTournamentData;
+      if ((d.golfers?.length ?? 0) > 0) return null;
+      if (d.marquee_whathit === true) return null;
+      return "empty_tournament";
+    }
+    case "concept": {
+      // A concept is a probability-free hub card, renderable ONLY when it leads with
+      // an authoritative result — the post-settlement WHAT-HIT window, which shows a
+      // "FINAL / see the recap" framing (and a graded winner when the payload has one,
+      // #1219). A live/upcoming concept has nothing to predict → the #1486 empty tile.
+      const d = item.data as FeedConceptData;
+      return d.marquee_whathit === true ? null : "empty_concept";
+    }
+    case "bundle": {
+      // Recursion backstop — bundles are not expected to nest, but a malformed
+      // deep chain must never blow the stack.
+      if (depth > 3) return "empty_bundle";
+      const d = item.data as FeedBundleData;
+      const members = d.items ?? [];
+      const anyRenderable = members.some(
+        (m) => feedItemSuppressionReason(m, now, depth + 1) === null,
+      );
+      return anyRenderable ? null : "empty_bundle";
+    }
+    default:
+      return "unknown_type";
+  }
+}
+
+/** Boolean convenience wrapper over {@link feedItemSuppressionReason}. */
+export function feedItemHasRenderableContent(
+  item: FeedItem,
+  now: number = Date.now(),
+): boolean {
+  return feedItemSuppressionReason(item, now) === null;
+}
+
+/**
+ * Collect the identity-free `{type, reason}` of every suppressed card in a list —
+ * the input for suppression telemetry. Carries only the card type and the machine
+ * reason (no ids, names, sessions, or market text).
+ */
+export function collectSuppressedEnvelopes(
+  items: FeedItem[],
+  now: number = Date.now(),
+): { type: string; reason: string }[] {
+  const out: { type: string; reason: string }[] = [];
+  for (const item of items) {
+    const reason = feedItemSuppressionReason(item, now);
+    if (reason) out.push({ type: item?.type ?? "unknown", reason });
+  }
+  return out;
 }
 
 export function isTrending(item: FeedItem): boolean {

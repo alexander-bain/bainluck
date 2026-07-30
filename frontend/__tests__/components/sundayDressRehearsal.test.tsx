@@ -215,11 +215,12 @@ describe("Sunday rehearsal · Sports-tab feed card (ConceptFeedCard)", () => {
     expect(html).not.toContain("Stage 21 — the final ride into Paris");
   });
 
-  test("live (unsettled) direction is unchanged — LIVE framing, no crown", () => {
+  test("live (unsettled) concept is failed closed — nothing to predict (#1486)", () => {
+    // L2-215 Item 1: a live concept carries no outcome, so the Sports dispatcher now
+    // suppresses it rather than rendering a bare LIVE-framed tile. Only WHAT-HIT
+    // (settled result) concepts surface.
     const html = renderToStaticMarkup(<FeedCard item={conceptFeedItem(LIVE_CONCEPT)} />);
-    expect(html).toContain("LIVE");
-    expect(html).not.toContain("FINAL");
-    expect(html).not.toContain("Won");
+    expect(html).toBe("");
   });
 });
 
@@ -238,12 +239,13 @@ describe("Sunday rehearsal · Discover-tab feed card (DiscoverCard concept branc
     expect(html).toContain('href="/event/cycling/tour-de-france-2026"');
   });
 
-  test("live (unsettled) concept renders its name, no crown", () => {
+  test("live (unsettled) concept is failed closed — no bare tile (#1486)", () => {
+    // L2-215 Item 1: the empty-envelope class Alex flagged (live TdF / Belgian GP).
+    // A live concept renders nothing on Discover until it can lead with a result.
     const html = renderToStaticMarkup(
       <DiscoverCard groupedItem={{ type: "single", item: conceptFeedItem(LIVE_CONCEPT) }} />,
     );
-    expect(html).toContain("Tour de France 2026");
-    expect(html).toContain("Live");
+    expect(html).toBe("");
     expect(html).not.toContain("Champion · Won");
   });
 });

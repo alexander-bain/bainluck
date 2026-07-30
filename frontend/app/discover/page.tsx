@@ -24,6 +24,7 @@ import {
 } from "@/lib/discoverInteractions";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
 import { isStale } from "@/lib/discover/feedFreshness";
+import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -650,7 +651,13 @@ export default function DiscoverPage() {
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
     const unique = dedupeById(raw, getItemId);
-    const fresh = unique.filter((item) => !isStale(item));
+    // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): drop any
+    // card that carries neither a renderable probability nor an authoritative result
+    // (empty concept/bundle/tournament/futures) BEFORE grouping, so no bare tile,
+    // group slot, or bundle member ever reaches render. The auto-pager (below) keeps
+    // fetching when this shortens a page, so it can never leave a blank tab.
+    const renderable = unique.filter((item) => feedItemHasRenderableContent(item));
+    const fresh = renderable.filter((item) => !isStale(item));
     const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
     const filtered = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
       || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
@@ -664,6 +671,31 @@ export default function DiscoverPage() {
     const grouped = groupRelatedMarkets(interleave(cooldownSafe));
     return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
   }, [data, allItems, dismissed, interactionProfile]);
+
+  // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
+  // dropped by the fail-closed filter, by card type + machine reason, with NO
+  // identity data (no ids, names, sessions, or market text). Fired once per distinct
+  // suppression signature so a stable feed does not re-emit on every render.
+  const suppressedEnvelopes = useMemo(
+    () => collectSuppressedEnvelopes(dedupeById([...(data?.items ?? []), ...allItems], getItemId)),
+    [data, allItems],
+  );
+  const suppressedSigRef = useRef("");
+  useEffect(() => {
+    if (suppressedEnvelopes.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const e of suppressedEnvelopes) {
+      const key = `${e.type}:${e.reason}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === suppressedSigRef.current) return;
+    suppressedSigRef.current = sig;
+    for (const [key, count] of counts) {
+      const [card_type, suppression_reason] = key.split(":");
+      trackEvent("feed_card_suppressed", { card_type, suppression_reason, count, surface: "discover" });
+    }
+  }, [suppressedEnvelopes]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
   const challengeItems = useMemo(() => {

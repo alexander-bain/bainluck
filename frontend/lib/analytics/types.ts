@@ -527,6 +527,19 @@ export interface FeedRefreshParams {
 }
 
 /**
+ * L2-215 Item 1 (#1486) — an empty predictive envelope (a concept/bundle/tournament/
+ * futures with neither a renderable probability nor an authoritative result) was
+ * failed closed at the client eligibility boundary. Identity-free: carries only the
+ * card type, the machine reason, a count, and the surface.
+ */
+export interface FeedCardSuppressedParams {
+  card_type: string;
+  suppression_reason: string;
+  count: number;
+  surface: 'discover' | 'sports';
+}
+
+/**
  * Discover theme-bundle card expanded. Carries the primary item's discover
  * analytics (all optional — a bundle may have only a fallback category) plus the
  * story grouping + position. Registered so the sanitation boundary keeps it.
@@ -797,6 +810,7 @@ export interface AnalyticsEventMap {
   feed_card_impression: FeedCardImpressionParams;
   feed_card_action: FeedCardActionParams;
   feed_refresh: FeedRefreshParams;
+  feed_card_suppressed: FeedCardSuppressedParams;
   theme_bundle_expand: ThemeBundleExpandParams;
 
   // Funnel events (Phase 1 — Queue L2-133 Item 2, measurement_spec §2)

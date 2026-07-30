@@ -240,8 +240,20 @@ final class FeedViewModel: ObservableObject {
             guard generation == loadGeneration else { return }
             // Cancellation (view disappeared / superseded) is not a transport
             // failure: abandon quietly, never surface it as an error or a failed
-            // stage (L2-209 Item 1 / C68). No siblings were started yet.
-            if error is CancellationError { return }
+            // stage (L2-209 Item 1 / C68). No siblings were started yet. Route through
+            // the SAME quiet-cancellation predicate established in L2-214 (Item 2 /
+            // C79): the Sports feed request wraps URLSession errors, so a torn-down
+            // `.task`/`.refreshable` or a superseded `startLoad()` surfaces
+            // cancellation WRAPPED as `APIError.networkError(NSURLErrorCancelled)` (or
+            // a bare `URLError.cancelled`), which the old raw `is CancellationError`
+            // check missed — painting a false error banner + `success:false` stage.
+            // Resolve the skeleton before the quiet exit so a cold-load cancellation
+            // never leaves a spinner up (parity with DiscoverViewModel's L2-214 quiet
+            // cancel, which also clears `loading`).
+            if DiscoverViewModel.isCancellation(error) {
+                loading = false
+                return
+            }
             loading = false
             if isInitial {
                 // Cold load: nothing on screen → the error/retry screen.
