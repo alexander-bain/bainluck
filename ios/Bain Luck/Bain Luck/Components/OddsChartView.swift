@@ -13,10 +13,12 @@ private let logger = Logger(subsystem: "com.bainluck", category: "oddsChart")
 struct ChartDataPoint: Identifiable {
     let id = UUID()
     let date: Date
+    /// The plotted value IS the home win probability (0.0–1.0), read straight up a
+    /// single 0–100 axis (L2-216). This replaced the old mirrored ±50 delta, where the
+    /// same "80%" appeared both above and below center; native now matches the web's
+    /// single 0–100 blended axis (L2-131).
     let probability: Double
     let source: String
-    /// Delta from 50% for mirrored Y-axis (home positive, away negative)
-    var delta: Double { probability - 0.5 }
     // Game state carried through for play-by-play card
     var homeScore: Int?
     var awayScore: Int?
@@ -614,8 +616,8 @@ struct OddsChartView: View {
         sources: [String: WinProbSourceInfo],
         visibleMarkers: [PeriodMarker]
     ) -> some ChartContent {
-        // 50% reference line (at delta = 0)
-        RuleMark(y: .value("Even", 0.0))
+        // 50% reference line (single 0–100 axis: even is 0.5)
+        RuleMark(y: .value("Even", 0.5))
             .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
             .foregroundStyle(.gray.opacity(0.4))
 
@@ -626,15 +628,18 @@ struct OddsChartView: View {
                 .foregroundStyle(.primary.opacity(0.4))
         }
 
-        // Data lines
-        ForEach(Set(dataPoints.map(\.source)).sorted(), id: \.self) { source in
+        // Data lines. When the backend blend exists it is the ONLY default line
+        // ("the blend is the product" — one number per question); source detail
+        // never competes with it here. Absent a blend we fail closed to the full
+        // set with the sportsbook consensus as primary (L2-216).
+        ForEach(Self.defaultVisibleSources(in: dataPoints), id: \.self) { source in
             let points = dataPoints.filter { $0.source == source }
             let color = colorForSource(source, sources: sources)
             let stroke = strokeStyleForSource(source, sources: sources)
             ForEach(points) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Delta", point.delta),
+                    y: .value("Win probability", point.probability),
                     series: .value("Source", source)
                 )
                 .foregroundStyle(color)
@@ -665,15 +670,21 @@ struct OddsChartView: View {
             visibleMarkers = periodMarkers
         }
 
-        // Fixed 100-50-100 mirrored Y-axis (matches web)
-        let yMin = -0.55
-        let yMax = 0.55
-        let yTicks: [Double] = [-0.50, -0.40, -0.30, -0.20, -0.10, 0, 0.10, 0.20, 0.30, 0.40, 0.50]
+        // Single 0–100 win-probability Y-axis (L2-216): the line is the HOME team's
+        // win probability read straight up the scale. Replaces the old mirrored ±50
+        // dual-axis where the same "80%" appeared both above and below center. Matches
+        // the web chart (L2-131).
+        let yMin = 0.0
+        let yMax = 1.0
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources, visibleMarkers: visibleMarkers)
         }
         .chartYScale(domain: yMin...yMax)
+        .accessibilityLabel(Text("Win probability over time"))
+        .accessibilityValue(Text(Self.accessibilityValue(
+            dataPoints: dataPoints, selectedDate: selectedDate,
+            homeShort: homeShort, awayShort: awayShort)))
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         // Period marker labels positioned inside chart via overlay
         .chartOverlay { proxy in
@@ -694,12 +705,11 @@ struct OddsChartView: View {
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: yTicks) { value in
+            AxisMarks(position: .leading, values: Self.yAxisTicks) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        let pct = Int(50 + abs(v * 100))
-                        Text("\(pct)%")
+                        Text(Self.axisLabel(for: v))
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
@@ -723,8 +733,9 @@ struct OddsChartView: View {
     // MARK: - Legend
 
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> some View {
-        // Order: aggregate first (if present), then consensus, then other sources sorted
-        let uniqueSources = Set(dataPoints.map(\.source)).sorted()
+        // Legend mirrors what is actually drawn: blend-only when a backend blend
+        // exists, else the fail-closed full set (L2-216).
+        let uniqueSources = Self.defaultVisibleSources(in: dataPoints)
         let ordered = uniqueSources.sorted { a, b in
             if a == "aggregate" { return true }
             if b == "aggregate" { return false }
@@ -822,6 +833,75 @@ struct OddsChartView: View {
         return points
     }
 
+    // MARK: - Primary line & 0–100 axis (pure, unit-tested in OddsChartAxisTests)
+
+    /// The source key whose line is the primary read: the backend blend when
+    /// present, otherwise the sportsbook consensus (fail closed — never a client
+    /// mean; see `chartPoints`).
+    static func primarySource(in points: [ChartDataPoint]) -> String {
+        points.contains { $0.source == "aggregate" } ? "aggregate" : "consensus"
+    }
+
+    /// Sources drawn on the chart by default. When the backend blend exists it is
+    /// the ONLY default line ("the blend is the product" — one number per
+    /// question); source divergence is not a comparison surface here. Absent a
+    /// blend we fail closed to the full set, with consensus first (L2-216).
+    static func defaultVisibleSources(in points: [ChartDataPoint]) -> [String] {
+        if points.contains(where: { $0.source == "aggregate" }) { return ["aggregate"] }
+        return Array(Set(points.map(\.source))).sorted()
+    }
+
+    /// Fixed 0–100 axis tick positions (probability basis, 0.0–1.0).
+    static let yAxisTicks: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
+
+    /// Axis / read-out label for a probability value on the single 0–100 axis.
+    /// No mirroring: 0.8 → "80%" everywhere (unlike the old ±50 delta axis).
+    static func axisLabel(for value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    /// Nearest REAL observed snapshot on the primary line to a scrub date. Never
+    /// interpolates — returns an actual captured point (or nil for an empty line).
+    static func nearestSnapshot(to date: Date, in points: [ChartDataPoint]) -> ChartDataPoint? {
+        let primary = primarySource(in: points)
+        return points
+            .filter { $0.source == primary }
+            .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
+    }
+
+    /// Latest real snapshot on the primary line (used for the resting accessibility
+    /// read-out when nothing is scrubbed).
+    static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
+        let primary = primarySource(in: points)
+        return points.filter { $0.source == primary }.max { $0.date < $1.date }
+    }
+
+    /// Human/VoiceOver read-out for a snapshot, in the SAME probability basis as
+    /// the plotted line and axis labels (home %, away %, plus real game state).
+    static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String) -> String {
+        let homePct = Int((point.probability * 100).rounded())
+        let awayPct = 100 - homePct
+        var parts = ["\(homeShort) \(homePct)%", "\(awayShort) \(awayPct)%"]
+        if let hs = point.homeScore, let a = point.awayScore { parts.append("score \(hs)–\(a)") }
+        if let period = point.period, !period.isEmpty { parts.append(period) }
+        if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Accessibility value for the chart: the scrubbed snapshot when one is
+    /// selected, else the latest primary snapshot. Always the 0–100 basis.
+    static func accessibilityValue(dataPoints: [ChartDataPoint], selectedDate: Date?,
+                                   homeShort: String, awayShort: String) -> String {
+        let point: ChartDataPoint?
+        if let selectedDate {
+            point = nearestSnapshot(to: selectedDate, in: dataPoints)
+        } else {
+            point = latestPrimaryPoint(in: dataPoints)
+        }
+        guard let point else { return "No probability data" }
+        return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort)
+    }
+
     // MARK: - Game State Enrichment
 
     /// Enrich chart data points with game state (score, period, clock, scoring play)
@@ -878,19 +958,7 @@ struct OddsChartView: View {
 
     /// Update the selected play point binding based on chart selection.
     private func updateSelectedPoint(date: Date?, dataPoints: [ChartDataPoint], history: EventHistoryResponse) {
-        guard let date else {
-            selectedPlayPoint = nil
-            return
-        }
-
-        // Find the primary source points (aggregate or consensus)
-        let primarySource = dataPoints.contains(where: { $0.source == "aggregate" }) ? "aggregate" : "consensus"
-        let primaryPoints = dataPoints.filter { $0.source == primarySource }.sorted { $0.date < $1.date }
-
-        // Find nearest point
-        guard let nearest = primaryPoints.min(by: {
-            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-        }) else {
+        guard let date, let nearest = Self.nearestSnapshot(to: date, in: dataPoints) else {
             selectedPlayPoint = nil
             return
         }
