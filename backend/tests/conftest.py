@@ -13,16 +13,24 @@ def _reset_request_cache_state():
     ``app.utils.request_cache`` keeps a process-global last-good store + in-flight
     singleflight registry. Without a reset they leak across tests (e.g. one
     calibration/feed test's last-good bleeding into the next). Cheap and safe.
+
+    Also resets the Discover candidate-ID base process cache (Queue 285): the feed
+    publishes a candidate base from the request path on a cold build, which stores
+    it in ``candidate_base._l0``. Without a reset, one seeded feed test's base
+    (its market IDs) would be served to the next test's differently-seeded DB.
     """
     from app.utils import request_cache as _rc
+    from app.utils import candidate_base as _cb
 
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
+    _cb._reset_l0_for_tests()
     yield
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
+    _cb._reset_l0_for_tests()
 
 
 @pytest.fixture
