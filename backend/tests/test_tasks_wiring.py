@@ -264,6 +264,7 @@ class TestBeatScheduleCompleteness:
         "compute-fair-fight-comparison",
         "precompute-source-intelligence",
         "precompute-category-pages",
+        "precompute-discover-candidate-base",
         "precompute-admin-audit-all",
         "precompute-admin-link-rate",
         "precompute-admin-matured-linkage",

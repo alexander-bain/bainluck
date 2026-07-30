@@ -143,6 +143,117 @@ async def _precompute_golf():
     return "ok"
 
 
+async def _precompute_discover_candidate_base():
+    """Precompute + publish the anonymous-default Discover candidate-ID base (Queue 285).
+
+    Runs the exact ordered candidate-pool queries the feed uses
+    (``feed._compute_ordered_candidate_ids`` — the same source both the request
+    path and this task call) for the anonymous default key (``sport=None``,
+    ``static_tag_filter=None``) and publishes the user-independent ordered ID list
+    as a versioned, freshness-tagged envelope. ``GET /api/feed`` then reads this
+    on a cold response-cache key instead of re-running the ~3–6s nine-query
+    discovery, so page one and page two of the same anonymous scroll (and native's
+    50/200 shapes) reuse one base.
+
+    Contracts honoured:
+
+    * **Kill switch** — when the Redis ``discover_candidate_base:enabled`` key is
+      ``"0"`` the build is skipped entirely (the feed also ignores the base and
+      runs direct queries).
+    * **Failed/partial builds never replace last-good** — the envelope is
+      published ONLY when the build produced a non-empty, valid ID list within the
+      deadline. An empty/invalid/timed-out build leaves the prior last-good key
+      untouched.
+    * **Measured** — build wall time and per-pool DB row counts are logged.
+    * **Bounded** — the build is deadline-guarded so it can never run long.
+
+    Only the anonymous default key is beat-warmed; arbitrary sport/static-tag feed
+    requests populate their own correctly-keyed base on first request (or fall
+    back to direct queries), per ``candidate_base.get_candidate_base``.
+    """
+    import asyncio
+    import os
+    import time
+    from datetime import datetime, timezone
+
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+    from app.routes.feed import _compute_ordered_candidate_ids
+    from app.utils.candidate_base import (
+        CANDIDATE_BASE_ENABLED_KEY,
+        base_identity,
+        build_envelope,
+        payload_valid,
+        publish_candidate_base_sync,
+    )
+
+    rc = get_redis_client()
+
+    # Kill switch — skip the build (and DB load) entirely when disabled.
+    try:
+        raw_enabled = rc.get(CANDIDATE_BASE_ENABLED_KEY)
+        if raw_enabled is not None:
+            value = (
+                raw_enabled.decode()
+                if isinstance(raw_enabled, (bytes, bytearray))
+                else raw_enabled
+            )
+            if str(value).strip() == "0":
+                logger.info("Discover candidate base precompute skipped — kill switch off")
+                return "disabled"
+    except Exception:
+        logger.debug("candidate base kill-switch read failed", exc_info=True)
+
+    try:
+        deadline_s = float(os.getenv("CANDIDATE_BASE_BUILD_DEADLINE_S", "20"))
+    except (TypeError, ValueError):
+        deadline_s = 20.0
+
+    now = datetime.now(timezone.utc)
+    t0 = time.perf_counter()
+    try:
+        async with get_task_session() as db:
+            market_ids, pool_counts, curator_ids = await asyncio.wait_for(
+                _compute_ordered_candidate_ids(db, now, None, None),
+                timeout=deadline_s,
+            )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Discover candidate base build exceeded %.0fs deadline — keeping last-good",
+            deadline_s,
+        )
+        return "timeout"
+    build_ms = round((time.perf_counter() - t0) * 1000, 1)
+
+    identity = base_identity(None, None)
+    envelope = build_envelope(
+        now,
+        identity,
+        market_ids,
+        pool_counts=pool_counts,
+        external_curator_recall_ids=curator_ids,
+    )
+
+    # Failed/partial builds never replace last-good: only publish a fully-built,
+    # non-empty, valid envelope.
+    if not market_ids or not payload_valid(envelope, expected_identity=identity):
+        logger.warning(
+            "Discover candidate base build empty/invalid (%d ids, %.1fms) — keeping last-good",
+            len(market_ids),
+            build_ms,
+        )
+        return "empty"
+
+    publish_candidate_base_sync(rc, envelope)
+    logger.info(
+        "Published Discover candidate base (%d ids, pools=%s, build=%.1fms)",
+        len(market_ids),
+        pool_counts,
+        build_ms,
+    )
+    return len(market_ids)
+
+
 async def _precompute_grids():
     """Pre-warm championship grid caches for MLB, NBA, NHL, Golf.
 

@@ -5543,6 +5543,271 @@ async def _score_sports_mode_futures(
     return scored_items
 
 
+async def _compute_ordered_candidate_ids(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+    static_tag_filter: Optional[list[str]] = None,
+    *,
+    mark_timing=None,
+) -> tuple[list[int], dict[str, int], list[int]]:
+    """Run the Discover futures candidate pools and return the ordered ID union.
+
+    This is the user-independent candidate discovery extracted from
+    ``_score_futures`` (Queue 285). It depends ONLY on ``now``, ``sport_filter``,
+    and ``static_tag_filter`` — never on the user, session, limit, offset, or
+    personalization — so its output is exactly the ordered, order-preserving
+    deduped ``market_ids`` list the feed consumes before loading any ORM rows.
+
+    Both the request-path direct-query fallback (``_score_futures``) and the
+    background precompute (``_precompute_discover_candidate_base``) call this, so
+    the base a cold page reuses is byte-for-byte the list it would have computed
+    inline. Returns ``(market_ids, pool_counts)``; ``pool_counts`` is
+    provenance-only (per-lane raw row counts) and never affects ordering.
+
+    ``mark_timing`` (optional) is the ``_score_futures`` timing closure; when
+    provided each pool's ``futures.pool_*`` stage is recorded exactly as before.
+
+    Returns ``(market_ids, pool_counts, external_curator_recall_ids)``.
+    ``pool_counts`` is provenance-only (per-lane raw row counts).
+    ``external_curator_recall_ids`` is the raw external-curator recall lane output
+    (a subset of ``market_ids``); the feed applies a recall score/rank bonus to
+    these, so it (and the base envelope) must carry it to score identically on a
+    base-served build.
+    """
+
+    def _mark(stage: str) -> None:
+        if mark_timing is not None:
+            mark_timing(stage)
+
+    base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        ~FuturesMarket.name.like("% vs %"),
+        ~FuturesMarket.name.like("% vs. %"),
+    ]
+
+    id_filters = list(base_filters)
+    if sport_filter:
+        id_filters.append(
+            or_(
+                FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
+                FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
+            )
+        )
+
+    if static_tag_filter:
+        import json as _json_mod
+
+        id_filters.append(
+            FuturesMarket.market_tags.op("@>")(
+                cast(_json_mod.dumps(static_tag_filter), JSONB)
+            )
+        )
+
+    # Pool 1: sports futures (capped — tier-ordered so best surface first).
+    sports_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+        )
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.resolution_date.asc().nulls_last(),
+        )
+        .limit(80)
+    )
+
+    sports_postseason_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            _SPORTS_POSTSEASON_SQL_FILTER,
+        )
+        .order_by(
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
+    # Pool 1c: broad sports futures with mainstream Discover value.
+    sports_editorial_recall_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+            _discover_sports_editorial_recall_filter(),
+        )
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
+    non_sports_filter = or_(
+        ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+        FuturesMarket.llm_sport_category.is_(None),
+    )
+
+    # Pool 2a: non-sports futures by liquidity.
+    nonsports_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+        )
+        .order_by(
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.market_tier.asc().nulls_last(),
+        )
+        .limit(120)
+    )
+
+    # Pool 2b: non-sports by actual movement (denormalized column).
+    nonsports_movement_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            FuturesMarket.max_movement_24h.isnot(None),
+            FuturesMarket.max_movement_24h > 0,
+        )
+        .order_by(
+            FuturesMarket.max_movement_24h.desc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        )
+        .limit(100)
+    )
+
+    # Pool 2c: enriched markets (hook/image present).
+    nonsports_enriched_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            or_(
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.image_url.isnot(None),
+            ),
+        )
+        .order_by(
+            FuturesMarket.hook_generated_at.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(100)
+    )
+
+    # Pool 2d: high-texture editorial recall (folded is_editorial_recall flag).
+    nonsports_editorial_recall_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            _discover_editorial_recall_filter(),
+        )
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
+    # Pool 2e: soon-resolving markets.
+    nonsports_timely_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            FuturesMarket.resolution_date.isnot(None),
+        )
+        .order_by(
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
+    external_curator_recall_ids = await _external_curator_recall_market_ids(
+        db,
+        id_filters,
+        row_limit=80,
+        market_limit=80,
+    )
+    _mark("pool_external_curator_recall")
+    sports_result = await db.execute(sports_query)
+    _mark("pool_sports")
+    sports_postseason_result = await db.execute(sports_postseason_query)
+    _mark("pool_sports_postseason")
+    sports_editorial_recall_result = await db.execute(sports_editorial_recall_query)
+    _mark("pool_sports_editorial_recall")
+    nonsports_result = await db.execute(nonsports_query)
+    _mark("pool_nonsports_volume")
+    nonsports_movement_result = await db.execute(nonsports_movement_query)
+    _mark("pool_nonsports_movement")
+    nonsports_enriched_result = await db.execute(nonsports_enriched_query)
+    _mark("pool_nonsports_enriched")
+    nonsports_editorial_recall_result = await db.execute(
+        nonsports_editorial_recall_query
+    )
+    _mark("pool_nonsports_editorial_recall")
+    nonsports_timely_result = await db.execute(nonsports_timely_query)
+    _mark("pool_nonsports_timely")
+
+    external_curator_recall_list = list(external_curator_recall_ids)
+    sports_ids = list(sports_result.scalars().all())
+    sports_postseason_ids = list(sports_postseason_result.scalars().all())
+    sports_editorial_recall_list = list(sports_editorial_recall_result.scalars().all())
+    nonsports_ids = list(nonsports_result.scalars().all())
+    nonsports_movement_ids = list(nonsports_movement_result.scalars().all())
+    nonsports_enriched_ids = list(nonsports_enriched_result.scalars().all())
+    nonsports_editorial_recall_list = list(
+        nonsports_editorial_recall_result.scalars().all()
+    )
+    nonsports_timely_ids = list(nonsports_timely_result.scalars().all())
+
+    candidate_market_ids = (
+        external_curator_recall_list
+        + sports_ids
+        + sports_postseason_ids
+        + sports_editorial_recall_list
+        + nonsports_ids
+        + nonsports_movement_ids
+        + nonsports_enriched_ids
+        + nonsports_editorial_recall_list
+        + nonsports_timely_ids
+    )
+    seen_market_ids: set[int] = set()
+    market_ids: list[int] = []
+    for market_id in candidate_market_ids:
+        if market_id in seen_market_ids:
+            continue
+        seen_market_ids.add(market_id)
+        market_ids.append(market_id)
+
+    pool_counts = {
+        "external_curator_recall": len(external_curator_recall_list),
+        "sports": len(sports_ids),
+        "sports_postseason": len(sports_postseason_ids),
+        "sports_editorial_recall": len(sports_editorial_recall_list),
+        "nonsports_volume": len(nonsports_ids),
+        "nonsports_movement": len(nonsports_movement_ids),
+        "nonsports_enriched": len(nonsports_enriched_ids),
+        "nonsports_editorial_recall": len(nonsports_editorial_recall_list),
+        "nonsports_timely": len(nonsports_timely_ids),
+        "deduped": len(market_ids),
+    }
+    return market_ids, pool_counts, external_curator_recall_list
+
+
 async def _score_futures(
     db: AsyncSession,
     now: datetime,
@@ -5593,21 +5858,9 @@ async def _score_futures(
         if update_previous:
             timing_previous_at = recorded_at
 
-    # === BASE FILTERS ===
-    base_filters = [
-        FuturesMarket.status == "open",
-        FuturesMarket.event_id.is_(None),
-        or_(
-            FuturesMarket.resolution_date.is_(None),
-            FuturesMarket.resolution_date >= now,
-        ),
-        ~FuturesMarket.name.like("% vs %"),
-        ~FuturesMarket.name.like("% vs. %"),
-        # NOTE: '% at %' filter deliberately removed — it killed non-sports
-        # markets like "S&P at 4pm", "temperature at NYC". The event_id IS NULL
-        # filter already excludes game matchups.
-    ]
-
+    # Base filters + the ordered candidate-ID pools now live in
+    # ``_compute_ordered_candidate_ids`` (Queue 285) so both the request-path
+    # direct-query fallback and the precompute beat build the identical base.
     base_options = [
         load_only(
             FuturesMarket.id,
@@ -5656,234 +5909,74 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
-    # === TWO-POOL QUERY — ensure non-sports markets compete fairly ===
-    # Sports outnumber non-sports ~10:1 in the DB, so a single query
-    # returns ~90% sports. Pull sports and non-sports separately with
-    # generous limits, then score everything together.
-    id_filters = list(base_filters)
-    if sport_filter:
-        id_filters.append(
-            or_(
-                FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
-                FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
+    # === CANDIDATE-ID BASE (Queue 285) ===
+    # The Discover futures candidate pools depend ONLY on (now, sport_filter,
+    # static_tag_filter) — never on the user, session, limit, offset, or
+    # personalization — so the ordered candidate-ID union is identical across the
+    # cold response-cache keys of the SAME anonymous scroll (page one, page two,
+    # native 50/200). Read a precomputed, user-independent base so cold pages skip
+    # the ~3–6s nine-query candidate discovery; the beat and earlier requests keep
+    # it warm. On a missing / stale / invalid base — or the Redis kill switch — run
+    # the current inline direct-query path under the existing absolute request
+    # deadline (no new blind parallelism, no gather() on this AsyncSession) and
+    # publish the freshly-computed base so the next page reuses it. Downstream
+    # market/outcome rows are loaded fresh and every runtime filter, scoring,
+    # personalization, diversity, and page op run unchanged below.
+    from app.utils import candidate_base as _candidate_base
+
+    _cb_base_ids, _cb_provenance, _cb_curator_ids = (
+        await _candidate_base.get_candidate_base(
+            now, sport_filter, static_tag_filter, stages=None
+        )
+    )
+    if _cb_base_ids is not None:
+        market_ids = list(_cb_base_ids)
+        external_curator_recall_ids = set(_cb_curator_ids or [])
+        # Provenance-only timing stage — records fresh|last_good and that ZERO
+        # candidate-pool SQL ran on this build (no IDs / content recorded).
+        mark_timing(f"candidate_base_{_cb_provenance}")
+    else:
+        candidate_queries_started_at = timing_previous_at
+        (
+            market_ids,
+            _cb_pool_counts,
+            _cb_curator_ids,
+        ) = await _compute_ordered_candidate_ids(
+            db,
+            now,
+            sport_filter,
+            static_tag_filter,
+            mark_timing=mark_timing,
+        )
+        external_curator_recall_ids = set(_cb_curator_ids)
+        mark_timing(
+            "candidate_queries",
+            since_at=candidate_queries_started_at,
+            update_previous=False,
+        )
+        mark_timing("candidate_dedupe")
+        # Publish the freshly-computed base (best-effort, non-blocking) so the next
+        # cold page / native shape reuses it — unless the kill switch is set.
+        if _cb_provenance != _candidate_base.PROV_DISABLED and market_ids:
+            from app.utils.request_cache import schedule_background as _cb_schedule
+
+            _cb_identity = _candidate_base.base_identity(
+                sport_filter, static_tag_filter
             )
-        )
-
-    if static_tag_filter:
-        import json as _json_mod
-
-        id_filters.append(
-            FuturesMarket.market_tags.op("@>")(
-                cast(_json_mod.dumps(static_tag_filter), JSONB)
+            _cb_schedule(
+                _candidate_base.publish_candidate_base(
+                    _candidate_base.build_envelope(
+                        now,
+                        _cb_identity,
+                        market_ids,
+                        pool_counts=_cb_pool_counts,
+                        external_curator_recall_ids=_cb_curator_ids,
+                    )
+                )
             )
-        )
-
-    # Pool 1: sports futures (capped — tier-ordered so best surface first).
-    # Limit was 50 but that starved Tier 2 sports (MMA, tennis, soccer)
-    # because Tier 1 sports filled the pool first. Raised to 80 to ensure
-    # UFC, Grand Slam tennis, and World Cup markets enter the candidate set.
-    sports_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-        )
-        .order_by(
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.resolution_date.asc().nulls_last(),
-        )
-        .limit(80)
-    )
-
-    sports_postseason_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            _SPORTS_POSTSEASON_SQL_FILTER,
-        )
-        .order_by(
-            FuturesMarket.resolution_date.asc().nulls_last(),
-            FuturesMarket.updated_at.desc().nulls_last(),
-        )
-        .limit(80)
-    )
-
-    # Pool 1c: broad sports futures with mainstream Discover value. This keeps
-    # World Cup / Super Bowl / Finals style markets from being crowded out by
-    # generic tier ordering while still passing through normal story caps.
-    sports_editorial_recall_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-            _discover_sports_editorial_recall_filter(),
-        )
-        .order_by(
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.volume_24h.desc().nulls_last(),
-            FuturesMarket.updated_at.desc().nulls_last(),
-        )
-        .limit(80)
-    )
-
-    non_sports_filter = or_(
-        ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-        FuturesMarket.llm_sport_category.is_(None),
-    )
-
-    # Pool 2a: non-sports futures by liquidity. Good for markets people are
-    # actively trading, but too narrow on its own because commodities/weather
-    # ladders dominate volume.
-    nonsports_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            non_sports_filter,
-        )
-        .order_by(
-            FuturesMarket.volume_24h.desc().nulls_last(),
-            FuturesMarket.market_tier.asc().nulls_last(),
-        )
-        .limit(120)
-    )
-
-    # Pool 2b: non-sports by actual movement. Uses denormalized
-    # max_movement_24h column (updated by Celery task) instead of a
-    # GROUP BY subquery on futures_outcomes. Cuts this pool from ~9s to <100ms.
-    nonsports_movement_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            non_sports_filter,
-            FuturesMarket.max_movement_24h.isnot(None),
-            FuturesMarket.max_movement_24h > 0,
-        )
-        .order_by(
-            FuturesMarket.max_movement_24h.desc().nulls_last(),
-            FuturesMarket.volume_24h.desc().nulls_last(),
-        )
-        .limit(100)
-    )
-
-    # Pool 2c: enriched markets. Hook/image enrichment is a useful prior that a
-    # market is feed-shaped, and it helps lower-volume good stories enter the
-    # scoring stage.
-    nonsports_enriched_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            non_sports_filter,
-            or_(
-                FuturesMarket.hook_description.isnot(None),
-                FuturesMarket.image_url.isnot(None),
-            ),
-        )
-        .order_by(
-            FuturesMarket.hook_generated_at.desc().nulls_last(),
-            FuturesMarket.updated_at.desc().nulls_last(),
-        )
-        .limit(100)
-    )
-
-    # Pool 2d: high-texture editorial recall. The `is_editorial_recall` boolean
-    # is set at ingest time (replacing the old 44-ILIKE scan). Queue 273 (#1475):
-    # the flag is folded directly into this pool's WHERE instead of first
-    # materializing EVERY open/active editorial ID via a helper that seq-scanned
-    # the 1.6GB / 588K-row futures_markets table (no matching index, no LIMIT) on
-    # every cold build — the single largest measured cold-feed query (it could not
-    # complete within the DB statement timeout; every other pool is sub-second).
-    # Equivalence: the helper's `status IN ('open','active')` intersects with
-    # base_filters' `status='open'` down to `status='open' AND is_editorial_recall`,
-    # so the candidate id set + order + LIMIT are byte-for-byte identical (proven
-    # against live production data). Folded query is bounded (~0.6s) via the
-    # existing ix_fm_feed_open_* partial indexes.
-    nonsports_editorial_recall_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            non_sports_filter,
-            _discover_editorial_recall_filter(),
-        )
-        .order_by(
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.volume_24h.desc().nulls_last(),
-            FuturesMarket.updated_at.desc().nulls_last(),
-        )
-        .limit(80)
-    )
-
-    # Pool 2e: soon-resolving markets. Timeliness matters, but this pool is
-    # still scored and quality-capped later, so routine ladders do not get a
-    # free pass.
-    nonsports_timely_query = (
-        select(FuturesMarket.id)
-        .where(
-            *id_filters,
-            non_sports_filter,
-            FuturesMarket.resolution_date.isnot(None),
-        )
-        .order_by(
-            FuturesMarket.resolution_date.asc().nulls_last(),
-            FuturesMarket.volume_24h.desc().nulls_last(),
-        )
-        .limit(80)
-    )
-
-    candidate_queries_started_at = timing_previous_at
-    external_curator_recall_ids = await _external_curator_recall_market_ids(
-        db,
-        id_filters,
-        row_limit=80,
-        market_limit=80,
-    )
-    mark_timing("pool_external_curator_recall")
-    sports_result = await db.execute(sports_query)
-    mark_timing("pool_sports")
-    sports_postseason_result = await db.execute(sports_postseason_query)
-    mark_timing("pool_sports_postseason")
-    sports_editorial_recall_result = await db.execute(sports_editorial_recall_query)
-    mark_timing("pool_sports_editorial_recall")
-    nonsports_result = await db.execute(nonsports_query)
-    mark_timing("pool_nonsports_volume")
-    nonsports_movement_result = await db.execute(nonsports_movement_query)
-    mark_timing("pool_nonsports_movement")
-    nonsports_enriched_result = await db.execute(nonsports_enriched_query)
-    mark_timing("pool_nonsports_enriched")
-    nonsports_editorial_recall_result = await db.execute(
-        nonsports_editorial_recall_query
-    )
-    mark_timing("pool_nonsports_editorial_recall")
-    nonsports_timely_result = await db.execute(nonsports_timely_query)
-    mark_timing("pool_nonsports_timely")
-    mark_timing(
-        "candidate_queries",
-        since_at=candidate_queries_started_at,
-        update_previous=False,
-    )
-
-    candidate_market_ids = (
-        list(external_curator_recall_ids)
-        + list(sports_result.scalars().all())
-        + list(sports_postseason_result.scalars().all())
-        + list(sports_editorial_recall_result.scalars().all())
-        + list(nonsports_result.scalars().all())
-        + list(nonsports_movement_result.scalars().all())
-        + list(nonsports_enriched_result.scalars().all())
-        + list(nonsports_editorial_recall_result.scalars().all())
-        + list(nonsports_timely_result.scalars().all())
-    )
-    seen_market_ids: set[int] = set()
-    market_ids: list[int] = []
-    for market_id in candidate_market_ids:
-        if market_id in seen_market_ids:
-            continue
-        seen_market_ids.add(market_id)
-        market_ids.append(market_id)
 
     if not market_ids:
-        mark_timing("candidate_dedupe")
         return []
-    mark_timing("candidate_dedupe")
 
     markets_result = await db.execute(
         select(FuturesMarket)

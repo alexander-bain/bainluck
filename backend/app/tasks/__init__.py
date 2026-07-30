@@ -2078,6 +2078,15 @@ def precompute_category_pages(self):
     return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")
+def precompute_discover_candidate_base(self):
+    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285)."""
+    from app.tasks.precompute_category_pages import _precompute_discover_candidate_base
+    return _tracked_run(
+        "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.refresh_open_commentary")
 def refresh_open_commentary(self):
     """Refresh the live AI commentary box for The Open Championship (Open-only,
@@ -2471,6 +2480,16 @@ celery_app.conf.beat_schedule = {
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
         "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        "options": {"queue": "background"},
+    },
+    "precompute-discover-candidate-base": {
+        "task": "app.tasks.precompute_discover_candidate_base",
+        # Every 2 min — keep the anonymous Discover candidate-ID base warm so cold
+        # feed pages skip the ~3–6s nine-query discovery (Queue 285). The 60s
+        # freshness window (CANDIDATE_BASE_FRESH_SECONDS) enforces the "no looser
+        # than the anon feed freshness contract" bound; the bounded last-good key
+        # + request-path publish keep cold pages covered between beats.
+        "schedule": crontab(minute="*/2"),
         "options": {"queue": "background"},
     },
     "precompute-backfill-winners-status": {
