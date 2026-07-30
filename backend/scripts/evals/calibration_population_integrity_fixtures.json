@@ -1,0 +1,153 @@
+{
+  "schema_version": "calibration-population-integrity/v1",
+  "audited_commit": "71571f4a",
+  "population_version": "q267",
+  "scenarios": [
+    {
+      "id": "ws_ungraded_requires_source",
+      "domain": "resolution",
+      "existing_source": null,
+      "incoming_source": "polymarket_ws_settlement",
+      "incoming_authority_tier": 3,
+      "writes_winner": true,
+      "expected": {"write": true, "stamp_source": true, "calibration_eligible": true}
+    },
+    {
+      "id": "ws_cannot_downgrade_api",
+      "domain": "resolution",
+      "existing_source": "api_settlement",
+      "existing_authority_tier": 3,
+      "incoming_source": "polymarket_ws_settlement",
+      "incoming_authority_tier": 3,
+      "writes_winner": false,
+      "expected": {"write": false, "preserve_source": true}
+    },
+    {
+      "id": "price_buffer_is_not_truth",
+      "domain": "resolution",
+      "existing_source": null,
+      "incoming_source": "price_buffer",
+      "incoming_authority_tier": 0,
+      "writes_winner": false,
+      "expected": {"write": false, "calibration_eligible": false}
+    },
+    {
+      "id": "reopen_clears_stale_grade",
+      "domain": "resolution",
+      "existing_source": "api_settlement",
+      "transition": "resolved_to_open",
+      "expected": {"clear_winner": true, "clear_source": true, "preserve_correction_chain": true}
+    },
+    {
+      "id": "resolved_shape_beat_is_immutable",
+      "domain": "shape",
+      "status": "resolved",
+      "fingerprint_changed": true,
+      "attended_recompute": false,
+      "expected": {"write_shape": false, "requires_population_version_bump": true}
+    },
+    {
+      "id": "resolved_shape_attended_recompute",
+      "domain": "shape",
+      "status": "resolved",
+      "fingerprint_changed": true,
+      "attended_recompute": true,
+      "census_recorded": true,
+      "version_bumped": true,
+      "expected": {"write_shape": true, "requires_population_version_bump": true}
+    },
+    {
+      "id": "open_shape_recomputes",
+      "domain": "shape",
+      "status": "open",
+      "fingerprint_changed": true,
+      "attended_recompute": false,
+      "expected": {"write_shape": true, "requires_population_version_bump": false}
+    },
+    {
+      "id": "horizon_reuses_canonical_population",
+      "domain": "population",
+      "surface": "horizon",
+      "uses_canonical_ctes": true,
+      "declared_subset": "non_event_with_resolution_date_and_horizon_snapshot",
+      "population_version": "q267",
+      "expected": {"valid": true, "same_filter_counts": true}
+    },
+    {
+      "id": "diagnostic_reimplementation_rejected",
+      "domain": "population",
+      "surface": "diagnostic",
+      "uses_canonical_ctes": false,
+      "declared_subset": null,
+      "population_version": null,
+      "expected": {"valid": false}
+    },
+    {
+      "id": "kalshi_zero_volume_with_bid_kept",
+      "domain": "liquidity",
+      "source": "kalshi",
+      "volume": 0,
+      "yes_bid": 0.31,
+      "last_price": null,
+      "expected": {"eligible": true, "transparency_bucket": "included"}
+    },
+    {
+      "id": "kalshi_zero_volume_no_evidence_dropped",
+      "domain": "liquidity",
+      "source": "kalshi",
+      "volume": 0,
+      "yes_bid": 0,
+      "last_price": 0,
+      "expected": {"eligible": false, "transparency_bucket": "excluded_no_evidence"}
+    },
+    {
+      "id": "two_member_explicit_group_is_one_question",
+      "domain": "grouping",
+      "group_size": 2,
+      "has_explicit_group_id": true,
+      "relation": "exactly_one",
+      "expected": {"grouped": true, "representative_rows": 1}
+    },
+    {
+      "id": "two_unrelated_event_props_stay_separate",
+      "domain": "grouping",
+      "event_size": 2,
+      "has_explicit_group_id": false,
+      "relation": "independent",
+      "expected": {"grouped": false, "representative_rows": 2}
+    },
+    {
+      "id": "datagolf_model_excluded",
+      "domain": "source",
+      "source": "datagolf",
+      "source_kind": "model",
+      "expected": {"published_curve": false, "diagnostic_only": true}
+    },
+    {
+      "id": "last_good_missing_main_is_marked",
+      "domain": "cache",
+      "origin": "redis_last_good",
+      "fresh_main_present": false,
+      "expected": {"cache_status": "stale", "reason": "main_key_absent", "memoized_copy_marked": true}
+    },
+    {
+      "id": "fresh_main_stays_fresh",
+      "domain": "cache",
+      "origin": "redis_main",
+      "fresh_main_present": true,
+      "expected": {"cache_status": "fresh", "memoized_copy_marked": false}
+    }
+  ],
+  "confirmed_current_defects": [
+    "ws_ungraded_requires_source",
+    "resolved_shape_beat_is_immutable",
+    "two_member_explicit_group_is_one_question",
+    "datagolf_model_excluded",
+    "last_good_missing_main_is_marked"
+  ],
+  "confirmed_clean_contracts": [
+    "horizon_reuses_canonical_population",
+    "kalshi_zero_volume_with_bid_kept",
+    "kalshi_zero_volume_no_evidence_dropped"
+  ]
+}
