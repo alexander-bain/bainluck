@@ -1,0 +1,193 @@
+{
+  "schema_version": "discover-staleness-authority/v1",
+  "audited_commit": "ea04efc4",
+  "declared_now": "2026-07-30T14:30:00Z",
+  "reason_taxonomy": {
+    "authoritative": ["status_terminal", "past_resolution", "linked_event_completed"],
+    "content": ["title_date_elapsed", "recurring_calendar_elapsed", "stale_without_movement", "empty_envelope", "duplicate_family"],
+    "user_recency": ["dismissed"],
+    "cache": []
+  },
+  "scenarios": [
+    {
+      "id": "resolved_market",
+      "lifecycle": {"status": "resolved", "resolution_relation": "past", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "unknown", "recurring_calendar": "none", "updated_age_hours": 3, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    },
+    {
+      "id": "closed_market",
+      "lifecycle": {"status": "closed", "resolution_relation": "none", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "signed_in_web",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    },
+    {
+      "id": "past_authoritative_resolution",
+      "lifecycle": {"status": "open", "resolution_relation": "past", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "unknown", "recurring_calendar": "none", "updated_age_hours": 2, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "native_first_page",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "past_resolution"}
+    },
+    {
+      "id": "completed_linked_event",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "completed_current", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "linked_event_completed"}
+    },
+    {
+      "id": "correction_reopens_market",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "reopened", "correction_reopen": true},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "signed_in_web",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible"}
+    },
+    {
+      "id": "explicit_title_date_elapsed",
+      "lifecycle": {"status": "open", "resolution_relation": "none", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "explicit_past", "recurring_calendar": "none", "updated_age_hours": 5, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "title_date_elapsed"}
+    },
+    {
+      "id": "recurring_calendar_correct_elapsed",
+      "lifecycle": {"status": "open", "resolution_relation": "none", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "unknown", "recurring_calendar": "correct_elapsed", "updated_age_hours": 12, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "recurring_calendar_elapsed"}
+    },
+    {
+      "id": "recurring_calendar_wrong_or_missing",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "unknown", "recurring_calendar": "wrong_or_missing", "updated_age_hours": 12, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible"}
+    },
+    {
+      "id": "old_update_without_movement",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 80, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "stale_without_movement"}
+    },
+    {
+      "id": "old_update_with_fresh_movement",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "unknown", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 80, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible"}
+    },
+    {
+      "id": "open_ninety_nine_percent_future",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false, "leader_probability": 0.99},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "native_first_page",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible"}
+    },
+    {
+      "id": "genuine_settled_winner",
+      "lifecycle": {"status": "resolved", "resolution_relation": "past", "linked_event": "completed_current", "correction_reopen": false},
+      "content": {"title_time": "past", "recurring_calendar": "none", "updated_age_hours": 20, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false, "leader_probability": 1.0},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "native_first_page",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    },
+    {
+      "id": "seen_contested_recycled",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 2, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false, "leader_probability": 0.55},
+      "user_recency": {"seen_age_hours": 24, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "heavy_user_recycled",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible_recycled"}
+    },
+    {
+      "id": "dismissed_market",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": 30, "dismissed": true},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "heavy_user_recycled",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "dismissed"}
+    },
+    {
+      "id": "recycled_then_runtime_blocked",
+      "lifecycle": {"status": "resolved", "resolution_relation": "past", "linked_event": "completed_current", "correction_reopen": false},
+      "content": {"title_time": "past", "recurring_calendar": "none", "updated_age_hours": 30, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": 24, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "heavy_user_recycled",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    },
+    {
+      "id": "stale_cache_valid_cards",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 2, "fresh_movement": true, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "stale_hit", "build_quality": "complete"},
+      "client_shape": "native_first_page",
+      "expected": {"authoritative_stale": false, "surface": true, "reason": "eligible_cache_stale"}
+    },
+    {
+      "id": "fresh_cache_authoritative_stale_card",
+      "lifecycle": {"status": "resolved", "resolution_relation": "past", "linked_event": "completed_current", "correction_reopen": false},
+      "content": {"title_time": "past", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    },
+    {
+      "id": "duplicate_family_second_card",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": true, "empty_envelope": false, "duplicate_family": true},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "anonymous_web",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "duplicate_family"}
+    },
+    {
+      "id": "empty_envelope",
+      "lifecycle": {"status": "open", "resolution_relation": "future", "linked_event": "scheduled", "correction_reopen": false},
+      "content": {"title_time": "current", "recurring_calendar": "none", "updated_age_hours": 1, "fresh_movement": false, "empty_envelope": true, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": null, "dismissed": false},
+      "cache": {"status": "fresh", "build_quality": "complete"},
+      "client_shape": "native_first_page",
+      "expected": {"authoritative_stale": false, "surface": false, "reason": "empty_envelope"}
+    },
+    {
+      "id": "native_refill_must_not_restore_terminal",
+      "lifecycle": {"status": "resolved", "resolution_relation": "past", "linked_event": "completed_current", "correction_reopen": false},
+      "content": {"title_time": "past", "recurring_calendar": "none", "updated_age_hours": 30, "fresh_movement": false, "empty_envelope": false, "duplicate_family": false},
+      "user_recency": {"seen_age_hours": 30, "dismissed": false},
+      "cache": {"status": "stale_hit", "build_quality": "complete"},
+      "client_shape": "native_refill_exhausted",
+      "expected": {"authoritative_stale": true, "surface": false, "reason": "status_terminal"}
+    }
+  ]
+}
