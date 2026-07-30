@@ -1,0 +1,124 @@
+{
+  "schema_version": "my-stuff-first-card/v1",
+  "audited_commit": "6614d20a",
+  "required_telemetry": [
+    "auth_ready_ms", "network_ms", "backend_elapsed_ms", "decode_ms",
+    "required_data_ready_ms", "first_render_ms", "cache_outcome",
+    "cache_age_seconds", "item_count", "app_build", "surface",
+    "outcome_class"
+  ],
+  "scenarios": [
+    {
+      "id": "anonymous_sign_in_prompt",
+      "dispatch_identity": "anon", "current_identity": "anon",
+      "required_request": "not_started", "optional_request": "not_started",
+      "cache_namespace": "anon", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 0,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": true, "outcome_class": "sign_in_required"}
+    },
+    {
+      "id": "returning_user_cold_success",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 6,
+      "expected": {"publish_required": true, "first_card": true, "prior_account_visible": false, "loading_clears": true, "outcome_class": "network_success"}
+    },
+    {
+      "id": "same_user_memory_cache",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": true, "generation_match": true,
+      "view_active": true, "required_item_count": 4,
+      "expected": {"publish_required": true, "first_card": true, "prior_account_visible": false, "loading_clears": true, "outcome_class": "memory_cache_hit"}
+    },
+    {
+      "id": "optional_futures_hung",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "hung",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 5,
+      "expected": {"publish_required": true, "first_card": true, "prior_account_visible": false, "loading_clears": true, "outcome_class": "partial_success"}
+    },
+    {
+      "id": "optional_futures_failure",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "failure",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 5,
+      "expected": {"publish_required": true, "first_card": true, "prior_account_visible": false, "loading_clears": true, "outcome_class": "partial_success"}
+    },
+    {
+      "id": "main_failure_optional_success",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "failure", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 0,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": true, "outcome_class": "required_failure"}
+    },
+    {
+      "id": "empty_success",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 0,
+      "expected": {"publish_required": true, "first_card": false, "prior_account_visible": false, "loading_clears": true, "outcome_class": "empty_success"}
+    },
+    {
+      "id": "navigation_away_cancellation",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "cancelled", "optional_request": "cancelled",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": false, "required_item_count": 0,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": true, "outcome_class": "cancelled"}
+    },
+    {
+      "id": "superseded_generation",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": false,
+      "view_active": true, "required_item_count": 7,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": false, "outcome_class": "superseded"}
+    },
+    {
+      "id": "account_a_to_b_late_response",
+      "dispatch_identity": "user_a", "current_identity": "user_b",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": false,
+      "view_active": true, "required_item_count": 8,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": false, "outcome_class": "identity_superseded"}
+    },
+    {
+      "id": "logout_late_response",
+      "dispatch_identity": "user_a", "current_identity": "anon",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": false,
+      "view_active": false, "required_item_count": 8,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": false, "outcome_class": "identity_superseded"}
+    },
+    {
+      "id": "reject_cross_principal_memory_cache",
+      "dispatch_identity": "user_b", "current_identity": "user_b",
+      "required_request": "success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": true, "generation_match": true,
+      "view_active": true, "required_item_count": 8,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": false, "outcome_class": "cache_principal_mismatch"}
+    },
+    {
+      "id": "retry_then_success",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "retry_success", "optional_request": "success",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": true,
+      "view_active": true, "required_item_count": 3,
+      "expected": {"publish_required": true, "first_card": true, "prior_account_visible": false, "loading_clears": true, "outcome_class": "retry_success"}
+    },
+    {
+      "id": "cancel_during_backoff",
+      "dispatch_identity": "user_a", "current_identity": "user_a",
+      "required_request": "cancelled", "optional_request": "cancelled",
+      "cache_namespace": "user_a", "cache_hit": false, "generation_match": false,
+      "view_active": false, "required_item_count": 0,
+      "expected": {"publish_required": false, "first_card": false, "prior_account_visible": false, "loading_clears": true, "outcome_class": "cancelled"}
+    }
+  ]
+}
