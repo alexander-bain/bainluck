@@ -222,6 +222,26 @@ def _golf_within_play_window(
     return s <= now.date() <= (e + timedelta(days=1))
 
 
+def _golf_start_in_future(start_date: str | None, now: datetime) -> bool:
+    """True iff a KNOWN tournament start date is still in the future.
+
+    Queue 283 lifecycle invariant: a tournament may not flip to "live" before its
+    authoritative start has passed, even if a leaderboard row looks fresh (the
+    "movement/pre-tournament dump may not establish live before commence" case —
+    AIG in the C81 corpus). Returns False when the date is missing/unparseable so
+    the caller's leaderboard-freshness fallback (#144, missing schedule dates)
+    still applies — unknown authority never blocks, it just cannot itself prove
+    live.
+    """
+    if not start_date:
+        return False
+    try:
+        s = datetime.fromisoformat(start_date).date()
+    except (ValueError, TypeError):
+        return False
+    return now.date() < s
+
+
 def _golf_leaderboard_is_fresh(
     updated_at: str | None,
     now: datetime,
@@ -1029,13 +1049,19 @@ class GolfEventAdapter:
                             leaderboard = lb
                             updated_at = ts
                     now = datetime.now(timezone.utc)
-                    if _golf_leaderboard_has_live_rows(leaderboard) and (
-                        _golf_within_play_window(
-                            tournament.get("start_date"),
-                            tournament.get("end_date"),
-                            now,
+                    if (
+                        _golf_leaderboard_has_live_rows(leaderboard)
+                        and not _golf_start_in_future(
+                            tournament.get("start_date"), now
                         )
-                        or _golf_leaderboard_is_fresh(updated_at, now)
+                        and (
+                            _golf_within_play_window(
+                                tournament.get("start_date"),
+                                tournament.get("end_date"),
+                                now,
+                            )
+                            or _golf_leaderboard_is_fresh(updated_at, now)
+                        )
                     ):
                         envelope["event"]["status"] = "live"
                         as_of = fuse_golf_live(

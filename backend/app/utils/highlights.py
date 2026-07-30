@@ -15,6 +15,7 @@ from typing import Optional, Literal
 import math
 
 from app.utils.league_classification import is_power_4_team
+from app.utils.lifecycle import live_start_satisfied
 
 
 # League tier definitions — the most important ranking signal for anonymous users.
@@ -470,7 +471,9 @@ def compute_highlight(
     # Live status - require both status="live" AND commence_time has passed.
     # The Odds API sometimes reports events as "live" before their commence_time,
     # which causes false "Upset brewing" labels from pre-game line noise.
-    flags.is_live = status == "live" and commence_time <= now
+    # The commence-gate is the shared lifecycle invariant (Queue 283): live is
+    # only valid once the authoritative start time has passed.
+    flags.is_live = status == "live" and live_start_satisfied(commence_time, now)
     if flags.is_live:
         result.score += WEIGHTS["live"]
         result.reasons.append("live")

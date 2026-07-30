@@ -342,6 +342,27 @@ def future_settled_events(events: list[dict], now) -> list[dict]:
     return out
 
 
+def live_before_commence_events(events: list[dict], now) -> list[dict]:
+    """status='live' events whose commence_time is in the FUTURE — labeled live
+    before they started (Queue 283 lifecycle invariant: live => now >= start).
+
+    This is the read-side monitor for the same rule the classifiers now enforce
+    (``highlights.compute_highlight`` / ``app.utils.lifecycle``). ``now`` injected
+    for testability."""
+    out = []
+    for e in events:
+        if e.get("status") != "live":
+            continue
+        t = _parse_commence(e.get("commence_time"))
+        if t is None or t <= now:
+            continue
+        out.append({"event_id": e.get("id"), "sport": e.get("sport"),
+                    "home_team": e.get("home_team"), "away_team": e.get("away_team"),
+                    "commence_time": e.get("commence_time"),
+                    "starts_in_hours": round((t - now).total_seconds() / 3600.0, 1)})
+    return out
+
+
 def inverted_completed_events(events: list[dict]) -> list[dict]:
     """completed/closed events whose ``completed_at`` PRECEDES their
     ``commence_time`` — a game recorded as finishing before it started. This is
@@ -703,10 +724,17 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
     stale = stale_live_events(live, now, STALE_LIVE_HOURS)
     future = future_settled_events(completed, now)
     inverted = inverted_completed_events(completed)
+    live_before = live_before_commence_events(live, now)
     failures = [
         {"detail": f"live {s['sport']} game {s['home_team']} vs {s['away_team']} "
                    f"started {s['age_hours']}h ago but still renders LIVE (id {s['event_id']})"}
         for s in stale
+    ] + [
+        {"detail": f"live {b['sport']} event {b['home_team']} vs {b['away_team']} "
+                   f"renders LIVE but its commence_time {b['commence_time']} is "
+                   f"{b['starts_in_hours']}h in the FUTURE (live before start, id "
+                   f"{b['event_id']})"}
+        for b in live_before
     ] + [
         {"detail": f"settled {f['sport']} event {f['home_team']} vs {f['away_team']} "
                    f"has a FUTURE commence_time {f['commence_time']} (id {f['event_id']})"}
@@ -727,6 +755,7 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
             "live_sampled": len(live), "completed_sampled": len(completed),
             "stale_live_hours": STALE_LIVE_HOURS,
             "stale_live": stale, "future_settled": future,
+            "live_before_commence": live_before,
             "inverted_completed": inverted,
         },
     }

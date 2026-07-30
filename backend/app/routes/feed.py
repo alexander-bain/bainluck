@@ -1807,6 +1807,15 @@ async def get_feed(
         # session mid-statement) and serve the partial feed.
         _is_sports_mode = (mode or "").lower() == "sports"
 
+        # Queue 283 (C80): track whether the futures stage completed. A build whose
+        # futures scoring timed out, was skipped for budget, or errored is DEGRADED
+        # — it must still be returned to this caller (and any coalesced waiters) but
+        # must NOT become shared truth (no process last-good, no Redis fresh/stale),
+        # so the next same-key request rebuilds instead of pinning a truncated feed.
+        # Degradation is an explicit stage result, never inferred from item count.
+        _build_quality = "complete"
+        _degraded_reason: str | None = None
+
         # Futures scoring draws from the SAME one absolute request budget the
         # singleflight waiter and cold-compute admission consumed above (Queue
         # 280) — never a fresh deadline — so total elapsed stays below the router
@@ -1818,6 +1827,8 @@ async def get_feed(
                 "Feed: no time budget left for futures scoring — serving events-only "
                 "partial feed (#1459)"
             )
+            _build_quality = "degraded"
+            _degraded_reason = "futures_skipped_budget"
         elif include_futures:
             try:
                 if _is_sports_mode:
@@ -1924,6 +1935,8 @@ async def get_feed(
                     "events-only partial feed (#1459)",
                     _rc.FEED_TOTAL_BUDGET_MS,
                 )
+                _build_quality = "degraded"
+                _degraded_reason = "futures_timeout"
                 try:
                     await db.rollback()
                 except Exception:
@@ -1934,6 +1947,8 @@ async def get_feed(
                     e,
                     exc_info=True,
                 )
+                _build_quality = "degraded"
+                _degraded_reason = "futures_error"
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
@@ -2239,18 +2254,30 @@ async def get_feed(
             ),
         )
 
+        # Queue 283 (C80): mark the build completeness on the payload so the client
+        # and observability can tell a degraded partial from a complete feed.
+        _is_degraded_build = _build_quality != "complete"
+        if _is_degraded_build:
+            payload["build_quality"] = _build_quality
+            payload["degraded_reason"] = _degraded_reason
+
         # --- Publish the freshly built payload (Queue 271) ---
         # Leader: record process-local last-good and hand the payload to any coalesced
         # waiters BEFORE returning, so a Redis-down waiter still gets a real payload.
-        if _cache_key:
+        # Queue 283 (C80): a DEGRADED build is still handed to the current caller and
+        # already-coalesced waiters (finish_build below), but it must NOT become
+        # shared truth — skip process last-good AND both Redis publications so the
+        # last COMPLETE payload is preserved and the next same-key request rebuilds.
+        if _cache_key and not _is_degraded_build:
             _rc.remember_last_good(_cache_key, payload)
         if _is_build_leader and _sf_future is not None:
             _rc.finish_build(_cache_key, _sf_future, result=payload)
 
         # Redis publication runs detached so a slow/hung write never delays THIS
         # response (the cache-write-stall seam). Both the fresh + :stale mirrors are
-        # written under a bounded op on the shared client.
-        if _cache_key and _shared_redis is not None:
+        # written under a bounded op on the shared client. Degraded builds skip
+        # publication entirely (guarded above).
+        if _cache_key and not _is_degraded_build and _shared_redis is not None:
             try:
                 _payload_json = _json_module.dumps(payload, default=str)
 
@@ -2722,6 +2749,49 @@ def _strip_mixed_binary_meta(outcomes: list) -> list:
     return outcomes
 
 
+def _feed_display_scale(all_sorted_outcomes: list) -> float:
+    """The single display-probability divisor for one futures card (Queue 283,
+    #1487).
+
+    Returns the factor that EVERY visible probability on the card must be divided
+    by so one outcome never renders at two different numbers across the mini-list
+    (``top_outcomes``), the distribution (``discover_card.distribution_outcomes``),
+    and the headline/context leader copy.
+
+    - ``1.0`` -> raw basis (already sane, or threshold/cumulative ladders whose
+      raw probabilities are individually meaningful).
+    - ``all_sum`` (1.0 < all_sum <= 2.0) -> independent-binary basis (gotcha #58):
+      divide by the all-outcome sum so the slice shows correct *relative* standing
+      without inflating past 100%.
+
+    Eligibility mirrors the historical ``_normalize_feed_probabilities`` decision
+    exactly (displayed-count threshold, the 2.0 ladder cutoff), so top_outcomes
+    and the other surfaces cannot drift.
+    """
+    displayed = [
+        o for o in all_sorted_outcomes[:3] if getattr(o, "current_probability", None)
+    ]
+    if not displayed:
+        return 1.0
+    # Two-outcome markets: stricter threshold (true binary)
+    norm_threshold = 1.01 if len(displayed) == 2 else 1.05
+    all_sum = sum(
+        float(o.current_probability)
+        for o in all_sorted_outcomes
+        if o.current_probability
+    )
+    if all_sum <= norm_threshold or all_sum > 2.0:
+        return 1.0
+    return all_sum
+
+
+def _scale_display_probability(prob, scale: float):
+    """Apply the card's single display scale to one probability (or None)."""
+    if prob is None or scale == 1.0:
+        return prob
+    return round(float(prob) / scale, 4)
+
+
 def _normalize_feed_probabilities(
     top_outcomes: list[dict],
     all_sorted_outcomes: list,
@@ -2738,37 +2808,16 @@ def _normalize_feed_probabilities(
     - all_sum > 2.0 -> threshold/cumulative outcomes (e.g. "rank 3+", "rank
       4+") that are NOT mutually exclusive.  Normalizing these flattens an
       81% leader to ~33%.  Skip entirely.
+
+    Delegates the eligibility/divisor decision to ``_feed_display_scale`` so the
+    mini-list shares one basis with the distribution + headline (Queue 283).
     """
-    probs_top = [o for o in top_outcomes if o.get("probability")]
-    if not probs_top:
+    scale = _feed_display_scale(all_sorted_outcomes)
+    if scale == 1.0:
         return top_outcomes
-
-    # Two-outcome markets: stricter threshold (true binary)
-    total_displayed = len(probs_top)
-    norm_threshold = 1.01 if total_displayed == 2 else 1.05
-
-    # Sum across ALL outcomes to gauge whether these are mutually exclusive
-    all_sum = sum(
-        float(o.current_probability)
-        for o in all_sorted_outcomes
-        if o.current_probability
-    )
-
-    if all_sum <= norm_threshold:
-        # Probabilities already sum to ~100% — no normalization needed
-        return top_outcomes
-
-    if all_sum > 2.0:
-        # Threshold / cumulative outcomes — do NOT normalize.
-        # Raw probabilities are individually meaningful.
-        return top_outcomes
-
-    # Independent binary markets summing to 100-200%: normalize the displayed
-    # outcomes using the all-outcome sum as divisor.
     for o in top_outcomes:
         if o.get("probability"):
-            o["probability"] = round(o["probability"] / all_sum, 4)
-
+            o["probability"] = round(o["probability"] / scale, 4)
     return top_outcomes
 
 
@@ -5050,6 +5099,13 @@ async def _score_sports_mode_futures(
                 else None
             )
 
+        # Queue 283 (#1487): ONE display-probability basis, shared by the
+        # mini-list, distribution, and headline/context leader copy. Sports mode
+        # draws every outcome surface from sorted_outcomes (no mixed-binary
+        # strip). leader_prob stays RAW for hook staleness/eligibility below.
+        _display_scale = _feed_display_scale(sorted_outcomes)
+        display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
+
         probs_available = [
             o["probability"] for o in outcomes_data if o["probability"] is not None
         ]
@@ -5241,7 +5297,7 @@ async def _score_sports_mode_futures(
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
-                leader_probability=leader_prob,
+                leader_probability=display_leader_prob,
                 source_count=source_count,
                 market_name=market.name,
             )
@@ -5252,7 +5308,7 @@ async def _score_sports_mode_futures(
             highlight_reasons=highlight_result.reasons,
             market_name=market.name,
             leader_name=_h_leader,
-            leader_probability=leader_prob,
+            leader_probability=display_leader_prob,
             source_count=source_count,
         )
 
@@ -5322,7 +5378,7 @@ async def _score_sports_mode_futures(
             top_surprise_name=_h_surprise,
             top_surprise_change=top_surprise_change,
             leader_name=_h_leader,
-            leader_probability=leader_prob,
+            leader_probability=display_leader_prob,
             source_count=source_count,
         )
 
@@ -5357,13 +5413,18 @@ async def _score_sports_mode_futures(
             if market.canonical_market_key
             else [market.source]
         )
+        # Queue 283 (#1487): scale the distribution to the SAME display basis as
+        # top_outcomes so the leader never reads two probabilities. Archetype
+        # classification keys on count/name/movement (not probability magnitude),
+        # so scaling here does not change the chosen card format.
         all_outcomes_for_card = [
             {
                 "name": o.name,
-                "probability": (
+                "probability": _scale_display_probability(
                     float(o.current_probability)
                     if o.current_probability is not None
-                    else None
+                    else None,
+                    _display_scale,
                 ),
                 "movement": (
                     float(o.probability_change_24h)
@@ -5967,6 +6028,20 @@ async def _score_futures(
                     else None
                 )
 
+            # #235 Item 2: segregate a Yes/No parent binary out of a mixed candidate
+            # field so the card renders a clean nominee distribution (never a binary
+            # merged into a candidate list). Pure binary markets pass through untouched.
+            card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
+            # Queue 283 (#1487): ONE display-probability basis for this card.
+            # _display_scale is the single divisor every VISIBLE surface uses —
+            # the mini-list (top_outcomes), the distribution (discover_card), and
+            # the headline/context leader copy — so one outcome never renders two
+            # numbers. leader_prob stays RAW below for the eligibility filters
+            # (is_locked_near_certain / runtime filters); only the COPY leader is
+            # scaled, so surfacing/ranking is unchanged.
+            _display_scale = _feed_display_scale(card_outcomes)
+            display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
+
             # --- Staleness filters ---
             # Keep serving-time exclusions on the same helper used by admin trace
             # output so stale/debug decisions cannot drift.
@@ -6077,7 +6152,7 @@ async def _score_futures(
                     top_surprise_name=_h_surprise,
                     top_surprise_change=top_surprise_change,
                     leader_name=_h_leader,
-                    leader_probability=leader_prob,
+                    leader_probability=display_leader_prob,
                     source_count=source_count,
                     market_name=market.name,
                 )
@@ -6088,7 +6163,7 @@ async def _score_futures(
                 highlight_reasons=highlight_result.reasons,
                 market_name=market.name,
                 leader_name=_h_leader,
-                leader_probability=leader_prob,
+                leader_probability=display_leader_prob,
                 source_count=source_count,
             )
 
@@ -6375,15 +6450,12 @@ async def _score_futures(
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
-                leader_probability=leader_prob,
+                leader_probability=display_leader_prob,
                 source_count=source_count,
             )
 
-            # #235 Item 2: segregate a Yes/No parent binary out of a mixed candidate
-            # field so the card renders a clean nominee distribution (never a binary
-            # merged into a candidate list). Pure binary markets pass through untouched.
-            card_outcomes = _strip_mixed_binary_meta(sorted_outcomes)
-
+            # card_outcomes + _display_scale computed above (Queue 283) so the
+            # headline/context leader copy shares the mini-list's basis.
             # Build compact futures data for the feed. #235 Item 2: null the 24h
             # movement badge for near-0% outcomes — a thin placeholder nominee ticking
             # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
@@ -6430,13 +6502,19 @@ async def _score_futures(
             )
             # #235 Item 2: card_outcomes has the mixed Yes/No meta stripped; movement
             # nulled for near-0% placeholder nominees.
+            # Queue 283 (#1487): scale the distribution to the SAME display basis
+            # as top_outcomes (via _display_scale) so a leader never renders two
+            # probabilities across the mini-list and the distribution. Archetype
+            # classification keys on count/name/movement, not probability
+            # magnitude, so scaling does not change the chosen card format.
             all_outcomes_for_card = [
                 {
                     "name": o.name,
-                    "probability": (
+                    "probability": _scale_display_probability(
                         float(o.current_probability)
                         if o.current_probability is not None
-                        else None
+                        else None,
+                        _display_scale,
                     ),
                     "movement": (
                         float(o.probability_change_24h)
