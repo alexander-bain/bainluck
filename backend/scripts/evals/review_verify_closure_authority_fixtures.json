@@ -1,0 +1,196 @@
+{
+  "schema_version": "review-verify-closure-authority/v1",
+  "audited_commit": "0c765251",
+  "source_snapshot": {
+    "json_rows": 72,
+    "markdown_claimed_rows": 73,
+    "reported_live_rows": 88,
+    "uncovered_reported_rows": 16,
+    "snapshot_date": "2026-07-27"
+  },
+  "ruling_overrides": {
+    "802": "parked-no-authority-until-football",
+    "816": "blocked-no-authority-exclude"
+  },
+  "batch_packet": {
+    "max_cards": 10,
+    "required_snapshot_fields": ["captured_at", "project_item_count", "review_verify_count", "source_sha"],
+    "required_product_evidence": ["exact_deployed_sha", "green_ci", "acceptance_unchanged", "current_live_proof", "no_newer_regression"],
+    "required_alert_evidence": ["canonical_declared_fingerprint", "complete_population", "continuous_green_hours", "no_red_since_first_green"],
+    "stop_conditions": ["population_incomplete", "project_join_ambiguous", "acceptance_changed", "newer_regression", "dependency_unknown", "deployment_unknown"],
+    "closure_mode": "draft-comments-only-until-per-card-revalidation"
+  },
+  "scenarios": [
+    {
+      "id": "product_complete_current_bundle",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "exact_deployed_sha": true,
+      "green_ci": true,
+      "acceptance_unchanged": true,
+      "current_live_proof": true,
+      "no_newer_regression": true,
+      "population_complete": true,
+      "expected_action": "recommend-manual-close"
+    },
+    {
+      "id": "product_code_only",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "exact_deployed_sha": true,
+      "green_ci": true,
+      "acceptance_unchanged": true,
+      "current_live_proof": false,
+      "no_newer_regression": true,
+      "population_complete": true,
+      "expected_action": "needs-live-verification"
+    },
+    {
+      "id": "product_stale_live_proof",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "exact_deployed_sha": false,
+      "green_ci": true,
+      "acceptance_unchanged": true,
+      "current_live_proof": true,
+      "no_newer_regression": true,
+      "population_complete": true,
+      "expected_action": "needs-live-verification"
+    },
+    {
+      "id": "newer_regression",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "exact_deployed_sha": true,
+      "green_ci": true,
+      "acceptance_unchanged": true,
+      "current_live_proof": true,
+      "no_newer_regression": false,
+      "population_complete": true,
+      "expected_action": "regressed"
+    },
+    {
+      "id": "dependency_open",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "dependency_open": true,
+      "population_complete": true,
+      "expected_action": "blocked-on-dependency"
+    },
+    {
+      "id": "absent_from_old_snapshot",
+      "issue_kind": "product",
+      "snapshot_member": false,
+      "current_member": true,
+      "population_complete": true,
+      "expected_action": "uncovered-requires-audit"
+    },
+    {
+      "id": "acceptance_changed",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "exact_deployed_sha": true,
+      "green_ci": true,
+      "acceptance_unchanged": false,
+      "current_live_proof": true,
+      "no_newer_regression": true,
+      "population_complete": true,
+      "expected_action": "unsafe-to-automate"
+    },
+    {
+      "id": "alert_first_green",
+      "issue_kind": "alert",
+      "canonical_declared_fingerprint": true,
+      "population_complete": true,
+      "continuous_green_hours": 0,
+      "red_since_first_green": false,
+      "expected_action": "green-pending"
+    },
+    {
+      "id": "alert_green_under_24h",
+      "issue_kind": "alert",
+      "canonical_declared_fingerprint": true,
+      "population_complete": true,
+      "continuous_green_hours": 23.9,
+      "red_since_first_green": false,
+      "expected_action": "green-pending"
+    },
+    {
+      "id": "alert_green_over_24h",
+      "issue_kind": "alert",
+      "canonical_declared_fingerprint": true,
+      "population_complete": true,
+      "continuous_green_hours": 24.1,
+      "red_since_first_green": false,
+      "behavior_deployed": true,
+      "expected_action": "auto-close-eligible"
+    },
+    {
+      "id": "alert_red_resets_clock",
+      "issue_kind": "alert",
+      "canonical_declared_fingerprint": true,
+      "population_complete": true,
+      "continuous_green_hours": 30,
+      "red_since_first_green": true,
+      "behavior_deployed": true,
+      "expected_action": "red-open"
+    },
+    {
+      "id": "creation_age_not_residence",
+      "issue_kind": "residence",
+      "created_age_hours": 1600,
+      "residence_observed": false,
+      "population_complete": true,
+      "expected_action": "grace-unknown-residence"
+    },
+    {
+      "id": "continuous_review_residence",
+      "issue_kind": "residence",
+      "created_age_hours": 1600,
+      "residence_observed": true,
+      "residence_hours": 169,
+      "population_complete": true,
+      "expected_action": "surface-triage-only"
+    },
+    {
+      "id": "partial_project_population",
+      "issue_kind": "product",
+      "snapshot_member": true,
+      "current_member": true,
+      "population_complete": false,
+      "expected_action": "unknown-no-op"
+    },
+    {
+      "id": "exact_marker_duplicate",
+      "issue_kind": "duplicate",
+      "population_complete": true,
+      "declared_marker_owners": 2,
+      "semantic_duplicate": true,
+      "expected_action": "duplicate-review"
+    },
+    {
+      "id": "semantic_duplicate_without_marker",
+      "issue_kind": "duplicate",
+      "population_complete": true,
+      "declared_marker_owners": 0,
+      "semantic_duplicate": true,
+      "expected_action": "duplicate-review"
+    },
+    {
+      "id": "uncommitted_green_delay",
+      "issue_kind": "alert",
+      "canonical_declared_fingerprint": true,
+      "population_complete": true,
+      "continuous_green_hours": 30,
+      "red_since_first_green": false,
+      "behavior_deployed": false,
+      "expected_action": "working-tree-only-no-op"
+    }
+  ]
+}
