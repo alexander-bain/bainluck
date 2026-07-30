@@ -1,0 +1,191 @@
+{
+  "schema_version": "cold-feed-latency-authority/v1",
+  "audited_commit": "62ccca91",
+  "claim_matrix": [
+    {"claim": "feed_headers_and_web_vitals_live", "verdict": "current"},
+    {"claim": "golf_rebuild_is_current_normal_cold_path", "verdict": "fixed-by-queue-278"},
+    {"claim": "sync_redis_rate_limit_blocks_event_loop", "verdict": "fixed"},
+    {"claim": "unbounded_588k_editorial_scan_still_runs", "verdict": "fixed-by-queue-273"},
+    {"claim": "queue_279_owns_candidate_pool_fix", "verdict": "wrong-queue"},
+    {"claim": "discover_events_sigkill_causes_request_latency", "verdict": "unrelated-background-freshness"},
+    {"claim": "calibration_cold_causes_discover_latency", "verdict": "unrelated"},
+    {"claim": "queue_272_is_running", "verdict": "stale-queue-state"},
+    {"claim": "native_has_no_latency_telemetry", "verdict": "false"},
+    {"claim": "native_chart_ux_explains_discover_latency", "verdict": "unsupported-causality"},
+    {"claim": "warm_feed_always_under_500ms", "verdict": "unproven"},
+    {"claim": "cold_feed_remains_multi-second", "verdict": "current-reported"}
+  ],
+  "measurement_gates": {
+    "backend_warm": {"metric": "x-feed-elapsed-ms", "p95_max_ms": 500, "basis": "existing admin red threshold"},
+    "backend_cold": {"metric": "x-feed-elapsed-ms", "p95_max_ms": 5000, "basis": "leave margin under native 6s initial deadline"},
+    "browser": {"metric": "first_card_ms", "target": "baseline-required-before-hard-gate"},
+    "native": {"metric": "discover_feed_first_render.first_render_ms", "target": "split cache/network and app_build before hard gate"},
+    "required_dimensions": ["cache_status", "singleflight", "limit", "offset", "authenticated", "app_build", "golf_provenance", "degraded_reason"]
+  },
+  "implementation_packets": [
+    {
+      "order": 1,
+      "name": "client-shaped latency probes",
+      "files": ["frontend/app/admin/page.tsx", "frontend/e2e/discover-latency.spec.ts", "backend/tests/integration/test_route_feed_finalizer.py"],
+      "proof": "limit=20 offset=0 and offset=20 cold/warm measurements; assertions fail above ratified gates",
+      "rollback": "remove new probe rows/assertions only"
+    },
+    {
+      "order": 2,
+      "name": "shared immutable candidate-id base",
+      "files": ["backend/app/routes/feed.py", "backend/app/utils/request_cache.py", "backend/app/tasks/precompute_category_pages.py"],
+      "proof": "ordered candidate ids and final ranked ids equal current path for identical snapshot/user; page2 avoids candidate pool queries",
+      "rollback": "Redis kill switch selects current direct-query path"
+    },
+    {
+      "order": 3,
+      "name": "native request-shape parity",
+      "files": ["ios/Bain Luck/Bain Luck/ViewModels/DiscoverViewModel.swift", "ios/Bain Luck/BainLuckTests/DiscoverFeedSWRTests.swift"],
+      "proof": "bounded first page and monotonic fixed-size pagination; identical ordered cards after merge",
+      "rollback": "restore request-size constants"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "web_warm_page_one",
+      "client": "web",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "hit",
+      "candidate_base": "not_read",
+      "runs_candidate_queries": false,
+      "runs_personalization": false,
+      "build_owner": "none",
+      "expected_candidate_base_reuse": false
+    },
+    {
+      "id": "web_cold_page_one",
+      "client": "web",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "miss",
+      "candidate_base": "miss",
+      "runs_candidate_queries": true,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": false
+    },
+    {
+      "id": "web_cold_page_two_reuses_base",
+      "client": "web",
+      "limit": 20,
+      "offset": 20,
+      "response_cache": "miss",
+      "candidate_base": "hit",
+      "runs_candidate_queries": false,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": true
+    },
+    {
+      "id": "native_current_first_page",
+      "client": "native",
+      "limit": 50,
+      "offset": 0,
+      "response_cache": "miss",
+      "candidate_base": "hit",
+      "runs_candidate_queries": false,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": true
+    },
+    {
+      "id": "native_current_page_two",
+      "client": "native",
+      "limit": 200,
+      "offset": 50,
+      "response_cache": "miss",
+      "candidate_base": "hit",
+      "runs_candidate_queries": false,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": true
+    },
+    {
+      "id": "admin_limit_ten_is_distinct",
+      "client": "admin",
+      "limit": 10,
+      "offset": 0,
+      "response_cache": "hit",
+      "candidate_base": "not_read",
+      "runs_candidate_queries": false,
+      "runs_personalization": false,
+      "build_owner": "none",
+      "expected_candidate_base_reuse": false
+    },
+    {
+      "id": "futures_timeout_truthful",
+      "client": "web",
+      "limit": 20,
+      "offset": 20,
+      "response_cache": "miss",
+      "candidate_base": "miss",
+      "runs_candidate_queries": true,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "build_quality": "degraded",
+      "degraded_reason": "futures_timeout",
+      "publishes_response_cache": false,
+      "expected_candidate_base_reuse": false
+    },
+    {
+      "id": "golf_fresh_base",
+      "client": "web",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "miss",
+      "candidate_base": "hit",
+      "golf_provenance": "fresh",
+      "runs_golf_rebuild": false,
+      "runs_candidate_queries": false,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": true
+    },
+    {
+      "id": "golf_last_good_base",
+      "client": "web",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "miss",
+      "candidate_base": "hit",
+      "golf_provenance": "last_good",
+      "runs_golf_rebuild": false,
+      "runs_candidate_queries": false,
+      "runs_personalization": true,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": true
+    },
+    {
+      "id": "redis_failure_uses_process_last_good",
+      "client": "web",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "last_good",
+      "candidate_base": "not_read",
+      "runs_candidate_queries": false,
+      "runs_personalization": false,
+      "build_owner": "none",
+      "expected_candidate_base_reuse": false
+    },
+    {
+      "id": "same_session_queries_remain_serial",
+      "client": "backend",
+      "limit": 20,
+      "offset": 0,
+      "response_cache": "miss",
+      "candidate_base": "miss",
+      "runs_candidate_queries": true,
+      "query_execution": "serial_same_async_session",
+      "parallel_safe": false,
+      "runs_personalization": false,
+      "build_owner": "leader",
+      "expected_candidate_base_reuse": false
+    }
+  ]
+}
