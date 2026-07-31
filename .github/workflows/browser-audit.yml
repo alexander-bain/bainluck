@@ -1,0 +1,172 @@
+name: Browser audit (manual)
+
+# L2-221 Item 2 — phase 1 of the replacement browser-QA rail (#1497).
+#
+# DELIBERATELY manual-only. No `schedule:`, no issue filing, no auth, no
+# production write credential. Those are later phases (C96's migration plan
+# steps 3-5) and must not be switched on by editing this file casually.
+#
+# The one thing this workflow must never do is report GREEN without evidence.
+# The retired provider's sweep concluded `success` with 0 of 3 modules
+# collected; every step below is arranged so that path is impossible:
+#
+#   * the SHA wait fails hard if the requested commit is not the one deployed
+#   * the runner fails if any journey fails
+#   * the manifest validator fails on zero selected journeys, a missing
+#     manifest, a SHA mismatch, an unevidenced journey, or a non-pass result
+#   * artifacts upload with `if: always()` and are NOT wrapped in
+#     continue-on-error, so a failed upload fails the job
+#
+# Rollback: disable or delete this workflow. Rollback does NOT mean restoring
+# the retired provider.
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_sha:
+        description: "Full 40-hex commit the deployed frontend must report before the audit runs"
+        required: true
+        type: string
+      base_url:
+        description: "Site origin to audit"
+        required: false
+        default: "https://www.bainluck.com"
+        type: string
+      api_base_url:
+        description: "Backend origin — its /health sha is RECORDED beside the frontend's, never substituted for it"
+        required: false
+        default: "https://api.bainluck.com"
+        type: string
+      sha_timeout_seconds:
+        description: "Bounded wait for the frontend deployment to report the requested SHA"
+        required: false
+        default: "600"
+        type: string
+
+# Least privilege: read the repo, nothing else. The filer that consumes a
+# validated manifest is a separate, later job with its own `issues: write`.
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-audit-${{ inputs.frontend_sha }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Anonymous Discover smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    env:
+      AUDIT_PACK: deploy-smoke
+      AUDIT_TRIGGER: workflow_dispatch
+      AUDIT_REQUESTED_SHA: ${{ inputs.frontend_sha }}
+      TRACE_BASE_URL: ${{ inputs.base_url }}
+      AUDIT_API_BASE_URL: ${{ inputs.api_base_url }}
+      AUDIT_OUT_DIR: ${{ github.workspace }}/frontend/e2e/audit-out
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate the requested SHA is a full 40-hex
+        run: |
+          # An abbreviated sha is ambiguous, and "close enough" is exactly how
+          # a run gets attached to the wrong deployment. Gotcha #9: the check
+          # lives inside the run block, not a step-level `if`.
+          SHA="${AUDIT_REQUESTED_SHA}"
+          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::frontend_sha must be a full lowercase 40-hex commit sha (got '${SHA}')"
+            exit 1
+          fi
+          echo "Requested frontend commit: $SHA"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+
+      - name: Contract fixtures (no dependencies, no browser, no network)
+        # Runs BEFORE any install: `node --test` needs nothing but Node. If the
+        # false-green fixtures stop failing, nothing downstream can be trusted,
+        # so this fails fast rather than after a browser download.
+        run: npm run contract
+
+      - name: Install locked dependencies
+        # `npm ci` — never `npm install`. It fails loudly when the lockfile is
+        # missing or disagrees with package.json, which is the reproducibility
+        # gate: without it, two runs can use different browser revisions while
+        # claiming to prove the same commit.
+        run: npm ci
+
+      - name: Install the Playwright-matched Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Record runtime versions
+        run: |
+          echo "AUDIT_BROWSER_VERSION=$(npx playwright --version)" >> "$GITHUB_ENV"
+          node --version
+
+      - name: Wait for the requested frontend deployment
+        # Exports AUDIT_OBSERVED_FRONTEND_SHA and, separately labelled,
+        # AUDIT_OBSERVED_BACKEND_SHA. Exits non-zero if the requested commit
+        # is not what /api/frontend-build reports within the bound.
+        run: node scripts/wait-for-frontend-sha.js --timeout-ms "$(( ${{ inputs.sha_timeout_seconds }} * 1000 ))"
+
+      - name: Anonymous Discover smoke — desktop and mobile
+        run: npm run smoke
+
+      - name: Validate the evidence manifest
+        # The gate. A missing manifest, zero selected journeys, a SHA
+        # mismatch, an unevidenced journey, or any non-pass result exits 1.
+        if: always()
+        run: npm run validate -- "$AUDIT_OUT_DIR/manifest.json"
+
+      - name: Upload audit evidence
+        # `if: always()` so failures keep their artifacts. Deliberately NOT
+        # continue-on-error: if the upload fails there is no evidence, and a
+        # run with no evidence must not be green.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-audit-${{ inputs.frontend_sha }}-${{ github.run_id }}
+          path: |
+            frontend/e2e/audit-out/
+            frontend/e2e/test-results/
+            frontend/e2e/playwright-report/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Summary
+        if: always()
+        run: |
+          MANIFEST="$AUDIT_OUT_DIR/manifest.json"
+          {
+            echo "## Browser audit"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| requested frontend sha | \`${AUDIT_REQUESTED_SHA}\` |"
+            echo "| observed frontend sha | \`${AUDIT_OBSERVED_FRONTEND_SHA:-unresolved}\` |"
+            echo "| observed backend sha (recorded only) | \`${AUDIT_OBSERVED_BACKEND_SHA:-unavailable}\` |"
+            echo "| base url | ${TRACE_BASE_URL} |"
+            if [ -f "$MANIFEST" ]; then
+              node -e '
+                const m = require(process.argv[1]);
+                const r = m.run;
+                console.log(`| result | **${r.result}** |`);
+                console.log(`| selected / completed / failed | ${r.selected_count} / ${r.completed_count} / ${r.failed_count} |`);
+                for (const j of m.journeys) {
+                  console.log(`| ${j.journey_id} [${j.project}] | ${j.result} |`);
+                }
+              ' "$MANIFEST"
+            else
+              echo "| result | **no manifest written — infrastructure failure** |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

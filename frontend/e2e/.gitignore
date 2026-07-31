@@ -1,5 +1,8 @@
 node_modules/
-package-lock.json
 test-results/
 playwright-report/
+audit-out/
 .cache/
+# package-lock.json is COMMITTED on purpose (L2-221 / C96 [P2]): without it,
+# `npm ci` cannot pin the runner, and two runs can use different browser
+# revisions while claiming to prove the same commit.

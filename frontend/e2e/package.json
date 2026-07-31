@@ -1,11 +1,16 @@
 {
-  "name": "bainluck-e2e-traces",
+  "name": "bainluck-e2e-browser-audit",
   "private": true,
-  "description": "L2-189 — isolated Playwright latency traces for Discover. Kept OUT of the main frontend dependency tree so it never touches Vercel/CI installs or `next build`.",
+  "version": "1.0.0",
+  "description": "L2-221 — the browser-audit rail (replaces the retired third-party browser QA provider). Locked, portable Playwright. Kept OUT of the main frontend dependency tree so it never touches Vercel/CI installs or `next build`.",
   "scripts": {
-    "trace:discover": "playwright test discover-latency.spec.ts"
+    "contract": "node --test \"contract/*.test.js\"",
+    "smoke": "playwright test --project=desktop --project=mobile discover-smoke",
+    "latency": "playwright test --project=desktop --project=mobile discover-latency",
+    "validate": "node scripts/validate-manifest.js",
+    "wait-for-sha": "node scripts/wait-for-frontend-sha.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0"
+    "@playwright/test": "1.48.2"
   }
 }

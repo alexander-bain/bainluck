@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bainluck.com/schema/browser-audit/v1.json",
+  "title": "Bain Luck browser-audit run manifest (v1)",
+  "description": "Published contract for the browser-audit evidence manifest. The ENFORCING implementation is helpers/manifest.js validateManifest(); this document exists for interop and review, and a contract test asserts the two agree on required fields so they cannot drift.",
+  "type": "object",
+  "required": ["schema_version", "run", "journeys"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "browser-audit/v1" },
+    "run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "run_url",
+        "pack",
+        "trigger",
+        "started_at_utc",
+        "started_at_pt",
+        "finished_at_utc",
+        "requested_frontend_sha",
+        "observed_frontend_sha",
+        "base_url",
+        "runtime",
+        "selected_count",
+        "completed_count",
+        "failed_count",
+        "result"
+      ],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "run_url": { "type": "string", "minLength": 1 },
+        "pack": { "type": "string", "minLength": 1 },
+        "trigger": { "type": "string", "minLength": 1 },
+        "started_at_utc": { "type": "string", "format": "date-time" },
+        "started_at_pt": { "type": "string", "minLength": 1 },
+        "finished_at_utc": { "type": "string", "format": "date-time" },
+        "finished_at_pt": { "type": "string" },
+        "requested_frontend_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit the run claims to prove. Full 40-hex only; an abbreviated sha is ambiguous."
+        },
+        "observed_frontend_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Read from the frontend build marker (/api/frontend-build). Vercel deploys independently of Heroku and of the GitHub SHA, so this is the ONLY frontend authority."
+        },
+        "observed_backend_sha": {
+          "type": ["string", "null"],
+          "description": "Recorded from backend /health as a second ledger entry. Never substitutable for observed_frontend_sha."
+        },
+        "base_url": { "type": "string", "minLength": 1 },
+        "final_origin": { "type": ["string", "null"] },
+        "runtime": {
+          "type": "object",
+          "required": ["node", "playwright", "browser", "os"],
+          "properties": {
+            "node": { "type": "string", "minLength": 1 },
+            "playwright": { "type": "string", "minLength": 1 },
+            "browser": { "type": "string", "minLength": 1 },
+            "os": { "type": "string", "minLength": 1 }
+          }
+        },
+        "selected_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Journeys the runner SELECTED. Zero is an infrastructure failure, never a pass — a rail that collected nothing must not conclude success."
+        },
+        "completed_count": { "type": "integer", "minimum": 0 },
+        "failed_count": { "type": "integer", "minimum": 0 },
+        "result": { "enum": ["pass", "fail", "infra_error", "superseded"] },
+        "superseded_by": { "type": ["string", "null"] },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "journeys": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "journey_id",
+          "project",
+          "viewport",
+          "url_path",
+          "started_at_utc",
+          "finished_at_utc",
+          "duration_ms",
+          "assertions",
+          "console_errors",
+          "page_errors",
+          "failed_requests",
+          "artifacts",
+          "attempt",
+          "result"
+        ],
+        "properties": {
+          "journey_id": { "type": "string", "minLength": 1 },
+          "project": { "type": "string", "minLength": 1 },
+          "viewport": {
+            "type": ["object", "null"],
+            "properties": {
+              "width": { "type": "integer" },
+              "height": { "type": "integer" }
+            }
+          },
+          "url_path": { "type": "string" },
+          "redirect_chain": { "type": "array", "items": { "type": "string" } },
+          "selected_fixture_ids": { "type": "array", "items": { "type": "string" } },
+          "started_at_utc": { "type": "string", "format": "date-time" },
+          "finished_at_utc": { "type": "string", "format": "date-time" },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "assertions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["assertion_id", "ok"],
+              "properties": {
+                "assertion_id": { "type": "string", "minLength": 1 },
+                "ok": { "type": "boolean" },
+                "detail": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "checked_clean": { "type": "array", "items": { "type": "string" } },
+          "console_errors": { "type": "array", "items": { "type": "string" } },
+          "page_errors": { "type": "array", "items": { "type": "string" } },
+          "failed_requests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "description": "Redacted: origin + path + query KEYS only." },
+                "method": { "type": "string" },
+                "status": { "type": ["integer", "null"] },
+                "failure": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "telemetry_requests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "host": { "type": "string" },
+                "path": { "type": "string" },
+                "count": { "type": "integer" }
+              }
+            }
+          },
+          "first_card_ms": {
+            "type": ["integer", "null"],
+            "description": "MUST be null when no real card was observed. Recording a duration for an absent card is the C96 P1 false green."
+          },
+          "artifacts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "sha256"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "bytes": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "attempt": { "type": "integer", "minimum": 1 },
+          "result": { "enum": ["pass", "fail", "infra_error", "superseded"] }
+        }
+      }
+    }
+  }
+}

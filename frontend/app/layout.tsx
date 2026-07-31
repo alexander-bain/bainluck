@@ -12,6 +12,7 @@ import SWRProvider from "@/components/SWRProvider";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
+import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { Suspense } from "react";
 const NavigationProgress = dynamic(() => import("@/components/NavigationProgress"), { ssr: false });
 const MobileSearchTrigger = dynamic(() => import("@/components/MobileSearchTrigger"), { ssr: false });
@@ -83,10 +84,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const buildCommit = frontendCommitSha();
 
   return (
     <html lang="en" className={jetbrainsMono.variable}>
       <head>
+        {/* Frontend deployment identity (L2-221). Vercel deploys independently
+            of Heroku and of the GitHub SHA that triggered CI, so a browser
+            audit needs the FRONTEND's own marker to know which build it just
+            rendered. Non-secret: a commit sha of a public repo. Rendered here
+            as well as at /api/frontend-build so the marker travels with the page that
+            was actually captured, not just with an API call beside it. */}
+        {buildCommit && <meta name={BUILD_META_NAME} content={buildCommit} />}
         {/* Preconnect to API origin — saves DNS + TLS roundtrip on first fetch */}
         <link rel="preconnect" href={apiUrl} crossOrigin="anonymous" />
         <link rel="dns-prefetch" href={apiUrl} />
