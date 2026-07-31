@@ -11,9 +11,10 @@ import {
 import { usePathname } from 'next/navigation';
 import { SEARCH_DEST_KEY, SEARCH_DEST_MAX_AGE_MS, type SearchDestCrumb } from '@/lib/searchFunnel';
 import {
-  getStoredConsent,
-  storeConsent,
-  updateConsent,
+  initTelemetryConsent,
+  getTelemetryConsent,
+  setTelemetryConsent,
+  subscribeTelemetryConsent,
   setUserId,
   setUserProperties,
   trackEvent,
@@ -77,27 +78,36 @@ interface AnalyticsProviderProps {
 export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const [consent, setConsentState] = useState<ConsentLevel>(null);
   const [showConsentBanner, setShowConsentBanner] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
   const pathname = usePathname();
 
-  // Check for stored consent on mount
+  // Mirror the ONE consent authority. This provider no longer reads or writes
+  // the persisted choice itself — `lib/analytics/telemetryConsent` is the only
+  // writer, so the banner, the GA rail, and the Vercel providers cannot drift
+  // apart (C90 P1). Subscribing also keeps the banner correct when the choice
+  // is changed from somewhere else (e.g. a revoke in Preferences).
   useEffect(() => {
-    const stored = getStoredConsent();
-    if (stored) {
-      setConsentState(stored);
-      updateConsent(stored);
-      setShowConsentBanner(false);
-    } else {
-      // No stored consent - show banner after a short delay
-      // This avoids layout shift on initial load
-      const timer = setTimeout(() => {
-        setShowConsentBanner(true);
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-    setIsInitialized(true);
+    const sync = () => setConsentState(getTelemetryConsent());
+    const unsubscribe = subscribeTelemetryConsent(sync);
+    const stored = initTelemetryConsent();
+    sync();
 
-    // Return visit tracking
+    if (!stored) {
+      // No choice yet — show the banner after a short delay so it does not
+      // shift layout during the initial paint.
+      const timer = setTimeout(() => setShowConsentBanner(true), 1500);
+      return () => {
+        clearTimeout(timer);
+        unsubscribe();
+      };
+    }
+    return unsubscribe;
+  }, []);
+
+  // Return-visit bookkeeping. Runs on EVERY visit: it previously sat after an
+  // early `return` in the consent effect, so it silently never ran for a
+  // first-time visitor. The `return_visit` event itself is still subject to the
+  // consent gate in `trackEvent`, so this emits nothing before a grant.
+  useEffect(() => {
     try {
       const lastVisit = localStorage.getItem('bainluck_last_visit');
       const sessionCount = parseInt(localStorage.getItem('bainluck_session_count') || '0', 10) + 1;
@@ -173,20 +183,19 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
     };
   }, [pathname]);
 
-  // Handle consent change
+  // Handle consent change. `setTelemetryConsent` is the single writer: it
+  // persists, updates Consent Mode + the emission gate, releases the withheld
+  // page view on a grant, and notifies the provider gates — in that order.
   const setConsent = useCallback((level: 'all' | 'analytics' | 'none') => {
+    setTelemetryConsent(level);
     setConsentState(level);
-    storeConsent(level);
-    updateConsent(level);
     setShowConsentBanner(false);
   }, []);
 
-  // Dismiss banner = explicit denial. Persist AND push a denied consent update
-  // (previously it stored 'none' but never told gtag, leaving default state).
+  // Dismiss banner = explicit denial, through the same single writer.
   const dismissBanner = useCallback(() => {
+    setTelemetryConsent('none');
     setConsentState('none');
-    storeConsent('none');
-    updateConsent('none');
     setShowConsentBanner(false);
   }, []);
 

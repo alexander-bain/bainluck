@@ -45,6 +45,12 @@ let currentUserId: string | undefined;
 let analyticsConsentGranted = false;
 let sessionStartTime = Date.now();
 let pagesViewed = 0;
+/**
+ * The page view withheld because consent was not yet granted. Only the MOST
+ * RECENT one is kept: on a grant we owe the user's CURRENT page exactly once,
+ * not a replay of everything they browsed while undecided. Cleared on denial.
+ */
+let withheldPageView: AnalyticsEventMap['page_view'] | null = null;
 let eventsViewed = new Set<number>();
 let sportsViewed = new Set<string>();
 let usedFilters = false;
@@ -151,6 +157,13 @@ export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
   // Update the local emission gate FIRST so it holds even if gtag is not yet
   // ready — no event is emitted until analytics is explicitly granted.
   analyticsConsentGranted = consent.analytics_storage === 'granted';
+
+  // A denial must not leave a page view sitting in the buffer: if the user
+  // later grants, they are owed the page they are on THEN, not the one they
+  // declined on.
+  if (!analyticsConsentGranted) {
+    withheldPageView = null;
+  }
 
   if (isAnalyticsReady()) {
     window.gtag('consent', 'update', consent);
@@ -285,12 +298,47 @@ export function trackEvent<E extends AnalyticsEventName>(
  * Track page view with rich parameters
  */
 export function trackPageView(params: AnalyticsEventMap['page_view']): void {
+  // Withhold rather than drop whenever we cannot emit YET — either consent is
+  // not granted, or gtag has not finished loading. `trackEvent` would silently
+  // discard both, which is why the landing page of a first-time visitor who
+  // then pressed Accept — and of a returning visitor whose stored grant beat
+  // gtag.js to the effect — was never counted (C90 P3). Keep ONLY the latest,
+  // so the flush emits the current route and never replays a session.
+  if (!analyticsConsentGranted || !isAnalyticsReady()) {
+    withheldPageView = params;
+    return;
+  }
+
   pagesViewed++;
 
   // Exactly one page_view per call. GA4 auto page_view is disabled
   // (`send_page_view: false`), so this custom event is the single source of
   // truth — the previous extra `gtag('config', …)` re-send double-counted.
   trackEvent('page_view', params, { immediate: true });
+}
+
+/**
+ * Emit the page view withheld before the grant — the user's CURRENT page,
+ * exactly once. Called by the consent authority immediately after a grant.
+ *
+ * Returns whether an event was emitted. When gtag is not ready yet the buffer
+ * is deliberately RETAINED (not dropped) so the landing page is still owed;
+ * the next navigation overwrites it, so this can never emit a stale route.
+ */
+export function flushWithheldPageView(): boolean {
+  if (!analyticsConsentGranted || !withheldPageView) return false;
+  if (!isAnalyticsReady()) return false;
+
+  const params = withheldPageView;
+  withheldPageView = null;
+  pagesViewed++;
+  trackEvent('page_view', params, { immediate: true });
+  return true;
+}
+
+/** Test/introspection helper: the currently withheld page view, if any. */
+export function peekWithheldPageView(): AnalyticsEventMap['page_view'] | null {
+  return withheldPageView;
 }
 
 // ============================================================================

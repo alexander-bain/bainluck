@@ -2,15 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { GoogleAnalytics, AnalyticsProvider, ConsentBanner, WebVitalsReporter } from "@/components/Analytics";
+import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/Analytics";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import dynamic from "next/dynamic";
 import UserMenu from "@/components/UserMenu";
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 import SWRProvider from "@/components/SWRProvider";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
@@ -104,8 +102,10 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <NavigationProgress />
         </Suspense>
-        <GoogleAnalytics />
-        <WebVitalsReporter />
+        {/* Every non-essential telemetry provider (GA/gtag.js, Vercel
+            Analytics, Speed Insights, Web Vitals) mounts ONLY through the
+            consent gate — see components/analytics/TelemetryGate.tsx. */}
+        <TelemetryGate />
         <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>
@@ -157,8 +157,6 @@ export default function RootLayout({
           </AuthProvider>
         </AnalyticsProvider>
         </SWRProvider>
-        <Analytics />
-        <SpeedInsights />
       </body>
     </html>
   );

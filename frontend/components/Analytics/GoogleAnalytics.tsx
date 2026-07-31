@@ -7,6 +7,7 @@ import {
   initializeAnalytics,
   isAnalyticsConfigured,
   sendSessionEngagement,
+  flushWithheldPageView,
 } from '@/lib/analytics';
 
 /**
@@ -24,6 +25,11 @@ export function GoogleAnalytics() {
     if (!configured) return;
     // Initialize analytics after gtag script loads
     initializeAnalytics();
+
+    // The rail is only emittable now. Release the page view withheld while we
+    // were still loading (or still unconsented) — the user's CURRENT route,
+    // exactly once. No-op when nothing was withheld.
+    flushWithheldPageView();
 
     // Send session engagement on page unload
     const handleUnload = () => {

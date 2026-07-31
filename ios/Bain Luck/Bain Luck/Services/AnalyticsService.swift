@@ -3,10 +3,24 @@ import Foundation
 
 /// Thin wrapper around Firebase Analytics matching the web GA4 taxonomy.
 enum AnalyticsService {
+    // MARK: - Emission Boundary
+
+    /// The ONE place this app hands an event to Firebase (L2-219 Item 2 /
+    /// #1453). Every `track*` helper routes through here, so the privacy
+    /// allowlist in `AnalyticsPrivacy` cannot be bypassed by a new call site —
+    /// including one that forgets the boundary exists. An unregistered event is
+    /// dropped rather than emitted unfiltered.
+    nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil) {
+        guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
+            return
+        }
+        Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+    }
+
     // MARK: - Screen Tracking
 
     nonisolated static func trackScreen(name: String, type: String) {
-        Analytics.logEvent(AnalyticsEventScreenView, parameters: [
+        log(AnalyticsEventScreenView, [
             AnalyticsParameterScreenName: name,
             "page_type": type,
         ])
@@ -15,7 +29,7 @@ enum AnalyticsService {
     // MARK: - Event Card
 
     nonisolated static func trackEventCardClick(eventId: Int, sport: String?, status: String?) {
-        Analytics.logEvent("event_card_click", parameters: [
+        log("event_card_click", [
             "event_id": eventId,
             "sport": sport ?? "unknown",
             "status": status ?? "unknown",
@@ -25,7 +39,7 @@ enum AnalyticsService {
     // MARK: - Event Detail
 
     nonisolated static func trackEventDetailView(eventId: Int, sport: String?, entryMethod: String = "tap") {
-        Analytics.logEvent("event_detail_view", parameters: [
+        log("event_detail_view", [
             "event_id": eventId,
             "sport": sport ?? "unknown",
             "entry_method": entryMethod,
@@ -34,8 +48,12 @@ enum AnalyticsService {
 
     // MARK: - Search
 
+    /// The raw `query` is NEVER transmitted: `AnalyticsPrivacy` replaces it with
+    /// `query_hash` / `query_length` / `query_word_count` at the boundary. The
+    /// hash matches the web rail's, so the same search is joinable across
+    /// surfaces (search → result click) without the text ever leaving the device.
     nonisolated static func trackSearch(query: String, resultsCount: Int) {
-        Analytics.logEvent(AnalyticsEventSearch, parameters: [
+        log(AnalyticsEventSearch, [
             AnalyticsParameterSearchTerm: query,
             "results_count": resultsCount,
         ])
@@ -44,32 +62,32 @@ enum AnalyticsService {
     // MARK: - Auth
 
     nonisolated static func trackLogin(method: String) {
-        Analytics.logEvent(AnalyticsEventLogin, parameters: [
+        log(AnalyticsEventLogin, [
             AnalyticsParameterMethod: method,
         ])
     }
 
     nonisolated static func trackSignUp(method: String) {
-        Analytics.logEvent(AnalyticsEventSignUp, parameters: [
+        log(AnalyticsEventSignUp, [
             AnalyticsParameterMethod: method,
         ])
     }
 
     nonisolated static func trackLogout() {
-        Analytics.logEvent("logout", parameters: nil)
+        log("logout")
     }
 
     // MARK: - Onboarding
 
     nonisolated static func trackOnboardingStep(step: Int, stepName: String) {
-        Analytics.logEvent("onboarding_step", parameters: [
+        log("onboarding_step", [
             "step": step,
             "step_name": stepName,
         ])
     }
 
     nonisolated static func trackOnboardingComplete(teamsCount: Int) {
-        Analytics.logEvent("onboarding_complete", parameters: [
+        log("onboarding_complete", [
             "teams_count": teamsCount,
         ])
     }
@@ -77,7 +95,7 @@ enum AnalyticsService {
     // MARK: - Chart
 
     nonisolated static func trackChartTimeRange(eventId: Int, range: String) {
-        Analytics.logEvent("chart_time_range", parameters: [
+        log("chart_time_range", [
             "event_id": eventId,
             "range": range,
         ])
@@ -86,7 +104,7 @@ enum AnalyticsService {
     // MARK: - Futures
 
     nonisolated static func trackFuturesDetailView(marketId: Int, category: String?) {
-        Analytics.logEvent("futures_detail_view", parameters: [
+        log("futures_detail_view", [
             "market_id": marketId,
             "category": category ?? "unknown",
         ])
@@ -101,7 +119,7 @@ enum AnalyticsService {
         rank: Int,
         score: Int?
     ) {
-        Analytics.logEvent("feed_card_impression", parameters: [
+        log("feed_card_impression", [
             "item_id": itemId,
             "item_type": itemType,
             "category": category,
@@ -118,7 +136,7 @@ enum AnalyticsService {
         category: String,
         source: String
     ) {
-        Analytics.logEvent("feed_card_action", parameters: [
+        log("feed_card_action", [
             "action": action,
             "item_id": itemId,
             "item_type": itemType,
@@ -129,7 +147,7 @@ enum AnalyticsService {
     }
 
     nonisolated static func trackDiscoverCategoryFilter(category: String) {
-        Analytics.logEvent("filter_category", parameters: [
+        log("filter_category", [
             "action": "select",
             "category": category,
             "surface": "discover",
@@ -137,7 +155,7 @@ enum AnalyticsService {
     }
 
     nonisolated static func trackDiscoverTuningReset(affinityCount: Int) {
-        Analytics.logEvent("discover_tuning_reset", parameters: [
+        log("discover_tuning_reset", [
             "affinity_count": affinityCount,
             "surface": "discover",
         ])
@@ -149,7 +167,7 @@ enum AnalyticsService {
     /// the machine reason, a count, and the surface — no ids, names, sessions, or
     /// market text.
     nonisolated static func trackFeedEnvelopeSuppressed(type: String, reason: String, count: Int, surface: String) {
-        Analytics.logEvent("feed_card_suppressed", parameters: [
+        log("feed_card_suppressed", [
             "card_type": type,
             "suppression_reason": reason,
             "count": count,
@@ -164,7 +182,7 @@ enum AnalyticsService {
     /// round-trip so the client win is measurable without implying the backend
     /// cold miss (#1459) is fixed. Carries no PII and no card content.
     nonisolated static func trackDiscoverFeedCache(_ telemetry: DiscoverFeedTelemetry) {
-        Analytics.logEvent("discover_feed_cache", parameters: [
+        log("discover_feed_cache", [
             "outcome": telemetry.outcome.rawValue,
             "cache_decode_ms": telemetry.cacheDecodeMs ?? -1,
             "network_ms": telemetry.networkMs ?? -1,
@@ -195,7 +213,7 @@ enum AnalyticsService {
         fromCache: Bool,
         itemCount: Int
     ) {
-        Analytics.logEvent("discover_feed_first_render", parameters: [
+        log("discover_feed_first_render", [
             "first_render_ms": firstRenderMs,
             "from_cache": fromCache,
             "item_count": itemCount,
@@ -230,7 +248,7 @@ enum AnalyticsService {
         cacheStatus: String? = nil,
         cacheStoreMs: Double? = nil
     ) {
-        Analytics.logEvent("discover_feed_network", parameters: [
+        log("discover_feed_network", [
             "network_ms": networkMs,
             "decode_ms": decodeMs,
             "item_count": itemCount,
@@ -257,7 +275,7 @@ enum AnalyticsService {
     /// moment the skeleton is removed. Carries no PII, token, session, market text,
     /// or raw query — only opaque timings, a stage label, and a count.
     nonisolated static func trackSportsFeedStage(_ stage: SportsFeedStage) {
-        Analytics.logEvent("sports_feed_stage", parameters: [
+        log("sports_feed_stage", [
             "stage": stage.kind.rawValue,
             "data_ready_ms": stage.dataReadyMs,
             "item_count": stage.itemCount,
@@ -276,7 +294,7 @@ enum AnalyticsService {
         firstRenderMs: Double,
         itemCount: Int
     ) {
-        Analytics.logEvent("sports_feed_first_render", parameters: [
+        log("sports_feed_first_render", [
             "first_render_ms": firstRenderMs,
             "item_count": itemCount,
             "app_build": appBuild(),
@@ -294,7 +312,7 @@ enum AnalyticsService {
     /// is not separately measurable. Carries no uid, email, token, session id,
     /// item id, or market text; the outcome class comes from a closed enum.
     nonisolated static func trackMyStuffStage(_ stage: MyStuffLoadStage) {
-        Analytics.logEvent("my_stuff_load", parameters: [
+        log("my_stuff_load", [
             "stage": stage.kind.rawValue,
             "auth_ready_ms": stage.authReadyMs,
             "network_ms": stage.networkMs,
@@ -323,7 +341,7 @@ enum AnalyticsService {
         itemCount: Int,
         fromCache: Bool
     ) {
-        Analytics.logEvent("my_stuff_first_render", parameters: [
+        log("my_stuff_first_render", [
             "first_render_ms": firstRenderMs,
             "item_count": itemCount,
             "from_cache": fromCache,
@@ -343,7 +361,7 @@ enum AnalyticsService {
         contentType: String,
         category: String?
     ) {
-        Analytics.logEvent("prediction_submit", parameters: [
+        log("prediction_submit", [
             "market_id": marketId,
             "guess": guess,
             "threshold": threshold,
@@ -358,13 +376,13 @@ enum AnalyticsService {
     // MARK: - Onboarding Lifecycle
 
     nonisolated static func trackOnboardingStart(entryPoint: String) {
-        Analytics.logEvent("onboarding_start", parameters: [
+        log("onboarding_start", [
             "entry_point": entryPoint,
         ])
     }
 
     nonisolated static func trackOnboardingSkip(lastStep: Int, lastStepName: String) {
-        Analytics.logEvent("onboarding_skip", parameters: [
+        log("onboarding_skip", [
             "last_step_completed": lastStep,
             "last_step_name": lastStepName,
         ])
@@ -372,8 +390,11 @@ enum AnalyticsService {
 
     // MARK: - Search
 
+    /// As with `trackSearch`, the raw `query` is reduced to bounded metadata at
+    /// the boundary — the shared `query_hash` is what joins this click back to
+    /// the search that produced it.
     nonisolated static func trackSearchResultClick(query: String, resultType: String, resultId: String, position: Int) {
-        Analytics.logEvent("search_result_click", parameters: [
+        log("search_result_click", [
             "query": query,
             "result_type": resultType,
             "result_id": resultId,
@@ -384,7 +405,7 @@ enum AnalyticsService {
     // MARK: - Navigation
 
     nonisolated static func trackNavigation(fromPage: String, toPage: String) {
-        Analytics.logEvent("navigation_click", parameters: [
+        log("navigation_click", [
             "click_type": "nav_tab",
             "from_page": fromPage,
             "to_page": toPage,
@@ -394,7 +415,7 @@ enum AnalyticsService {
     // MARK: - Return Visit
 
     nonisolated static func trackReturnVisit(daysSinceLast: Int, sessionNumber: Int) {
-        Analytics.logEvent("return_visit", parameters: [
+        log("return_visit", [
             "days_since_last": daysSinceLast,
             "session_number": sessionNumber,
         ])

@@ -251,3 +251,29 @@ describe('taxonomy integrity', () => {
     }
   });
 });
+
+// ============================================================================
+// Cross-surface hash contract (L2-219 Item 2 / #1453)
+// ============================================================================
+
+describe('hashQuery — cross-surface contract with native', () => {
+  /**
+   * The native rail (`AnalyticsPrivacy.hashQuery` in
+   * `ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift`) pins these exact
+   * values. Both sides must agree or the search funnel silently stops joining
+   * web ↔ iOS. Change one, change both — and expect both suites to fail first.
+   */
+  it('pins the values the Swift implementation asserts', () => {
+    expect(hashQuery('')).toBe('ztntfp');
+    expect(hashQuery('lakers')).toBe('1ghlcvp');
+    expect(hashQuery('Lakers vs Celtics')).toBe('sn4x6t');
+    expect(hashQuery('super bowl')).toBe('4gxf0');
+  });
+
+  it('normalizes trim + case the same way native does', () => {
+    const canonical = hashQuery('Lakers');
+    for (const variant of ['lakers', '  lakers  ', 'LAKERS', '\tLakers\n']) {
+      expect(hashQuery(variant)).toBe(canonical);
+    }
+  });
+});

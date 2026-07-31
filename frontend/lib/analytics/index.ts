@@ -50,7 +50,32 @@ export {
   calculateMinutesToStart,
   isCloseGame,
   getUserId,
+  flushWithheldPageView,
+  peekWithheldPageView,
 } from './core';
+
+// The single web telemetry consent authority — every non-essential provider
+// (GA, Vercel Analytics, Speed Insights, Web Vitals) reads its gate from here.
+export {
+  decideTelemetry,
+  isAnalyticsGranted,
+  initTelemetryConsent,
+  getTelemetryConsent,
+  getTelemetryDecision,
+  getServerTelemetryDecision,
+  setTelemetryConsent,
+  subscribeTelemetryConsent,
+  type ConsentLevel,
+  type TelemetryDecision,
+} from './telemetryConsent';
+
+export {
+  nextEngagementObservation,
+  EMPTY_ENGAGEMENT_LEDGER,
+  type EngagementLedger,
+  type EngagementObservation,
+  type EngagementInput,
+} from './engagement';
 
 // ============================================================================
 // Convenience API

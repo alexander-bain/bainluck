@@ -96,7 +96,8 @@ export function ConsentBanner() {
                   </div>
                   <p className="text-xs text-text-secondary">
                     Helps us understand how you use the site so we can improve it.
-                    We use Google Analytics with anonymized data.
+                    We use Google Analytics, Vercel Analytics, and Vercel Speed
+                    Insights with anonymized data. Decline and none of them load.
                   </p>
                 </div>
 
