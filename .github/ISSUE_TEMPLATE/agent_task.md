@@ -44,6 +44,6 @@ Apply one or more:
 
 Commands, URLs, screenshots, or admin pages to check:
 
-## Backlog link
+## Related context
 
-Related `docs/backlog.md` section:
+Related issues (parent epic, blockers, duplicates) and the project board column this belongs in:

@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Bain Luck backlog
-    url: https://github.com/alexander-bain/bainluck/blob/master/docs/backlog.md
-    about: Use the backlog for strategy and issue links; use issues for scoped execution.
+  - name: Bain Luck issue board
+    url: https://github.com/alexander-bain/bainluck/issues
+    about: Issues are the only source of priority and status. Search here before filing.
+  - name: Bain Luck Execution Queue (project board)
+    url: https://github.com/users/alexander-bain/projects/1
+    about: Column and ownership tracking for issues that are already triaged.
