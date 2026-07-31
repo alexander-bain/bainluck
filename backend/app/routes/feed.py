@@ -29,6 +29,9 @@ from sqlalchemy.orm import load_only, selectinload
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
+# Admission bounds for the shared candidate base live WITH the base (they exist
+# to bound its Redis key + process-local map), so there is one definition.
+from app.utils import candidate_base as _cb_limits
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import (
     DiscoverInteraction,
@@ -1218,6 +1221,76 @@ def _ei_label(score: int) -> str:
 _pulse_label = _ei_label
 
 
+# Tags that don't change: sport, league, tier, class, level, gender, category,
+# source. These are SQL-pushable and are the ONLY tags that key the shared
+# candidate base; everything else is filtered inline per request.
+_STATIC_TAG_NAMESPACES = {
+    "sport",
+    "league",
+    "tier",
+    "class",
+    "level",
+    "gender",
+    "category",
+    "source",
+}
+
+
+class FeedTagFilterError(ValueError):
+    """A structurally invalid ``tags`` payload — mapped to 400, never a 500."""
+
+
+def _split_tag_filter(
+    tags: Optional[str],
+) -> tuple[Optional[list], list[str], list[str]]:
+    """Parse the ``tags`` JSON query param into (all, static, dynamic) filters.
+
+    Legacy-permissive where it always was: a missing param, unparseable JSON, or
+    a non-list payload means "no tag filter" (not an error), so existing clients
+    are unaffected. But a list whose *elements* are not strings used to reach
+    ``t.split(":")`` and raise an uncaught ``AttributeError`` — a 500 on a public
+    endpoint for input like ``?tags=[{":":1}]``. Those now raise
+    ``FeedTagFilterError`` so the route can answer 400.
+    """
+    if not tags:
+        return None, [], []
+    try:
+        parsed = _json_module.loads(tags)
+    except (ValueError, TypeError):
+        return None, [], []
+    if not isinstance(parsed, list):
+        return None, [], []
+
+    static_tags: list[str] = []
+    dynamic_tags: list[str] = []
+    for tag in parsed:
+        if not isinstance(tag, str):
+            raise FeedTagFilterError(
+                f"tag filter entries must be strings, got {type(tag).__name__}"
+            )
+        namespace = tag.split(":")[0] if ":" in tag else ""
+        if namespace in _STATIC_TAG_NAMESPACES:
+            static_tags.append(tag)
+        else:
+            dynamic_tags.append(tag)
+
+    # Static tags key the process- and Redis-shared candidate base, so they are
+    # bounded HERE — the one admission point — rather than letting the identity
+    # builder raise deeper in the request (which would surface as a 500).
+    if len(static_tags) > _cb_limits.MAX_STATIC_TAGS:
+        raise FeedTagFilterError(
+            f"tag filter carries more than {_cb_limits.MAX_STATIC_TAGS} static tags "
+            f"({len(static_tags)})"
+        )
+    for tag in static_tags:
+        if len(tag) > _cb_limits.MAX_TAG_LENGTH:
+            raise FeedTagFilterError(
+                f"static tag exceeds {_cb_limits.MAX_TAG_LENGTH} characters "
+                f"({len(tag)})"
+            )
+    return parsed, static_tags, dynamic_tags
+
+
 @router.get("")
 async def get_feed(
     response: Response,
@@ -1513,40 +1586,13 @@ async def get_feed(
 
     now = datetime.now(timezone.utc)
 
-    # Parse tag filter — split into static (SQL-pushable) and dynamic (inline)
-    import json as _json
-
-    tag_filter: Optional[list[str]] = None
-    static_tag_filter: list[str] = (
-        []
-    )  # Tags that don't change: sport, league, tier, class, level, gender, category, source
-    dynamic_tag_filter: list[str] = (
-        []
-    )  # Tags that change frequently: status, signal, timing, ei, importance
-    STATIC_NAMESPACES = {
-        "sport",
-        "league",
-        "tier",
-        "class",
-        "level",
-        "gender",
-        "category",
-        "source",
-    }
-    if tags:
-        try:
-            tag_filter = _json.loads(tags)
-            if not isinstance(tag_filter, list):
-                tag_filter = None
-            else:
-                for t in tag_filter:
-                    ns = t.split(":")[0] if ":" in t else ""
-                    if ns in STATIC_NAMESPACES:
-                        static_tag_filter.append(t)
-                    else:
-                        dynamic_tag_filter.append(t)
-        except (ValueError, TypeError):
-            tag_filter = None
+    # Parse tag filter — static tags (SQL-pushable) key the shared candidate
+    # base; dynamic tags (status, signal, timing, ei, importance) are filtered
+    # inline per request.
+    try:
+        tag_filter, static_tag_filter, dynamic_tag_filter = _split_tag_filter(tags)
+    except FeedTagFilterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # my_teams_only requires authentication
     if my_teams_only and not feed_user:
@@ -5877,20 +5923,26 @@ async def _score_futures(
         if _cb_provenance != _candidate_base.PROV_DISABLED and market_ids:
             from app.utils.request_cache import schedule_background as _cb_schedule
 
-            _cb_identity = _candidate_base.base_identity(
-                sport_filter, static_tag_filter
-            )
-            _cb_schedule(
-                _candidate_base.publish_candidate_base(
-                    _candidate_base.build_envelope(
-                        now,
-                        _cb_identity,
-                        market_ids,
-                        pool_counts=_cb_pool_counts,
-                        external_curator_recall_ids=_cb_curator_ids,
+            # A rejected identity means this filter is not shareable — serve the
+            # direct-query result (already computed above) and publish nothing.
+            try:
+                _cb_identity = _candidate_base.base_identity(
+                    sport_filter, static_tag_filter
+                )
+            except _candidate_base.CandidateBaseTagError:
+                _cb_identity = None
+            if _cb_identity is not None:
+                _cb_schedule(
+                    _candidate_base.publish_candidate_base(
+                        _candidate_base.build_envelope(
+                            now,
+                            _cb_identity,
+                            market_ids,
+                            pool_counts=_cb_pool_counts,
+                            external_curator_recall_ids=_cb_curator_ids,
+                        )
                     )
                 )
-            )
 
     if not market_ids:
         return []

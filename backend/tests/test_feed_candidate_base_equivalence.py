@@ -72,7 +72,7 @@ def test_candidate_base_key_is_stable_across_pages_while_response_key_fragments(
 
     # The candidate base is REUSED across every page/limit/offset/client shape...
     live_keys = {cb.base_identity(None, None) for _ in (page1, page2, native1, native2)}
-    assert live_keys == {"discover-candidates:v1:all:no-static-tags"}
+    assert live_keys == {"discover-candidates:v2:all:no-static-tags"}
 
     # ...but the response cache key MUST stay page-specific (limit/offset fragment).
     assert response_cache_key(page1) != response_cache_key(page2)
@@ -84,7 +84,7 @@ def test_identity_excludes_limit_offset_user_session():
     # shape can enter it. Concretely, the anon default is a fixed string that
     # carries none of the response-key fragments (limit/offset/user-id/session-id).
     key = cb.base_identity(None, None)
-    assert key == "discover-candidates:v1:all:no-static-tags"
+    assert key == "discover-candidates:v2:all:no-static-tags"
     for token in ("limit", "offset", ":20:", ":50:", ":200:", "u:1", "anon"):
         assert token not in key
     # The keying function's signature proves it: only sport + static tags.

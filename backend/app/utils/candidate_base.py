@@ -25,11 +25,13 @@ contract. Design contract:
   exactly as before. The base is only the *input ID set*, not the answer.
 
 * **Keyed by the pool inputs, not the request shape.** The base key is
-  ``discover-candidates:v1:{sport|all}:{static-tags|no-static-tags}`` — it
+  ``discover-candidates:v2:{sport|all}:{static-tags|no-static-tags}`` — it
   deliberately excludes ``limit``, ``offset``, user, and session, so page one and
   page two (and native's 50/200 shapes) reuse the SAME base. The anonymous
   default (``sport=None``, ``static_tag_filter=None``) is the hot key the beat
-  keeps warm.
+  keeps warm. The v2 encoding is *injective*: structural characters are escaped,
+  tags are deduped + sorted, and an over-long tag set collapses to a digest, so
+  two different filters can never share a key and two equivalent ones always do.
 
 * **Fresh only through the anonymous feed freshness boundary.** A base older than
   ``CANDIDATE_BASE_FRESH_SECONDS`` (defaults to the 60s anon feed response TTL) is
@@ -58,6 +60,7 @@ The frozen offline contract is the C85 pack
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -78,12 +81,17 @@ def _env_int(name: str, default: int) -> int:
 
 
 # --- Keys, versions, and freshness policy -------------------------------------
-CANDIDATE_BASE_SCHEMA_VERSION = 1
+# v2 (Queue 288/C91): collision-free canonical identity encoding + a monotonic
+# ``generated_epoch_ms``. The version bump is deliberate — a v1 envelope must
+# never be read under a v2 identity, and vice versa, so the two namespaces are
+# disjoint and the cutover needs no migration (the beat republishes within one
+# interval; until then the feed simply falls back to its direct-query path).
+CANDIDATE_BASE_SCHEMA_VERSION = 2
 _KEY_PREFIX = "discover-candidates"
-_KEY_VERSION = "v1"
+_KEY_VERSION = "v2"
 # Redis key namespace (distinct from the offline oracle's ``candidate_base_key``
 # which returns the *identity* string below without the redis namespace).
-_REDIS_NS = "bainluck:candidate_base:v1"
+_REDIS_NS = "bainluck:candidate_base:v2"
 
 # The feed freshness boundary — defaults to the 60s anonymous feed response cache
 # TTL so the base is never labelled ``fresh`` looser than the anon feed's own
@@ -108,6 +116,27 @@ CANDIDATE_BASE_LAST_GOOD_TTL_S = _env_int("CANDIDATE_BASE_LAST_GOOD_TTL_S", 8640
 # as fresh — it only bounds Redis round-trips within a hot process.
 CANDIDATE_BASE_L0_TTL_S = _env_int("CANDIDATE_BASE_L0_TTL_S", 30)
 
+# Hard ceiling on the process-local L0 map. Arbitrary sport/static-tag requests
+# each mint their own identity, so an unbounded map is a memory-growth vector
+# under filter churn (a crawler varying ``sport=`` is enough). Eviction is
+# expiry-first, then oldest-fetch-first.
+CANDIDATE_BASE_L0_MAX_ENTRIES = _env_int("CANDIDATE_BASE_L0_MAX_ENTRIES", 256)
+
+# Admission bounds for the user-supplied pool inputs. These bound the Redis key
+# and the L0 map; they are NOT a product filter policy (every tag that reaches
+# the pools today is far below them).
+MAX_TAG_LENGTH = _env_int("CANDIDATE_BASE_MAX_TAG_LENGTH", 256)
+MAX_STATIC_TAGS = _env_int("CANDIDATE_BASE_MAX_STATIC_TAGS", 32)
+MAX_IDENTITY_LENGTH = _env_int("CANDIDATE_BASE_MAX_IDENTITY_LENGTH", 256)
+
+
+class CandidateBaseTagError(ValueError):
+    """A malformed / non-string / oversized pool input was rejected at admission.
+
+    Subclasses ``ValueError`` so existing broad ``except (ValueError, TypeError)``
+    callers keep working; the route layer maps it to a 400, never a 500.
+    """
+
 # Redis kill switch. When this key equals "0" the feed ignores the base entirely
 # (reads and publishes) and runs its current direct-query path — one key,
 # immediate rollback.
@@ -126,6 +155,7 @@ PROV_UNAVAILABLE = "unavailable"
 _REQUIRED_ENVELOPE_KEYS = {
     "schema_version",
     "generated_at",
+    "generated_epoch_ms",
     "identity",
     "candidate_ids",
     "external_curator_recall_ids",
@@ -146,11 +176,68 @@ _FORBIDDEN_ENVELOPE_KEYS = {
 
 
 # --- Identity keying ----------------------------------------------------------
+# Reserved sentinels that a *literal* value must never be able to impersonate.
+_SENTINEL_ALL = "all"
+_SENTINEL_NO_TAGS = "no-static-tags"
+# Characters that carry structure in the identity string. Escaping them makes the
+# encoding injective: two different (sport, tags) inputs can never render to the
+# same identity. ``%`` must be escaped first (it is the escape character), and
+# ``~`` is reserved as the digest marker so a literal token can never start with it.
+_ESCAPES = (("%", "%25"), (":", "%3A"), (",", "%2C"), ("~", "%7E"))
+
+
+def _escape(token: str) -> str:
+    for raw, encoded in _ESCAPES:
+        token = token.replace(raw, encoded)
+    return token
+
+
+def _disambiguate(token: str) -> str:
+    """Percent-encode the first character of a token that equals a sentinel.
+
+    ``sport="all"`` must not render the same identity as ``sport=None``, and a
+    literal tag ``"no-static-tags"`` must not render the same as *no tags*.
+    """
+    if token in (_SENTINEL_ALL, _SENTINEL_NO_TAGS):
+        return f"%{ord(token[0]):02X}{token[1:]}"
+    return token
+
+
+def _validate_tag(value: Any, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise CandidateBaseTagError(
+            f"{field} must be a string, got {type(value).__name__}"
+        )
+    if len(value) > MAX_TAG_LENGTH:
+        raise CandidateBaseTagError(
+            f"{field} exceeds {MAX_TAG_LENGTH} characters ({len(value)})"
+        )
+    return value
+
+
 def _static_tags_token(static_tag_filter: Optional[list[str]]) -> str:
+    """Return a collision-free, order- and duplicate-independent tags token.
+
+    Canonicalization is limited to transforms that are provably SQL-identical:
+    **dedupe** and **sort**. Case folding and Unicode normalization are
+    deliberately NOT applied — Postgres JSONB containment (``event_tags @> ...``)
+    is byte-exact, so folding them would merge two genuinely different candidate
+    sets and serve the wrong markets.
+    """
     if not static_tag_filter:
-        return "no-static-tags"
-    # Order-independent, stable token so ["a","b"] and ["b","a"] share a base.
-    return ",".join(sorted(str(t) for t in static_tag_filter))
+        return _SENTINEL_NO_TAGS
+    if len(static_tag_filter) > MAX_STATIC_TAGS:
+        raise CandidateBaseTagError(
+            f"static tag filter exceeds {MAX_STATIC_TAGS} tags "
+            f"({len(static_tag_filter)})"
+        )
+    validated = [
+        _validate_tag(t, field="static tag") for t in static_tag_filter
+    ]
+    # Dedupe + sort: both are no-ops for the resulting SQL, so the deduped and
+    # reordered forms of one filter must share exactly one base.
+    token = ",".join(_escape(t) for t in sorted(set(validated)))
+    return _disambiguate(token)
 
 
 def base_identity(
@@ -159,12 +246,29 @@ def base_identity(
     """Return the user-independent identity string for this candidate base.
 
     Excludes limit, offset, user, and session by construction; includes only the
-    pool inputs (sport + static tags). Mirrors the C85 offline oracle
-    ``candidate_base_key`` (which returns ``discover-candidates:v1:all:no-static-tags``
-    for the anonymous default).
+    pool inputs (sport + static tags). The anonymous default stays the readable
+    ``discover-candidates:v2:all:no-static-tags`` (the C85 offline oracle key,
+    version-bumped); any input containing a structural character is escaped, and
+    an over-long tag set collapses to a ``~<sha256>`` digest so the Redis key is
+    length-bounded without ever becoming ambiguous.
+
+    Raises ``CandidateBaseTagError`` on a non-string / oversized pool input.
     """
-    sport_token = sport_filter or "all"
-    return f"{_KEY_PREFIX}:{_KEY_VERSION}:{sport_token}:{_static_tags_token(static_tag_filter)}"
+    if sport_filter is None:
+        sport_token = _SENTINEL_ALL
+    else:
+        sport_token = _disambiguate(
+            _escape(_validate_tag(sport_filter, field="sport filter"))
+        )
+    tags_token = _static_tags_token(static_tag_filter)
+
+    identity = f"{_KEY_PREFIX}:{_KEY_VERSION}:{sport_token}:{tags_token}"
+    if len(identity) <= MAX_IDENTITY_LENGTH:
+        return identity
+    # Digest the (already canonical) tags token. ``~`` cannot begin an escaped
+    # literal token, so the digest form can never collide with a literal one.
+    digest = hashlib.sha256(tags_token.encode("utf-8")).hexdigest()[:40]
+    return f"{_KEY_PREFIX}:{_KEY_VERSION}:{sport_token}:~{digest}"
 
 
 def _redis_keys(identity: str) -> tuple[str, str]:
@@ -226,9 +330,14 @@ def build_envelope(
     """
     ids = [int(mid) for mid in candidate_ids]
     curator_ids = [int(mid) for mid in (external_curator_recall_ids or [])]
+    generated = now.astimezone(timezone.utc)
     return {
         "schema_version": CANDIDATE_BASE_SCHEMA_VERSION,
-        "generated_at": now.astimezone(timezone.utc).isoformat(),
+        "generated_at": generated.isoformat(),
+        # Integer build clock for the monotonic publish guard. Comparing ints in
+        # the Redis compare-and-set script is exact, unlike lexicographic
+        # comparison of ISO strings with optional microseconds.
+        "generated_epoch_ms": int(generated.timestamp() * 1000),
         "identity": identity,
         "candidate_ids": ids,
         "external_curator_recall_ids": curator_ids,
@@ -295,8 +404,35 @@ def _l0_lookup(
     return None
 
 
+def _l0_evict(now_wall: float) -> None:
+    """Expiry-first, then oldest-first eviction to the configured bound.
+
+    Arbitrary sport/static-tag requests each mint an identity, so without this
+    the map grows for as long as the dyno lives.
+    """
+    for identity, entry in list(_l0.items()):
+        if (now_wall - entry.get("fetched_wall", 0.0)) >= CANDIDATE_BASE_L0_TTL_S:
+            _l0.pop(identity, None)
+    overflow = len(_l0) - CANDIDATE_BASE_L0_MAX_ENTRIES
+    if overflow <= 0:
+        return
+    for identity, _ in sorted(
+        _l0.items(), key=lambda kv: kv[1].get("fetched_wall", 0.0)
+    )[:overflow]:
+        _l0.pop(identity, None)
+
+
 def _l0_store(identity: str, envelope: dict) -> None:
-    _l0[identity] = {"envelope": envelope, "fetched_wall": time.time()}
+    now_wall = time.time()
+    _l0[identity] = {"envelope": envelope, "fetched_wall": now_wall}
+    # Bounded by construction: the map can never be observed above the cap, and
+    # expired entries never linger (the map is <=256 entries, so this is cheap).
+    _l0_evict(now_wall)
+
+
+def _l0_drop(identity: str) -> None:
+    """Forget any process-local base for ``identity`` (kill-switch rollback)."""
+    _l0.pop(identity, None)
 
 
 def _reset_l0_for_tests() -> None:
@@ -376,21 +512,42 @@ async def get_candidate_base(
     served, the third element is the external-curator recall ID list carried in
     the envelope, so the feed's recall score/rank bonus scores identically.
     """
-    identity = base_identity(sport_filter, static_tag_filter)
-
-    hit = _l0_lookup(identity, now)
-    if hit is not None:
-        _record_stage(stages, "candidate_base_read", time.perf_counter())
-        return hit
+    # Defense in depth: the route bounds these at admission, but a bad pool input
+    # from ANY caller must degrade to the direct-query path, never raise into a
+    # request handler as a 500.
+    try:
+        identity = base_identity(sport_filter, static_tag_filter)
+    except CandidateBaseTagError:
+        logger.debug("candidate base identity rejected at read", exc_info=True)
+        return None, PROV_DIRECT, None
 
     fresh_key, last_good_key = _redis_keys(identity)
     t0 = time.perf_counter()
+
+    # The kill switch is checked BEFORE any local (L0 / process last-good)
+    # service, so rollback is immediate rather than lagging one L0 window. A
+    # switch-read failure leaves the base ENABLED (default on) so a Redis outage
+    # degrades to last-good instead of a direct-query stampede.
+    client = None
     try:
         client = await _rc.get_shared_async_redis()
         if await _kill_switch_disabled(client):
+            _l0_drop(identity)  # no warm local base may outlive the switch
             _record_stage(stages, "candidate_base_read", t0)
             return None, PROV_DISABLED, None
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("candidate base kill-switch read failed", exc_info=True)
 
+    hit = _l0_lookup(identity, now)
+    if hit is not None:
+        _record_stage(stages, "candidate_base_read", t0)
+        return hit
+
+    try:
+        if client is None:
+            client = await _rc.get_shared_async_redis()
         fresh_env = await _read_key(client, fresh_key)
         if _usable(fresh_env, now, CANDIDATE_BASE_FRESH_SECONDS, identity):
             _l0_store(identity, fresh_env)
@@ -429,6 +586,70 @@ async def get_candidate_base(
     return None, PROV_DIRECT, None
 
 
+# --- Monotonic publication ----------------------------------------------------
+# Compare-and-set: write only when the incoming build is not OLDER than what is
+# already stored. Two builds can overlap (a slow request-path build and the beat,
+# or two cold pages), and without this the one that finishes LAST wins even when
+# it started first — republishing a stale candidate set over a fresh one.
+_MONOTONIC_SET_LUA = """
+local incoming = tonumber(ARGV[2])
+local current = redis.call('GET', KEYS[1])
+if current then
+  local ok, decoded = pcall(cjson.decode, current)
+  if ok and type(decoded) == 'table' and type(decoded['generated_epoch_ms']) == 'number' then
+    if decoded['generated_epoch_ms'] > incoming then
+      return 0
+    end
+  end
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
+return 1
+"""
+
+
+def _is_older_than_stored(raw: Any, epoch_ms: int) -> bool:
+    """True iff ``raw`` decodes to an envelope strictly NEWER than ``epoch_ms``."""
+    existing = _decode_envelope(raw)
+    if not isinstance(existing, dict):
+        return False
+    stored = existing.get("generated_epoch_ms")
+    return isinstance(stored, int) and stored > epoch_ms
+
+
+async def _monotonic_set(client: Any, key: str, payload: str, epoch_ms: int, ttl: int) -> None:
+    """Atomically set ``key`` unless a strictly newer envelope is already there.
+
+    Falls back to a bounded read-compare-set when the Redis deployment rejects
+    ``EVAL`` — narrower (the compare and the set are not one operation) but still
+    rejects the common older-completes-last case, and never blocks publication.
+    """
+    result = await _rc.bounded_redis_call(
+        lambda: client.eval(_MONOTONIC_SET_LUA, 1, key, payload, epoch_ms, ttl),
+        treat_none_as_miss=False,
+    )
+    if result.is_ok or result.status == _rc.TIMEOUT:
+        return
+    current = await _rc.bounded_redis_call(lambda: client.get(key))
+    if current.is_ok and _is_older_than_stored(current.value, epoch_ms):
+        return
+    await _rc.bounded_redis_call(lambda: client.set(key, payload, ex=ttl))
+
+
+def _monotonic_set_sync(rc_client: Any, key: str, payload: str, epoch_ms: int, ttl: int) -> None:
+    """Sync twin of ``_monotonic_set`` for the precompute beat."""
+    try:
+        rc_client.eval(_MONOTONIC_SET_LUA, 1, key, payload, epoch_ms, ttl)
+        return
+    except Exception:
+        logger.debug("candidate base monotonic EVAL unavailable", exc_info=True)
+    try:
+        if _is_older_than_stored(rc_client.get(key), epoch_ms):
+            return
+    except Exception:
+        logger.debug("candidate base monotonic read failed", exc_info=True)
+    rc_client.set(key, payload, ex=ttl)
+
+
 async def publish_candidate_base(envelope: dict, *, stages=None) -> None:
     """Publish a base envelope to both Redis keys via the shared async client.
 
@@ -442,18 +663,20 @@ async def publish_candidate_base(envelope: dict, *, stages=None) -> None:
     identity = envelope["identity"]
     fresh_key, last_good_key = _redis_keys(identity)
     payload = json.dumps(envelope, default=str)
+    epoch_ms = int(envelope["generated_epoch_ms"])
     t0 = time.perf_counter()
     try:
         client = await _rc.get_shared_async_redis()
+        # Checked immediately before the writes: a disable that lands while this
+        # build was running must not be undone by the build's own publish.
         if await _kill_switch_disabled(client):
+            _l0_drop(identity)
             return
-        await _rc.bounded_redis_call(
-            lambda: client.set(fresh_key, payload, ex=CANDIDATE_BASE_FRESH_TTL_S)
+        await _monotonic_set(
+            client, fresh_key, payload, epoch_ms, CANDIDATE_BASE_FRESH_TTL_S
         )
-        await _rc.bounded_redis_call(
-            lambda: client.set(
-                last_good_key, payload, ex=CANDIDATE_BASE_LAST_GOOD_TTL_S
-            )
+        await _monotonic_set(
+            client, last_good_key, payload, epoch_ms, CANDIDATE_BASE_LAST_GOOD_TTL_S
         )
         _l0_store(identity, envelope)
         _rc.remember_last_good(f"candidate_base:{identity}", envelope)
@@ -464,6 +687,23 @@ async def publish_candidate_base(envelope: dict, *, stages=None) -> None:
     _record_stage(stages, "candidate_base_publish", t0)
 
 
+def _kill_switch_disabled_sync(rc_client: Any) -> bool:
+    """Sync twin of ``_kill_switch_disabled`` (missing key / error -> enabled)."""
+    try:
+        value = rc_client.get(CANDIDATE_BASE_ENABLED_KEY)
+    except Exception:
+        logger.debug("candidate base sync kill-switch read failed", exc_info=True)
+        return False
+    if value is None:
+        return False
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return False
+    return str(value).strip() == "0"
+
+
 def publish_candidate_base_sync(rc: Any, envelope: dict) -> None:
     """Publish a base to both keys with a SYNC Redis client.
 
@@ -472,11 +712,22 @@ def publish_candidate_base_sync(rc: Any, envelope: dict) -> None:
     reads. A failed/partial build must never reach here (the task only publishes a
     fully-built, valid envelope), so the prior last-good key is never clobbered by
     a bad build.
+
+    The kill switch is re-checked HERE, not just at the top of the build: the beat
+    build takes up to ~20s, so a disable landing mid-build would otherwise be
+    silently undone by the build's own publish. Writes are monotonic — an older
+    build finishing after a newer one cannot replace it.
     """
     if not payload_valid(envelope):
+        return
+    if _kill_switch_disabled_sync(rc):
+        logger.info("Discover candidate base publish skipped — kill switch off")
         return
     identity = envelope["identity"]
     fresh_key, last_good_key = _redis_keys(identity)
     payload = json.dumps(envelope, default=str)
-    rc.set(fresh_key, payload, ex=CANDIDATE_BASE_FRESH_TTL_S)
-    rc.set(last_good_key, payload, ex=CANDIDATE_BASE_LAST_GOOD_TTL_S)
+    epoch_ms = int(envelope["generated_epoch_ms"])
+    _monotonic_set_sync(rc, fresh_key, payload, epoch_ms, CANDIDATE_BASE_FRESH_TTL_S)
+    _monotonic_set_sync(
+        rc, last_good_key, payload, epoch_ms, CANDIDATE_BASE_LAST_GOOD_TTL_S
+    )

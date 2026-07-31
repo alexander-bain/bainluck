@@ -22,7 +22,10 @@ def response_cache_key(row: dict[str, Any]) -> str:
 def candidate_base_key(row: dict[str, Any]) -> str:
     # Intentionally excludes response pagination and identity. Production must
     # include static sport/tag/config/version inputs when they differ.
-    return "discover-candidates:v1:all:no-static-tags"
+    # v2 (Queue 288/C91): the live encoding was bumped when the identity became
+    # collision-free (escaped delimiters, deduped/sorted tags, digest bound).
+    # The anonymous default is unchanged apart from the version segment.
+    return "discover-candidates:v2:all:no-static-tags"
 
 
 def validate(row: dict[str, Any]) -> list[str]:

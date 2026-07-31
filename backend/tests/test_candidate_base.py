@@ -85,7 +85,7 @@ def test_anon_default_identity_matches_c85_oracle():
     # The anonymous default (no sport, no static tags) must be the exact key the
     # C85 offline oracle asserts.
     assert (
-        cb.base_identity(None, None) == "discover-candidates:v1:all:no-static-tags"
+        cb.base_identity(None, None) == "discover-candidates:v2:all:no-static-tags"
     )
 
 
@@ -109,7 +109,7 @@ def test_envelope_round_trips_and_validates():
 
 def test_envelope_rejects_wrong_identity_schema_and_leaked_state():
     identity, env = _envelope([1, 2])
-    assert not cb.payload_valid(env, expected_identity="discover-candidates:v1:golf:no-static-tags")
+    assert not cb.payload_valid(env, expected_identity="discover-candidates:v2:golf:no-static-tags")
     assert not cb.payload_valid({**env, "schema_version": 999}, expected_identity=identity)
     assert not cb.payload_valid({**env, "user_id": 7}, expected_identity=identity)
     assert not cb.payload_valid({**env, "candidate_ids": [1, "x"]}, expected_identity=identity)
