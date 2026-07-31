@@ -18,7 +18,8 @@ Zero heavy imports — safe to unit-test with synthetic dicts (no DB, no network
 
 from __future__ import annotations
 
-from datetime import datetime
+import hashlib
+from datetime import datetime, timezone
 from typing import Optional
 
 # --- tuning knobs (deltas are on the 0..1 win-prob scale) -------------------
@@ -201,15 +202,80 @@ def compute_moments(
                 "prob_delta": round(delta, 4),
                 "confidence": conf,
                 "label": label,
-                "dedupe_key": _dedupe_key(source, h, a, play.get("description")),
+                "dedupe_key": canonical_dedupe_key(source, play, ts),
             }
         )
-    return moments
+    return canonicalize_moments(moments)
 
 
-def _dedupe_key(source: str, h, a, description: Optional[str]) -> str:
-    desc = (description or "")[:40].strip().lower().replace(" ", "_")
-    return f"{source}:{h}-{a}:{desc}"[:120]
+# --- canonical moment identity (#1445) --------------------------------------
+# The v1 key was `source:h-a:description[:40]`, which is lossy in three ways that
+# each produced a duplicate `(event_id, dedupe_key)` and crashed the writer:
+#   * a score correction then re-advance re-emits the SAME score + description,
+#   * two distinct plays whose descriptions share 40 characters collapse,
+#   * nothing distinguishes two source plays at one score.
+# v2 identity is the SOURCE PLAY's own identity: the provider's play id when it
+# has one, else a digest over the play's full content plus its own occurrence
+# time. Distinct plays never collide; an identical recomputation is byte-stable,
+# so a rerun updates its row instead of inserting a second one.
+_KEY_VERSION = "m2"
+_PLAY_ID_FIELDS = (
+    "play_id",
+    "playId",
+    "id",
+    "external_id",
+    "at_bat_index",
+    "atBatIndex",
+)
+
+
+def _iso_ts(value) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.isoformat()
+        return value.astimezone(timezone.utc).isoformat()
+    return str(value or "")
+
+
+def _play_identity(play: dict, matched_ts=None) -> str:
+    """Collision-resistant identity for ONE source play."""
+    for field in _PLAY_ID_FIELDS:
+        raw = play.get(field)
+        if raw not in (None, ""):
+            return "p" + str(raw).strip().lower().replace(" ", "_")[:60]
+    payload = "|".join(
+        (
+            # the play's OWN time when the producer supplies one (synthesized MLB
+            # plays do) — that is what separates a correction from its re-advance
+            _iso_ts(play.get("ts") or matched_ts),
+            str(play.get("home_score")),
+            str(play.get("away_score")),
+            str(play.get("period") or ""),
+            str(play.get("team") or play.get("team_name") or ""),
+            str(play.get("player_name") or play.get("player") or ""),
+            str(play.get("type") or play.get("play_type") or ""),
+            # FULL description, never a prefix
+            (play.get("description") or "").strip().lower(),
+        )
+    )
+    return "h" + hashlib.sha1(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def canonical_dedupe_key(source: str, play: dict, matched_ts=None) -> str:
+    """Event-scoped (the constraint carries event_id), stable, collision-resistant."""
+    return f"{_KEY_VERSION}:{source}:{_play_identity(play, matched_ts)}"[:120]
+
+
+def canonicalize_moments(moments: list[dict]) -> list[dict]:
+    """Collapse true reruns of the SAME source play to one row, order-stably.
+
+    The persistence layer must never be handed two rows carrying one key: a
+    multi-row upsert cannot touch the same conflict target twice.
+    """
+    by_key: dict[str, dict] = {}
+    for m in moments:
+        by_key.setdefault(m["dedupe_key"], m)
+    return list(by_key.values())
 
 
 def synth_scoring_plays_from_snapshots(
@@ -255,6 +321,11 @@ def synth_scoring_plays_from_snapshots(
                         "description": f"{team} scored {runs} run{plural} — now {a}-{h}",
                         "period": s.get("period"),
                         "type": "score",
+                        # This play's OWN transition time. The join re-derives its
+                        # measurement snapshot by FIRST-reaching score, so a
+                        # correction and its re-advance share that snapshot — only
+                        # the transition time tells the two apart (#1445).
+                        "ts": s["ts"],
                     }
                 )
         prev_h, prev_a = h, a

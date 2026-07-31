@@ -91,8 +91,74 @@ class TestComputeMoments:
         plays = [{"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR by Judge"}]
         a = compute_moments(plays, snaps, "Yankees", "Red Sox", source="espn")[0]
         b = compute_moments(plays, snaps, "Yankees", "Red Sox", source="espn")[0]
-        assert a["dedupe_key"] == b["dedupe_key"]
-        assert a["dedupe_key"].startswith("espn:1-0:")
+        assert a["dedupe_key"] == b["dedupe_key"]  # identical recomputation is byte-stable
+        assert a["dedupe_key"].startswith("m2:espn:")
+
+
+class TestCanonicalIdentity:
+    """#1445 — the v1 key (`source:h-a:description[:40]`) collided, and one
+    collision crashed the writer for the whole pass. Each case here is a C59
+    persistence fixture (`scripts/evals/game_moments_persistence_fixtures.json`)
+    lifted to the real join."""
+
+    def test_equal_40_char_prefix_does_not_collide(self):
+        # C59 "equal-prefix-40": two distinct plays whose descriptions agree for
+        # 40 characters. v1 truncated at 40 and emitted one key for both.
+        prefix = "a" * 40
+        snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0)]
+        plays = [
+            {"home_score": 1, "away_score": 0, "team": "Yankees", "description": prefix + "-x"},
+            {"home_score": 1, "away_score": 0, "team": "Yankees", "description": prefix + "-y"},
+        ]
+        moments = compute_moments(plays, snaps, "Yankees", "Red Sox", source="espn")
+        keys = [m["dedupe_key"] for m in moments]
+        assert len(keys) == 2 and len(set(keys)) == 2
+
+    def test_score_correction_then_readvance_are_two_moments(self):
+        # C59 "score-correction-readvance": 0-0 → 1-0 → 0-0 → 1-0 re-emits the
+        # same score AND the same synthesized description. Only the play's own
+        # transition time tells them apart.
+        snaps = [
+            _snap(0, 0.50, 0, 0),
+            _snap(10, 0.68, 1, 0),
+            _snap(20, 0.50, 0, 0),  # correction
+            _snap(30, 0.69, 1, 0),  # re-advance
+        ]
+        plays = synth_scoring_plays_from_snapshots(snaps, "Phillies", "Mets")
+        assert len(plays) == 2
+        assert plays[0]["description"] == plays[1]["description"]  # v1's collision
+        moments = compute_moments(plays, snaps, "Phillies", "Mets", source="mlb")
+        keys = [m["dedupe_key"] for m in moments]
+        assert len(keys) == 2 and len(set(keys)) == 2
+
+    def test_duplicate_source_play_collapses_to_one_row(self):
+        # C59 "duplicate-source-play"/"identical-rerun": the SAME play twice is a
+        # rerun, not two moments — it must collapse, not crash the upsert.
+        snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0)]
+        play = {"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR"}
+        moments = compute_moments([play, dict(play)], snaps, "Yankees", "Red Sox")
+        assert len(moments) == 1
+
+    def test_provider_play_id_is_preferred_identity(self):
+        snaps = [_snap(0, 0.50, 0, 0), _snap(10, 0.68, 1, 0)]
+        plays = [
+            {"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR", "play_id": "abc"},
+            {"home_score": 1, "away_score": 0, "team": "Yankees", "description": "HR", "play_id": "def"},
+        ]
+        keys = [m["dedupe_key"] for m in compute_moments(plays, snaps, "Yankees", "Red Sox")]
+        assert keys == ["m2:espn:pabc", "m2:espn:pdef"]
+
+    def test_uniqueness_is_scoped_to_the_event(self):
+        # C59 "same-key-different-events": identical keys in two events are legal;
+        # the constraint carries event_id, so the key itself must not.
+        from app.models import GameMoment
+
+        cols = {
+            tuple(c.name for c in con.columns)
+            for con in GameMoment.__table__.constraints
+            if con.name == "uq_game_moment_event_key"
+        }
+        assert cols == {("event_id", "dedupe_key")}
 
 
 class TestSynthPlaysFromSnapshots:
