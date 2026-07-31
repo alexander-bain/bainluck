@@ -38,6 +38,113 @@ function assertion(id, ok, detail) {
 }
 
 /**
+ * Does an observed telemetry destination match a ledger rule?
+ * `hostSuffix` matches the host or any subdomain of it; `pathPrefix` is a
+ * literal prefix. A rule with neither matches nothing (a typo must not become
+ * a wildcard).
+ */
+function telemetryRuleMatches(rule, observed) {
+  const host = String((observed && observed.host) || "");
+  const path = String((observed && observed.path) || "");
+  let matched = false;
+  if (rule.hostSuffix) {
+    if (host !== rule.hostSuffix && !host.endsWith(`.${rule.hostSuffix}`)) return false;
+    matched = true;
+  }
+  if (rule.pathPrefix) {
+    if (!path.startsWith(rule.pathPrefix)) return false;
+    matched = true;
+  }
+  return matched;
+}
+
+/**
+ * The consent pack's network ledger (L2-222 Item 3 / #1453).
+ *
+ * A consent claim is half about what DID happen and half about what did NOT.
+ * "Zero analytics requests" is the assertion that matters most after a Decline,
+ * and it is also the easiest one to fake: a run that never gave the page a
+ * chance to send anything observes zero and reports success. So absence is only
+ * accepted alongside a declared, non-trivial observation window — a journey
+ * that cannot say how long it watched cannot prove a negative.
+ *
+ * Rules are exhaustive by default: any observed telemetry destination that no
+ * rule mentions fails the journey. Otherwise a new provider could start
+ * beaconing after a Decline and every existing rule would still be satisfied.
+ */
+function evaluateTelemetryLedger(o, assertions, checkedClean) {
+  const expectation = o.telemetryExpectation;
+  if (!expectation) {
+    checkedClean.push("telemetry.ledger (journey declares no telemetry expectation)");
+    return;
+  }
+
+  const observed = Array.isArray(o.telemetry) ? o.telemetry : [];
+  const rules = Array.isArray(expectation.rules) ? expectation.rules : [];
+
+  // Absence needs a window. This is the anti-false-green guard for the whole
+  // ledger, so it is asserted before any individual rule.
+  const windowMs = typeof o.telemetryWindowMs === "number" ? o.telemetryWindowMs : null;
+  const minWindow =
+    typeof expectation.minWindowMs === "number" ? expectation.minWindowMs : 1000;
+  assertions.push(
+    assertion(
+      "telemetry.observation_window",
+      windowMs !== null && windowMs >= minWindow,
+      windowMs === null
+        ? "no telemetry observation window was recorded — absence cannot be proven"
+        : windowMs >= minWindow
+          ? `${windowMs}ms observed (min ${minWindow}ms)`
+          : `only ${windowMs}ms observed, below the ${minWindow}ms floor`
+    )
+  );
+
+  for (const rule of rules) {
+    const id = String(rule.id || "unnamed");
+    const hits = observed.filter((x) => telemetryRuleMatches(rule, x));
+    const count = hits.reduce((n, x) => n + (Number(x.count) || 0), 0);
+    let ok;
+    let detail;
+    if (rule.expect === "absent") {
+      ok = count === 0;
+      detail = ok
+        ? "0 requests, as required"
+        : `${count} request(s) to ${hits.map((x) => `${x.host}${x.path}`).join(", ")}`;
+    } else if (rule.expect === "exact") {
+      const want = Number(rule.count);
+      ok = count === want;
+      detail = `${count} request(s), expected exactly ${want}`;
+    } else if (rule.expect === "at_least") {
+      const want = Number(rule.count);
+      ok = count >= want;
+      detail = `${count} request(s), expected at least ${want}`;
+    } else {
+      ok = false;
+      detail = `unknown expectation "${redactText(String(rule.expect))}"`;
+    }
+    assertions.push(assertion(`telemetry.${id}`, ok, detail));
+  }
+
+  if (expectation.allowUnlisted === true) {
+    checkedClean.push("telemetry.no_unlisted_destinations (explicitly allowed)");
+    return;
+  }
+  const unlisted = observed.filter((x) => !rules.some((r) => telemetryRuleMatches(r, x)));
+  assertions.push(
+    assertion(
+      "telemetry.no_unlisted_destinations",
+      unlisted.length === 0,
+      unlisted.length === 0
+        ? null
+        : `${unlisted.length} unlisted destination(s): ${unlisted
+            .slice(0, 5)
+            .map((x) => `${x.host}${x.path}`)
+            .join("; ")}`
+    )
+  );
+}
+
+/**
  * @param {any} observation
  * @returns {{ result: string, assertions: Array<{assertion_id: string, ok: boolean, detail: string|null}>, checked_clean: string[] }}
  */
@@ -86,23 +193,34 @@ function evaluateJourney(observation) {
   }
 
   // --- Content. A real card, OR a NAMED empty state that was actually seen.
-  //     "The page was blank" never satisfies either branch. ---
+  //     "The page was blank" never satisfies either branch.
+  //
+  //     `contentMode: "none"` exists for journeys whose subject is not the feed
+  //     (the consent pack's network-only legs). It is an explicit opt-out, not
+  //     a default, so a feed journey cannot quietly acquire it — and the
+  //     main-region check below still applies either way, so an opted-out
+  //     journey on a blank page still fails. ---
+  const contentMode = o.contentMode === "none" ? "none" : "card";
   const realCard = o.realCardFound === true;
   const empty = o.emptyState || null;
   const namedEmptyProven = Boolean(empty && empty.name && empty.visible === true);
-  assertions.push(
-    assertion(
-      "content.real_card_or_named_empty",
-      realCard || namedEmptyProven,
-      realCard
-        ? "a real (non-skeleton) card was visible"
-        : namedEmptyProven
-          ? `named empty state rendered: ${redactText(empty.name, { maxLength: 80 })}`
-          : empty
-            ? `empty state "${redactText(empty.name || "(unnamed)", { maxLength: 80 })}" was declared but not proven visible`
-            : "no real card and no named empty state"
-    )
-  );
+  if (contentMode === "none") {
+    checkedClean.push("content.real_card_or_named_empty (journey declares no feed content)");
+  } else {
+    assertions.push(
+      assertion(
+        "content.real_card_or_named_empty",
+        realCard || namedEmptyProven,
+        realCard
+          ? "a real (non-skeleton) card was visible"
+          : namedEmptyProven
+            ? `named empty state rendered: ${redactText(empty.name, { maxLength: 80 })}`
+            : empty
+              ? `empty state "${redactText(empty.name || "(unnamed)", { maxLength: 80 })}" was declared but not proven visible`
+              : "no real card and no named empty state"
+      )
+    );
+  }
 
   assertions.push(
     assertion(
@@ -166,6 +284,9 @@ function evaluateJourney(observation) {
     )
   );
 
+  // --- Telemetry ledger (L2-222 Item 3 / #1453). ---
+  evaluateTelemetryLedger(o, assertions, checkedClean);
+
   // --- Artifacts. A journey with no evidence is not a proven journey. ---
   const artifacts = Array.isArray(o.artifacts) ? o.artifacts : [];
   assertions.push(
@@ -180,4 +301,10 @@ function evaluateJourney(observation) {
   return { result, assertions, checked_clean: checkedClean };
 }
 
-module.exports = { RESULTS, TERMINAL_RESULTS, evaluateJourney };
+module.exports = {
+  RESULTS,
+  TERMINAL_RESULTS,
+  evaluateJourney,
+  evaluateTelemetryLedger,
+  telemetryRuleMatches,
+};

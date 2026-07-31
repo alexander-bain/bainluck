@@ -27,7 +27,7 @@
  * testable in this repo's DOM-free jest environment.
  */
 
-import { isAnalyticsConfigured } from './config';
+import { isAnalyticsConfigured, type ConsentPersistResult } from './config';
 import {
   decideTelemetry,
   getTelemetryConsent,
@@ -54,6 +54,18 @@ export interface TelemetryChangePlan {
    * live-providers → no-providers transition does; see the module comment.
    */
   requiresReload: boolean;
+  /**
+   * Whether the write was verifiably durable (`'saved'` only after an exact
+   * readback). Present on the value `applyTelemetryChange` returns; the pure
+   * planner cannot know it.
+   */
+  persistence?: ConsentPersistResult;
+  /**
+   * Whether the reload actually happened. A reload that `requiresReload` asked
+   * for but durability withheld is the ONE case where these differ — see
+   * `applyTelemetryChange`.
+   */
+  reloaded?: boolean;
 }
 
 /**
@@ -81,7 +93,7 @@ export function planTelemetryChange(
 /** Injection seam so the side-effecting path is testable without a DOM. */
 export interface TelemetryChangeDeps {
   getConsent?: () => ConsentLevel;
-  setConsent?: (level: 'all' | 'analytics' | 'none') => void;
+  setConsent?: (level: 'all' | 'analytics' | 'none') => ConsentPersistResult | void;
   reload?: () => void;
   gaConfigured?: boolean;
 }
@@ -100,6 +112,15 @@ function defaultReload(): void {
  * A reload that beat the write would come back up still granted; a write with
  * no reload would leave the loaded providers running. Returns the plan that was
  * executed.
+ *
+ * DURABILITY GATES THE RELOAD (L2-222 Item 1). The write is now verified by
+ * readback, and an unverifiable write must NOT be followed by a reload: the new
+ * document would read whatever is actually stored — quite possibly the grant the
+ * user just revoked — and come back up with every provider running, having
+ * thrown away the in-memory denial that was at least holding in this document.
+ * Staying put with the gate closed is strictly better than reloading into the
+ * old choice, so on `'unavailable'` we keep the page and let the UI say the
+ * choice could not be saved.
  */
 export function applyTelemetryChange(
   next: 'all' | 'analytics' | 'none',
@@ -114,11 +135,12 @@ export function applyTelemetryChange(
 
   // Always write, even when the level is unchanged: re-asserting is harmless
   // and keeps "the store reflects the last explicit choice" true.
-  write(next);
+  const persistence: ConsentPersistResult = write(next) ?? 'saved';
 
-  if (plan.requiresReload) {
+  const reloaded = plan.requiresReload && persistence === 'saved';
+  if (reloaded) {
     reload();
   }
 
-  return plan;
+  return { ...plan, persistence, reloaded };
 }

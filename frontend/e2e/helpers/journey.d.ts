@@ -17,6 +17,32 @@ export interface JourneyArtifact {
   bytes?: number;
 }
 
+export interface TelemetryObservation {
+  host: string;
+  path: string;
+  count: number;
+}
+
+export interface TelemetryLedgerRule {
+  /** Stable id — becomes the `telemetry.<id>` assertion. */
+  id: string;
+  /** Matches this host or any subdomain of it. */
+  hostSuffix?: string;
+  /** Literal path prefix. */
+  pathPrefix?: string;
+  expect: "absent" | "exact" | "at_least";
+  /** Required for `exact` / `at_least`. */
+  count?: number;
+}
+
+export interface TelemetryExpectation {
+  rules: TelemetryLedgerRule[];
+  /** Minimum observation window before an absence is believed. Default 1000ms. */
+  minWindowMs?: number;
+  /** Opt out of the exhaustiveness check. Off by default, deliberately. */
+  allowUnlisted?: boolean;
+}
+
 export interface JourneyObservation {
   /** Set when the browser/runner itself broke — never a product verdict. */
   infra?: { crashed: boolean; reason?: string } | null;
@@ -35,6 +61,14 @@ export interface JourneyObservation {
   failedRequests?: FailedRequestSummary[];
   allowedFailures?: string[];
   artifacts?: JourneyArtifact[];
+  /** `"none"` opts a non-feed journey out of the card/empty-state assertion. */
+  contentMode?: "card" | "none";
+  /** Telemetry destinations actually observed during the journey. */
+  telemetry?: TelemetryObservation[];
+  /** What the journey claims about telemetry. Absent = not evaluated. */
+  telemetryExpectation?: TelemetryExpectation | null;
+  /** How long telemetry was watched. Absence is not believed without this. */
+  telemetryWindowMs?: number | null;
 }
 
 export type JourneyResult = "pass" | "fail" | "infra_error" | "superseded";

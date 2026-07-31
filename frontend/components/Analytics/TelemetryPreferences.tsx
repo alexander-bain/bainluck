@@ -22,20 +22,52 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   getTelemetryConsent,
+  getConsentPersistence,
   subscribeTelemetryConsent,
   initTelemetryConsent,
   type ConsentLevel,
 } from '@/lib/analytics';
 import { applyTelemetryChange } from '@/lib/analytics/telemetryRevoke';
 
+/**
+ * The status sentence. Pure so the copy contract is directly assertable — this
+ * is the surface that must never say "saved" or "off" when neither is true.
+ *
+ * `notDurable` is the recoverable failure state: the choice IS in force right
+ * now, but durable storage refused the write, so it will not survive a reload.
+ * Saying "Analytics is OFF" there would be a straightforward lie the moment the
+ * user navigates.
+ */
+export function telemetryStatusText(
+  consent: ConsentLevel,
+  opts: { hydrated: boolean; notDurable: boolean },
+): string {
+  if (!opts.hydrated) return 'Checking your saved choice…';
+  const isOn = consent === 'all' || consent === 'analytics';
+  if (opts.notDurable) {
+    return isOn
+      ? 'Analytics is ON for this page, but your browser would not save the choice — it will be off again when you reload.'
+      : 'Analytics is OFF for this page, but your browser would not save the choice — it may load again when you reload. Private browsing or blocked site storage is the usual cause.';
+  }
+  if (isOn) {
+    return 'Analytics is ON. Google Analytics, Vercel Analytics and Vercel Speed Insights load on this site.';
+  }
+  if (consent === 'none') return 'Analytics is OFF. None of those load.';
+  return "You haven't chosen yet, so nothing loads. Analytics is off until you turn it on.";
+}
+
 export function TelemetryPreferences() {
   // `null` until the client has read the persisted choice — the server render
   // must not assert a state it cannot know.
   const [consent, setConsent] = useState<ConsentLevel>(null);
+  const [notDurable, setNotDurable] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const sync = () => setConsent(getTelemetryConsent());
+    const sync = () => {
+      setConsent(getTelemetryConsent());
+      setNotDurable(getConsentPersistence() === 'unavailable');
+    };
     const unsubscribe = subscribeTelemetryConsent(sync);
     initTelemetryConsent();
     sync();
@@ -44,18 +76,15 @@ export function TelemetryPreferences() {
   }, []);
 
   const choose = useCallback((level: 'analytics' | 'none') => {
-    // May hard-reload when providers are live; the denial is persisted first.
-    applyTelemetryChange(level);
+    // May hard-reload when providers are live AND the denial verifiably
+    // persisted; an unverifiable write deliberately keeps the page (a reload
+    // would come back up on whatever is actually stored).
+    const plan = applyTelemetryChange(level);
+    setNotDurable(plan.persistence === 'unavailable');
   }, []);
 
   const isOn = consent === 'all' || consent === 'analytics';
-  const status = !hydrated
-    ? 'Checking your saved choice…'
-    : isOn
-      ? 'Analytics is ON. Google Analytics, Vercel Analytics and Vercel Speed Insights load on this site.'
-      : consent === 'none'
-        ? 'Analytics is OFF. None of those load.'
-        : "You haven't chosen yet, so nothing loads. Analytics is off until you turn it on.";
+  const status = telemetryStatusText(consent, { hydrated, notDurable });
 
   return (
     <section

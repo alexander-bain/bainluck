@@ -128,14 +128,47 @@ export function getStoredConsent(): 'all' | 'analytics' | 'none' | null {
 }
 
 /**
- * Store consent preference
+ * Whether a consent write is actually durable.
+ *
+ * `'saved'` is only returned after an EXACT readback of the value we just
+ * wrote. `'unavailable'` means the choice is in effect for this document but
+ * will NOT survive a reload.
  */
-export function storeConsent(consent: 'all' | 'analytics' | 'none'): void {
-  if (typeof window === 'undefined') return;
+export type ConsentPersistResult = 'saved' | 'unavailable';
+
+/**
+ * Store the consent preference and PROVE it landed (L2-222 Item 1 / #1453).
+ *
+ * BEFORE: this swallowed every failure. Safari private mode, a full quota, and
+ * a no-op storage shim all looked identical to success, so the UI said "saved"
+ * and the revoke path hard-reloaded into a document that read the OLD grant
+ * back — the reload re-enabled exactly what the user had just switched off, and
+ * nothing anywhere could tell. A silent no-op write is the worst case for a
+ * consent store precisely because the recovery (say so, keep the in-memory
+ * denial) is cheap and the failure is invisible.
+ *
+ * NOW: write, then read back and compare EXACTLY. A throwing store, a quota
+ * rejection, and a shim whose `setItem` does nothing are all reported as
+ * `'unavailable'`. Callers must not claim "saved", and must not reload on the
+ * strength of a write they cannot verify.
+ */
+export function storeConsent(consent: 'all' | 'analytics' | 'none'): ConsentPersistResult {
+  if (typeof window === 'undefined') return 'unavailable';
 
   try {
     localStorage.setItem(GA_CONFIG.CONSENT_STORAGE_KEY, consent);
   } catch {
-    // Silently fail if localStorage is not available
+    // Throwing store (Safari private mode, quota exceeded, blocked origin).
+    return 'unavailable';
+  }
+
+  try {
+    // The no-op case: `setItem` accepted the call and stored nothing. Only an
+    // exact match counts — a stale prior value reads back fine but is a lie.
+    return localStorage.getItem(GA_CONFIG.CONSENT_STORAGE_KEY) === consent
+      ? 'saved'
+      : 'unavailable';
+  } catch {
+    return 'unavailable';
   }
 }

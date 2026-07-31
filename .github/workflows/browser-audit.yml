@@ -42,6 +42,15 @@ on:
         required: false
         default: "600"
         type: string
+      pack:
+        description: "Which journeys to run"
+        required: false
+        default: "deploy-smoke+consent"
+        type: choice
+        options:
+          - deploy-smoke+consent
+          - deploy-smoke
+          - consent
 
 # Least privilege: read the repo, nothing else. The filer that consumes a
 # validated manifest is a separate, later job with its own `issues: write`.
@@ -54,7 +63,7 @@ concurrency:
 
 jobs:
   audit:
-    name: Anonymous Discover smoke
+    name: Anonymous Discover smoke + web consent pack
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -62,7 +71,7 @@ jobs:
         working-directory: frontend/e2e
 
     env:
-      AUDIT_PACK: deploy-smoke
+      AUDIT_PACK: ${{ inputs.pack }}
       AUDIT_TRIGGER: workflow_dispatch
       AUDIT_REQUESTED_SHA: ${{ inputs.frontend_sha }}
       TRACE_BASE_URL: ${{ inputs.base_url }}
@@ -119,8 +128,31 @@ jobs:
         # is not what /api/frontend-build reports within the bound.
         run: node scripts/wait-for-frontend-sha.js --timeout-ms "$(( ${{ inputs.sha_timeout_seconds }} * 1000 ))"
 
-      - name: Anonymous Discover smoke — desktop and mobile
-        run: npm run smoke
+      - name: Run the selected pack — desktop and mobile
+        # EXACTLY ONE playwright invocation, deliberately.
+        #
+        # The reporter writes `$AUDIT_OUT_DIR/manifest.json` on every run, so a
+        # second invocation OVERWRITES the first's manifest — the validator
+        # would then grade only the last pack while the summary still implied
+        # both had been proven. A silently-discarded half is precisely the
+        # false-green shape this rail exists to make impossible, so the packs
+        # are combined into one run instead of chained as separate steps.
+        #
+        # The consent pack (#1453) is the rendered half of the web consent
+        # claim: zero requests after a Decline, exactly one page view after a
+        # Grant, nothing after a revoke. Each journey carries a telemetry ledger
+        # the shared evaluator grades, and an absence is believed only alongside
+        # a declared observation window.
+        run: |
+          case "${AUDIT_PACK}" in
+            deploy-smoke)          npm run smoke ;;
+            consent)               npm run consent ;;
+            deploy-smoke+consent)  npm run smoke-consent ;;
+            *)
+              echo "::error::unknown pack '${AUDIT_PACK}'"
+              exit 1
+              ;;
+          esac
 
       - name: Validate the evidence manifest
         # The gate. A missing manifest, zero selected journeys, a SHA

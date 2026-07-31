@@ -55,6 +55,17 @@ let eventsViewed = new Set<number>();
 let sportsViewed = new Set<string>();
 let usedFilters = false;
 let viewedCharts = false;
+/**
+ * Idle-callback handles for sends that were scheduled but have not run yet.
+ *
+ * `trackEvent` defers non-critical events to `requestIdleCallback`, which can
+ * fire up to 2s later. A revoke inside that window used to be irrelevant: the
+ * consent gate was read when the event was QUEUED, so an event admitted under
+ * a grant still reached `gtag` after the user turned analytics off. Denial now
+ * cancels these and the callback re-checks the gate anyway (belt and braces —
+ * `cancelIdleCallback` is not guaranteed to exist).
+ */
+let pendingIdleSends = new Set<number>();
 
 // ============================================================================
 // Initialization
@@ -154,15 +165,29 @@ export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
       break;
   }
 
-  // Update the local emission gate FIRST so it holds even if gtag is not yet
-  // ready — no event is emitted until analytics is explicitly granted.
-  analyticsConsentGranted = consent.analytics_storage === 'granted';
+  const granting = consent.analytics_storage === 'granted';
 
-  // A denial must not leave a page view sitting in the buffer: if the user
-  // later grants, they are owed the page they are on THEN, not the one they
-  // declined on.
-  if (!analyticsConsentGranted) {
+  // ORDER IS THE CONTRACT on a denial. Dropping the configured `user_id` is
+  // itself a gtag write, so it has to happen while we are still willing to make
+  // one — clear the identity FIRST, then close the gate. Clearing after would
+  // be refused by the very gate we just closed, leaving the id configured in
+  // gtag for the life of the document and riding along on anything the page
+  // manages to emit afterwards.
+  if (!granting) {
+    clearIdentityBeforeDenial();
+  }
+
+  // Update the local emission gate so it holds even if gtag is not yet
+  // ready — no event is emitted until analytics is explicitly granted.
+  analyticsConsentGranted = granting;
+
+  if (!granting) {
+    // A denial must not leave a page view sitting in the buffer: if the user
+    // later grants, they are owed the page they are on THEN, not the one they
+    // declined on.
     withheldPageView = null;
+    // …nor any event already handed to the idle queue under the old grant.
+    cancelPendingSends();
   }
 
   if (isAnalyticsReady()) {
@@ -181,15 +206,69 @@ export function isConsentGranted(): boolean {
   return analyticsConsentGranted;
 }
 
+/**
+ * Drop any scheduled-but-unfired idle send. Called on denial so an event
+ * admitted under the previous grant cannot land afterwards.
+ */
+function cancelPendingSends(): void {
+  if (pendingIdleSends.size === 0) return;
+  const cancel =
+    typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function'
+      ? window.cancelIdleCallback.bind(window)
+      : null;
+  for (const handle of Array.from(pendingIdleSends)) {
+    try {
+      cancel?.(handle);
+    } catch {
+      /* the in-callback re-check is the real guarantee */
+    }
+  }
+  pendingIdleSends.clear();
+}
+
+/** Test/introspection helper: how many idle sends are still scheduled. */
+export function pendingDeferredSendCount(): number {
+  return pendingIdleSends.size;
+}
+
 // ============================================================================
 // User Identity
 // ============================================================================
 
 /**
- * Set user ID for cross-platform tracking
+ * Explicitly un-configure the user id in gtag as part of a denial.
+ *
+ * Only meaningful when an id was actually set — otherwise a fresh decline would
+ * push a pointless `config` at a property we are about to stop talking to.
+ * Runs BEFORE the emission gate closes; see `updateConsent`.
+ */
+function clearIdentityBeforeDenial(): void {
+  if (currentUserId === undefined) return;
+  currentUserId = undefined;
+  if (!isAnalyticsReady()) return;
+  window.gtag('config', GA_CONFIG.MEASUREMENT_ID, { user_id: null });
+  if (GA_CONFIG.DEBUG_MODE) {
+    console.log('[Analytics] User ID cleared (consent denied)');
+  }
+}
+
+/**
+ * Set user ID for cross-platform tracking.
+ *
+ * Consent-gated (L2-222 Item 1). A `user_id` is the single most identifying
+ * thing this rail can hand Google, and it was the one write that skipped the
+ * gate entirely: signing in after a Decline reconfigured the GA property with a
+ * durable cross-platform identity. Clearing (`undefined`) is always allowed —
+ * removing an identity is never something consent should be able to block.
  */
 export function setUserId(userId: string | undefined): void {
   if (!isAnalyticsReady()) return;
+  if (userId !== undefined && !analyticsConsentGranted) {
+    if (GA_CONFIG.DEBUG_MODE) {
+      console.log('[Analytics] User ID write dropped (consent not granted)');
+    }
+    return;
+  }
 
   currentUserId = userId;
 
@@ -206,10 +285,18 @@ export function setUserId(userId: string | undefined): void {
 }
 
 /**
- * Set user properties
+ * Set user properties. Consent-gated for the same reason as `setUserId`:
+ * `user_properties` persist on the GA property across the session, so a write
+ * made after a denial outlives the events the gate does block.
  */
 export function setUserProperties(properties: Partial<UserProperties>): void {
   if (!isAnalyticsReady()) return;
+  if (!analyticsConsentGranted) {
+    if (GA_CONFIG.DEBUG_MODE) {
+      console.log('[Analytics] User properties dropped (consent not granted)');
+    }
+    return;
+  }
 
   window.gtag('set', 'user_properties', properties);
 
@@ -255,6 +342,17 @@ export function trackEvent<E extends AnalyticsEventName>(
   }
 
   const sendEvent = () => {
+    // EXECUTION-TIME gate. The check at the top of `trackEvent` reflects consent
+    // when the event was QUEUED; an idle callback can run up to 2s later, and a
+    // revoke in that window must win. Re-read both the gate and readiness here,
+    // where the send actually happens.
+    if (!analyticsConsentGranted || !isAnalyticsReady()) {
+      if (GA_CONFIG.DEBUG_MODE) {
+        console.log('[Analytics] Deferred event dropped (consent revoked before send):', eventName);
+      }
+      return;
+    }
+
     // Add common parameters
     const enrichedParams = {
       ...params,
@@ -290,7 +388,21 @@ export function trackEvent<E extends AnalyticsEventName>(
   if (options.immediate || typeof requestIdleCallback === 'undefined') {
     sendEvent();
   } else {
-    requestIdleCallback(sendEvent, { timeout: 2000 });
+    // Track the handle so a denial can cancel it outright, and drop it from the
+    // set once it runs so the set cannot grow unbounded over a long session.
+    // The `ran` flag covers a shim that invokes the callback synchronously —
+    // without it the handle would be registered after the fact and never
+    // removed.
+    const ticket = { handle: -1, ran: false };
+    ticket.handle = requestIdleCallback(
+      () => {
+        ticket.ran = true;
+        pendingIdleSends.delete(ticket.handle);
+        sendEvent();
+      },
+      { timeout: 2000 },
+    );
+    if (!ticket.ran) pendingIdleSends.add(ticket.handle);
   }
 }
 

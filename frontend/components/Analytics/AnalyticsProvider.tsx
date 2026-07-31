@@ -13,8 +13,9 @@ import { SEARCH_DEST_KEY, SEARCH_DEST_MAX_AGE_MS, type SearchDestCrumb } from '@
 import {
   initTelemetryConsent,
   getTelemetryConsent,
-  setTelemetryConsent,
+  startTelemetryConsentSync,
   subscribeTelemetryConsent,
+  applyTelemetryChange,
   setUserId,
   setUserProperties,
   trackEvent,
@@ -26,6 +27,7 @@ import {
   type AnalyticsEventName,
   type UserProperties,
 } from '@/lib/analytics';
+import { startConsentBannerScheduler } from '@/lib/analytics/consentBanner';
 
 // ============================================================================
 // Context Types
@@ -88,19 +90,26 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   useEffect(() => {
     const sync = () => setConsentState(getTelemetryConsent());
     const unsubscribe = subscribeTelemetryConsent(sync);
-    const stored = initTelemetryConsent();
+    // Adopt a choice made in another tab: closes this tab's gate immediately and
+    // reloads only on a verified stored denial (see telemetryConsent).
+    const stopSync = startTelemetryConsentSync();
+    initTelemetryConsent();
     sync();
 
-    if (!stored) {
-      // No choice yet — show the banner after a short delay so it does not
-      // shift layout during the initial paint.
-      const timer = setTimeout(() => setShowConsentBanner(true), 1500);
-      return () => {
-        clearTimeout(timer);
-        unsubscribe();
-      };
-    }
-    return unsubscribe;
+    // The banner's raise rule lives in `lib/analytics/consentBanner` so the
+    // timing matrix — including "a Preferences grant at t<1.5s must never raise
+    // a stale banner" — is provable under fake timers without a DOM.
+    const stopBanner = startConsentBannerScheduler({
+      getConsent: getTelemetryConsent,
+      subscribe: subscribeTelemetryConsent,
+      setVisible: setShowConsentBanner,
+    });
+
+    return () => {
+      stopBanner();
+      stopSync();
+      unsubscribe();
+    };
   }, []);
 
   // Return-visit bookkeeping. Runs on EVERY visit: it previously sat after an
@@ -183,18 +192,27 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
     };
   }, [pathname]);
 
-  // Handle consent change. `setTelemetryConsent` is the single writer: it
-  // persists, updates Consent Mode + the emission gate, releases the withheld
-  // page view on a grant, and notifies the provider gates — in that order.
+  // Handle consent change. ONE UI PATH (L2-222 Item 2): every grant, decline and
+  // revoke — banner, dismiss, and the Preferences control — routes through
+  // `applyTelemetryChange`, which persists through the single writer and then
+  // hard-reloads if (and only if) providers are actually live and the denial
+  // verifiably persisted.
+  //
+  // The banner used to call `setTelemetryConsent` directly, skipping the
+  // planner. That was survivable only because the banner is normally raised
+  // before anything has been granted; the moment a Decline lands on a page where
+  // providers ARE running — another tab's grant syncing in, a re-raised banner —
+  // it left them running while reporting the choice as applied. Two paths to the
+  // same decision is one path too many.
   const setConsent = useCallback((level: 'all' | 'analytics' | 'none') => {
-    setTelemetryConsent(level);
+    applyTelemetryChange(level);
     setConsentState(level);
     setShowConsentBanner(false);
   }, []);
 
-  // Dismiss banner = explicit denial, through the same single writer.
+  // Dismiss banner = explicit denial, through the same one path.
   const dismissBanner = useCallback(() => {
-    setTelemetryConsent('none');
+    applyTelemetryChange('none');
     setConsentState('none');
     setShowConsentBanner(false);
   }, []);

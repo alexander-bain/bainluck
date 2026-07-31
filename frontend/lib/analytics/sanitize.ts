@@ -405,11 +405,62 @@ const PHONE_RE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
  */
 const MIN_PHONE_DIGITS = 7;
 
+/**
+ * An ISO 8601 date or date-time: `2026-07-31`, `2026-07-31T20:15:00.000Z`,
+ * `2026-07-31 20:15`, with or without an offset.
+ */
+const ISO_DATE_RE =
+  /\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/g;
+
+/**
+ * Placeholder delimiter: NUL. The placeholder has to be something a real
+ * analytics string cannot contain — a readable sentinel like " a " would be
+ * matched inside ordinary prose ("the bad cabbage") and eaten on restore.
+ */
+const MASK_DELIM = '\u0000';
+/** Digit-free placeholder body, so a mask can never itself look phone-shaped. */
+function encodeMaskIndex(n: number): string {
+  return String(n).replace(/\d/g, (d) => String.fromCharCode(97 + Number(d)));
+}
+function decodeMaskIndex(s: string): number {
+  return Number(s.replace(/[a-j]/g, (c) => String(c.charCodeAt(0) - 97)));
+}
+
+/**
+ * Redact phone-SHAPED runs, but never at the cost of a legitimate value.
+ *
+ * The digit-count floor (`MIN_PHONE_DIGITS`) saved the "1.4.2 (231)" build tag.
+ * It does NOT save a date: `2026-07-31` is phone-shaped and carries 8 real
+ * digits, so it cleared the bar and every `event_timestamp` — which
+ * `trackEvent` attaches to EVERY non-performance event — was leaving as
+ * `"[redacted-phone]T20:15:00.000Z"`. Silent, universal, and invisible without
+ * a fixture that asserts a timestamp survives.
+ *
+ * This is the third appearance of one trap: shape is not identity. L2-219 hit
+ * it on the native rail, L2-220 on the web build tag, L2-221 on the browser
+ * rail's own evidence timestamps — and the web scrubber, the oldest of the
+ * three, still had it. So ISO tokens are masked out before the phone pass and
+ * restored after, rather than the pattern being loosened (which would start
+ * letting real phone numbers through).
+ */
 function redactPhoneLike(value: string): string {
-  return value.replace(PHONE_RE, (match) => {
+  const masked: string[] = [];
+  const withPlaceholders = value.replace(ISO_DATE_RE, (m) => {
+    masked.push(m);
+    return `${MASK_DELIM}${encodeMaskIndex(masked.length - 1)}${MASK_DELIM}`;
+  });
+
+  const scrubbed = withPlaceholders.replace(PHONE_RE, (match) => {
     const digitCount = (match.match(/\d/g) ?? []).length;
     return digitCount >= MIN_PHONE_DIGITS ? '[redacted-phone]' : match;
   });
+
+  // Restore. An unknown index (only reachable if the input already contained a
+  // NUL) leaves the placeholder text alone rather than deleting content.
+  return scrubbed.replace(
+    new RegExp(`${MASK_DELIM}([a-j]+)${MASK_DELIM}`, 'g'),
+    (whole, idx: string) => masked[decodeMaskIndex(idx)] ?? whole,
+  );
 }
 
 /**
@@ -429,13 +480,69 @@ export function scrubString(value: string): string {
   return out;
 }
 
-/** Recursively scrub a value: strings redacted+truncated, arrays element-wise. */
-function scrubValue(value: unknown): unknown {
+// ============================================================================
+// Shape enforcement
+// ============================================================================
+
+/**
+ * Maximum members retained from a primitive array. GA4 flattens arrays into a
+ * bounded string anyway; the cap is here so an unexpectedly large array can't
+ * itself become a fingerprint or blow the parameter size limit.
+ */
+const MAX_ARRAY_LEN = 50;
+
+/**
+ * The ONLY value shapes a GA4 event parameter may carry: a string, a finite
+ * number, or a boolean.
+ *
+ * `null`/`undefined` are not "valid" here — they are simply dropped, since an
+ * absent parameter and a null one mean the same thing downstream and the null
+ * only costs payload.
+ */
+function isEventPrimitive(value: unknown): value is string | number | boolean {
+  const t = typeof value;
+  if (t === 'string' || t === 'boolean') return true;
+  return t === 'number' && Number.isFinite(value as number);
+}
+
+/**
+ * Coerce an allowlisted value to a safe SHAPE, or drop it (L2-222 Item 2).
+ *
+ * The key allowlist answers "may this field be sent at all"; it says nothing
+ * about what is *inside* the field. That gap was real: `context` and `item_name`
+ * are allowlisted keys, so `context: { email: 'a@b.com', token: '…' }` was
+ * forwarded to `gtag` as a whole object — untouched, because the old scrubber
+ * only recursed into strings and arrays and returned everything else verbatim.
+ * `event_ids: [{ user: … }]` had the same hole one level down: an array member
+ * that was not a string was passed straight through.
+ *
+ * So the rule is now positive rather than subtractive — retain only what is
+ * provably an event-valid primitive, or a bounded array of them:
+ *  - primitives are kept (strings scrubbed and truncated);
+ *  - a flat array of primitives is kept, scrubbed element-wise and capped;
+ *  - a nested array, an array containing any non-primitive, and ANY plain
+ *    object (including `null`) are dropped entirely.
+ *
+ * Dropping the whole array rather than filtering it is deliberate: a partially
+ * retained array silently changes the meaning of the parameter (a count, an id
+ * list), and the caller shape is wrong either way — better to lose the field
+ * than to ship a quietly incorrect one.
+ */
+function coerceParamValue(value: unknown): unknown {
   if (typeof value === 'string') return scrubString(value);
+  if (isEventPrimitive(value)) return value;
+
   if (Array.isArray(value)) {
-    return value.map((v) => (typeof v === 'string' ? scrubString(v) : v));
+    // One non-primitive member (object, nested array, NaN, null) disqualifies
+    // the whole array — see above.
+    if (!value.every(isEventPrimitive)) return undefined;
+    return value
+      .slice(0, MAX_ARRAY_LEN)
+      .map((v) => (typeof v === 'string' ? scrubString(v) : v));
   }
-  return value;
+
+  // Plain objects, Dates, Maps, functions, symbols, bigints, null, NaN, ±∞.
+  return undefined;
 }
 
 // ============================================================================
@@ -504,9 +611,9 @@ export function sanitizeEvent(
   const perfKeys = PERF_EVENT_KEYS[eventName];
   if (perfKeys) {
     for (const [key, value] of Object.entries(input)) {
-      if (perfKeys.has(key) && value !== undefined) {
-        out[key] = scrubValue(value);
-      }
+      if (!perfKeys.has(key) || value === undefined) continue;
+      const coerced = coerceParamValue(value);
+      if (coerced !== undefined) out[key] = coerced;
     }
     return { name: eventName, params: out };
   }
@@ -520,7 +627,8 @@ export function sanitizeEvent(
     if (value === undefined) continue;
     if (HARD_DROP_KEYS.has(key)) continue; // includes raw `query`, handled above
     if (!ALLOWED_PARAM_KEYS.has(key)) continue; // reject unknown params
-    out[key] = scrubValue(value);
+    const coerced = coerceParamValue(value); // …then reject unknown SHAPES
+    if (coerced !== undefined) out[key] = coerced;
   }
 
   return { name: eventName, params: out };

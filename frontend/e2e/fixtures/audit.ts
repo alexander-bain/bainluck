@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page, type TestInfo } from "@playwright/test";
 
-import { evaluateJourney, type JourneyObservation } from "../helpers/journey";
+import {
+  evaluateJourney,
+  type JourneyObservation,
+  type TelemetryExpectation,
+} from "../helpers/journey";
 import { sha256 } from "../helpers/manifest";
 import type { JourneyRecord } from "../helpers/manifest";
 import { redactText, redactUrl } from "../helpers/redaction";
@@ -43,6 +47,14 @@ export interface FinishInput {
   mainRegionNonBlank: boolean;
   selectedFixtureIds?: string[];
   allowedFailures?: string[];
+  /** `"none"` for journeys whose subject is not the feed (the consent pack). */
+  contentMode?: "card" | "none";
+  /**
+   * What this journey claims about telemetry destinations. Evaluated by the
+   * shared ledger, which requires a non-trivial observation window before it
+   * believes an absence — see `helpers/journey.js`.
+   */
+  telemetryExpectation?: TelemetryExpectation | null;
 }
 
 export class JourneyRecorder {
@@ -54,6 +66,12 @@ export class JourneyRecorder {
 
   private readonly startedAt = new Date();
   private crashed: { crashed: boolean; reason: string } | null = null;
+  /**
+   * When the telemetry watch began. Set at construction, so the window is the
+   * whole journey unless a spec deliberately restarts it (e.g. after a Decline,
+   * where only what happens AFTER the choice is evidence).
+   */
+  private telemetryWatchStart = Date.now();
 
   constructor(
     private readonly page: Page,
@@ -134,6 +152,24 @@ export class JourneyRecorder {
     this.crashed = { crashed: true, reason };
   }
 
+  /**
+   * Discard everything seen so far and restart the telemetry window.
+   *
+   * A grant→revoke journey has to prove "zero requests AFTER the revoke", and
+   * the requests from before it are legitimate. Without this, the only way to
+   * express that would be to subtract counts by hand in the spec — arithmetic
+   * that lives outside the evaluator and can therefore be got wrong silently.
+   */
+  resetTelemetryWindow(): void {
+    this.telemetry.clear();
+    this.telemetryWatchStart = Date.now();
+  }
+
+  /** Telemetry destinations seen in the current window. */
+  telemetrySeen(): Array<{ host: string; path: string; count: number }> {
+    return [...this.telemetry.values()];
+  }
+
   async finish(input: FinishInput): Promise<JourneyRecord> {
     const finishedAt = new Date();
     const project = this.testInfo.project.name;
@@ -195,6 +231,10 @@ export class JourneyRecorder {
       failedRequests: this.failedRequests,
       allowedFailures: input.allowedFailures ?? [],
       artifacts,
+      contentMode: input.contentMode ?? "card",
+      telemetry: this.telemetrySeen(),
+      telemetryExpectation: input.telemetryExpectation ?? null,
+      telemetryWindowMs: Date.now() - this.telemetryWatchStart,
     };
 
     const verdict = evaluateJourney(observation);
@@ -214,7 +254,7 @@ export class JourneyRecorder {
       console_errors: this.consoleErrors,
       page_errors: this.pageErrors,
       failed_requests: this.failedRequests,
-      telemetry_requests: [...this.telemetry.values()],
+      telemetry_requests: this.telemetrySeen(),
       first_card_ms: firstCardMs,
       artifacts,
       attempt: this.testInfo.retry + 1,

@@ -52,6 +52,7 @@ export {
   getUserId,
   flushWithheldPageView,
   peekWithheldPageView,
+  pendingDeferredSendCount,
 } from './core';
 
 // The single web telemetry consent authority — every non-essential provider
@@ -65,7 +66,13 @@ export {
   getServerTelemetryDecision,
   setTelemetryConsent,
   subscribeTelemetryConsent,
+  getConsentPersistence,
+  handleExternalConsentChange,
+  startTelemetryConsentSync,
   type ConsentLevel,
+  type ConsentPersistence,
+  type ExternalConsentOutcome,
+  type ConsentSyncDeps,
   type TelemetryDecision,
 } from './telemetryConsent';
 
@@ -78,6 +85,13 @@ export {
   type TelemetryChangePlan,
   type TelemetryChangeDeps,
 } from './telemetryRevoke';
+
+// The banner raise rule — pure and injectable so its timing matrix is testable.
+export {
+  startConsentBannerScheduler,
+  CONSENT_BANNER_DELAY_MS,
+  type ConsentBannerSchedulerDeps,
+} from './consentBanner';
 
 export {
   nextEngagementObservation,

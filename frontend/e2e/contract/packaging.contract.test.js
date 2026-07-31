@@ -146,4 +146,71 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
   it("carries no production secret", () => {
     assert.ok(!/secrets\./.test(config), "phase 1 runs anonymously, with no secret");
   });
+
+  /**
+   * The reporter writes `$AUDIT_OUT_DIR/manifest.json` unconditionally on every
+   * `playwright test` run, so two invocations in one job means the second
+   * OVERWRITES the first. The validator would then grade only the last pack
+   * while the step summary still implied both had been proven — a green run
+   * covering half of what it claimed. Packs are therefore combined into a
+   * single invocation, and this pins that.
+   */
+  it("runs playwright exactly once, so no manifest can be overwritten", () => {
+    // Every pack invocation must sit inside ONE `case` dispatch. Two separate
+    // steps would each run playwright, and the second manifest would replace
+    // the first.
+    const caseBlock = config.match(/case "\$\{AUDIT_PACK\}"[\s\S]*?esac/);
+    assert.ok(caseBlock, "pack selection must be a single `case` dispatch");
+
+    const outsideCase = config.replace(caseBlock[0], "");
+    const strays = [...outsideCase.matchAll(/npm run (smoke-consent|smoke|consent|latency)\b/g)];
+    assert.deepEqual(
+      strays.map((m) => m[0]),
+      [],
+      "a pack invocation outside the dispatch would clobber the manifest"
+    );
+
+    const inside = [...caseBlock[0].matchAll(/npm run (smoke-consent|smoke|consent|latency)\b/g)];
+    assert.ok(inside.length >= 1, "the dispatch must run at least one pack");
+  });
+
+  it("offers the consent pack, and defaults to running it", () => {
+    assert.ok(config.includes("deploy-smoke+consent"));
+    assert.match(config, /default:\s*"deploy-smoke\+consent"/);
+  });
+});
+
+describe("the pack scripts exist for every workflow choice", () => {
+  it("every pack the workflow can dispatch has a script", () => {
+    for (const script of ["smoke", "consent", "smoke-consent"]) {
+      assert.ok(pkg.scripts[script], `missing npm script "${script}"`);
+      assert.match(
+        pkg.scripts[script],
+        /--project=desktop --project=mobile/,
+        `"${script}" must run both viewports`
+      );
+    }
+  });
+
+  it("the consent spec exists and is picked up by the consent filter", () => {
+    const spec = path.join(e2eRoot, "specs", "consent.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/consent.spec.ts must exist");
+    const raw = fs.readFileSync(spec, "utf8");
+    // The #1453 cases the queue enumerates, by journey id.
+    for (const id of [
+      "consent.untouched",
+      "consent.decline",
+      "consent.grant",
+      "consent.grant_then_revoke",
+      "consent.navigation",
+      "consent.two_tabs",
+      "consent.storage_failure",
+      "consent.deferred_event",
+      "consent.identity_after_denial",
+      "consent.reachable",
+      "consent.my_stuff_denied",
+    ]) {
+      assert.ok(raw.includes(`journeyId: "${id}"`), `consent pack is missing ${id}`);
+    }
+  });
 });
