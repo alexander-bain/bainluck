@@ -119,6 +119,18 @@ describe('scrubString — PII redaction fixtures', () => {
     expect(scrubString('call +1 (415) 555-1234 now')).toContain('[redacted-phone]');
   });
 
+  it('does NOT redact a phone-SHAPED value with too few digits (L2-220)', () => {
+    // The build tag "1.4.2 (231)" is phone-shaped but carries only 6 digits.
+    // Shape-only matching rewrote it to "[redacted-phone])", which would have
+    // destroyed build attribution on every My Stuff latency packet. Redaction
+    // now needs >=7 real digits — the same rule L2-219 gave the native rail.
+    expect(scrubString('1.4.2 (231)')).toBe('1.4.2 (231)');
+    expect(scrubString('build 1.4.2 (231)')).toBe('build 1.4.2 (231)');
+    // A version with a long build number IS 7+ digits and still redacts —
+    // the guard is digit-count, not an exemption for anything version-shaped.
+    expect(scrubString('12.34.56 (7890)')).toContain('[redacted-phone]');
+  });
+
   it('truncates overlong (non-token) strings to the bound', () => {
     // Short words separated by spaces so no token/phone pattern matches — only
     // the length bound applies.

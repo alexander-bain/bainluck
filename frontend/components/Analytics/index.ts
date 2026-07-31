@@ -7,3 +7,4 @@ export { AnalyticsProvider, useAnalyticsContext } from './AnalyticsProvider';
 export { ConsentBanner } from './ConsentBanner';
 export { default as WebVitalsReporter } from './WebVitalsReporter';
 export { TelemetryGate } from './TelemetryGate';
+export { TelemetryPreferences } from './TelemetryPreferences';

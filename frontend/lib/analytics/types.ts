@@ -505,6 +505,27 @@ export interface ShareParams {
   url?: string;
 }
 
+/**
+ * The Discover Stats scorecard share (L2-220 Item 1 / #1453).
+ *
+ * This event used to be emitted by a direct `window.gtag('event', …)` call in
+ * `app/discover/stats/page.tsx`, which bypassed the consent gate and the
+ * sanitation boundary entirely — after a grant→revoke it would still fire,
+ * because revoking does not delete the `window.gtag` global. It is registered
+ * here so it travels the one authority like every other event.
+ *
+ * Deliberately identity-free: aggregate counts about the user's own scorecard,
+ * no session id, no market text, no prediction rows.
+ */
+export interface ShareScorecardParams {
+  /** Whole-percent accuracy, 0-100. */
+  accuracy_percent: number;
+  /** How many predictions the scorecard covers. */
+  total_questions: number;
+  /** Current streak at share time. */
+  streak: number;
+}
+
 export interface SharedLinkOpenParams {
   content_type: 'event' | 'futures' | 'grid';
   item_id: number | string;
@@ -833,6 +854,7 @@ export interface AnalyticsEventMap {
   player_prop_click: PlayerPropClickParams;
   market_map_interact: MarketMapInteractParams;
   share: ShareParams;
+  share_scorecard: ShareScorecardParams;
   shared_link_open: SharedLinkOpenParams;
   prediction_submit: PredictionSubmitParams;
   feed_card_impression: FeedCardImpressionParams;

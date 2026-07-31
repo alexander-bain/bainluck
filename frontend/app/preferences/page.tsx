@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useCategoryInterests, getLevelLabel } from "@/hooks/useCategoryInterests";
+import { TelemetryPreferences } from "@/components/Analytics";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import type { UserFavoriteItem } from "@/lib/types";
@@ -273,6 +274,15 @@ export default function PreferencesPage() {
           </p>
         </section>
       )}
+
+      {/* ================================================================
+          Privacy & analytics — the reachable telemetry control (L2-220 /
+          #1453). The consent banner only ever appears when no choice is
+          stored, so this is the only way back after Accept or Decline.
+          Shown to signed-in and anonymous visitors alike: the choice is a
+          property of the browser, not the account.
+          ================================================================ */}
+      <TelemetryPreferences />
     </div>
     </ErrorBoundary>
   );

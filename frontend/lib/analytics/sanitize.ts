@@ -34,93 +34,91 @@ import type { AnalyticsEventName } from './types';
 // ============================================================================
 
 /**
- * Every registered event name. Mirrors the keys of `AnalyticsEventMap`
- * (`types.ts`). Adding a new event means adding it here too — the
- * `analyticsSanitize` test guards that the two stay in sync for a representative
- * set, and an unregistered name is silently dropped at runtime.
+ * Every registered event name, as a Record keyed by `AnalyticsEventName`.
+ *
+ * The Record shape is the point: TypeScript REQUIRES every key of
+ * `AnalyticsEventMap` to appear here, so adding an event to the taxonomy
+ * without registering it fails `tsc` instead of failing silently in production.
+ *
+ * That guard exists because the silent mode is genuinely invisible. L2-217
+ * shipped `my_stuff_load` into `AnalyticsEventMap` and emitted it through
+ * `trackEvent`, but never added it to this list — so every My Stuff latency
+ * packet was dropped here, at the last boundary before `gtag`, for the entire
+ * time the surface was live. Its own suite could not catch it: that test mocks
+ * `@/lib/analytics` wholesale, so the sanitizer never ran (L2-220 Item 1).
  */
-export const KNOWN_EVENT_NAMES: ReadonlySet<AnalyticsEventName> = new Set<AnalyticsEventName>([
-  // Navigation
-  'page_view',
-  'navigation_click',
-  // Filters
-  'filter_category',
-  'filter_league',
-  'filter_view_mode',
-  'filter_more_sports',
-  // Event interactions
-  'event_card_click',
-  'event_card_impression',
-  'event_detail_view',
-  'bookmaker_hover',
-  // Sections
-  'section_toggle',
-  // Charts
-  'chart_time_range',
-  'chart_data_hover',
-  'chart_view',
-  // Engagement
-  'scroll_depth',
-  'time_on_page',
-  'session_engagement',
-  // Errors
-  'api_error',
-  'retry_click',
-  'stale_data_view',
-  // Search
-  'search_submit',
-  'answer_visible_typeahead',
-  // Onboarding
-  'onboarding_step',
-  'onboarding_complete',
-  // Feed filter chips
-  'feed_filter_chip',
-  // Progression table
-  'progression_sort',
-  'progression_stage_click',
-  // Account
-  'sign_up',
-  'login',
-  'logout',
-  // Futures
-  'futures_card_click',
-  'concept_card_click',
-  'futures_detail_view',
-  // Funnel & retention
-  'onboarding_start',
-  'onboarding_skip',
-  'search_result_click',
-  'return_visit',
-  // Content interaction
-  'grid_cell_click',
-  'player_prop_click',
-  'market_map_interact',
-  'share',
-  'shared_link_open',
-  'prediction_submit',
-  'feed_card_impression',
-  'feed_card_action',
-  'feed_refresh',
-  'feed_card_suppressed',
-  'theme_bundle_expand',
-  // Funnel events
-  'streak_continued',
-  'challenge_completed',
-  'search_opened',
-  'destination_engaged',
-  // Cockpit
-  'eval_verdict',
-  'eval_promote_toggle',
-  // Admin taxonomy
-  'team_cluster_verdict',
-  // Friend challenge
-  'friend_challenge_view',
-  'friend_challenge_accept',
-  'friend_challenge_share',
-  // Performance / observability (L2-189)
-  'feed_telemetry',
-  'web_vital',
-]);
+const EVENT_NAME_REGISTRY: Record<AnalyticsEventName, true> = {
+  page_view: true,
+  navigation_click: true,
+  filter_category: true,
+  filter_league: true,
+  filter_view_mode: true,
+  filter_more_sports: true,
+  event_card_click: true,
+  event_card_impression: true,
+  event_detail_view: true,
+  bookmaker_hover: true,
+  section_toggle: true,
+  chart_time_range: true,
+  chart_data_hover: true,
+  chart_view: true,
+  scroll_depth: true,
+  time_on_page: true,
+  session_engagement: true,
+  api_error: true,
+  retry_click: true,
+  stale_data_view: true,
+  search_submit: true,
+  answer_visible_typeahead: true,
+  onboarding_step: true,
+  onboarding_complete: true,
+  feed_filter_chip: true,
+  progression_sort: true,
+  progression_stage_click: true,
+  sign_up: true,
+  login: true,
+  logout: true,
+  futures_card_click: true,
+  concept_card_click: true,
+  futures_detail_view: true,
+  onboarding_start: true,
+  onboarding_skip: true,
+  search_result_click: true,
+  return_visit: true,
+  grid_cell_click: true,
+  player_prop_click: true,
+  market_map_interact: true,
+  share: true,
+  share_scorecard: true,
+  shared_link_open: true,
+  prediction_submit: true,
+  feed_card_impression: true,
+  feed_card_action: true,
+  feed_refresh: true,
+  feed_card_suppressed: true,
+  theme_bundle_expand: true,
+  streak_continued: true,
+  challenge_completed: true,
+  search_opened: true,
+  destination_engaged: true,
+  eval_verdict: true,
+  eval_promote_toggle: true,
+  team_cluster_verdict: true,
+  friend_challenge_view: true,
+  friend_challenge_accept: true,
+  friend_challenge_share: true,
+  feed_telemetry: true,
+  web_vital: true,
+  my_stuff_load: true,
+};
+
+/**
+ * Every registered event name. Derived from `EVENT_NAME_REGISTRY` so the set
+ * and the taxonomy cannot drift; an unregistered name is dropped at runtime.
+ */
+export const KNOWN_EVENT_NAMES: ReadonlySet<AnalyticsEventName> = new Set<AnalyticsEventName>(
+  Object.keys(EVENT_NAME_REGISTRY) as AnalyticsEventName[],
+);
 
 // ============================================================================
 // Parameter allowlist
@@ -285,6 +283,8 @@ export const ALLOWED_PARAM_KEYS: ReadonlySet<string> = new Set<string>([
   'actual_probability',
   'correct',
   'score',
+  // Discover Stats scorecard share (L2-220) — aggregate, identity-free.
+  'accuracy_percent',
   'trigger',
   'new_items_count',
   'story_key',
@@ -340,6 +340,26 @@ const PERF_EVENT_KEYS: Record<string, ReadonlySet<string>> = {
     'navigation_type',
     'page_path',
   ]),
+  // My Stuff first-card latency packet (L2-217 / C88). Treated as a perf event
+  // rather than widening the global param allowlist by ~10 latency-only keys:
+  // the C88 privacy contract already says a packet carries ONLY durations,
+  // counts, a coarse cache label, a build tag and a bounded outcome class, so
+  // the exact-key form is both narrower and a closer match to the contract.
+  my_stuff_load: new Set([
+    'stage',
+    'auth_ready_ms',
+    'network_ms',
+    'backend_elapsed_ms',
+    'decode_ms',
+    'required_data_ready_ms',
+    'first_render_ms',
+    'cache_outcome',
+    'cache_age_seconds',
+    'item_count',
+    'app_build',
+    'surface',
+    'outcome_class',
+  ]),
 };
 
 /** Keys that are ALWAYS dropped even though a raw form might be handed in. */
@@ -367,19 +387,42 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
 // A JWT, or any long opaque token-shaped run (>=24 url-safe chars, no spaces).
 const TOKEN_RE = /\b(?:eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|[A-Za-z0-9_-]{24,})\b/g;
-// A phone-like run: 8+ digits possibly split by spaces/dashes/parens/dots.
+// A phone-SHAPED run: digits split by spaces/dashes/parens/dots. Shape alone is
+// not enough to redact — see MIN_PHONE_DIGITS.
 const PHONE_RE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
+/**
+ * How many REAL digits a phone-shaped run needs before it is redacted.
+ *
+ * Shape-only matching destroys legitimate values. The build tag "1.4.2 (231)"
+ * is phone-shaped but carries just 6 digits, and was being rewritten to
+ * "[redacted-phone])" — which would have silently wrecked build attribution on
+ * every My Stuff latency packet. That defect could not be seen until L2-220
+ * registered `my_stuff_load` in the name allowlist, because until then the
+ * event was dropped before it ever reached the scrubber.
+ *
+ * This is the same >=7-digit rule L2-219 applied to the native rail after the
+ * identical trap bit there (`AnalyticsPrivacy`), so the two rails now agree.
+ */
+const MIN_PHONE_DIGITS = 7;
+
+function redactPhoneLike(value: string): string {
+  return value.replace(PHONE_RE, (match) => {
+    const digitCount = (match.match(/\d/g) ?? []).length;
+    return digitCount >= MIN_PHONE_DIGITS ? '[redacted-phone]' : match;
+  });
+}
 
 /**
  * Redact PII-shaped substrings from a free-form string and bound its length.
  * Order matters: emails and URLs before the token/phone catch-alls.
  */
 export function scrubString(value: string): string {
-  let out = value
-    .replace(EMAIL_RE, '[redacted-email]')
-    .replace(URL_RE, '[redacted-url]')
-    .replace(TOKEN_RE, '[redacted-token]')
-    .replace(PHONE_RE, '[redacted-phone]');
+  let out = redactPhoneLike(
+    value
+      .replace(EMAIL_RE, '[redacted-email]')
+      .replace(URL_RE, '[redacted-url]')
+      .replace(TOKEN_RE, '[redacted-token]'),
+  );
   if (out.length > MAX_STRING_LEN) {
     out = out.slice(0, MAX_STRING_LEN);
   }

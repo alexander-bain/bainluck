@@ -69,6 +69,16 @@ export {
   type TelemetryDecision,
 } from './telemetryConsent';
 
+// Truthful revoke: a grant→revoke on a page where the providers already
+// loaded needs a bounded hard reload, because unmounting is not teardown.
+export {
+  anyProviderEnabled,
+  planTelemetryChange,
+  applyTelemetryChange,
+  type TelemetryChangePlan,
+  type TelemetryChangeDeps,
+} from './telemetryRevoke';
+
 export {
   nextEngagementObservation,
   EMPTY_ENGAGEMENT_LEDGER,

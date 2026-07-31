@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { trackEvent } from "@/lib/analytics";
 import LoadingState from "@/components/LoadingState";
 
 interface DetailedStats {
@@ -47,10 +48,15 @@ export default function PredictionStatsPage() {
     const shareUrl = `${window.location.origin}/discover/scorecard?${shareParams}`;
     const shareText = `I'm ${accuracy}% accurate across ${stats.total} predictions on Bain Luck!`;
 
+    // Whether the share actually happened. A cancelled native share sheet is
+    // not a share, and previously still logged one.
+    let shared = false;
+
     if (navigator.share) {
       try {
         await navigator.share({ title: "My Prediction Scorecard", text: shareText, url: shareUrl });
         setShareState("shared");
+        shared = true;
       } catch {
         // User cancelled — no-op
       }
@@ -59,6 +65,7 @@ export default function PredictionStatsPage() {
         await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
         setShareState("copied");
         setTimeout(() => setShareState("idle"), 2000);
+        shared = true;
       } catch {
         // Fallback: select text
         const textarea = document.createElement("textarea");
@@ -69,18 +76,22 @@ export default function PredictionStatsPage() {
         document.body.removeChild(textarea);
         setShareState("copied");
         setTimeout(() => setShareState("idle"), 2000);
+        shared = true;
       }
     }
 
-    // Log share action
-    if (typeof window !== "undefined" && window.gtag) {
-      window.gtag("event", "share_scorecard", {
-        accuracy,
-        total: stats.total,
+    // Log the share through the ONE analytics authority (L2-220 Item 1 /
+    // #1453). This was a direct `window.gtag('event', …)` call, which bypassed
+    // both the consent gate and the sanitation boundary: revoking consent does
+    // not delete the `window.gtag` global, so after a grant→revoke it kept
+    // emitting. `trackEvent` is consent-gated and sanitized.
+    if (shared) {
+      trackEvent("share_scorecard", {
+        accuracy_percent: accuracy,
+        total_questions: stats.total,
         streak: stats.current_streak,
       });
     }
-
   }, [stats]);
 
   useEffect(() => {
