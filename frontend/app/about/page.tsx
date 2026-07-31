@@ -136,6 +136,13 @@ export default function AboutPage() {
                 <div className="text-micro text-text-muted mt-1.5">76ers</div>
               </div>
             </div>
+            {/* This American-odds string STAYS. Alex ruling 2026-07-31.
+                It is the counter-example, not a price we are quoting — the
+                60/40 above only means something against the thing it replaces,
+                and this is the product's founding line. The no-price-format
+                rule bans odds used as a SELLING POINT (and L2-221 removed the
+                dollar-volume social proof under the same ruling); it does not
+                ban naming what we refuse to show. Do not "clean this up". */}
             <p className="text-micro text-text-muted text-center mt-4">
               Not &ldquo;-150 / +130&rdquo; &mdash; just probabilities.
             </p>
