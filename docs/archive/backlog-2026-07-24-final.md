@@ -1,8 +1,8 @@
-# Backlog (SINGLE SOURCE OF TRUTH)
+# Backlog — RETIRED (final snapshot, 2026-07-24)
 
-All outstanding work items for Bain Luck. Shipped items live in `docs/completed-features.md`.
+> **RETIRED 2026-07-31.** This document is no longer a priority source. The [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) is the only source of priority and status; `docs/PRODUCT-BRAIN.md` holds the standing judgment. Kept as a point-in-time snapshot for rationale and workstream context only — do not add to it, and do not read ordering out of it.
 
-GitHub Issues are the execution queue for scoped work packets. This document remains the strategic source of truth for priorities, rationale, and workstream context. When a backlog item becomes ready for a person or agent to pick up, create/link a GitHub issue and mark it with one of: `[idea]`, `[ready]`, `[active]`, `[blocked]`, `[shipped]`. See `docs/github-workflow.md`.
+All outstanding work items for Bain Luck as of the retirement snapshot. Shipped items live in `docs/completed-features.md`.
 
 ## Instant Answers (program — search-as-answer)
 

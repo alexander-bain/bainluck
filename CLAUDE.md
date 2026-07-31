@@ -25,13 +25,13 @@ There are 4 layers of matching, measured by `backend/scripts/audit_event_matchin
 | **L3: Futures Surfacing** | Season futures on event detail pages | `--self-check` | ✅ 100% (MLB/NBA/NHL) |
 | **L4: Market Completeness** | Every market type showing per game | `--l4-deep` | ✅ Verified live (April 24) |
 
-Plus **Grid Accuracy** (`backend/scripts/audit_grid_accuracy.py`, needs a Manus-fed `--ground-truth` file): 51/51 (100%) as of April 24.
+Plus **Grid Accuracy** (`backend/scripts/audit_grid_accuracy.py`, needs an external `--ground-truth` file): 51/51 (100%) as of April 24. The Manus rail that used to feed that file is **permanently retired** (Alex ruling 2026-07-31); the Grid Sentinel's sampled ground-truth self-check replaced it on accuracy duty.
 
 The **Grid Sentinel** (`backend/app/tasks/grid_sentinel.py`, daily 07:25 UTC; `POST /api/admin/grid-sentinel/run`, `GET .../grid-sentinel/last`) is the grid analogue of the Flow/Calibration sentinels (Queue #196). It replaces the raw grid *health score* — which cried wolf (the mlb-66 forensic: 67/100 in-season with ZERO real defects, entirely blend-hidden Kalshi/Polymarket source disagreement) — with a **verdict**: it classifies every finding as REAL (monotonicity, envelope corruption, over-100% sums, empty grid, stale-when-active) vs EXPLAINED (a season-window artifact via `app/utils/season_windows.py`) vs WATCH (plausibility: source disagreement / illiquid extremes — blend-hidden, never RED). Only REAL defects file a deduped issue, so **RED means REAL**. It carries a **ground-truth self-check** (merged prob must lie inside its own source envelope; sampled — retires the Manus ground-truth file from accuracy duty) + a DB freshness self-check. The cockpit grid tile consumes the verdict + artifact badges, not the raw score. `season_windows` also makes the data-quality watchdog's Tier-1 coverage-drop alarm break-aware (r197's ask — no more crying wolf when NBA/NHL stop playing in July).
 
 **Freshness note (re-measure attempted 2026-07-14, docs-sweep Queue #192):** the table's last FULL audit is still April 24 — a clean full re-measure could not be produced today for three compounding reasons, so the April-24 column is intentionally left in place rather than overwritten with tooling-limited numbers:
 1. **`--self-check` is schema-stale.** The Discover feed moved to a nested `items[].data` shape with a `type` field (`event`/`futures`/`tournament`/`concept`) and top-level `sport=null`; the script still reads the old flat schema, so it sees `sport=""` on every card and renders `? @ ?`. Fixing the feed parser is queued for the next code queue (#193).
-2. **`audit_grid_accuracy.py` needs an external `--ground-truth` file** (Manus-fed) — it is not a standalone self-check, so it can't be run fresh here.
+2. **`audit_grid_accuracy.py` needs an external `--ground-truth` file** — it is not a standalone self-check, so it can't be run fresh here. (It was Manus-fed; Manus is permanently retired as of 2026-07-31, so this path is dead until the C96 replacement rail lands.)
 3. **Mid-July is an off-brand sports lull.** Today's feed-surfaced game slate is NBA Summer League, NPB, UCL qualifiers, World Cup, and one settled MLB game — no Tier-1 games, and thin upstream Kalshi/Polymarket game-market coverage.
 
 Direct production spot-check of the 13 feed-surfaced game events (via `/api/events/{id}/game-markets` + `/related-futures`): **L1 = 13/13** (every game carries ≥1 win-prob source); **L2 = 0** game markets (expected upstream coverage gap for this off-brand slate — not a matching regression); **L3 verified working** (e.g. Red Sox @ Rays surfaces 6 team futures). A true dated L1–L4 column requires fixing the self-check feed parser (#193) and re-running during an in-season Tier-1 slate. Also spot-verified July 14: duplicate events = 0 (#1085 fixed, sentinel-guarded), The Open round-leader dates correct (#1088), kalshi calibration ECE ≈ 1.0pp. The **Flow Sentinel** (`backend/app/tasks/flow_sentinel.py`, nightly 07:10 UTC; `POST /api/admin/flow-sentinel/run`, `GET .../flow-sentinel/last`) regression-guards the user-facing half of this table and auto-files evidence-packed issues (GITHUB_TOKEN rail live).
@@ -46,9 +46,9 @@ Direct production spot-check of the 13 feed-surfaced game events (via `/api/even
 
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
+| `docs/PRODUCT-BRAIN.md` | The staging JUDGMENT layer: standing rulings + the WHY + how Alex works + lane split (for whoever stages queues) | When Alex issues a new ruling (append + date) |
 | `docs/PRD.md` | The product's voice: vision, reliability bar, journeys, principles (rev 2026-07-14) | When product theses change (Alex rulings) |
-| `docs/execution-plan-2026-07-13.md` | Current operating plan: programs P1–P7, week table, Opus operating model | Weekly, and when programs ship/change |
-| `docs/backlog.md` | Strategic backlog: priorities, rationale, and long-term context | When items ship, are added, or reprioritized |
+| [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The ONLY source of priority and status — docs hold judgment and reference, never ordering | Continuously, as work is triaged and shipped |
 | `docs/github-workflow.md` | GitHub Issues/Project operating model and backlog sync rules | When issue labels, templates, project columns, or agent handoff rules change |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
 | `docs/gotchas-reference.md` | Full gotcha catalog and incident learnings | When new gotchas discovered |
@@ -211,7 +211,7 @@ Device-token registration, token listing, and admin send-test are covered with F
 
 **Two standing rulings that shape all of the above (Alex):** *The blend is the product* — one number per question; source divergence is a data bug to fix, not a feature to show (deliberate comparison surfaces only: category-page spotlights, playoffs source lines, My Stuff dots; this supersedes the old "cross-source comparison" priority). *Settled means settled* — one system-wide settled language: heroes show winners, cards show results, props show the script graded, charts show the completed journey.
 
-**Work tracking split**: `docs/backlog.md` is the strategic backlog; GitHub Issues are the execution queue for scoped work.
+**Work tracking**: GitHub Issues is the ONLY source of priority and status. `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls. Docs never carry ordering. (The old `docs/backlog.md` was retired 2026-07-31 to `docs/archive/backlog-2026-07-24-final.md` as a historical snapshot.)
 
 ## Agent Execution Lanes (read before doing ANY repo work)
 
@@ -219,24 +219,22 @@ There is a queue-based execution system in `.claude/handoff/` (protocol: `.claud
 
 1. Check `.claude/handoff/QUEUE.md`. If `status: approved`, that queue IS the next work — execute it via the /triage handoff mode rather than inventing a plan. If `status: running`, another session owns the lane: do NOT do repo work that could collide.
 2. Check `.claude/handoff/SEQUENCE.md` for the agreed priority order. Don't execute sequence items ad-hoc from an interactive plan — they get staged as queues with briefs, gates, and live-proof requirements. If you ship something outside the lane anyway, you MUST move it to SEQUENCE.md's Consumed section and post the same session-end evidence (clean git status, CI run ID quoted green, live proofs, board sync) the queue lane requires.
-3. Whoever ships, updates: the board, `docs/backlog.md`, and SEQUENCE.md must not drift.
+3. Whoever ships, updates: the board and SEQUENCE.md must not drift.
 
 This section exists because parallel lanes (interactive sessions, the headless crank, subagents) collided on 2026-06-11: stashed WIP, skipped priorities, and unverified "shipped" claims. The queue lane's gates are the source of truth.
 
 ## GitHub Issues + Project Workflow
 
-`docs/backlog.md` is the strategic source of truth for priorities, rationale, and workstream context. GitHub Issues are the execution queue for scoped work packets. The GitHub Project board is status and ownership tracking.
+GitHub Issues is the single source of truth for priority, status, rationale, and workstream context. The GitHub Project board is status and ownership tracking. Docs hold judgment (`docs/PRODUCT-BRAIN.md`) and reference, never ordering.
 
 Use this split consistently:
 
-- Put rough ideas, long-term context, and strategic priority changes in `docs/backlog.md`.
+- Put rough ideas and long-term context in a GitHub issue (label it `type:idea` if it is not yet scoped) — not in a doc.
 - Create/update GitHub Issues only for work that is scoped enough to execute or delegate.
 - Label issues with one or more `area:*` labels, one or more `type:*` labels, a `priority:*` label when useful, and routing labels such as `needs-agent`, `needs-user`, `blocked`, or `alert-intake`.
-- When promoting a backlog item to an issue, link the issue from the backlog and include a `Backlog source` section in the issue body.
-- GitHub issue `created` date is the promotion date, not necessarily the original discovery date. When porting older backlog items, preserve the original source date or backlog section date in the issue body.
-- When closing a product issue, update `docs/backlog.md` in the same change if the corresponding backlog item shipped, changed, or became obsolete.
-- Do not duplicate full backlog prose into issues. Issues should contain outcome, scope, acceptance criteria, verification, and a link back to the backlog.
-- Alert-intake issues can be closed without backlog edits if they are stale/superseded CI failures or purely operational alerts; leave a closing comment with the reason.
+- GitHub issue `created` date is the promotion date, not necessarily the original discovery date. When porting an item from the retired backlog snapshot (`docs/archive/backlog-2026-07-24-final.md`), preserve the original source date in the issue body.
+- Issues should contain outcome, scope, acceptance criteria, and verification. The issue body is the record — do not push that prose back into a doc.
+- Alert-intake issues can be closed when they are stale/superseded CI failures or purely operational alerts; leave a closing comment with the reason.
 - Treat the Project `In Progress` column plus the `in-progress` label as a collision-avoidance lock. When a person, Codex thread, Claude thread, or subagent starts an issue, run `python3 scripts/claim_issue.py ISSUE_NUMBER "In Progress" --owner "<thread/context>"` before editing files. This moves the Project card, adds `in-progress`, removes `needs-agent`, and comments with the active owner/context. Before starting or delegating work, check `In Progress` for overlapping files or pipeline ownership.
 
 Canonical labels and project columns are documented in `docs/github-workflow.md`. If a user asks for "the next thing to work on," prefer open issues labeled `needs-agent`, especially `priority:p0`/`priority:p1`, before mining the whole backlog.
@@ -394,7 +392,7 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 
 ## Session Startup: Health Check
 
-Run `/health` at the start of every session. It covers all production checks: Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, feed quality, and Manus audit status. See `.claude/commands/health.md` for the full definition.
+Run `/health` at the start of every session. It covers all production checks: Sentry, Heroku, CI, Celery queues, quota, link rates, grids, calibration, latency, and feed quality. (The Manus audit-status check is dead — Manus was permanently retired 2026-07-31.) See `.claude/commands/health.md` for the full definition.
 
 **Thresholds for immediate action:**
 - Sentry issue >100 events in 24h → triage now
@@ -461,7 +459,8 @@ When fixing ANY data quality, matching, or display issue:
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` (Authorization: Bearer $ADMIN_TOKEN) |
 | Ad-hoc SQL (read-only) | `POST /api/admin/db-query` (Authorization: Bearer $ADMIN_TOKEN, body: `{"sql":"...","limit":500}`) |
 | API docs | https://api.bainluck.com/docs |
-| Backlog | `docs/backlog.md` |
+| Priority + status (only source) | https://github.com/alexander-bain/bainluck/issues |
+| Standing product rulings | `docs/PRODUCT-BRAIN.md` |
 | Shipped features | `docs/completed-features.md` |
 | Architecture | `docs/architecture-reference.md` |
 | Gotchas (full) | `docs/gotchas-reference.md` |

@@ -1,6 +1,6 @@
 # Instant Answers — Program Strategy
 
-**Written:** 2026-07-06 by Fable, in live session with Alex. This is the canonical strategy doc for the Instant Answers program. Triage (Lane 1), Triage 2 (Lane 2), and Ops threads should treat this as a first-class sequence source alongside `.claude/handoff/SEQUENCE.md`. Repo hygiene: the first code session that touches the tree should commit this doc and link it from `docs/backlog.md` under a new "Instant Answers" workstream.
+**Written:** 2026-07-06 by Fable, in live session with Alex. This is the canonical strategy doc for the Instant Answers program. Triage (Lane 1), Triage 2 (Lane 2), and Ops threads should treat this as a first-class sequence source alongside `.claude/handoff/SEQUENCE.md`. Repo hygiene: this doc is committed; the program's open work is tracked on the [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues), which is the only source of priority and status.
 
 ---
 

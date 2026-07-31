@@ -1,6 +1,6 @@
 # Bain Luck — Product Requirements Document
 
-*Last full revision: 2026-07-14 (Fable + Alex). Prior revision: 2026-05-15. This document is the product's voice; `docs/execution-plan-2026-07-13.md` is the current operating plan; `docs/backlog.md` is the work ledger.*
+*Last full revision: 2026-07-14 (Fable + Alex). Prior revision: 2026-05-15. This document is the product's voice; the [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) is the only source of priority and status; `docs/PRODUCT-BRAIN.md` holds the standing judgment behind staging calls.*
 
 ## 1. Vision & North Star
 
@@ -170,9 +170,9 @@ CI on every push: backend pytest + frontend build (ESLint gate), serialized Hero
 
 | Document | Purpose |
 |----------|---------|
-| `docs/execution-plan-2026-07-13.md` | Current operating plan, programs P1–P7, Opus handoff |
+| [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The only source of priority and status |
+| `docs/PRODUCT-BRAIN.md` | Standing rulings and the reasoning behind them |
 | `docs/architecture-reference.md` | System design detail |
-| `docs/backlog.md` | Strategic work ledger |
 | `docs/feature-reference.md` / `completed-features.md` | Feature detail / shipped log |
 | `docs/gotchas-reference.md` | The full hard-won gotcha catalog |
 | `docs/design-system.md` | Visual language incl. the settled-state system |

@@ -972,7 +972,7 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 
 **Files:**
 - Prototype: `tv-mode-prototype.jsx` (interactive React component with device switching, mode toggling, EI slider)
-- Design plan: `docs/tv-mode-plan.md` (full spec including iOS v2 features, implementation phases)
+- Design plan: `docs/archive/tv-mode-plan.md` (archived 2026-07-31; full spec including iOS v2 features, implementation phases)
 
 **Implementation plan (4 phases):**
 1. Route + core layout: `/tv` route, device detection, LiveView, wire to events/history APIs
@@ -1248,9 +1248,67 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin
 
 ---
 
+## Current Programs (mid-July → 2026-07-31, through Queue 289 / L2-220 / C96)
+
+The newest layer, on top of the mid-May → mid-July programs documented below.
+
+### Discover Cold-Load Speed Rail (#1459 / #1472 / #1475 / #1480)
+`GET /api/feed` is governed by one absolute request deadline with single-owner singleflight — a
+slow candidate pool degrades honestly instead of queueing behind itself (Queues 271, 277, 280).
+The expensive candidate-ID pool is computed **once, user-independently**, and shared across cold
+requests (Queues 278, 285); the editorial global-ID materialization was removed from the hot path
+(Queue 273). Candidate-base identity is v2: **dedupe + sort only, deliberately no case/NFC
+folding** (folding was rejected as collision-prone), with a truthful switch, monotonic
+publication, and per-service-tier monotonicity (Queues 288, 289).
+
+Two traps this program produced, worth carrying forward:
+- A deep call-site bound turns one 500 into another 500 — bound at the boundary, not inside.
+- A cache-tier test that resets the tier between write and read is testing the store *below* it.
+
+Open residual: deployed p95 + provenance proof are still owed on #1459 / #1475. Monotonicity was
+verified in Redis but **not** in L0 / process-last-good.
+
+Native and web clients pair with this: bounded first page, classified retries, first-card
+telemetry, immutable render-generation tokens, and principal-bound response caches so a
+signed-out payload can never render for a signed-in principal (L2-201, L2-206 → L2-214).
+
+### Feed Trust & Card Authority
+Every cache path reports its state truthfully and every card declares its authority (Queues 275,
+283; #1483, #1487). Live/upcoming concept cards **fail closed** — suppressed until they can lead
+with a real result rather than rendering an empty predictive shell (L2-215); the durable fix
+(backend concept-outcome inlining) is still open. The admin candidate-pool trace had drifted from
+the real pool definitions; both now read a single spec (Queue 286).
+
+### Calibration Durability
+The calibration route no longer 503s under a contended precompute: publication is durable and the
+route falls back to last-good while reporting the drift (Queue 272, #1459; precompute limit raised
+900→1500s). A DB `statement_timeout` backstop bounds the precompute itself (Queue 274, #1479), and
+resolved cohorts are immutable with recorded provenance so a later pass cannot silently re-grade
+stored values (Queue 284). This is the machinery half of the calibration "done" bar — the drag was
+never accuracy.
+
+### Telemetry Consent Authority (#1453)
+One emission authority replaced the scattered per-call consent checks on web, and revoke now
+actually stops emission rather than only flipping a flag (L2-219, L2-220). Paired with the native
+search privacy boundary, the Google access-token audience boundary (Queue 282), and Play session
+anonymization (L2-214).
+
+### Sentinel Filing Ownership
+The Daily Health Check filer is marker-based and owns exactly its own issue via an evidence
+fingerprint, failing closed on a cold create — this stopped the #1477 clobber (Queues 276, 279).
+Coverage is now measured against a named expectation instead of inferred from absence: the
+expected-event inventory + named-event recovery ledger (#1467) and the Tier-1 Polymarket event +
+prop discovery ledger (#1468).
+
+**Manus is permanently retired** (Alex ruling 2026-07-31). The browser-verification collection
+really died ~07-28; C96 staged the replacement rail and #1497 is the retirement packet. No doc or
+runbook should instruct reviving it, and the key must not be rotated or reactivated.
+
+---
+
 ## Recent Programs (mid-May → mid-July 2026)
 
-The features below shipped after the mid-May snapshot above. They map to the programs in `docs/execution-plan-2026-07-13.md` (P1–P7) and the six failure classes the reliability program hunts.
+The features below shipped after the mid-May snapshot above. They map to the programs in the archived `docs/archive/execution-plan-2026-07-13.md` (P1–P7) and the six failure classes the reliability program hunts.
 
 ### Event Concept Pages + Hubs (unified tournament/card/ceremony surfaces)
 Tournaments, fight cards, ceremonies, and elections render as ONE event-framed page at `/event/<domain>/<slug>` — the H1 is the *event*, not a market. This is the "event concepts + hubs" priority (#5): one matching engine and entity registry underneath, one page pattern on top.

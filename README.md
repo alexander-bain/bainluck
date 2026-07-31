@@ -5,24 +5,45 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Next.js 14](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org/)
 
-**The most engaging way to explore what the world thinks will happen.**
+**Probability, not betting. The world's honest guess about what happens next.**
 
-Bain Luck translates prediction markets and betting odds into intuitive probabilities. Users see "60% vs 40%" instead of "-150 / +130". Started with sports odds, now covers economics, politics, tech, culture, weather, and more.
+Bain Luck aggregates prediction markets, sportsbook lines, and statistical models into one blended probability per question. You always see a probability like "60%", never a price like "-150" or "+3000". It started with sports and now covers politics, economics, entertainment, tech, geopolitics, and weather.
 
-**[Live Site](https://bainluck.com)** · **[Discover Feed](https://bainluck.com/discover)** · **[API Docs](https://api.bainluck.com/docs)**
+**[Live Site](https://bainluck.com)** · **[Discover Feed](https://bainluck.com/discover)** · **[Calibration](https://bainluck.com/calibration)** · **[API Docs](https://api.bainluck.com/docs)**
 
 ---
 
+## Why
+
+> At the 2026 Australian Open, Carlos Alcaraz beat Alexander Zverev in a five-set tennis semifinal. So why did his odds run from 98% up two sets to 14%, the brink of elimination, before he won?
+
+That swing (an adductor injury, a near-collapse, a fifth-set comeback) is the story of the match, and it's invisible in the final score. Bain Luck gives every question one honest number and shows you how that number moved.
+
+It isn't just sports. The same probability lines tracked who would stand in Taylor Swift's wedding party ahead of her July 2026 wedding, how many rate cuts the Fed delivers this year, and which movie tops Netflix this week. If the world is guessing about it, there's a number, and the way the number moves is the story.
+
+## What makes it different
+
+- **One number per question.** Sources are blended with fitted-skill weighting into a single probability. When sources disagree, that's a data problem to fix, not a feature to display.
+- **Public calibration.** The [calibration page](https://bainluck.com/calibration) shows how often our probabilities were right, across more than a million resolved outcomes, broken out by category. It's the scoreboard we hold ourselves to.
+- **No gambling formats.** Prices like -140 or +3000 never appear anywhere. Every number is a probability.
+- **Honest charts.** No smoothing and a fixed 0-100 axis. Real movement is the product.
+
 ## Features
 
-- **Probability-first event pages** — Multi-source win probability charts, market maps, player props, championship path
-- **Discover feed** — Social prediction market feed with Higher/Lower guess games, images, LLM context hooks
-- **Cross-source aggregation** — Combine odds from 12+ sportsbooks, Kalshi, Polymarket, ESPN, and stat models
-- **Championship grids** — Visual probability grids for NBA, NHL, MLB, NFL, Golf
-- **Multi-platform** — Web (Next.js), iOS, macOS (shared SwiftUI codebase), Apple Watch prototype
-- **Real-time updates** — Live game odds with 32-second polling, ESPN win probability, score tracking
-- **Weather & Economics** — Polymarket + Kalshi markets for temperature, rain, oil prices, S&P 500
-- **3,350+ tests** — Comprehensive backend test suite
+- **Discover feed**: ranked, story-grouped prediction cards across every category, with Today's Challenge
+- **Probability-first event pages**: blended win probability charts, market maps, player props, championship paths
+- **Cross-source aggregation**: 12+ sportsbooks, Kalshi, Polymarket, ESPN, and stat models
+- **Championship grids**: visual probability grids for NBA, NHL, MLB, NFL, and Golf
+- **Multi-platform**: web (Next.js), iOS and macOS (shared SwiftUI), Apple Watch prototype
+- **Real-time**: live game updates, ESPN win probability, score tracking
+- **Tested**: 9,300+ backend (pytest), 1,000+ frontend (Jest), and 300+ native (XCTest) tests
+
+## Under the hood
+
+- **Stories, not markets.** The feed ranks stories: a golf tournament is one story with forty markets inside it, not forty competing cards. Ranking the story is what keeps a just-ended World Cup above a routine Tuesday slate.
+- **Fitted-skill blending.** Source weights aren't hand-picked. They're fitted from each source's measured historical accuracy, per category, and re-fit as the record grows.
+- **Calibration as infrastructure.** Every resolved outcome (1.28M and counting) is graded against a registered settlement authority, with provenance tiers and versioned populations, so the public accuracy page can survive a skeptical audit.
+- **Eval-gated changes.** A fenced eval workshop turns hard-won definitions (what counts as "stale," what counts as "settled") into versioned fixture corpora that gate CI, and adversarial audit passes review the riskiest shipped diffs.
 
 ## Tech Stack
 
@@ -35,47 +56,11 @@ Bain Luck translates prediction markets and betting odds into intuitive probabil
 | iOS/macOS | SwiftUI (shared codebase) | TestFlight |
 | watchOS | SwiftUI (prototype) | Direct install |
 
-**Data Sources:** The Odds API, Kalshi, Polymarket, ESPN, StatPal, DataGolf, MLB Stats API
+**Data Sources:** The Odds API, Kalshi, Polymarket, ESPN, DataGolf, MLB Stats API
 
-## Quick Start
+## How it's built
 
-### Prerequisites
-- Python 3.11+
-- PostgreSQL
-- Redis (for background jobs)
-- Node.js 18+ (for frontend)
-
-### Backend
-
-```bash
-git clone https://github.com/alexander-bain/bainluck.git
-cd bainluck/backend
-
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-cp ../.env.example .env
-# Edit .env with your API keys
-
-alembic upgrade head
-uvicorn app.main:app --reload
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Tests
-
-```bash
-cd backend
-python3 -m pytest tests/test_startup.py -v    # Smoke test (<1s)
-python3 -m pytest tests/ -x -q                # Full suite (3,350+ tests)
-```
+This repo is developed by one person orchestrating multiple AI agent lanes running in parallel: a backend lane, a frontend/iOS lane, a read-only production verification lane, and a fenced adversarial audit lane, all coordinated through file-based work queues, with automated sentinels watching production and filing issues. Product judgment stays human. Taste, ranking, and calibration calls are made by the maintainer and recorded as standing rulings in [docs/PRODUCT-BRAIN.md](docs/PRODUCT-BRAIN.md). The GitHub Issues board is the single source of priority.
 
 ## Project Structure
 
@@ -84,15 +69,15 @@ bainluck/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI entry point
-│   │   ├── models/              # SQLAlchemy models (26 models)
+│   │   ├── models/              # SQLAlchemy models
 │   │   ├── routes/              # API endpoints
 │   │   ├── services/            # External API clients
-│   │   ├── tasks/               # Celery tasks (23 modules)
+│   │   ├── tasks/               # Celery tasks (incl. sentinels)
 │   │   └── utils/               # Pure logic
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,350+ tests
+│   └── tests/                   # Backend test suite
 ├── frontend/
-│   ├── app/                     # Next.js app router (30+ pages)
+│   ├── app/                     # Next.js app router
 │   ├── components/              # React components
 │   └── lib/                     # API client, types
 ├── ios/Bain Luck/               # iOS + macOS + watchOS (SwiftUI)
@@ -105,22 +90,23 @@ bainluck/
 | Doc | Purpose |
 |-----|---------|
 | [Architecture](docs/architecture-reference.md) | System design, aggregation, resilience |
+| [Product Brain](docs/PRODUCT-BRAIN.md) | Standing product rulings and the reasoning behind them |
 | [Feature Reference](docs/feature-reference.md) | Detailed feature documentation |
 | [Design System](docs/design-system.md) | Colors, typography, components |
-| [Backlog](docs/backlog.md) | Outstanding work items |
 | [Completed Features](docs/completed-features.md) | Shipped features log |
 | [Gotchas](docs/gotchas-reference.md) | Known pitfalls and workarounds |
+| [GitHub Issues](https://github.com/alexander-bain/bainluck/issues) | The single source of priority |
 
 ## API
 
 The API is documented at [api.bainluck.com/docs](https://api.bainluck.com/docs) (Swagger UI).
 
 Key endpoints:
-- `GET /api/events` — List events with probabilities
-- `GET /api/events/{id}` — Event detail with full history
-- `GET /api/feed` — Discover feed (events + futures)
-- `GET /api/events/typeahead` — Search suggestions
-- `GET /api/weather/{type}` — Weather prediction markets
+- `GET /api/events` lists events with probabilities
+- `GET /api/events/{id}` returns event detail with full history
+- `GET /api/feed` serves the Discover feed (events + futures)
+- `GET /api/events/typeahead` powers search suggestions
+- `GET /api/calibration` returns calibration data by category
 
 ## License
 

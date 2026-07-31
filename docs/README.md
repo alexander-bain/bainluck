@@ -4,24 +4,29 @@ One screen to navigate the drawer. `CLAUDE.md` (repo root) is the always-loaded
 index + gotcha hot-list; everything below is the deeper reference it points to.
 When you change something, update the doc named in **Update trigger** in the same change.
 
+> **Priority lives on the board, not here.** The
+> [GitHub Issues board](https://github.com/alexander-bain/bainluck/issues) is the
+> only source of priority and status. These docs hold judgment, architecture, and
+> reference — never ordering. (`backlog.md` was retired 2026-07-31; its final
+> snapshot is `archive/backlog-2026-07-24-final.md`.)
+
 > Convention: living docs sit in `docs/`. Point-in-time artifacts (superseded
-> strategy, old prompts, dated diagnoses, trip plans) live in `docs/archive/`
+> strategy, old prompts, dated diagnoses, finished programs) live in `docs/archive/`
 > (see `docs/archive/README.md`). Don't let a dated one-off masquerade as living.
 
-## Plan of record & priorities
+## Judgment & product voice
 | Doc | Purpose | Update trigger |
 |-----|---------|----------------|
-| `execution-plan-2026-07-13.md` | Current operating plan: programs P1–P7, week table, Opus operating model, standing rules | Weekly; when programs ship/change |
+| `PRODUCT-BRAIN.md` | The judgment layer: standing rulings, the WHY behind them, how Alex works, the lane split | When Alex issues a new ruling (append + date) |
 | `PRD.md` | Product voice: vision, reliability bar, journeys, principles (rev 2026-07-14) | When product theses change (Alex rulings) |
-| `backlog.md` | Strategic backlog: priorities, rationale, long-term context | When items ship, are added, or reprioritized |
-| `github-workflow.md` | GitHub Issues/Project operating model + backlog-sync rules | When labels, templates, columns, or agent-handoff rules change |
 | `decisions-2026-07-06.md` | Decision register (the calibration "done" bar and related rulings) | When a durable product/eng decision is ratified |
+| `github-workflow.md` | GitHub Issues/Project operating model, labels, columns, agent-handoff rules | When labels, templates, columns, or handoff rules change |
 
 ## Architecture & engineering reference
 | Doc | Purpose | Update trigger |
 |-----|---------|----------------|
 | `architecture-reference.md` | Core system design: aggregation, resilience, matching, tasks, sentinels, cockpit, admin | When architecture changes |
-| `gotchas-reference.md` | Full gotcha catalog + incident learnings (CLAUDE.md keeps the hot ~15) | When a new gotcha is discovered |
+| `gotchas-reference.md` | Full gotcha catalog + incident learnings (CLAUDE.md keeps the hot list) | When a new gotcha is discovered |
 | `quality-audit.md` | Audit-script usage + check catalog | When checks are added/removed |
 | `hill-climb-guide.md` | Matching-accuracy hill-climb playbook (measure → fix bucket → re-measure) | When matching layers/gotchas change |
 | `aggregation-weighting-methodology.md` | How the blended probability + source weights are computed | When source weights or the blend change |
@@ -41,39 +46,33 @@ When you change something, update the doc named in **Update trigger** in the sam
 | Doc | Purpose | Update trigger |
 |-----|---------|----------------|
 | `strategy-instant-answers.md` | Instant Answers program: fastest merged entity-question answer (search + speed) | When the search/speed program changes |
-| `golf-product-strategy.md` | Golf coverage & product strategy | When golf strategy changes |
-| `calibration-project.md` | Calibration program scope & outcomes | When the calibration program changes |
-| `championship-grids-project.md` | Championship-grid program | When grid scope changes |
-| `prediction-market-improvement-plan.md` | Prediction-market coverage/matching improvement plan | When the plan changes |
 | `search-curation-spec.md` | Search result curation spec | When search curation rules change |
 | `app-store-launch-plan.md` | App Store submission plan & checklist | When the launch plan changes |
 
-## Runbooks, playbooks & setup guides
+## Runbooks & playbooks
 | Doc | Purpose | Update trigger |
 |-----|---------|----------------|
 | `calibration-diagnosis-playbooks.md` | Step-by-step calibration diagnosis recipes | When a new diagnosis class is learned |
 | `search-fts-runbook.md` | Postgres full-text search runbook | When search indexing changes |
 | `alert-intake.md` | Alert-intake operating model (auto-filed issues → board) | When the alert/sentinel rails change |
-| `ios-app-setup-guide.md` | iOS/macOS build & signing setup | When the native build setup changes |
-| `ga4-setup-guide.md` | GA4 analytics setup guide | When analytics config changes |
 
-## Design briefs & specialized references
-| Doc | Purpose |
-|-----|---------|
-| `design-brief-event-detail-v2.md` | Event-detail redesign brief (props = the script) |
-| `claude-design-context.md` | Context handed to Claude Design projects |
-| `ios-code-quality-plan.md` | iOS code-quality/refactor plan |
-| `tv-mode-plan.md` | TV / second-screen mode plan |
+## Specialized references
+| Path | Purpose |
+|------|---------|
+| `chart_census.md` | Inventory of chart surfaces across web and native |
+| `audits/` | Point-in-time audit outputs |
 | `designs/`, `mockups/`, `design-handoffs/` | HTML mockups & design handoff bundles |
 
-## Point-in-time diagnoses & inventories
-Dated, single-purpose captures — read for context, not as living spec. Candidates
-for `archive/` once fully consumed:
-`sports-page-leak-diagnosis-2026-06-18.md`, `us-open-market-coverage-diagnosis-2026-06-18.md`,
-`weather-market-inventory.md`, `issue-roadmap-2026-q3.md` (superseded by the execution plan),
-`ds-veteran-analysis.md`, `ga4-setup-prompt.md`, and the trip cluster
-(`trip-recap-and-next-steps.md`, `italy-trip-masters-plan.md`, `travel-guide.md`).
-
 ## Archive
-`docs/archive/` holds superseded strategy docs, old prompts, dated diagnoses, and
-trip plans — preserved, never deleted. See `docs/archive/README.md`.
+`docs/archive/` holds superseded strategy docs, retired program plans, old prompts,
+dated diagnoses, setup guides, and the final backlog snapshot — preserved, never
+deleted. See `archive/README.md`. Notable entries retired on 2026-07-31:
+
+- `archive/backlog-2026-07-24-final.md` — the retired strategic backlog (board owns priority now)
+- `archive/execution-plan-2026-07-13.md`, `archive/issue-roadmap-2026-q3.md` — superseded planning docs
+- `archive/calibration-project.md`, `archive/championship-grids-project.md`, `archive/prediction-market-improvement-plan.md`,
+  `archive/golf-product-strategy.md`, `archive/tv-mode-plan.md`, `archive/ios-code-quality-plan.md` — finished or superseded programs
+- `archive/ga4-setup-guide.md`, `archive/ga4-setup-prompt.md`, `archive/ios-app-setup-guide.md` — one-time setup guides
+- `archive/design-brief-event-detail-v2.md`, `archive/claude-design-context.md`, `archive/design-handoffs/` (the weather + economics chat transcripts) — consumed design briefs
+- `archive/sports-page-leak-diagnosis-2026-06-18.md`, `archive/us-open-market-coverage-diagnosis-2026-06-18.md`,
+  `archive/weather-market-inventory.md`, `archive/ds-veteran-analysis.md`, `archive/trip-recap-and-next-steps.md` — dated one-offs

@@ -131,3 +131,6 @@ test_chart.html
 # iOS build artifacts
 ios/Bain Luck/build/
 docs/designs/
+
+# Personal / private notes — never commit
+private/

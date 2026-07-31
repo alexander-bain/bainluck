@@ -1,12 +1,91 @@
 # Completed Features (Shipped)
 
-> **Note (2026-07-14):** Entries before May 20 are the granular daily log. The block
-> below rolls up ~8 weeks (May 20 → mid-July) at the program level; per-item detail
-> lives in GitHub issues (#N), `.claude/handoff/` reports, and `docs/feature-reference.md`.
+> **Note (2026-07-14):** Entries before May 20 are the granular daily log. The blocks
+> below roll up at the program level; per-item detail lives in GitHub issues (#N),
+> `.claude/handoff/` reports, and `docs/feature-reference.md`.
+
+## July 14 – July 31, 2026 — Cold-load speed, feed trust, calibration durability, consent authority
+
+Rolled up through Queue 289 / L2-220 / C96 (`86c4abcb`). Lane prefixes: `Queue N` = Lane 1
+backend, `L2-N` = Lane 2 frontend/native, `codex:` = the fenced eval workshop, `C-N` = Codex
+audit missions.
+
+### Discover cold-load speed (the #1459 / #1472 / #1475 / #1480 program)
+- ✅ **One absolute feed deadline + single-owner singleflight** — `/api/feed` runs under a
+  hard request budget with exactly-one-owner singleflight and inert diagnostics, so a slow
+  candidate pool degrades instead of piling up (Queues 271, 277, 280).
+- ✅ **Shared user-independent candidate base** — the expensive candidate-ID pool is computed
+  once and shared across cold requests instead of per-principal (Queues 278, 285), with the
+  editorial global-ID materialization removed from the hot path (Queue 273).
+- ✅ **Collision-free candidate-base identity (v2) + monotonic publication** — identity v1→v2
+  is dedupe+sort only (deliberately no case/NFC folding), with a truthful switch, monotonic
+  publication, and per-service-tier monotonicity (Queues 288, 289). Residual: deployed p95 +
+  provenance proof still owed on #1459/#1475.
+- ✅ **Native first-card critical path** — bounded first page, classified retries, first-card
+  telemetry, progressive Sports/Discover rendering, immutable render-generation tokens, and
+  principal-bound response caches so a signed-out payload can never render for a signed-in
+  principal (L2-201, L2-206 through L2-213).
+- ✅ **Web first-load speed + client freshness truth** — linear Discover interleave, memoized
+  presentation, stale-while-revalidate last-good cache (L2-197, L2-202, L2-214).
+
+### Feed trust & card authority
+- ✅ **Feed cache integrity + card authority** — cache paths report truthfully on every branch,
+  and each card declares its authority (Queues 275, 283; #1483, #1487).
+- ✅ **Fail-closed empty predictive cards** — live/upcoming concept cards are suppressed until
+  they can lead with a real result, plus Sports cancellation parity and a first-load contract
+  test (L2-215). Durable fix (backend concept-outcome inlining) still open.
+- ✅ **Single-sourced candidate-pool specs** — the admin trace had drifted from the real pool
+  definitions; both now read one spec (Queue 286).
+- ✅ **Search typeahead race hardening** — stale-response and cancellation races fixed (L2-198).
+- ✅ **My Stuff identity boundary + progressive first team card** (L2-217, #1490).
+
+### Calibration durability
+- ✅ **Durable precompute publication + last-good route fallback** — the calibration route no
+  longer 503s when a precompute is contended; it serves last-good and reports the drift
+  (Queue 272, #1459). Precompute limit raised 900→1500s for contended compute.
+- ✅ **DB `statement_timeout` backstop** on calibration precompute (Queue 274, #1479).
+- ✅ **Calibration provenance + resolved-cohort immutability** — resolved cohorts are frozen so
+  a later pass cannot silently re-grade stored values (Queue 284).
+
+### Privacy, consent, and account boundaries
+- ✅ **One web telemetry consent authority + truthful revoke** — a single emission authority
+  replaced the scattered consent checks, and revoke actually stops emission (L2-219, L2-220,
+  #1453). Includes the native search privacy boundary.
+- ✅ **Google access-token audience boundary** (Queue 282) and **Play session anonymization**
+  (L2-214) — both closing account-boundary classes the Codex audit fixtures cover.
+- ✅ **Analytics honesty** — GA4 `page_type` honesty, single-page-view contract tests, and the
+  `preferred_sport` user property populated from real affinities (L2-203, L2-204, L2-205).
+
+### Sentinels, filers, and coverage ledgers
+- ✅ **Marker-based Daily Health Check filer** — stops the #1477 clobber; the filer owns exactly
+  its own issue via an evidence fingerprint and fails closed on a cold create (Queues 276, 279).
+- ✅ **Expected-event inventory + named-event recovery ledger** (#1467, Queue 269) and the
+  **Tier-1 Polymarket event + prop discovery ledger** (#1468, L1-270) — coverage gaps are now
+  measured against a named expectation instead of inferred from absence.
+- ✅ **Manus retired** — Alex ruling 2026-07-31: the Manus browser-verification rail is
+  permanently retired (the collection really died ~07-28). C96 staged the replacement rail;
+  #1497 is the retirement packet. Nothing in the repo should instruct reviving it.
+
+### Native (iOS / macOS / watchOS)
+- ✅ **Single 0–100 blend axis on the native event chart** — replaced the mirrored ±50 delta
+  rendering; blend-only default line (L2-216).
+- ✅ **Native concept fixture + Watch marquee renderability scan** with the marquee extracted
+  for testability (L2-200, #1471).
+- ✅ **Native pagination generation guard** (L2-213, #1472) and **owned Sports load rail** with
+  structured sibling ownership and real render telemetry (L2-209, L2-211, #1480).
+
+### The fenced eval workshop (Codex lane)
+- ✅ **Versioned contract fixtures now gate CI** across: cold-feed equivalence and latency,
+  feed cardinality/trust/speed, concept + lifecycle + probability authority, calibration
+  population integrity, degraded-cache and kid-privacy behavior, account and closure
+  boundaries, Discover staleness authority, grid freshness truth, game-moments persistence,
+  native capability parity, pre-commence live authority, My Stuff first-card authority, and
+  Review/Verify closure authority. Codex writes only `backend/scripts/evals/` + `tests/evals/`
+  and never pushes.
 
 ## May 20 – July 14, 2026 — Reliability program, event concepts, sentinels, cockpit, calibration autopilot
 
-Organized by the programs in `docs/execution-plan-2026-07-13.md` (P1–P7).
+Organized by the programs in the (now archived) `docs/archive/execution-plan-2026-07-13.md` (P1–P7).
 
 ### Event concepts + hubs (P5 — the "unified surfaces" priority)
 - ✅ **Event concept pages** — `/event/<domain>/<slug>` renders tournaments, fight cards, ceremonies, and elections as one event-framed page (H1 = event, not a market). Generic envelope `GET /api/event/{key}` + per-domain adapters (golf, tennis, F1, UFC, boxing, awards, elections) over `utils/event_concept.py`. `primary.kind` = `winner_field` or `co_equal_list`.
@@ -51,7 +130,7 @@ Organized by the programs in `docs/execution-plan-2026-07-13.md` (P1–P7).
 
 ### Docs & governance
 - ✅ **PRD rev 2026-07-14** — full rewrite folding the ratified theses (reliability definition of success, props = script/divergence, morning digest v1, P7 Apple surfaces, Instant Answers, universal matching, settled-state, no-gambling-enticements).
-- ✅ **Execution plan of record** (`docs/execution-plan-2026-07-13.md`), decisions register (`docs/decisions-2026-07-06.md`), governance sync (#184), docs sweep (#192-docs / L2-115-docs).
+- ✅ **Execution plan of record** (`docs/archive/execution-plan-2026-07-13.md`, archived 2026-07-31), decisions register (`docs/decisions-2026-07-06.md`), governance sync (#184), docs sweep (#192-docs / L2-115-docs).
 
 ## May 19-20, 2026 — App Store Fixes + Bug Triage + Route Refactors
 
@@ -147,7 +226,7 @@ Organized by the programs in `docs/execution-plan-2026-07-13.md` (P1–P7).
 - ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.
 - ✅ **Shared native utilities** — extracted clipboard, share URL, formatting, sport display, flag URL, flow layout, and color helpers. Share links now avoid force-unwrapped URLs.
 - ✅ **Native model/service docs** — added concise doc comments across native model types and key API/auth/navigation service methods.
-- ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches. Current package-resolution blocker is tracked in `docs/backlog.md`.
+- ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches. Current package-resolution blocker is tracked on the GitHub Issues board.
 
 ### Backend Cleanup
 - ✅ **Playoff conference maps made data-driven** — removed large static conference fallback maps from `routes/playoffs.py`; playoff grouping now uses `Team.standings_data` with tolerant label parsing and tests for string/object standings payloads.
@@ -169,7 +248,7 @@ Organized by the programs in `docs/execution-plan-2026-07-13.md` (P1–P7).
 - ✅ **May 18 documentation sync** — verified the recent guardrail commits were already pushed, mirrored gotchas 71-75 into `CLAUDE.md`, and corrected the extended gotchas header.
 - ✅ **GA4 Admin setup script** — added idempotent `backend/scripts/setup_ga4.py` for custom dimensions, key events, and audiences, with focused config/planning tests.
 
-**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `backend/tests/`, `backend/tests/integration/`, `backend/app/utils/league_classification.py`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
+**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `backend/tests/`, `backend/tests/integration/`, `backend/app/utils/league_classification.py`, `docs/archive/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 
 ## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
 

@@ -39,7 +39,16 @@ done
 python3 scripts/audit_grid_accuracy.py
 ```
 
-### Manus ground truth (for manual verification)
+### Manus ground truth (for manual verification) — RETIRED 2026-07-31
+
+> **Manus is permanently retired** (Alex ruling 2026-07-31). The collection stopped
+> producing results around 2026-07-28 and the rail is not coming back — do not rotate
+> or reactivate the key, and do not stage work that depends on a Manus-fed file. The
+> replacement verification rail was staged as C96; #1497 is the retirement packet.
+> The steps below are kept only to document how the historical ground-truth files
+> were produced. For grid accuracy, the Grid Sentinel's sampled ground-truth
+> self-check (merged probability must lie inside its own source envelope) replaced
+> this file on accuracy duty.
 
 Prompt: `Manus/prompts/event_matching_ground_truth.md`
 
@@ -144,4 +153,4 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/a
 | `utils/market_label_normalization.py` | Category classification + tier assignment |
 | `utils/futures_categorization.py` | `is_game_prop()` + sport detection |
 | `utils/sport_keys.py` | Ticker prefix maps (single source of truth) |
-| `Manus/prompts/event_matching_ground_truth.md` | Manus sweep prompt |
+| `Manus/prompts/event_matching_ground_truth.md` | Manus sweep prompt — RETIRED 2026-07-31, historical only |

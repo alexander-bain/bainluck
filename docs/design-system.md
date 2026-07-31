@@ -1,6 +1,6 @@
 # Bain Luck Design System
 
-> **Source**: Extracted by Claude Design (April 2026) from `frontend/` codebase + user brief. Settled-state, concept-page, threshold-group, end-of-feed, and cockpit sections added 2026-07-14 from the shipped implementation.
+> **Source**: Extracted by Claude Design (April 2026) from `frontend/` codebase + user brief. Settled-state, concept-page, threshold-group, end-of-feed, and cockpit sections added 2026-07-14 from the shipped implementation. Refreshed 2026-07-31 through Queue 289 / L2-220 (dollar-volume ruling, nothing-beats-unhelpful, fail-closed cards, progressive first card, native chart axis parity).
 > **Canonical tokens**: `frontend/app/globals.css`, `frontend/app/design-tokens.css`, `frontend/tailwind.config.ts`.
 > **Usage**: Reference this doc when writing Claude Design prompts or implementing new UI in Claude Code.
 
@@ -183,9 +183,10 @@ Horizontal scrollable row, pill-shaped (`9999px` radius). Active chip: `bg-text-
 
 ## STANDING PRODUCT RULINGS (bind every surface)
 
-Two Alex rulings sit above the visual system — they decide *what* renders before this doc decides *how*.
+Alex's standing rulings sit above the visual system — they decide *what* renders before this doc decides *how*. The full set with reasoning lives in `docs/PRODUCT-BRAIN.md`.
 
-- **Probabilities only, never odds.** No American (−150/+130), decimal, or spread-style prices anywhere a user can see. Probability (`%`) is the only quantity format on any surface. Payloads may still carry `american_odds` for API consumers, but no rendered row prints it. Book/market-mechanics language ("bet", "payout", "juice", "odds") never appears in UI copy. Any odds string that reaches the screen is a P1 bug (the futures-detail `+9900` leak, L2-48). The anti-gambling-enticement thesis is the product's reason to exist.
+- **Probabilities only, never odds — and never dollar volume.** No American (−150/+130), decimal, or spread-style prices anywhere a user can see. Probability (`%`) is the only quantity format on any surface. Payloads may still carry `american_odds` for API consumers, but no rendered row prints it. Book/market-mechanics language ("bet", "payout", "juice", "odds") never appears in UI copy. Any odds string that reaches the screen is a P1 bug (the futures-detail `+9900` leak, L2-48). **Dollar volume as social proof is banned too** (ruling 2026-07-30): "$6.6M changed hands" framing violates the same thesis, whether in prose or a chart attribution line. The *word* "odds" in editorial copy is fine; it is price formats and dollar framing that are banned. The anti-gambling-enticement thesis is the product's reason to exist.
+- **Nothing beats unhelpful.** Silence is better than filler. A commentary box that states the obvious, an empty chart frame, an unexplained chip — remove it rather than shipping it. Annotations are explainability-gated: name a real cause with confidence, or render nothing. Filler erodes trust faster than absence does.
 - **The blend is the product.** One clean blended probability per question. Source names are quiet data-row chips at most, never in headlines, and per-source *lines* are forbidden on charts. Source divergence is a data-quality bug to fix upstream, not a feature to display. Three deliberate exceptions only: category-page cross-source spotlights, the playoffs "Sources" line, and My Stuff source dots.
 - **Settled means settled** (see next section) and **no chart smoothing, ever** (fixed 0–100 axis; ugly movement is a data bug to fix, not a curve to sand down — see `chart-design-spec.md`).
 
@@ -208,6 +209,22 @@ One system-wide rule: **a finished thing shows its result, never a stale live af
 **Props, graded ("the script, graded")** (`components/PlayerPropsDashboard.tsx`): four states — `pre | live | done | settled`. A graded `StatBox` shows the actual stat colored by hit (team accent) vs miss (`#EF4444`), "of {line}", and a **"HIT"/"MISS"** pill; it prefers the authoritative server grade (`serverActual/serverHit`). Settled-but-ungradeable renders a muted **"Resolved · grading unavailable"** — never the misleading ~100%/0% pre bar (L2-112).
 
 **Charts** (`OddsChart`, `components/event/SettledPathChart.tsx`): a completed chart shows the *full journey*. The domain ends at the real last-snapshot time, never the backend processing timestamp (gotcha #22/#46); the settled concept chart ("Path to resolution") is fixed 0–100, step-interpolated, no smoothing.
+
+**Native parity** (`OddsChartView`, L2-216): the native event chart uses the **same single 0–100 axis** as web, defaulting to the blend-only line. The old mirrored ±50 delta rendering is gone — it was the main reason users fell back to Kalshi/ESPN during big games.
+
+---
+
+## LOADING & FAIL-CLOSED RENDERING
+
+Speed and honesty are one system: what renders while data is in flight is a design decision, not an implementation detail.
+
+**Progressive first card.** Web and native both render a bounded first page and paint the first card as soon as it is real, rather than blocking on a full payload (L2-207, L2-211, L2-217, #1480). Retries are classified — a timeout, an auth failure, and an empty result are visibly different states, never one generic spinner.
+
+**Render-generation tokens.** Each render carries an immutable generation token so a late response from a superseded request can never paint over a newer one (L2-210 → L2-213). Response caches are principal-bound: a signed-out payload must never render for a signed-in principal.
+
+**Fail closed on empty.** A predictive card that cannot lead with a real result is **suppressed, not rendered empty** (L2-215). An empty predictive shell reads as a broken app; absence reads as "nothing here yet." This is the loading-state corollary of *nothing beats unhelpful*.
+
+**Last-good over nothing.** Where a cache exists, a stale-but-labeled last-good render beats an error state (L2-197, L2-214) — provided the staleness is stated truthfully in the UI, never silently.
 
 ---
 
