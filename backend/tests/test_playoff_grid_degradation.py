@@ -63,15 +63,27 @@ class TestGridPayloadUsable:
 
 
 class TestMarkLastGood:
-    def test_marks_degraded_and_preserves_payload(self):
+    def test_timeout_serve_is_degraded_and_preserves_payload(self):
         payload = {"teams": [{"name": "Rays"}], "columns": [{"key": "championship"}]}
-        marked = _mark_last_good(payload, "timeout")
+        marked = _mark_last_good(payload, "timeout", degraded=True)
         assert marked["degraded"] is True
         assert marked["degraded_reason"] == "timeout"
         assert marked["stale"] is True
+        assert marked["stale_reason"] == "timeout"
         # Every original key survives byte-for-byte.
         assert marked["teams"] == [{"name": "Rays"}]
         assert marked["columns"] == [{"key": "championship"}]
+
+    def test_cache_miss_serve_is_stale_but_NOT_degraded(self):
+        """A routine between-warms last-good serve is real, complete data.
+        Flagging it `degraded` would fire RED on every healthy grid whose fresh
+        key is cold — exactly the cry-wolf the sentinel exists to avoid."""
+        marked = _mark_last_good({"teams": [{"name": "Oilers"}]}, "cache_miss",
+                                 degraded=False)
+        assert marked["stale"] is True
+        assert marked["stale_reason"] == "cache_miss"
+        assert "degraded" not in marked
+        assert "degraded_reason" not in marked
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +195,10 @@ class TestTimeoutDegradation:
         assert "degraded" not in result
 
     @pytest.mark.asyncio
-    async def test_stale_fallback_is_labelled(self):
+    async def test_stale_fallback_is_labelled_but_not_degraded(self):
         """Serving last-good when the fresh key is cold is correct — serving it
-        UNLABELLED is what made a stale grid indistinguishable from a fresh one."""
+        UNLABELLED is what made a stale grid indistinguishable from a fresh one.
+        It is `stale`, NOT `degraded`: the build did not fail."""
         import json
 
         good = {"teams": [{"name": "Oilers"}], "columns": []}
@@ -194,8 +207,11 @@ class TestTimeoutDegradation:
         with patch("app.tasks.redis_state.get_async_redis_client", return_value=rc):
             result = await get_playoff_grid_cached("nhl", None, 10, False, MagicMock())
 
-        assert result["degraded"] is True
-        assert result["degraded_reason"] == "cache_miss"
+        assert result["stale"] is True
+        assert result["stale_reason"] == "cache_miss"
+        assert "degraded" not in result, (
+            "a routine stale serve must not be classified as a failure"
+        )
         assert result["teams"] == [{"name": "Oilers"}]
 
     @pytest.mark.asyncio

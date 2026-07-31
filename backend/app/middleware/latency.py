@@ -46,6 +46,17 @@ _ALWAYS_SAMPLE = frozenset(
 # Rolling window: keep samples from the last hour.
 WINDOW_SECONDS = 3600
 
+# #1500: hard ceiling on members per endpoint, on top of the time window.
+#
+# Always-sampling /api/feed multiplies its sorted set by ~SAMPLE_RATE, and Redis
+# here is Premium-0 / 50 MB / allkeys-lru — where an oversized working set evicts
+# COLD keys regardless of TTL (r320 lost the grid-sentinel verdict exactly that
+# way). The time window alone bounds nothing under a traffic spike, so the size
+# is capped explicitly. 2000 samples is far above the n=100 that p99 needs and
+# costs ~60 KB per endpoint, so the whole rail stays a rounding error against
+# 50 MB.
+MAX_SAMPLES_PER_ENDPOINT = int(os.getenv("LATENCY_MAX_SAMPLES", "2000"))
+
 # #1500: cache-status buckets recorded alongside each sample. Constrained to a
 # fixed allowlist so the dimension can never grow unbounded — an unknown header
 # value collapses to "other". Warm hits dominate the /api/feed population, so a
@@ -182,6 +193,11 @@ class LatencyMiddleware(BaseHTTPMiddleware):
             pipe.zadd(key, {member: now})
             # Trim entries older than the window.
             pipe.zremrangebyscore(key, "-inf", now - WINDOW_SECONDS)
+            # ...and cap the member count so a traffic spike on an
+            # always-sampled endpoint cannot grow the working set (#1500).
+            # Rank 0 is the oldest (score = timestamp), so this drops the
+            # oldest overflow and keeps the most recent window.
+            pipe.zremrangebyrank(key, 0, -(MAX_SAMPLES_PER_ENDPOINT + 1))
             # Set TTL so keys self-clean if traffic stops.
             pipe.expire(key, WINDOW_SECONDS + 60)
             # Track this endpoint in the master set.

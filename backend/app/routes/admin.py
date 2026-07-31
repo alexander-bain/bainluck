@@ -555,13 +555,18 @@ async def get_latency_stats(
     from app.middleware.latency import _ALWAYS_SAMPLE
     from app.utils.latency_stats import parse_sample_member, summarize
 
+    # `get_redis_client()` constructs lazily, so a dead Redis surfaces on the
+    # FIRST command, not here. Both must be inside the guard or an unreachable
+    # store returns an opaque 500 instead of a truthful "cannot measure" 503.
     try:
         from app.tasks.redis_state import get_redis_client
         r = get_redis_client()
-    except Exception:
-        raise HTTPException(status_code=503, detail="Redis unavailable")
+        endpoints_set = r.smembers("latency:_endpoints")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Redis unavailable: {str(exc)[:160]}"
+        )
 
-    endpoints_set = r.smembers("latency:_endpoints")
     if not endpoints_set:
         return {"endpoints": [], "note": "No latency data collected yet"}
 

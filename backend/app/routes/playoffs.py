@@ -2301,19 +2301,28 @@ def _grid_payload_usable(payload) -> bool:
     return isinstance(teams, list) and len(teams) > 0
 
 
-def _mark_last_good(payload: dict, reason: str) -> dict:
-    """Label a payload as a degraded last-good serve.
+def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
+    """Label a last-good serve. Additive fields only; existing keys untouched.
 
-    The data is real (it is the last successful build), but it is NOT a fresh
-    measurement, and consumers — the Grid Sentinel above all — must be able to
-    tell. ``degraded``/``degraded_reason``/``stale`` are additive fields; every
-    existing key is preserved byte-for-byte.
+    Two DIFFERENT conditions share this path and must not share a severity:
+
+    * ``degraded=False`` (``reason="cache_miss"``) — routine. The fresh key was
+      cold, so the bounded last-good key answered. The data is a real, complete
+      grid; it is just not this minute's build. Marked ``stale`` so consumers can
+      see it, but NOT ``degraded``: treating an ordinary between-warms serve as a
+      failure would fire RED on three healthy grids every deploy, which is the
+      cry-wolf the Grid Sentinel exists to avoid.
+    * ``degraded=True`` (``reason="timeout"``) — the live build FAILED and we are
+      substituting old data for a measurement we could not make. That is a real
+      defect and must read as one.
     """
     if not isinstance(payload, dict):
         return payload
-    payload["degraded"] = True
-    payload["degraded_reason"] = reason
     payload["stale"] = True
+    payload["stale_reason"] = reason
+    if degraded:
+        payload["degraded"] = True
+        payload["degraded_reason"] = reason
     return payload
 
 
@@ -2358,7 +2367,7 @@ async def get_playoff_grid_cached(
                 candidate = json.loads(stale)
                 if _grid_payload_usable(candidate):
                     await rc.aclose()
-                    return _mark_last_good(candidate, "cache_miss")
+                    return _mark_last_good(candidate, "cache_miss", degraded=False)
             await rc.aclose()
         except Exception:
             pass  # Fall through to live query
@@ -2397,7 +2406,7 @@ async def get_playoff_grid_cached(
             except Exception:
                 last_good = None
         if last_good is not None:
-            return _mark_last_good(last_good, "timeout")
+            return _mark_last_good(last_good, "timeout", degraded=True)
         raise HTTPException(
             status_code=503,
             detail=(

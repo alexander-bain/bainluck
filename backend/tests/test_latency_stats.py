@@ -285,3 +285,48 @@ async def test_endpoint_requires_admin_auth():
         with pytest.raises(HTTPException) as exc:
             await get_latency_stats(MagicMock(), None, 20)
     assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Redis footprint bound
+# ---------------------------------------------------------------------------
+class TestWriteBound:
+    async def test_sample_write_caps_member_count(self):
+        """Always-sampling /api/feed multiplies its sorted set ~SAMPLE_RATE-fold.
+        Redis is Premium-0 / 50 MB / allkeys-lru, where an oversized working set
+        evicts cold keys regardless of TTL (r320 lost the grid-sentinel verdict
+        that way), so the member count is capped explicitly."""
+        from app.middleware import latency
+
+        latency._request_counters.clear()
+        pipe = MagicMock()
+        redis = MagicMock()
+        redis.pipeline.return_value = pipe
+
+        request = MagicMock()
+        request.url.path = "/api/feed"
+        response = MagicMock(headers={"x-feed-cache": "miss"})
+
+        async def _call_next(_req):
+            return response
+
+        mw = latency.LatencyMiddleware(app=MagicMock())
+        with patch.object(latency, "_get_redis", return_value=redis):
+            await mw.dispatch(request, _call_next)
+
+        # The rank trim is present and keeps the NEWEST MAX_SAMPLES_PER_ENDPOINT.
+        pipe.zremrangebyrank.assert_called_once_with(
+            "latency:/api/feed", 0, -(latency.MAX_SAMPLES_PER_ENDPOINT + 1)
+        )
+        # The time-window trim is still there too — both bounds apply.
+        assert pipe.zremrangebyscore.called
+        # The cache bucket rides the existing member; no new key family.
+        member = list(pipe.zadd.call_args.args[1].keys())[0]
+        assert member.endswith(":miss")
+        assert redis.pipeline.call_count == 1
+
+    def test_cap_is_comfortably_above_p99_requirement(self):
+        from app.middleware.latency import MAX_SAMPLES_PER_ENDPOINT
+        from app.utils.latency_stats import min_samples_for
+
+        assert MAX_SAMPLES_PER_ENDPOINT >= min_samples_for(99) * 10
