@@ -254,54 +254,165 @@ async def _precompute_discover_candidate_base():
     return len(market_ids)
 
 
-async def _precompute_grids():
+GRID_WARM_TIMEOUT_S = 120
+GRID_WARM_LEAGUES = ["mlb", "nba", "nhl", "golf"]
+
+# Where the run report lands for the read-only admin rail. One key, overwritten
+# per run, TTL well past the hourly beat so a missed beat reads as STALE rather
+# than vanishing (Redis is allkeys-lru — a cold key is evicted regardless of
+# TTL, and an absent report is itself the signal that the beat is not running).
+PRECOMPUTE_STATUS_KEY = "bainluck:precompute:category_pages:last"
+PRECOMPUTE_STATUS_TTL = 6 * 3600
+
+
+async def _precompute_grids(report: dict | None = None):
     """Pre-warm championship grid caches for MLB, NBA, NHL, Golf.
 
     #901: golf was missing from this warm list, so `/playoffs/golf` read an
     unwarmed `bainluck:category:playoffs:golf` key on every load → cold rebuild
     via ~15 sequential DataGolf calls (~12s) and frequent skeleton stalls. Golf
     is warmed here so the request path hits Redis like the other leagues.
+
+    #1484 observability: every league's warm is now recorded with an explicit
+    outcome (``ok`` / ``timeout`` / ``error`` / ``not_attempted``), its duration,
+    and the team count it produced. Before this, a league whose warm timed out
+    was swallowed into ``logger.exception`` and the return value listed only the
+    SUCCESSES — so "MLB timed out at 120s" and "MLB was never reached because
+    the task ran out of budget" were indistinguishable from the outside. That
+    ambiguity is precisely why the MLB grid could sit cold for days. Nothing here
+    tunes a time limit; it makes the limits' effects visible first.
     """
     from app.tasks.base import get_task_session
     from app.routes.playoffs import get_playoff_grid
     from app.tasks.redis_state import get_redis_client
     import asyncio
+    import time as _time
 
     rc = get_redis_client()
     warmed = []
-    for slug in ["mlb", "nba", "nhl", "golf"]:
+    leagues: dict[str, dict] = {
+        slug: {"outcome": "not_attempted"} for slug in GRID_WARM_LEAGUES
+    }
+    if report is not None:
+        report["grid_leagues"] = leagues
+        report["grid_warm_timeout_s"] = GRID_WARM_TIMEOUT_S
+
+    for slug in GRID_WARM_LEAGUES:
+        started = _time.monotonic()
+        leagues[slug] = {"outcome": "started"}
         try:
             async with get_task_session() as session:
                 result = await asyncio.wait_for(
                     get_playoff_grid(slug, hours=None, top=10, debug=False, db=session),
-                    timeout=120,
+                    timeout=GRID_WARM_TIMEOUT_S,
                 )
                 payload = json.dumps(result, default=str)
                 cache_key = f"bainluck:category:playoffs:{slug}"
                 rc.setex(cache_key, 3600, payload)
                 rc.setex(f"{cache_key}:stale", 86400, payload)
                 warmed.append(slug)
-        except Exception:
+                leagues[slug] = {
+                    "outcome": "ok",
+                    "duration_s": round(_time.monotonic() - started, 1),
+                    "teams": len(result.get("teams") or []),
+                    "columns": len(result.get("columns") or []),
+                }
+                logger.info(
+                    "Warmed %s grid in %.1fs (%d teams)",
+                    slug, leagues[slug]["duration_s"], leagues[slug]["teams"],
+                )
+        except asyncio.TimeoutError:
+            leagues[slug] = {
+                "outcome": "timeout",
+                "duration_s": round(_time.monotonic() - started, 1),
+                "timeout_s": GRID_WARM_TIMEOUT_S,
+            }
+            logger.error(
+                "Grid warm TIMEOUT for %s after %ss — the request path will "
+                "rebuild cold and may degrade (#1484)",
+                slug, GRID_WARM_TIMEOUT_S,
+            )
+        except Exception as exc:
+            leagues[slug] = {
+                "outcome": "error",
+                "duration_s": round(_time.monotonic() - started, 1),
+                "error": str(exc)[:200],
+            }
             logger.exception("Failed to precompute %s grid", slug)
     return warmed
 
 
+def _write_precompute_report(report: dict) -> None:
+    """Persist the run report for the read-only admin rail. Never raises."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().setex(
+            PRECOMPUTE_STATUS_KEY,
+            PRECOMPUTE_STATUS_TTL,
+            json.dumps(report, default=str),
+        )
+    except Exception as exc:
+        logger.warning("Category precompute report write failed: %s", exc)
+
+
 async def _precompute_all_category_pages():
-    """Precompute all category page caches."""
-    results = {}
-    for name, fn in [
+    """Precompute all category page caches.
+
+    #1484: the run is now self-reporting. Each section records dispatch →
+    start → success/failure with a duration, and the whole report is written to
+    Redis even when a section blows up, so ``/api/admin/category-precompute/last``
+    can answer "did the MLB grid warm actually run, and how long did it take?"
+    without reading worker logs.
+    """
+    import time as _time
+
+    sections = [
         ("politics", _precompute_politics),
         ("entertainment", _precompute_entertainment),
         ("economics", _precompute_economics),
         ("weather", _precompute_weather),
         ("golf", _precompute_golf),
         ("grids", _precompute_grids),
-    ]:
-        try:
-            results[name] = await fn()
-        except Exception:
-            logger.exception("Failed to precompute %s category page", name)
-            results[name] = "error"
+    ]
+    run_started = _time.monotonic()
+    report: dict = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        # Ordered dispatch plan — a section still listed as "not_attempted" when
+        # the report lands means the task died or ran out of budget before
+        # reaching it (grids run LAST, so they starve first).
+        "sections": {name: {"outcome": "not_attempted"} for name, _ in sections},
+        "section_order": [name for name, _ in sections],
+    }
+    results = {}
+    try:
+        for name, fn in sections:
+            started = _time.monotonic()
+            report["sections"][name] = {"outcome": "started"}
+            try:
+                results[name] = (
+                    await fn(report) if name == "grids" else await fn()
+                )
+                report["sections"][name] = {
+                    "outcome": "ok",
+                    "duration_s": round(_time.monotonic() - started, 1),
+                    "result": results[name],
+                }
+            except Exception as exc:
+                logger.exception("Failed to precompute %s category page", name)
+                results[name] = "error"
+                report["sections"][name] = {
+                    "outcome": "error",
+                    "duration_s": round(_time.monotonic() - started, 1),
+                    "error": str(exc)[:200],
+                }
+    finally:
+        # Written in `finally` so a soft-time-limit kill (SoftTimeLimitExceeded
+        # is a BaseException-derived signal Celery raises in-thread) still
+        # leaves evidence of exactly how far the run got.
+        report["duration_s"] = round(_time.monotonic() - run_started, 1)
+        report["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _write_precompute_report(report)
 
     logger.info("Category page precompute complete: %s", results)
     return {"status": "ok", "results": results}

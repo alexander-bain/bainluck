@@ -18,7 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config.league_configs import LeagueConfig, get_league_config, get_all_league_slugs
-from app.models import FuturesMarket, FuturesOddsSnapshot, MatchingOverride, Team
+from app.models import (
+    FuturesMarket,
+    FuturesOddsSnapshot,
+    FuturesOutcome,
+    MatchingOverride,
+    Team,
+)
 from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import lookup_division as _static_lookup_division
@@ -803,6 +809,41 @@ def _merge_probabilities(
             return sum(p * w for p, w in zip(corrected, weights)) / total_weight
 
     return statistics.median(corrected)
+
+
+# Batch size for the deferred outcome fetch. Bounds the IN-list handed to the
+# planner; the surviving (column-matched) market set is small in practice, so
+# this is a safety rail rather than a hot path.
+_OUTCOME_FETCH_BATCH = 200
+
+
+async def _load_outcomes_for_markets(
+    session: AsyncSession,
+    market_ids: list[int],
+) -> dict[int, list[FuturesOutcome]]:
+    """Load outcomes for exactly ``market_ids`` — the #1484 bounded-compute half.
+
+    The grid used to eager-load (``selectinload``) the outcomes of every market
+    that matched the league's ticker/category filters, then throw most of them
+    away: only markets that resolve to a grid column are ever read. In-season
+    MLB matches thousands of per-game markets, so that eager load was the
+    league-specific cost behind the grid timing out and serving an empty grid.
+
+    Returns ``{market_id: [outcome, ...]}``. Markets with no outcomes are simply
+    absent, so callers should use ``.get(mid, ())``.
+    """
+    grouped: dict[int, list[FuturesOutcome]] = defaultdict(list)
+    if not market_ids:
+        return grouped
+    unique_ids = list(dict.fromkeys(market_ids))
+    for i in range(0, len(unique_ids), _OUTCOME_FETCH_BATCH):
+        batch = unique_ids[i : i + _OUTCOME_FETCH_BATCH]
+        result = await session.execute(
+            select(FuturesOutcome).where(FuturesOutcome.market_id.in_(batch))
+        )
+        for outcome in result.scalars().all():
+            grouped[outcome.market_id].append(outcome)
+    return grouped
 
 
 async def _compute_movers(
@@ -2241,6 +2282,42 @@ async def get_golf_schedule():
 
 
 # ---------------------------------------------------------------------------
+# Degradation labelling (#1484)
+# ---------------------------------------------------------------------------
+
+def _grid_payload_usable(payload) -> bool:
+    """Whether a cached grid payload is worth serving as last-good.
+
+    A last-good payload must actually carry teams. An empty grid — including a
+    previously-cached timeout envelope — is NOT a usable fallback: serving one
+    would re-create the exact "zero teams looks like a real answer" failure this
+    guard exists to remove.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("error"):
+        return False
+    teams = payload.get("teams")
+    return isinstance(teams, list) and len(teams) > 0
+
+
+def _mark_last_good(payload: dict, reason: str) -> dict:
+    """Label a payload as a degraded last-good serve.
+
+    The data is real (it is the last successful build), but it is NOT a fresh
+    measurement, and consumers — the Grid Sentinel above all — must be able to
+    tell. ``degraded``/``degraded_reason``/``stale`` are additive fields; every
+    existing key is preserved byte-for-byte.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    payload["degraded"] = True
+    payload["degraded_reason"] = reason
+    payload["stale"] = True
+    return payload
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -2268,11 +2345,20 @@ async def get_playoff_grid_cached(
             if cached:
                 await rc.aclose()
                 return json.loads(cached)
-            # Stale fallback: serve old data while recomputing
+            # Stale fallback: serve old data while recomputing. #1484 changes
+            # two things here. (a) It is LABELLED — serving a last-good payload
+            # is right, serving it unlabelled made a stale grid
+            # indistinguishable from a fresh one to every consumer including the
+            # Grid Sentinel. (b) It must be USABLE — an empty grid or a
+            # previously-cached timeout envelope is not a fallback, and serving
+            # one would launder the failure into a 200. An unusable stale
+            # payload falls through to the live rebuild instead.
             stale = await rc.get(f"{cache_key}:stale")
             if stale:
-                await rc.aclose()
-                return json.loads(stale)
+                candidate = json.loads(stale)
+                if _grid_payload_usable(candidate):
+                    await rc.aclose()
+                    return _mark_last_good(candidate, "cache_miss")
             await rc.aclose()
         except Exception:
             pass  # Fall through to live query
@@ -2284,7 +2370,42 @@ async def get_playoff_grid_cached(
             timeout=25,
         )
     except _asyncio.TimeoutError:
-        return {"teams": [], "columns": [], "error": "timeout"}
+        # #1484 truthful degradation. The old behaviour returned
+        # ``200 + {"teams": [], "columns": [], "error": "timeout"}``: an empty
+        # grid that every consumer reads as a successful response describing a
+        # league with no teams. The Grid Sentinel duly filed "MLB grid returned
+        # ZERO teams" plus four "missing column" defects — five REAL defects
+        # that were all one timeout wearing a healthy costume.
+        #
+        # Now: serve a validated last-good payload when one exists (explicitly
+        # labelled degraded), and otherwise fail with a non-success status so
+        # nothing downstream can mistake it for a populated grid.
+        logger.error(
+            "Playoff grid %s: request timed out after 25s — attempting last-good",
+            league_slug,
+        )
+        last_good = None
+        if cache_eligible:
+            try:
+                rc = get_async_redis_client()
+                raw = await rc.get(f"{cache_key}:stale")
+                await rc.aclose()
+                if raw:
+                    candidate = json.loads(raw)
+                    if _grid_payload_usable(candidate):
+                        last_good = candidate
+            except Exception:
+                last_good = None
+        if last_good is not None:
+            return _mark_last_good(last_good, "timeout")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Playoff grid for '{league_slug}' timed out and no last-good "
+                f"payload is available. This is a degraded state, not an empty "
+                f"league."
+            ),
+        )
 
     if cache_eligible:
         try:
@@ -2492,13 +2613,18 @@ async def get_playoff_grid(
     # Keep the original market_filter for the resolved backfill (which adds its own status filter)
     market_filter = or_(*sport_conditions, *category_conditions) if sport_conditions or category_conditions else None
 
-    stmt = (
-        select(FuturesMarket)
-        .where(
-            market_filter_with_status,
-        )
-        .options(selectinload(FuturesMarket.outcomes))
-    )
+    # #1484 bounded compute — phase 1 of a two-phase load: market ROWS only, no
+    # outcomes. Every filter between here and the column match (`_market_passes_
+    # league_filter`, the season filter, `_match_market_to_column`) reads only
+    # market fields (name / external_id / market_tier), so eagerly loading the
+    # outcomes of every candidate market was pure waste. In-season MLB matches
+    # every per-game Kalshi series (`KXMLB%`) and every Odds-API game market
+    # (`baseball_mlb%`), and `selectinload` pulled ALL of their outcomes — the
+    # league-specific cost that pushed the MLB grid past its 25s request budget
+    # while the out-of-season NBA/NHL grids stayed cheap. Phase 2 (below) loads
+    # outcomes only for markets that actually resolved to a grid column, so the
+    # response is unchanged and only the wasted I/O is gone.
+    stmt = select(FuturesMarket).where(market_filter_with_status)
     result = await db.execute(stmt)
     all_markets = result.scalars().unique().all()
 
@@ -2562,13 +2688,25 @@ async def get_playoff_grid(
     _SETTLED_COLUMNS = {"make_playoffs", "division"}
     _stale_skipped = 0
 
+    # Resolve every market to its column FIRST (market fields only), then load
+    # outcomes for just the survivors — phase 2 of the #1484 bounded load.
+    matched_markets: list[tuple[FuturesMarket, str]] = []
     for market in markets:
         col_key = _match_market_to_column(market, config)
-        if not col_key:
-            continue
+        if col_key:
+            matched_markets.append((market, col_key))
 
+    outcomes_by_market = await _load_outcomes_for_markets(
+        db, [m.id for m, _ in matched_markets]
+    )
+    logger.info(
+        "Playoff grid %s: %d/%d markets matched a column; loaded outcomes for those only",
+        league_slug, len(matched_markets), len(markets),
+    )
+
+    for market, col_key in matched_markets:
         cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
-        for outcome in market.outcomes:
+        for outcome in outcomes_by_market.get(market.id, ()):
             if outcome.last_updated and outcome.last_updated < cutoff:
                 _stale_skipped += 1
                 continue

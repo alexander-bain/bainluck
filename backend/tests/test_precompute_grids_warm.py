@@ -42,9 +42,13 @@ async def test_precompute_grids_warms_golf():
 
 
 def test_precompute_grids_source_lists_golf():
-    """Belt-and-suspenders source assert: the warm loop literal includes golf."""
-    import inspect
+    """Belt-and-suspenders assert: the warm list still includes golf.
 
-    src = inspect.getsource(pcp._precompute_grids)
-    assert '"golf"' in src
-    assert "mlb" in src and "nba" in src and "nhl" in src
+    #1484 lifted the literal out of the loop body into the module-level
+    ``GRID_WARM_LEAGUES`` so the observability report can pre-seed one entry per
+    league. Assert the constant directly — it is the thing a future refactor
+    could actually drop, and it is stronger than a substring match on source
+    text (which "golf" would satisfy from a docstring alone).
+    """
+    assert "golf" in pcp.GRID_WARM_LEAGUES
+    assert {"mlb", "nba", "nhl", "golf"}.issubset(set(pcp.GRID_WARM_LEAGUES))

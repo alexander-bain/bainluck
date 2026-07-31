@@ -235,7 +235,11 @@ class TestPlayoffGridMockedData:
         mock_db.execute.side_effect = [
             _mock_result(),          # SET LOCAL statement_timeout
             _mock_result([]),        # matching overrides
-            _mock_result([market]),  # futures markets
+            _mock_result([market]),  # futures markets (rows only — #1484)
+            # #1484: outcomes are now loaded in a SECOND query, for
+            # column-matched markets only, instead of being eager-loaded with
+            # every candidate market.
+            _mock_result(market.outcomes),  # deferred outcome load
             _mock_result([]),        # resolved-market backfill
         ]
         monkeypatch.setattr(
@@ -286,6 +290,7 @@ class TestPlayoffGridMockedData:
             _mock_result(),
             _mock_result([]),
             _mock_result([market]),
+            _mock_result(market.outcomes),  # #1484 deferred outcome load
             _mock_result([]),
         ]
         monkeypatch.setattr(
@@ -350,6 +355,7 @@ class TestPlayoffGridMockedData:
             _mock_result(),
             _mock_result([]),
             _mock_result([market]),
+            _mock_result(market.outcomes),  # #1484 deferred outcome load
             _mock_result([]),
         ]
         monkeypatch.setattr(

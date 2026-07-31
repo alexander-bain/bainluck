@@ -28,8 +28,43 @@ logger = logging.getLogger(__name__)
 # Sample every Nth request to limit Redis writes.
 SAMPLE_RATE = int(os.getenv("LATENCY_SAMPLE_RATE", "10"))
 
+# #1500: endpoints that are ALWAYS sampled, regardless of SAMPLE_RATE.
+#
+# The 1-in-10 rate was applied against ONE process-global counter shared by
+# every endpoint, so a low-traffic, high-variance endpoint like /api/feed kept a
+# handful of samples an hour — and those survivors were biased to whatever is
+# most frequent, i.e. warm cache hits. The rail retained n=3 for /api/feed in an
+# hour that contained four measured cold misses of 3.9–8.8 s, and captured none
+# of them. An always-sample allowlist is the smallest change that makes the cold
+# tail measurable; everything else keeps the global default.
+_ALWAYS_SAMPLE = frozenset(
+    p.strip()
+    for p in os.getenv("LATENCY_ALWAYS_SAMPLE", "/api/feed").split(",")
+    if p.strip()
+)
+
 # Rolling window: keep samples from the last hour.
 WINDOW_SECONDS = 3600
+
+# #1500: cache-status buckets recorded alongside each sample. Constrained to a
+# fixed allowlist so the dimension can never grow unbounded — an unknown header
+# value collapses to "other". Warm hits dominate the /api/feed population, so a
+# single blended p95 cannot express the cold tail; the bucket is what makes the
+# cold number measurable.
+_CACHE_BUCKETS = frozenset({"miss", "hit", "stale_hit", "error"})
+_BUCKET_OTHER = "other"
+_BUCKET_NONE = "none"
+
+
+def _cache_bucket(response) -> str:
+    """Map the X-Feed-Cache response header onto a bounded bucket label."""
+    try:
+        raw = (response.headers.get("x-feed-cache") or "").strip().lower()
+    except Exception:
+        return _BUCKET_NONE
+    if not raw:
+        return _BUCKET_NONE
+    return raw if raw in _CACHE_BUCKETS else _BUCKET_OTHER
 
 # Paths to skip entirely (health checks, docs, static).
 _SKIP_PREFIXES = ("/docs", "/openapi.json", "/redoc", "/health", "/")
@@ -41,7 +76,22 @@ _ID_PATTERNS = [
     (re.compile(r"/\d+"), "/{id}"),
 ]
 
-_request_counter = 0
+# #1500: per-endpoint counters. A single global counter meant a rare endpoint's
+# sampling depended on unrelated traffic. Bounded by the normalized-path space,
+# which is already bounded by the route table (IDs are collapsed by
+# _normalize_path before they get here).
+_request_counters: dict[str, int] = {}
+
+
+def _should_sample(normalized: str) -> bool:
+    """Per-endpoint 1-in-N sampling, with an always-sample allowlist."""
+    if normalized in _ALWAYS_SAMPLE:
+        return True
+    if SAMPLE_RATE <= 1:
+        return True
+    count = _request_counters.get(normalized, 0) + 1
+    _request_counters[normalized] = count
+    return count % SAMPLE_RATE == 0
 
 # #1197: cache the sync client. A fresh get_redis_client() per sampled request
 # spins up a NEW connection pool that is never closed — abandoned pools cycle
@@ -86,8 +136,6 @@ class LatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        global _request_counter
-
         path = request.url.path
 
         # Skip non-API and admin paths.
@@ -110,14 +158,13 @@ class LatencyMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
-        # Sampling: only record every Nth request.
-        _request_counter += 1
-        if _request_counter % SAMPLE_RATE != 0:
+        # Sampling: per-endpoint 1-in-N, with an always-sample allowlist (#1500).
+        normalized = _normalize_path(path)
+        if not _should_sample(normalized):
             return response
 
         # Fire-and-forget write to Redis. Never let tracking break a request.
         try:
-            normalized = _normalize_path(path)
             now = time.time()
             key = f"latency:{normalized}"
 
@@ -126,8 +173,12 @@ class LatencyMiddleware(BaseHTTPMiddleware):
                 return response
 
             pipe = r.pipeline(transaction=False)
-            # Store timestamp as score (for window trimming), latency in member.
-            member = f"{now}:{duration_ms:.1f}"
+            # Store timestamp as score (for window trimming), latency + cache
+            # bucket in the member. #1500: the bucket rides the EXISTING sorted
+            # set rather than adding a key family — Redis is Premium-0/50MB with
+            # allkeys-lru, so widening a member is strictly cheaper than new
+            # keys. Readers must tolerate the legacy 2-field form.
+            member = f"{now}:{duration_ms:.1f}:{_cache_bucket(response)}"
             pipe.zadd(key, {member: now})
             # Trim entries older than the window.
             pipe.zremrangebyscore(key, "-inf", now - WINDOW_SECONDS)

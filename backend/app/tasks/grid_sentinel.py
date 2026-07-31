@@ -131,6 +131,30 @@ def _merged(cell: dict | None):
     return cell.get("merged_probability")
 
 
+def check_degraded_payload(grid: dict, league: str) -> list[dict]:
+    """#1484 — the grid told us it is NOT a fresh measurement.
+
+    ``/api/playoffs/{league}`` now labels a last-good serve with
+    ``degraded: true`` + ``degraded_reason`` instead of returning an unlabelled
+    empty grid on timeout. That is one REAL defect with a truthful cause, and it
+    replaces the structural checks entirely: running monotonicity / column /
+    fill checks against a stale-or-degraded payload measures the fallback, not
+    the grid, and is exactly the cry-wolf the sentinel exists to avoid (the
+    five "MLB ZERO teams + 4 missing columns" defects on #1484 were one
+    timeout wearing a healthy costume).
+    """
+    if not grid.get("degraded"):
+        return []
+    reason = grid.get("degraded_reason") or "unspecified"
+    return [_finding(
+        "grid_degraded", "critical",
+        f"{league.upper()} grid served a DEGRADED last-good payload "
+        f"(reason: {reason}) — the live build did not complete, so this run "
+        f"could not measure the grid",
+        seasonal_ok=False, degraded_reason=reason,
+    )]
+
+
 def check_teams_present(grid: dict, league: str) -> list[dict]:
     """Missing teams — an empty grid or a partial roster. Empty is always REAL
     (structural collapse); a partial roster is seasonal-excusable (futures for
@@ -661,16 +685,25 @@ async def _run_league(client: httpx.AsyncClient, league: str, now=None) -> dict:
                 "verdict": "red", "stats": {}}
 
     findings: list[dict] = []
-    findings += check_teams_present(grid, league)
-    findings += check_missing_columns(grid, league)
-    findings += check_fill_rate(grid, league)
-    findings += check_monotonicity(grid, league)
-    findings += check_prob_sum(grid, league)
-    findings += check_source_disagreement(grid, league)
-    findings += check_illiquid_extremes(grid, league)
+    selfcheck_stats: dict = {}
 
-    env_findings, selfcheck_stats = check_envelope_invariant(grid, league)
-    findings += env_findings
+    # #1484: a degraded (last-good) payload short-circuits the structural
+    # checks. One REAL defect naming the true cause beats five derived defects
+    # describing the fallback's shape.
+    degraded = check_degraded_payload(grid, league)
+    if degraded:
+        findings += degraded
+    else:
+        findings += check_teams_present(grid, league)
+        findings += check_missing_columns(grid, league)
+        findings += check_fill_rate(grid, league)
+        findings += check_monotonicity(grid, league)
+        findings += check_prob_sum(grid, league)
+        findings += check_source_disagreement(grid, league)
+        findings += check_illiquid_extremes(grid, league)
+
+        env_findings, selfcheck_stats = check_envelope_invariant(grid, league)
+        findings += env_findings
 
     # DB freshness self-check (bypasses the pipeline).
     fresh = await _grid_freshness(league, now)
@@ -680,7 +713,8 @@ async def _run_league(client: httpx.AsyncClient, league: str, now=None) -> dict:
     verdict = grid_verdict(classified)
     return {
         "league": league,
-        "grid_ok": True,
+        "grid_ok": not degraded,
+        "degraded": bool(degraded),
         "teams": len(grid.get("teams") or []),
         "columns": [c.get("key") for c in (grid.get("columns") or [])],
         "sources": grid.get("sources_available"),

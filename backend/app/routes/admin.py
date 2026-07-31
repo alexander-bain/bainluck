@@ -533,10 +533,27 @@ async def get_latency_stats(
 
     Data comes from sampled request timings stored in Redis sorted sets
     by the LatencyMiddleware.
+
+    #1500 — this rail used to report green through the tail it exists to
+    measure. Two changes make it honest:
+
+    * **Nearest-rank percentiles with an explicit ``n`` and a minimum-sample
+      rule.** The old estimator floored to a low-order sample (at n=2, the
+      MINIMUM), which is how it reported a 1.2 ms p99 on an endpoint whose
+      slowest sample in the window was 12.9 s. Below the minimum n for a given
+      percentile the field is ``null`` — unavailable, never a fabricated number.
+    * **Cache-status buckets.** ``/api/feed`` is dominated by warm hits, so a
+      blended percentile cannot express the cold cost. Each sample now carries
+      its ``X-Feed-Cache`` bucket and ``by_cache_status`` reports each bucket
+      separately, so the ``miss`` p95 is readable on its own.
     """
     _check_admin_secret(secret, request=request)
 
     import time as _time
+    from collections import defaultdict as _defaultdict
+
+    from app.middleware.latency import _ALWAYS_SAMPLE
+    from app.utils.latency_stats import parse_sample_member, summarize
 
     try:
         from app.tasks.redis_state import get_redis_client
@@ -557,47 +574,246 @@ async def get_latency_stats(
         key = f"latency:{ep}"
 
         # Get all members within the time window (score = timestamp).
-        # member format: "timestamp:latency_ms"
+        # member format: "timestamp:latency_ms[:cache_bucket]"
         pairs = r.zrangebyscore(key, cutoff, "+inf")
         if not pairs:
             continue
 
-        latencies = []
+        latencies: list[float] = []
+        by_bucket: dict[str, list[float]] = _defaultdict(list)
         for raw_member in pairs:
             m = raw_member.decode() if isinstance(raw_member, bytes) else raw_member
-            try:
-                latencies.append(float(m.split(":", 1)[1]))
-            except (IndexError, ValueError):
+            parsed = parse_sample_member(m)
+            if parsed is None:
                 continue
+            latency, bucket = parsed
+            latencies.append(latency)
+            by_bucket[bucket].append(latency)
         if not latencies:
             continue
-        latencies.sort()
-        n = len(latencies)
 
-        def _percentile(data, pct):
-            idx = int(pct / 100 * (len(data) - 1))
-            return round(data[idx], 1)
-
-        results.append({
+        entry = {
             "endpoint": ep,
-            "samples": n,
-            "p50_ms": _percentile(latencies, 50),
-            "p95_ms": _percentile(latencies, 95),
-            "p99_ms": _percentile(latencies, 99),
-            "max_ms": round(latencies[-1], 1),
-            "min_ms": round(latencies[0], 1),
-        })
+            "samples": len(latencies),
+            "always_sampled": ep in _ALWAYS_SAMPLE,
+            **summarize(latencies),
+        }
+        # Only surface the cache dimension where it exists — an endpoint that
+        # sets no X-Feed-Cache header lands entirely in the "none" bucket, and
+        # repeating the blended numbers under a second heading would be noise.
+        real_buckets = {b: v for b, v in by_bucket.items() if b != "none"}
+        if real_buckets:
+            entry["by_cache_status"] = {
+                bucket: summarize(values)
+                for bucket, values in sorted(real_buckets.items())
+            }
+        results.append(entry)
 
-    # Sort by p95 descending so the slowest endpoints are first.
-    results.sort(key=lambda x: x["p95_ms"], reverse=True)
+    # Sort by p95 descending so the slowest endpoints are first. A null p95
+    # (too few samples to answer) must not sort as "fast" — fall back to the
+    # observed max, which is a lower bound on the true p95.
+    def _sort_key(e):
+        return e.get("p95_ms") if e.get("p95_ms") is not None else (e.get("max_ms") or 0)
+
+    results.sort(key=_sort_key, reverse=True)
     results = results[:top]
 
     return {
         "window": "1 hour",
         "sample_rate": f"1/{os.getenv('LATENCY_SAMPLE_RATE', '10')}",
+        "always_sampled_endpoints": sorted(_ALWAYS_SAMPLE),
+        "percentile_method": "nearest-rank (ceil(pct/100 * n) - 1)",
+        "note": (
+            "A null percentile means too few samples in the window to answer "
+            "it (see min_samples), NOT a fast endpoint."
+        ),
         "endpoints": results,
         "total_endpoints_tracked": len(endpoints_set),
     }
+
+
+@router.get("/candidate-base-state")
+async def get_candidate_base_state(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Read-only state of the Discover candidate-ID base (#1500 scope 4).
+
+    Answers "which namespace/version is actually being written, is the kill
+    switch on, how old are the keys, and how many IDs did the last publish
+    carry?" without a `debug=true` feed call — which today is the only way to
+    read the provenance signal, and which costs ~2x the request being measured
+    (it runs the ground-truth block and disables the response cache).
+
+    STRICTLY read-only: no flip, no flush, no trigger, no raw Redis passthrough.
+    Only the allowlisted fields below are returned, and candidate IDs / market
+    content are never exposed — just counts and ages.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+    import time as _time
+
+    from app.utils import candidate_base as cb
+
+    state: dict = {
+        "namespace": cb._REDIS_NS,
+        "key_prefix": cb._KEY_PREFIX,
+        "key_version": cb._KEY_VERSION,
+        "schema_version": cb.CANDIDATE_BASE_SCHEMA_VERSION,
+        "kill_switch_key": cb.CANDIDATE_BASE_ENABLED_KEY,
+        "policy": {
+            "fresh_seconds": cb.CANDIDATE_BASE_FRESH_SECONDS,
+            "last_good_max_age_s": cb.CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S,
+            "fresh_ttl_s": cb.CANDIDATE_BASE_FRESH_TTL_S,
+            "last_good_ttl_s": cb.CANDIDATE_BASE_LAST_GOOD_TTL_S,
+        },
+        "provenance_labels": [
+            cb.PROV_FRESH, cb.PROV_LAST_GOOD, cb.PROV_DIRECT,
+            cb.PROV_DISABLED, cb.PROV_UNAVAILABLE,
+        ],
+    }
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+        r = get_redis_client()
+    except Exception as exc:
+        # UNKNOWN, not "disabled" — an unreadable store is not a configuration.
+        state["enabled"] = None
+        state["status"] = "unavailable"
+        state["error"] = str(exc)[:200]
+        return state
+
+    def _text(value):
+        if value is None:
+            return None
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    try:
+        raw_switch = _text(r.get(cb.CANDIDATE_BASE_ENABLED_KEY))
+    except Exception as exc:
+        state["enabled"] = None
+        state["status"] = "unavailable"
+        state["error"] = str(exc)[:200]
+        return state
+
+    # Absent key = enabled (the switch is an opt-OUT set to "0"); report the raw
+    # value too so "unset" and "explicitly 1" stay distinguishable.
+    state["kill_switch_value"] = raw_switch
+    state["enabled"] = raw_switch != "0"
+    state["status"] = "enabled" if state["enabled"] else "disabled"
+
+    # The default (sport=None, no static tags) identity is the one the beat
+    # publishes and the anonymous cold feed reads.
+    identity = cb.base_identity(sport_filter=None, static_tag_filter=None)
+    fresh_key, last_good_key = cb._redis_keys(identity)
+    state["default_identity"] = identity
+
+    now_ms = _time.time() * 1000
+    keys: dict[str, dict] = {}
+    for label, key in (("fresh", fresh_key), ("last_good", last_good_key)):
+        info: dict = {"present": False}
+        try:
+            raw = r.get(key)
+            ttl = r.ttl(key)
+        except Exception as exc:
+            info["error"] = str(exc)[:200]
+            keys[label] = info
+            continue
+        if raw is None:
+            info["ttl_s"] = None
+            keys[label] = info
+            continue
+        info["present"] = True
+        info["ttl_s"] = ttl if isinstance(ttl, int) and ttl >= 0 else None
+        try:
+            envelope = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        except Exception as exc:
+            info["valid"] = False
+            info["error"] = f"unparseable envelope: {str(exc)[:120]}"
+            keys[label] = info
+            continue
+        info["valid"] = cb.payload_valid(envelope, expected_identity=identity)
+        info["schema_version"] = envelope.get("schema_version")
+        info["generated_at"] = envelope.get("generated_at")
+        generated_ms = envelope.get("generated_epoch_ms")
+        if isinstance(generated_ms, (int, float)):
+            info["age_seconds"] = round(max(0.0, (now_ms - generated_ms) / 1000.0), 1)
+            info["is_fresh"] = info["age_seconds"] <= cb.CANDIDATE_BASE_FRESH_SECONDS
+        else:
+            info["age_seconds"] = None
+            info["is_fresh"] = None
+        ids = envelope.get("candidate_ids")
+        info["candidate_id_count"] = len(ids) if isinstance(ids, list) else None
+        info["pool_counts"] = envelope.get("pool_counts")
+        info["source_watermark"] = envelope.get("source_watermark")
+        keys[label] = info
+    state["keys"] = keys
+
+    # What provenance an anonymous cold request would get RIGHT NOW, derived
+    # from the same policy the feed applies. Read-only inference; no request.
+    if not state["enabled"]:
+        state["would_serve"] = cb.PROV_DISABLED
+    elif keys.get("fresh", {}).get("valid") and keys["fresh"].get("is_fresh"):
+        state["would_serve"] = cb.PROV_FRESH
+    elif any(keys.get(k, {}).get("valid") for k in ("fresh", "last_good")):
+        state["would_serve"] = cb.PROV_LAST_GOOD
+    else:
+        state["would_serve"] = cb.PROV_DIRECT
+
+    return state
+
+
+@router.get("/category-precompute/last")
+async def get_category_precompute_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Last category-page precompute run report (#1484, read-only).
+
+    Makes the grid warm's dispatch/start/success/failure observable. Before
+    this, a league whose warm timed out was swallowed into a log line and the
+    task's return value listed only the SUCCESSES — so "the MLB grid warm timed
+    out" and "the task never reached grids" (they run last) were the same
+    observation from outside. Tuning the task's time limits without this rail
+    would be tuning blind.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+
+    from app.tasks.precompute_category_pages import (
+        PRECOMPUTE_STATUS_KEY,
+        PRECOMPUTE_STATUS_TTL,
+    )
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+        raw = get_redis_client().get(PRECOMPUTE_STATUS_KEY)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Redis unavailable: {str(exc)[:120]}"
+        )
+
+    if not raw:
+        return {
+            "status": "unknown",
+            "report": None,
+            "key": PRECOMPUTE_STATUS_KEY,
+            "ttl_s": PRECOMPUTE_STATUS_TTL,
+            "note": (
+                "No report present. The beat runs hourly at :25 and the report "
+                "is written even on failure, so an absent report means the task "
+                "did not run (or was hard-killed before its finally block)."
+            ),
+        }
+
+    try:
+        report = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        return {"status": "unparseable", "error": str(exc)[:200], "report": None}
+
+    return {"status": "ok", "key": PRECOMPUTE_STATUS_KEY, "report": report}
 
 
 # ---------------------------------------------------------------------------

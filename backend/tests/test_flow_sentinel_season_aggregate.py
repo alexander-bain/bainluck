@@ -26,8 +26,11 @@ class _FakeClient:
         self._raise = raise_exc
         self.last_call = None
 
-    async def post(self, path, params=None, json=None):
-        self.last_call = {"path": path, "params": params, "json": json}
+    # #1494: the flow now authenticates with `Authorization: Bearer` instead of
+    # the removed `?secret=` query param, so the stand-in accepts headers.
+    async def post(self, path, params=None, json=None, headers=None):
+        self.last_call = {"path": path, "params": params, "json": json,
+                          "headers": headers}
         if self._raise:
             raise self._raise
         return _FakeResp(self._payload)
@@ -44,6 +47,9 @@ async def test_zero_linked_passes(monkeypatch):
     # asserts the guard actually queried the season-agg predicate
     assert "Head-to-Head Win Total" in client.last_call["json"]["sql"]
     assert client.last_call["path"] == "/api/admin/db-query"
+    # #1494: Bearer transport, and no credential in the URL/query string.
+    assert client.last_call["headers"] == {"Authorization": "Bearer secret"}
+    assert "secret" not in str(client.last_call["params"] or {})
 
 
 @pytest.mark.asyncio

@@ -246,6 +246,22 @@ def gold_set_regressions(results: list[dict]) -> list[dict]:
     return [r for r in results if r["expected_found"] and not r["found"]]
 
 
+def gold_set_transport_errors(results: list[dict]) -> list[dict]:
+    """Gold-set queries that did not get an ANSWER at all (#1494 criterion 3).
+
+    A 503/timeout/connection-abort is not a search result — it is the absence of
+    one. The old scoring collapsed both into ``found: False``, so a transport
+    error on an ``expected_found: False`` entry scored EXACTLY like a legitimate
+    "correctly returns nothing". On 2026-07-31 the sentinel recorded three hard
+    503s from ``/api/events/search`` and still reported ``passed: true`` — search
+    was down and its own regression guard said green.
+
+    Transport failure is now its own fileable class, on ANY gold entry
+    regardless of its expectation.
+    """
+    return [r for r in results if r.get("error")]
+
+
 def gold_set_recoveries(results: list[dict]) -> list[dict]:
     """Expected-miss entities that now return something — good news, surfaced but
     never filed (the frozen baseline can be tightened once they stick)."""
@@ -507,10 +523,102 @@ def severity_for_flow(flow_key: str, failed_count: int, checked: int) -> str:
 # ---------------------------------------------------------------------------
 # Live flow runners (HTTP against production)
 # ---------------------------------------------------------------------------
-async def _get_json(client: httpx.AsyncClient, path: str, params: dict | None = None) -> Any:
-    resp = await client.get(path, params=params)
+async def _get_json(
+    client: httpx.AsyncClient,
+    path: str,
+    params: dict | None = None,
+    headers: dict | None = None,
+) -> Any:
+    # `headers` is forwarded only when set: the unauthenticated public-endpoint
+    # flows (search, feed, events) send no auth at all, so their call shape is
+    # unchanged.
+    kwargs: dict = {"params": params}
+    if headers:
+        kwargs["headers"] = headers
+    resp = await client.get(path, **kwargs)
     resp.raise_for_status()
     return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Admin transport (#1494) — Bearer only, never a token in a URL
+# ---------------------------------------------------------------------------
+def _admin_headers() -> dict | None:
+    """Canonical admin transport: ``Authorization: Bearer <ADMIN_TOKEN>``.
+
+    Queue #252 Item 3 removed the ``?secret=`` query-parameter auth path (a
+    secret in a URL leaks through access logs, Referer, and browser history).
+    Three flows here were never migrated, so every admin call they made returned
+    403 — and each of them mapped that 403 to ``{"checked": 0, "passed": True}``,
+    which the scorecard counted as a PASS. Three checks reported clean for weeks
+    while being structurally unable to verify anything.
+
+    Returns ``None`` when ADMIN_TOKEN is unset, so the caller reports UNKNOWN
+    rather than issuing a request that cannot possibly authenticate.
+    """
+    token = os.environ.get("ADMIN_TOKEN", "")
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _redact(text: Any) -> str:
+    """Scrub the admin token out of any string bound for evidence/logs/issues.
+
+    Defence in depth: httpx embeds the request URL in its error messages, and
+    evidence strings land verbatim in a PUBLIC GitHub issue body. Even though
+    the token no longer travels in a URL, anything that could carry it is
+    scrubbed before it can be written down.
+    """
+    out = str(text)
+    token = os.environ.get("ADMIN_TOKEN", "")
+    if token and len(token) >= 6:
+        out = out.replace(token, "<redacted>")
+    # Belt and braces: strip any surviving secret/token query parameter.
+    out = re.sub(
+        r"((?:secret|token|admin_token)=)[^&\s\"']+", r"\1<redacted>", out,
+        flags=re.IGNORECASE,
+    )
+    return out
+
+
+def _unknown_flow(flow: str, reason: str, **evidence: Any) -> dict:
+    """An explicit UNKNOWN result: we could not measure, so we cannot judge.
+
+    This is the #1494 fix in one shape. UNKNOWN is neither a pass nor a failure:
+
+    * it is EXCLUDED from ``flows_passed`` (a check that could not run has not
+      passed — the old code counted it as one), and
+    * it never files an issue and never resolves one (filing on our own broken
+      measurement is the #1147 cry-wolf; auto-closing on it is worse).
+
+    ``passed`` stays ``True`` purely so the existing "failing → file" path is
+    untouched; ``unknown`` is the field every count now keys on.
+    """
+    return {
+        "flow": flow,
+        "checked": 0,
+        "passed": True,
+        "unknown": True,
+        "skipped": True,
+        "failures": [],
+        "evidence": {"unknown": True, "reason": _redact(reason), **evidence},
+    }
+
+
+def flow_outcome(result: dict) -> str:
+    """Classify one flow result as ``pass`` / ``fail`` / ``unknown``.
+
+    The load-bearing invariant (#1494 acceptance): **a flow with
+    ``checked == 0`` can never be a pass.** Zero checks means zero evidence.
+    """
+    if result.get("unknown") or result.get("skipped"):
+        return "unknown"
+    if not result.get("passed"):
+        return "fail"
+    if not result.get("checked"):
+        return "unknown"
+    return "pass"
 
 
 async def _run_search_gold_set(client: httpx.AsyncClient, canary: bool) -> dict:
@@ -537,21 +645,36 @@ async def _run_search_gold_set(client: httpx.AsyncClient, canary: bool) -> dict:
                 }
             except Exception as exc:
                 return {"query": query, "expected_found": expected, "found": False,
-                        "error": str(exc)[:150]}
+                        "error": _redact(exc)[:150]}
 
     results = await asyncio.gather(*[_one(q, e) for q, e in gold])
     regressions = gold_set_regressions(results)
     recoveries = gold_set_recoveries(results)
+    transport = gold_set_transport_errors(results)
+    # A transport error on an expected-found entity is already a regression;
+    # don't file the same query twice.
+    regression_queries = {r["query"] for r in regressions}
+    transport_only = [r for r in transport if r["query"] not in regression_queries]
     found_n = sum(1 for r in results if r["found"])
     return {
         "flow": "search_gold_set",
         "checked": len(results),
-        "passed": len(regressions) == 0,
-        "failures": [{"query": r["query"], "detail": "expected-found entity now returns nothing"}
-                     for r in regressions],
+        # #1494 criterion 3: search being DOWN must fail this flow, not pass it.
+        "passed": len(regressions) == 0 and len(transport) == 0,
+        "failures": [
+            {"query": r["query"], "detail": "expected-found entity now returns nothing"}
+            for r in regressions
+        ] + [
+            {"query": r["query"],
+             "detail": f"search ERRORED for this query — no answer was returned "
+                       f"(transport/5xx, not a legitimate miss): "
+                       f"{_redact(r.get('error'))[:150]}"}
+            for r in transport_only
+        ],
         "evidence": {
             "found": found_n,
             "total": len(results),
+            "transport_errors": [r["query"] for r in transport],
             "regressions": [r["query"] for r in regressions],
             "recoveries": [r["query"] for r in recoveries],
             "per_entity": results,
@@ -578,7 +701,7 @@ async def _run_search_gold_top1(client: httpx.AsyncClient) -> dict:
                 }
             except Exception as exc:
                 return {"query": query, "kind": kind, "marker": marker,
-                        "top1_ok": False, "error": str(exc)[:150]}
+                        "top1_ok": False, "error": _redact(exc)[:150]}
 
     results = await asyncio.gather(*[_one(q, k, m) for q, k, m in GOLD_SET_TOP1])
     misses = gold_top1_misses(results)
@@ -762,16 +885,21 @@ async def _run_resolved_state(client: httpx.AsyncClient) -> dict:
 
 
 async def _run_chart_density(client: httpx.AsyncClient) -> dict:
-    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    headers = _admin_headers()
+    if headers is None:
+        return _unknown_flow("chart_density", "ADMIN_TOKEN unset — cannot authenticate")
     tile = None
     err = None
     try:
-        data = await _get_json(client, "/api/admin/backfill-progress",
-                               {"secret": admin_token} if admin_token else None)
+        data = await _get_json(client, "/api/admin/backfill-progress", None, headers)
         census = data.get("census") if isinstance(data, dict) else None
         tile = census.get("chart_density") if isinstance(census, dict) else None
     except Exception as exc:
-        err = str(exc)[:150]
+        # Transport / auth / 5xx / parse failure — we could not read the tile at
+        # all. That is UNKNOWN, not a pass (#1494).
+        return _unknown_flow(
+            "chart_density", f"admin read failed: {str(exc)[:150]}"
+        )
     # #1147: a MISSING tile, or a DEGRADED one (the census tile query hit its
     # statement_timeout and _degrade returned {"error": ...} / {"skipped": ...} with
     # no prior good value), is a BROKEN MEASUREMENT — not evidence of a real density
@@ -785,12 +913,7 @@ async def _run_chart_density(client: httpx.AsyncClient) -> dict:
             if isinstance(tile, dict)
             else (err or "chart_density tile unavailable")
         )
-        return {
-            "flow": "chart_density", "checked": 0, "passed": True,
-            "failures": [],
-            "evidence": {"skipped": True, "reason": reason},
-            "skipped": True,
-        }
+        return _unknown_flow("chart_density", reason, skipped=True)
     passed, ev = chart_density_verdict(tile, CHART_DENSITY_MAX_BELOW_BAR_PCT)
     return {
         "flow": "chart_density",
@@ -1072,17 +1195,16 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
     #238 and the backlog was repaired; this asserts the census stays 0. Reads via
     the admin db-query (read-only). A missing/broken admin path is SKIPPED, never
     filed — filing on our own broken measurement is the cry-wolf #1147 flagged."""
-    admin_token = os.environ.get("ADMIN_TOKEN", "")
-    if not admin_token:
-        return {
-            "flow": "season_aggregate_linkage", "checked": 0, "passed": True,
-            "skipped": True, "failures": [],
-            "evidence": {"reason": "ADMIN_TOKEN unset — db-query unavailable"},
-        }
+    headers = _admin_headers()
+    if headers is None:
+        return _unknown_flow(
+            "season_aggregate_linkage",
+            "ADMIN_TOKEN unset — db-query unavailable",
+        )
     try:
         resp = await client.post(
             "/api/admin/db-query",
-            params={"secret": admin_token},
+            headers=headers,
             json={"sql": _SEASON_AGG_LINKAGE_SQL, "limit": 1},
         )
         resp.raise_for_status()
@@ -1090,11 +1212,9 @@ async def _run_season_aggregate_linkage(client: httpx.AsyncClient) -> dict:
         rows = data.get("rows") if isinstance(data, dict) else None
         linked = int(rows[0][0]) if rows and rows[0] else 0
     except Exception as exc:
-        return {
-            "flow": "season_aggregate_linkage", "checked": 0, "passed": True,
-            "skipped": True, "failures": [],
-            "evidence": {"reason": f"db-query failed: {str(exc)[:120]}"},
-        }
+        return _unknown_flow(
+            "season_aggregate_linkage", f"db-query failed: {str(exc)[:120]}"
+        )
     failures = (
         [{"detail": f"{linked} season-aggregate market(s) (Head-to-Head/Season "
                     f"Series/Win Total/make-the-playoffs) carry an event_id — a "
@@ -1132,33 +1252,32 @@ async def _run_team_identity_dupes(client: httpx.AsyncClient) -> dict:
     Reads the repairs dry-run census (no writes) + the pending-clusters summary.
     A broken/absent admin path is SKIPPED, never filed — filing on our own broken
     measurement is the #1147 cry-wolf."""
-    admin_token = os.environ.get("ADMIN_TOKEN", "")
-    if not admin_token:
-        return {
-            "flow": "team_identity_dupes", "checked": 0, "passed": True,
-            "skipped": True, "failures": [],
-            "evidence": {"reason": "ADMIN_TOKEN unset — admin endpoints unavailable"},
-        }
+    headers = _admin_headers()
+    if headers is None:
+        return _unknown_flow(
+            "team_identity_dupes",
+            "ADMIN_TOKEN unset — admin endpoints unavailable",
+        )
     try:
         # apply=false → dry-run census only, no writes.
         r1 = await client.post(
             "/api/admin/repairs/team-identity-merge",
-            params={"secret": admin_token, "apply": "false"},
+            params={"apply": "false"},
+            headers=headers,
         )
         r1.raise_for_status()
         census = r1.json() or {}
         r2 = await client.get(
             "/api/admin/team-clusters/pending",
-            params={"secret": admin_token, "summary": "true"},
+            params={"summary": "true"},
+            headers=headers,
         )
         r2.raise_for_status()
         awaiting = int((r2.json() or {}).get("awaiting", 0) or 0)
     except Exception as exc:
-        return {
-            "flow": "team_identity_dupes", "checked": 0, "passed": True,
-            "skipped": True, "failures": [],
-            "evidence": {"reason": f"admin endpoint failed: {str(exc)[:120]}"},
-        }
+        return _unknown_flow(
+            "team_identity_dupes", f"admin endpoint failed: {str(exc)[:120]}"
+        )
 
     unresolved = int(census.get("pairs_remaining", census.get("pairs_planned", 0)) or 0)
     failures = []
@@ -1400,15 +1519,29 @@ async def _run_flow_sentinel(
             stats["flows"].append(result)
 
     # --- Scorecard ---
-    failing = [f for f in stats["flows"] if not f["passed"]]
+    # #1494: three outcomes, not two. An UNKNOWN flow (auth/transport/5xx/parse
+    # failure, or ADMIN_TOKEN unset) could not measure anything, so it is
+    # excluded from `flows_passed` instead of silently inflating it — the bug
+    # that let three admin flows report clean for weeks while every one of their
+    # requests was 403ing. `flows_verified` is the honest denominator: the
+    # headline "N/M passed" is only meaningful against the flows that ran.
+    outcomes = [flow_outcome(f) for f in stats["flows"]]
+    failing = [f for f, o in zip(stats["flows"], outcomes) if o == "fail"]
+    unknown = [f for f, o in zip(stats["flows"], outcomes) if o == "unknown"]
+    passed = [f for f, o in zip(stats["flows"], outcomes) if o == "pass"]
     stats["scorecard"] = {
         "flows_total": len(stats["flows"]),
-        "flows_passed": len(stats["flows"]) - len(failing),
+        "flows_verified": len(passed) + len(failing),
+        "flows_passed": len(passed),
         "flows_failed": len(failing),
+        "flows_unknown": len(unknown),
+        "unknown_flows": [f["flow"] for f in unknown],
         "per_flow": [
-            {"flow": f["flow"], "passed": f["passed"], "checked": f["checked"],
-             "failing": len(f["failures"]), "skipped": f.get("skipped", False)}
-            for f in stats["flows"]
+            {"flow": f["flow"], "outcome": o, "passed": o == "pass",
+             "checked": f["checked"], "failing": len(f["failures"]),
+             "unknown": o == "unknown",
+             "skipped": f.get("skipped", False)}
+            for f, o in zip(stats["flows"], outcomes)
         ],
     }
 
@@ -1424,7 +1557,7 @@ async def _run_flow_sentinel(
         for f in failing:
             stats["filed"].append(file_flow_issue(f, open_issues=open_issues))
         recovered = [
-            f for f in stats["flows"] if f["passed"] and not f.get("skipped")
+            f for f, o in zip(stats["flows"], outcomes) if o == "pass"
         ]
         stats["resolved"] = [
             r
@@ -1453,10 +1586,13 @@ async def _run_flow_sentinel(
         logger.warning("Flow sentinel result cache write failed: %s", exc)
 
     logger.info(
-        "Flow sentinel (%s%s): %d/%d flows passed, %d issues filed in %.1fs",
+        "Flow sentinel (%s%s): %d/%d verified flows passed (%d UNKNOWN of %d "
+        "total), %d issues filed in %.1fs",
         stats["mode"],
         " +canary" if canary else "",
         stats["scorecard"]["flows_passed"],
+        stats["scorecard"]["flows_verified"],
+        stats["scorecard"]["flows_unknown"],
         stats["scorecard"]["flows_total"],
         len(stats["filed"]),
         stats["duration_seconds"],

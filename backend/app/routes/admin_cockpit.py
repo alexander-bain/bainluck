@@ -313,7 +313,10 @@ def _flow_sentinel_group() -> dict:
             continue
         flow = str(pf.get("flow") or "?")
         passed = bool(pf.get("passed"))
-        skipped = bool(pf.get("skipped"))
+        # #1494: `unknown` is the explicit "could not measure" flag. Older
+        # cached payloads only carry `skipped`, so both are honoured — an
+        # unmeasurable flow renders AMBER, never GREEN.
+        skipped = bool(pf.get("skipped")) or bool(pf.get("unknown"))
         flow_status = "amber" if skipped else ("green" if passed else "red")
         issue = filed_by_flow.get(flow)
         rows.append(
