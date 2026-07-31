@@ -392,6 +392,16 @@ nonisolated struct FeedTournamentData: Decodable, Sendable {
     let resolutionDate: String?
     let golfers: [FeedTournamentGolfer]?
     let sourceCount: Int?
+    /// #235 Item 4 / L2-159: calendar-flagged marquee tournament.
+    let isMarquee: Bool?
+    /// True only in the T+36h post-settlement WHAT-HIT window — the card leads with
+    /// the result instead of a live leader line. L2-224: the backend has always sent
+    /// this on every tournament card (`routes/feed.py` `_score_golf_tournaments`) and
+    /// web has always read it (`FeedTournamentData.marquee_whathit`), but the native
+    /// model dropped it — so a finished marquee rendered on iPhone with live framing
+    /// and a "+Npp today" movement line. Decoded from `marquee_whathit` via the
+    /// decoder's `.convertFromSnakeCase`.
+    let marqueeWhathit: Bool?
 }
 
 /// Golfer entry in a tournament feed card.

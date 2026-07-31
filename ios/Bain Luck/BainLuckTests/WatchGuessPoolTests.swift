@@ -104,4 +104,84 @@ final class WatchGuessPoolTests: XCTestCase {
         let questions = WatchGuessPool.buildQuestions(from: feed.items)
         XCTAssertEqual(questions.map(\.id), [2])
     }
+
+    // MARK: - L2-224: WatchFeedItem identity is namespaced AND deterministic
+
+    /// The namespace half: an event and a futures market sharing numeric id 42 must
+    /// produce two DIFFERENT item identities, the same `event-` / `futures-` contract
+    /// web and the main app use.
+    func testEventAndFuturesWithSameNumericIdGetDistinctIdentities() throws {
+        let feed = try decode("""
+        {
+          "items": [
+            { "type": "event", "score": 80,
+              "data": { "id": 42, "home_team": "A", "away_team": "B", "status": "live",
+                        "current_odds": { "home_probability": 0.5 } } },
+            { "type": "futures", "score": 70,
+              "data": { "id": 42, "name": "Who wins?",
+                        "top_outcomes": [ { "name": "Yes", "probability": 0.4 } ] } }
+          ],
+          "total": 2, "limit": 8, "offset": 0, "has_more": false
+        }
+        """)
+
+        let ids = feed.items.map(\.id)
+        XCTAssertEqual(ids, ["event-42", "futures-42"])
+        XCTAssertEqual(Set(ids).count, 2, "the shared numeric id must not collapse")
+    }
+
+    /// The determinism half (the rerender case): identity must be a pure function of
+    /// the item. It used to fall back to `UUID().uuidString` for an item that decoded
+    /// neither payload — a NEW value on every access, which breaks `Identifiable` and
+    /// makes SwiftUI rebuild the row on every body pass instead of diffing it.
+    func testUnknownItemIdentityIsStableAcrossRepeatedAccess() throws {
+        let feed = try decode("""
+        {
+          "items": [
+            { "type": "spaceship", "score": 5, "headline": "Nothing to see" }
+          ],
+          "total": 1, "limit": 8, "offset": 0, "has_more": false
+        }
+        """)
+        let item = try XCTUnwrap(feed.items.first)
+        let first = item.id
+        XCTAssertEqual(first, item.id)
+        XCTAssertEqual(first, item.id, "identity must not change between body passes")
+        XCTAssertFalse(first.isEmpty)
+    }
+
+    /// Two decodes of the SAME payload yield the same identity — a refresh that
+    /// returns identical cards must retain its rows rather than replace them.
+    func testIdentityIsStableAcrossSeparateDecodesOfTheSamePayload() throws {
+        let json = """
+        {
+          "items": [
+            { "type": "poll", "score": 12, "headline": "Who is your favorite?" },
+            { "type": "futures", "score": 70,
+              "data": { "id": 9, "name": "Q",
+                        "top_outcomes": [ { "name": "Yes", "probability": 0.4 } ] } }
+          ],
+          "total": 2, "limit": 8, "offset": 0, "has_more": false
+        }
+        """
+        let a = try decode(json).items.map(\.id)
+        let b = try decode(json).items.map(\.id)
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(Set(a).count, 2, "distinct cards keep distinct identities")
+    }
+
+    /// Two DIFFERENT unknown-type cards must not collapse onto one identity — a
+    /// content-derived token still has to discriminate.
+    func testDistinctUnknownItemsDoNotShareAnIdentity() throws {
+        let feed = try decode("""
+        {
+          "items": [
+            { "type": "poll", "score": 12, "headline": "First question" },
+            { "type": "poll", "score": 12, "headline": "Second question" }
+          ],
+          "total": 2, "limit": 8, "offset": 0, "has_more": false
+        }
+        """)
+        XCTAssertEqual(Set(feed.items.map(\.id)).count, 2)
+    }
 }

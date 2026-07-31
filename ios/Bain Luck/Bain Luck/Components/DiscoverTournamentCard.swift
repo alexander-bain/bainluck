@@ -9,6 +9,14 @@ struct NativeTournamentDiscoverCard: View {
         sportCategoryGradients["golf"] ?? sportDefaultGradient
     }
 
+    /// True only in the T+36h post-settlement WHAT-HIT window. L2-224: the field was
+    /// being dropped at decode, so a finished marquee rendered here with full live
+    /// framing — a hero win probability plus a "+Npp today" movement line — for a
+    /// tournament that was over ("settled means settled"). This mirrors the web
+    /// treatment field for field (`TournamentCard.tsx`): a FINAL chip, a WON chip on
+    /// the leader, the "Champion" label, and no live movement once settled.
+    private var whatHit: Bool { data.marqueeWhathit == true }
+
     private var leader: FeedTournamentGolfer? {
         data.golfers?.first
     }
@@ -44,6 +52,16 @@ struct NativeTournamentDiscoverCard: View {
                             .background(.white.opacity(0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
+                        if whatHit {
+                            Text("🏁 FINAL")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.white.opacity(0.2))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+
                         Spacer()
 
                         if let venue = data.venue {
@@ -66,10 +84,27 @@ struct NativeTournamentDiscoverCard: View {
                                 .foregroundStyle(.white)
 
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(leader.name)
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(.white)
-                                if let move = leader.movement24h, abs(move) >= 0.5 {
+                                HStack(spacing: 6) {
+                                    Text(leader.name)
+                                        .font(.subheadline.bold())
+                                        .foregroundStyle(.white)
+                                    if whatHit {
+                                        Text("WON")
+                                            .font(.caption2.bold())
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(.white.opacity(0.22))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    }
+                                }
+                                if whatHit {
+                                    Text("Champion")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.75))
+                                } else if let move = leader.movement24h, abs(move) >= 0.5 {
+                                    // No live "% today" movement once settled — the
+                                    // result is fixed (mirrors TournamentCard.tsx:128).
                                     Text(move > 0 ? "+\(String(format: "%.1f", move))pp today" : "\(String(format: "%.1f", move))pp today")
                                         .font(.caption2)
                                         .foregroundStyle(move > 0 ? .green : .red)

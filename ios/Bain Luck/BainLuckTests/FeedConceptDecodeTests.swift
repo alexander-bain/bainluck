@@ -175,4 +175,167 @@ final class FeedConceptDecodeTests: XCTestCase {
         XCTAssertNil(data.marqueeWhathit)
         XCTAssertNil(data.isMajor)
     }
+
+    // MARK: - L2-224: the tournament WHAT-HIT client loss
+
+    /// The backend sends `marquee_whathit` (and `is_marquee`) on EVERY tournament
+    /// card — `routes/feed.py` `_score_golf_tournaments` sets them unconditionally —
+    /// and web has always read them. `FeedTournamentData` decoded neither, so a
+    /// finished marquee arrived on device indistinguishable from a live one.
+    func testTournamentDecodesMarqueeWhatHitFields() throws {
+        let json = """
+        {
+          "type": "tournament", "score": 88,
+          "data": {
+            "key": "golf:the-open-2026", "name": "The Open 2026",
+            "tour": "pga", "tour_label": "PGA Tour", "is_major": true,
+            "venue": "Royal Birkdale",
+            "golfers": [ { "name": "Scottie Scheffler", "probability": 100.0, "rank": 1,
+                           "movement_24h": 2.3 } ],
+            "source_count": 2, "is_marquee": true, "marquee_whathit": true
+          }
+        }
+        """
+        let item = try decoder().decode(FeedItem.self, from: Data(json.utf8))
+        let data = try XCTUnwrap(item.tournament)
+        XCTAssertEqual(data.marqueeWhathit, true)
+        XCTAssertEqual(data.isMarquee, true)
+    }
+
+    /// Absent fields stay nil — an ordinary live/upcoming tournament is unaffected.
+    func testTournamentWithoutMarqueeFieldsDecodesToNil() throws {
+        let json = """
+        {
+          "type": "tournament", "score": 40,
+          "data": { "key": "golf:rsm-2026", "name": "RSM Classic",
+                    "golfers": [ { "name": "A Player", "probability": 12.0, "rank": 1 } ] }
+        }
+        """
+        let item = try decoder().decode(FeedItem.self, from: Data(json.utf8))
+        let data = try XCTUnwrap(item.tournament)
+        XCTAssertNil(data.marqueeWhathit)
+        XCTAssertNil(data.isMarquee)
+    }
+
+    // MARK: - L2-224: the native suppression matrix (parity with web)
+
+    // `DiscoverViewModel.suppressionReason` shipped in L2-215 with no native test at
+    // all — web's rules were guarded by `feedEmptyEnvelope.test.tsx`, native's by
+    // nothing. These lock the full matrix against
+    // `frontend/components/discover/utils.ts` `feedItemSuppressionReason`.
+
+    private func decodeItem(_ json: String) throws -> FeedItem {
+        try decoder().decode(FeedItem.self, from: Data(json.utf8))
+    }
+
+    func testSuppressionKeepsEventAlways() throws {
+        let item = try decodeItem("""
+        { "type": "event", "score": 50,
+          "data": { "id": 1, "home_team": "A", "away_team": "B", "status": "scheduled" } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(item))
+    }
+
+    func testSuppressionDropsLiveConceptKeepsWhatHitConcept() throws {
+        // The #1486 rule, and the reason a live Tour de France card does not appear
+        // natively — a DELIBERATE fail-closed ruling in exact parity with web, not a
+        // native decode defect.
+        let live = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "cycling:tour-de-france-2026", "name": "Tour de France 2026",
+                    "domain": "cycling", "status": "live", "marquee_whathit": false } }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(live), "empty_concept")
+
+        let settled = try decodeItem("""
+        { "type": "concept", "score": 90,
+          "data": { "key": "cycling:tour-de-france-2026", "name": "Tour de France 2026",
+                    "domain": "cycling", "status": "settled", "marquee_whathit": true,
+                    "winner": "Tadej Pogačar" } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(settled))
+    }
+
+    func testSuppressionTournamentKeepsGolfersOrWhatHit() throws {
+        let withGolfers = try decodeItem("""
+        { "type": "tournament", "score": 60,
+          "data": { "key": "golf:rsm-2026", "name": "RSM Classic",
+                    "golfers": [ { "name": "A Player", "probability": 12.0, "rank": 1 } ] } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(withGolfers))
+
+        // The parity fix: web keeps a golfer-less settled marquee; native dropped it.
+        let whatHitNoField = try decodeItem("""
+        { "type": "tournament", "score": 60,
+          "data": { "key": "golf:the-open-2026", "name": "The Open 2026",
+                    "golfers": [], "marquee_whathit": true } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(whatHitNoField),
+                     "a settled marquee leads with its result even with an empty field")
+
+        let empty = try decodeItem("""
+        { "type": "tournament", "score": 60,
+          "data": { "key": "golf:rsm-2026", "name": "RSM Classic", "golfers": [] } }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(empty), "empty_tournament")
+    }
+
+    func testSuppressionFuturesNeedsOutcomesOrSettledStatus() throws {
+        let withOutcomes = try decodeItem("""
+        { "type": "futures", "score": 50,
+          "data": { "id": 1, "name": "Q", "status": "open",
+                    "top_outcomes": [ { "id": 1, "name": "Yes", "probability": 0.5 } ] } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(withOutcomes))
+
+        let settled = try decodeItem("""
+        { "type": "futures", "score": 50,
+          "data": { "id": 2, "name": "Q", "status": "resolved", "top_outcomes": [] } }
+        """)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(settled))
+
+        let empty = try decodeItem("""
+        { "type": "futures", "score": 50,
+          "data": { "id": 3, "name": "Q", "status": "open", "top_outcomes": [] } }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(empty), "empty_futures")
+    }
+
+    func testSuppressionUnknownShapeFailsClosed() throws {
+        let item = try decodeItem("""
+        { "type": "spaceship", "score": 5 }
+        """)
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(item), "unknown_type")
+    }
+
+    /// A malformed concept must lose ONLY itself: a mixed page keeps every healthy
+    /// sibling, in the server's order, and the renderable set is unchanged apart
+    /// from the dropped card.
+    func testMalformedConceptLosesOnlyItselfAndOrderIsStable() throws {
+        let json = """
+        {
+          "items": [
+            { "type": "event", "score": 80,
+              "data": { "id": 11, "home_team": "Celtics", "away_team": "Lakers", "status": "live" } },
+            { "type": "concept", "score": 90, "data": [ "not", "an", "object" ] },
+            { "type": "futures", "score": 70,
+              "data": { "id": 22, "name": "2026 NBA Champion", "status": "open",
+                        "top_outcomes": [ { "id": 1, "name": "Celtics", "probability": 0.3 } ] } },
+            { "type": "concept", "score": 85,
+              "data": { "key": "cycling:tdf-2026", "name": "Tour de France 2026",
+                        "domain": "cycling", "status": "settled", "marquee_whathit": true,
+                        "winner": "Tadej Pogačar" } }
+          ],
+          "total": 4, "limit": 50, "offset": 0, "has_more": false
+        }
+        """
+        let feed = try decoder().decode(FeedResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(feed.items.map(\.id),
+                       ["event-11", "futures-22", "concept-cycling:tdf-2026"],
+                       "only the malformed concept drops; server order is preserved")
+
+        let renderable = feed.items.filter { DiscoverViewModel.isRenderable($0) }
+        XCTAssertEqual(renderable.map(\.id),
+                       ["event-11", "futures-22", "concept-cycling:tdf-2026"])
+    }
 }

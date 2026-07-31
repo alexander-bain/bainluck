@@ -669,7 +669,7 @@ final class DiscoverViewModel: ObservableObject {
     /// same cards:
     ///  - `event`: always renderable — a real matchup + status/score, never a bare tile.
     ///  - `futures`: needs ≥1 outcome row OR a settled status; else `empty_futures`.
-    ///  - `tournament`: needs ≥1 golfer (the native payload carries no whathit field);
+    ///  - `tournament`: needs ≥1 golfer OR a settled marquee result (`marquee_whathit`);
     ///    else `empty_tournament`.
     ///  - `concept`: a probability-free hub card, renderable ONLY with an authoritative
     ///    result (WHAT-HIT + a winner/summary); else `empty_concept` (the TdF / Belgian
@@ -685,10 +685,14 @@ final class DiscoverViewModel: ObservableObject {
             return "empty_futures"
         }
         if let tournament = item.tournament {
-            // The native tournament payload carries no whathit/result field, so it is
-            // renderable purely on its golfer field (which #1486 confirmed is always
-            // present); an empty-field tournament is the empty-envelope case.
+            // Renderable on its golfer field OR — L2-224 — on an authoritative
+            // settled result. The previous comment here asserted "the native
+            // tournament payload carries no whathit/result field"; it does (the
+            // backend sends `marquee_whathit` on every tournament card), the MODEL
+            // just dropped it. Now that it decodes, this matches web exactly
+            // (`feedItemSuppressionReason`, discover/utils.ts): golfers OR whathit.
             if let golfers = tournament.golfers, !golfers.isEmpty { return nil }
+            if tournament.marqueeWhathit == true { return nil }
             return "empty_tournament"
         }
         if let concept = item.concept {

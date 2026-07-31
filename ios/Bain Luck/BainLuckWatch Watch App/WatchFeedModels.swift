@@ -44,10 +44,35 @@ nonisolated struct WatchFeedItem: Decodable, Identifiable, Sendable {
     let event: WatchFeedEvent?
     let futures: WatchFeedFutures?
 
+    /// Namespaced, DETERMINISTIC identity. The `event-` / `futures-` prefixes are the
+    /// same contract web and the main app use, so an event and a futures market that
+    /// happen to share a numeric id can never collide (the L2-180 class).
+    ///
+    /// L2-224: the fallback used to be `UUID().uuidString` — a *fresh* value on every
+    /// access, which breaks `Identifiable` outright: SwiftUI sees a new id each body
+    /// pass, so any `ForEach` over these items destroys and rebuilds every row instead
+    /// of diffing it. Derive a stable token from the item's own content instead, exactly
+    /// as the main app does (`FeedModels.swift` `stableFeedIdentityComponent`).
     var id: String {
         if let e = event { return "event-\(e.id)" }
         if let f = futures { return "futures-\(f.id)" }
-        return UUID().uuidString
+        return (
+            ["watch", type, headline, contextSummary, String(score)]
+                .compactMap(Self.stableIdentityComponent)
+                .joined(separator: "-")
+        )
+    }
+
+    private static func stableIdentityComponent(_ value: String?) -> String? {
+        guard let slug = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter({ !$0.isEmpty })
+            .joined(separator: "-"),
+            !slug.isEmpty
+        else { return nil }
+        return slug
     }
 
     enum CodingKeys: String, CodingKey {

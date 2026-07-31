@@ -145,4 +145,81 @@ final class WidgetFeedDecodeTests: XCTestCase {
         // than throwing the whole response away or looping forever.
         XCTAssertTrue(feed.items.isEmpty)
     }
+
+    // MARK: - L2-224: position coverage — first and last, not just the middle
+
+    // The L2-182 fixtures only ever put a malformed card BETWEEN two healthy ones.
+    // A skip loop can be position-sensitive (a failure that does not advance the
+    // unkeyed container's index hangs; one that over-advances eats a neighbour), so
+    // the first and last slots need their own fixtures.
+
+    func testMalformedFirstItemDoesNotWipeHealthySiblings() throws {
+        let feed = try decodeEvents("""
+        {
+          "items": [
+            { "type": "concept", "data": { "key": "k", "name": "Tour de France" } },
+            { "type": "event",
+              "data": { "id": 31, "home_team": "A", "away_team": "B", "status": "live" } },
+            { "type": "event",
+              "data": { "id": 32, "home_team": "C", "away_team": "D", "status": "live" } }
+          ],
+          "total": 3, "limit": 10, "offset": 0, "has_more": false
+        }
+        """)
+        XCTAssertEqual(feed.items.compactMap { $0.data?.id }, [31, 32])
+    }
+
+    func testMalformedLastItemDoesNotWipeHealthySiblings() throws {
+        let feed = try decodeEvents("""
+        {
+          "items": [
+            { "type": "event",
+              "data": { "id": 41, "home_team": "A", "away_team": "B", "status": "live" } },
+            { "type": "event",
+              "data": { "id": 42, "home_team": "C", "away_team": "D", "status": "live" } },
+            { "type": "tournament", "data": { "slug": "the-open", "field": 156 } }
+          ],
+          "total": 3, "limit": 10, "offset": 0, "has_more": false
+        }
+        """)
+        XCTAssertEqual(feed.items.compactMap { $0.data?.id }, [41, 42])
+    }
+
+    // MARK: - L2-224: non-object elements must be skipped, never hang
+
+    /// The subtle hazard in the skip loop: `UnkeyedDecodingContainer.decode` does
+    /// NOT advance `currentIndex` when it throws, so `while !isAtEnd` spins forever
+    /// unless the `WidgetSkipOne` fallback consumes the element. An OBJECT that fails
+    /// to decode is the easy case; a `null` / string / number / array / bool element
+    /// is the one that would hang. If this test ever times out rather than fails,
+    /// that is the regression.
+    func testNonObjectElementsAreSkippedWithoutHanging() throws {
+        let feed = try decodeEvents("""
+        {
+          "items": [
+            null,
+            "garbage",
+            { "type": "event",
+              "data": { "id": 51, "home_team": "A", "away_team": "B", "status": "live" } },
+            42,
+            [1, 2, 3],
+            { "type": "event",
+              "data": { "id": 52, "home_team": "C", "away_team": "D", "status": "live" } },
+            true
+          ],
+          "total": 7, "limit": 10, "offset": 0, "has_more": false
+        }
+        """)
+        XCTAssertEqual(feed.items.compactMap { $0.data?.id }, [51, 52],
+                       "every non-object element is consumed; both real events survive")
+    }
+
+    /// An items array made entirely of junk elements is an honest empty list, not a
+    /// throw and not a hang.
+    func testAllNonObjectElementsDecodeToEmpty() throws {
+        let feed = try decodeDiscover("""
+        { "items": [ null, null, "x", 7 ], "total": 4, "limit": 10, "offset": 0 }
+        """)
+        XCTAssertTrue(feed.items.isEmpty)
+    }
 }
