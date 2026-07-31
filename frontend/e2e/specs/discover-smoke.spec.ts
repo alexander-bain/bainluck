@@ -18,15 +18,31 @@ import { test, expect } from "../fixtures/audit";
  *     itself more leniently than the fixtures prove.
  */
 
-/** Per-card wrapper rendered only when the feed has visible items. */
-const CARD_WRAPPER = "main div.break-inside-avoid";
+/**
+ * Stable, state-based hooks (L2-223). These replaced two brittle selectors:
+ *
+ *   - `main div.break-inside-avoid` for a card. That is a Tailwind LAYOUT
+ *     class, and `DiscoverSkeletonGrid` carries it too — so a Discover stuck
+ *     on skeletons matched, `realCardFound` went true, a first-card latency
+ *     was recorded, and the run reported GREEN. A live false green of exactly
+ *     the C96 [P1] shape, reached through the selector instead of a `.catch()`.
+ *   - `getByText("You're all caught up")` for the empty state. Copy is edited
+ *     by anyone at any time; a wording change would quietly convert a proven
+ *     empty state into an unproven blank page.
+ *
+ * `data-testid` is rendered only on a mounted feed item and on the real empty
+ * state, so neither substitution is possible.
+ */
+const CARD_WRAPPER = '[data-testid="discover-card"]';
 /** Card detail links — a second, independent signal that content is real. */
 const CARD_LINK =
   'main a[href^="/event"], main a[href^="/futures"], main a[href^="/hub"], main a[href^="/topic"], main a[href^="/market"]';
-/** The one named, legitimate empty state Discover ships (EndOfFeedCard). */
-const NAMED_EMPTY = "You're all caught up";
+/** The named, legitimate empty state Discover ships (EndOfFeedCard). */
+const NAMED_EMPTY = '[data-testid="discover-empty-state"]';
 /** An error state. Never a legitimate empty state. */
-const ERROR_STATE = "Failed to load feed";
+const ERROR_STATE = '[data-testid="discover-feed-error"]';
+/** The loading placeholder. Never content, and explicitly asserted against. */
+const SKELETON = '[data-testid="discover-skeleton"]';
 
 const PATHS = [
   { journeyId: "discover.landing", path: "/" },
@@ -43,8 +59,8 @@ for (const target of PATHS) {
     // means a legitimately-empty deploy resolves fast instead of burning the
     // full timeout, while a blank page still exhausts it and fails.
     const cardLocator = page.locator(CARD_WRAPPER).first();
-    const emptyLocator = page.getByText(NAMED_EMPTY, { exact: false }).first();
-    const errorLocator = page.getByText(ERROR_STATE, { exact: false }).first();
+    const emptyLocator = page.locator(NAMED_EMPTY).first();
+    const errorLocator = page.locator(ERROR_STATE).first();
 
     await Promise.race([
       cardLocator.waitFor({ state: "visible", timeout: 45_000 }).catch(() => null),
@@ -62,7 +78,21 @@ for (const target of PATHS) {
     const firstCardMs = realCardFound ? Date.now() - startedAt : null;
 
     const namedEmptyVisible = await emptyLocator.isVisible().catch(() => false);
-    const emptyState = namedEmptyVisible ? { name: NAMED_EMPTY, visible: true } : null;
+    // The state NAME comes from the component's own data attribute, not from
+    // its rendered copy — the evaluator only believes an empty state it can
+    // name, and a name scraped from editable prose is not a name.
+    const emptyStateName = namedEmptyVisible
+      ? await emptyLocator.getAttribute("data-empty-state-name").catch(() => null)
+      : null;
+    const emptyState = namedEmptyVisible
+      ? { name: emptyStateName || "discover-empty-state", visible: true }
+      : null;
+
+    // A still-mounted skeleton means the feed never resolved. It is neither
+    // content nor a legitimate empty state, and asserting on it directly keeps
+    // "we timed out waiting" distinguishable from "the deploy is genuinely
+    // empty" in the manifest rather than only in a screenshot.
+    const skeletonVisible = await page.locator(SKELETON).first().isVisible().catch(() => false);
 
     const mainText = (await page.locator("main").first().innerText().catch(() => "")) || "";
 
@@ -72,11 +102,12 @@ for (const target of PATHS) {
       realCardFound,
       firstCardMs,
       emptyState,
-      mainRegionNonBlank: mainText.trim().length > 40,
+      mainRegionNonBlank: mainText.trim().length > 40 && !skeletonVisible,
     });
 
     // Redundant with the evaluator, but keeps the failure legible in the
     // Playwright report without having to open the manifest.
+    expect(skeletonVisible, "the loading skeleton must not still be mounted").toBe(false);
     expect(realCardFound || namedEmptyVisible, "a real card or a named empty state must render").toBe(true);
   });
 }

@@ -97,7 +97,21 @@ export default class AuditReporter implements Reporter {
       requestedFrontendSha: process.env.AUDIT_REQUESTED_SHA || null,
       observedFrontendSha: process.env.AUDIT_OBSERVED_FRONTEND_SHA || null,
       observedBackendSha: process.env.AUDIT_OBSERVED_BACKEND_SHA || null,
+      // L2-223: which commit's grading code produced this verdict, and how it
+      // relates to the deployed commit. Both are established by the workflow
+      // (`git rev-parse` / `git merge-base --is-ancestor`) — the reporter only
+      // transcribes them, so it cannot upgrade an unproven relationship.
+      checkoutSha: process.env.AUDIT_CHECKOUT_SHA || null,
+      checkoutAncestry: process.env.AUDIT_CHECKOUT_ANCESTRY || null,
+      // Playwright's process-level verdict. Recorded even when it disagrees
+      // with the journeys, because that disagreement is the finding.
+      runnerStatus: result.status,
       baseUrl: process.env.TRACE_BASE_URL || "https://www.bainluck.com",
+      apiBaseUrl: process.env.AUDIT_API_BASE_URL || null,
+      // The origin the browser actually ended on, observed rather than
+      // declared. Held to the same allowlist as base_url, so a canonical start
+      // that redirects to a preview host cannot be filed as production proof.
+      finalOrigin: this.journeys.map((j) => j.final_origin).find((o) => typeof o === "string" && o) ?? null,
       runtime: {
         node: process.version,
         playwright: readPlaywrightVersion(),

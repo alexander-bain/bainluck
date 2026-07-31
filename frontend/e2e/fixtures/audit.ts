@@ -7,7 +7,7 @@ import {
   type JourneyObservation,
   type TelemetryExpectation,
 } from "../helpers/journey";
-import { sha256 } from "../helpers/manifest";
+import { sha256, CANONICAL_ORIGINS } from "../helpers/manifest";
 import type { JourneyRecord } from "../helpers/manifest";
 import { redactText, redactUrl } from "../helpers/redaction";
 import { compareSha } from "../helpers/buildAuthority";
@@ -27,6 +27,14 @@ import { compareSha } from "../helpers/buildAuthority";
  */
 
 export const ATTACHMENT_NAME = "audit-journey.json";
+
+/** Mirrors `ARTIFACT_ROOT` in `helpers/manifest.js`; a contract test pins them together. */
+const ARTIFACT_SUBDIR = "artifacts";
+
+/** The directory the manifest is written to — artifact paths are relative to it. */
+function auditOutDir(): string {
+  return process.env.AUDIT_OUT_DIR || "audit-out";
+}
 
 /** Telemetry destinations the consent pack cares about (recorded, not blocked). */
 const TELEMETRY_HOSTS = [
@@ -102,8 +110,10 @@ export class JourneyRecorder {
       const url = res.url();
       const status = res.status();
       if (status >= 300 && status < 400) this.redirectChain.push(redactUrl(url));
-      // Same-origin 4xx/5xx are product defects; third-party noise is not ours.
-      if (status >= 400 && this.isSameOrigin(url)) {
+      // First-party 4xx/5xx are product defects — that includes the backend
+      // API, which is a different origin but entirely ours. Third-party noise
+      // is not graded.
+      if (status >= 400 && this.isFirstParty(url)) {
         this.failedRequests.push({
           url: redactUrl(url),
           method: res.request().method(),
@@ -116,11 +126,34 @@ export class JourneyRecorder {
     this.page.on("request", (req) => this.recordTelemetry(req.url()));
   }
 
-  private isSameOrigin(url: string): boolean {
+  /**
+   * Origins whose 4xx/5xx are OUR defect.
+   *
+   * L2-223: this used to be the site origin alone, which quietly discarded the
+   * most important failures the rail can see. Bain Luck's frontend renders
+   * almost entirely from `api.bainluck.com` — a different origin — so every
+   * backend 500 behind a blank Discover was filed as "third-party noise" and
+   * the journey went green on the strength of a named empty state. A first
+   * party is not defined by matching origins; it is defined by us owning it.
+   */
+  private firstPartyOrigins(): string[] {
+    const origins = new Set<string>();
+    const add = (value: string | undefined | null) => {
+      if (!value) return;
+      try {
+        origins.add(new URL(value).origin);
+      } catch {
+        /* an unparseable base is caught by the manifest origin allowlist */
+      }
+    };
+    add(this.testInfo.project.use?.baseURL ?? "https://www.bainluck.com");
+    add(process.env.AUDIT_API_BASE_URL ?? "https://api.bainluck.com");
+    return [...origins];
+  }
+
+  private isFirstParty(url: string): boolean {
     try {
-      const target = new URL(url);
-      const base = new URL(this.testInfo.project.use?.baseURL ?? "https://www.bainluck.com");
-      return target.origin === base.origin;
+      return this.firstPartyOrigins().includes(new URL(url).origin);
     } catch {
       return false;
     }
@@ -173,40 +206,50 @@ export class JourneyRecorder {
   async finish(input: FinishInput): Promise<JourneyRecord> {
     const finishedAt = new Date();
     const project = this.testInfo.project.name;
-    const artifacts: Array<{ name: string; sha256: string; bytes: number }> = [];
+    const artifacts: Array<{ name: string; path: string; sha256: string; bytes: number }> = [];
 
     // Terminal screenshot: taken for EVERY outcome, not only failures. A pass
     // with no artifact is unverifiable after the fact.
+    //
+    // L2-223: written into `$AUDIT_OUT_DIR/artifacts/` — beside the manifest,
+    // inside the one directory the workflow uploads — and recorded as a
+    // relative path. A digest with no fetchable path cannot be re-hashed by a
+    // reviewer, which made every artifact claim unfalsifiable.
     const shotName = `${input.journeyId}.${project}.terminal.png`;
+    const relativePath = `${ARTIFACT_SUBDIR}/${shotName}`;
     try {
-      const shotPath = this.testInfo.outputPath(shotName);
+      const shotPath = path.join(auditOutDir(), ARTIFACT_SUBDIR, shotName);
+      fs.mkdirSync(path.dirname(shotPath), { recursive: true });
       const buffer = await this.page.screenshot({ fullPage: true, path: shotPath });
-      artifacts.push({ name: shotName, sha256: sha256(buffer), bytes: buffer.byteLength });
+      artifacts.push({
+        name: shotName,
+        path: relativePath,
+        sha256: sha256(buffer),
+        bytes: buffer.byteLength,
+      });
       await this.testInfo.attach(shotName, { path: shotPath, contentType: "image/png" });
     } catch (err) {
       this.markInfraError(`terminal screenshot failed: ${redactText(err)}`);
     }
 
-    // Playwright's own trace is attached by the reporter; hash whatever it wrote.
-    for (const attachment of this.testInfo.attachments) {
-      if (attachment.name === "trace" && attachment.path && fs.existsSync(attachment.path)) {
-        const buffer = fs.readFileSync(attachment.path);
-        artifacts.push({
-          name: path.basename(attachment.path),
-          sha256: sha256(buffer),
-          bytes: buffer.byteLength,
-        });
-      }
-    }
+    // No trace is hashed here, deliberately (L2-223 Item 2). Playwright's trace
+    // is a zip of the whole session — request/response bodies, storage, cookie
+    // headers — and phase 1 uploads artifacts unconditionally with 90-day
+    // retention and no reviewed containment policy. Scrubbing this manifest's
+    // JSON fields would do nothing to those bytes, so tracing is off in
+    // `playwright.config.ts` and the manifest validator REJECTS a declared
+    // trace rather than quietly accepting one.
 
     const shaVerdict = compareSha(this.requestedSha, this.observedSha);
-    const urlPath = (() => {
+    const landed = (() => {
       try {
-        return new URL(this.page.url()).pathname;
+        const parsed = new URL(this.page.url());
+        return { path: parsed.pathname, origin: parsed.origin };
       } catch {
-        return redactUrl(this.page.url());
+        return { path: redactUrl(this.page.url()), origin: null as string | null };
       }
     })();
+    const urlPath = landed.path;
 
     // A duration is only carried when a card was actually observed. This is
     // the false green being closed: the old spec always recorded elapsed time.
@@ -222,6 +265,9 @@ export class JourneyRecorder {
       shaDetail: shaVerdict.reason,
       expectedPath: input.expectedPath ?? null,
       urlPath,
+      finalOrigin: landed.origin,
+      canonicalOrigins: [...CANONICAL_ORIGINS],
+      redirectChain: this.redirectChain,
       realCardFound: input.realCardFound,
       firstCardMs,
       emptyState: input.emptyState ?? null,
@@ -244,6 +290,7 @@ export class JourneyRecorder {
       project,
       viewport: this.page.viewportSize(),
       url_path: urlPath,
+      final_origin: landed.origin,
       redirect_chain: this.redirectChain,
       selected_fixture_ids: input.selectedFixtureIds ?? [],
       started_at_utc: this.startedAt.toISOString(),

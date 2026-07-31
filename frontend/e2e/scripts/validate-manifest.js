@@ -19,7 +19,8 @@
  */
 
 const fs = require("node:fs");
-const { validateManifest } = require("../helpers/manifest");
+const path = require("node:path");
+const { validateManifest, verifyArtifactBytes } = require("../helpers/manifest");
 
 function fail(message) {
   console.error(`[browser-audit] FAIL — ${message}`);
@@ -28,6 +29,13 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const allowNonPass = args.includes("--allow-nonpass");
+/**
+ * L2-223: re-hash every claimed artifact against the bytes on disk. Only
+ * meaningful where the files still exist (the workflow, or a downloaded and
+ * unpacked artifact), which is why it is a flag rather than always-on — but
+ * the workflow always passes it, so a fictional artifact never survives CI.
+ */
+const verifyBytes = args.includes("--verify-bytes");
 const manifestPath = args.find((a) => !a.startsWith("--")) || "audit-out/manifest.json";
 
 if (!fs.existsSync(manifestPath)) {
@@ -46,6 +54,17 @@ if (!ok) {
   console.error(`[browser-audit] manifest ${manifestPath} is INVALID:`);
   for (const error of errors) console.error(`  ✗ ${error}`);
   process.exit(1);
+}
+
+if (verifyBytes) {
+  const root = path.dirname(path.resolve(manifestPath));
+  const bytes = verifyArtifactBytes(manifest, { root });
+  if (!bytes.ok) {
+    console.error(`[browser-audit] artifact bytes in ${root} do NOT match the manifest:`);
+    for (const error of bytes.errors) console.error(`  ✗ ${error}`);
+    process.exit(1);
+  }
+  console.log(`[browser-audit] ${bytes.verified} artifact(s) re-hashed from disk and matched`);
 }
 
 const run = manifest.run;

@@ -1,4 +1,4 @@
-# Browser audit rail (L2-221, phase 1)
+# Browser audit rail (L2-221 / L2-223, phase 1)
 
 Repo-owned, locally replayable Playwright. This is the replacement for the
 retired third-party browser-QA provider (#1497), built to C96's design.
@@ -43,11 +43,13 @@ TRACE_BASE_URL=https://www.bainluck.com \
 # 3. The anonymous Discover smoke, desktop + mobile.
 AUDIT_REQUESTED_SHA=<full-40-hex> \
 AUDIT_OBSERVED_FRONTEND_SHA=<full-40-hex> \
+AUDIT_CHECKOUT_SHA=$(git rev-parse HEAD) \
 TRACE_BASE_URL=https://www.bainluck.com \
   npm run smoke
 
-# 4. The gate. Exit 0 only on a structurally valid, `pass` manifest.
-npm run validate -- audit-out/manifest.json
+# 4. The gate. Exit 0 only on a structurally valid, `pass` manifest whose
+#    every claimed artifact re-hashes to the bytes on disk.
+npm run validate -- audit-out/manifest.json --verify-bytes
 ```
 
 In CI: **Actions → Browser audit (manual) → Run workflow**, with
@@ -96,6 +98,61 @@ contract test asserts the two agree on required fields so they cannot drift.
 `deriveRunResult([])` is `infra_error`, never `pass` — a rail that collects
 nothing must never conclude success.
 
+### What L2-223 added: evidence that is *bound*
+
+L2-221 made it impossible to report green with **no** evidence. It was still
+possible to report green with **unbound** evidence — evidence that looked
+complete but was not tied to anything checkable. Each of these was a real hole
+in the shipped rail, and each now has a dependency-free fixture in
+`contract/integrity.contract.test.js`:
+
+| Hole | What it allowed | Now |
+|---|---|---|
+| No checkout binding | A dispatch from any ref graded production with **that ref's** evaluator and filed the green against the deployed commit | `checkout_sha` is required; if it differs from the audited commit the workflow must have PROVEN ancestry with `git merge-base --is-ancestor` |
+| `journeys <= selected` | Selecting 2 journeys and completing 1 validated — one record is not "more than" two | `selected_count == completed_count == journeys.length` |
+| No runner status | A runner that failed, timed out, or was interrupted still produced a green manifest from the journeys that *had* finished | `runner_status` is recorded from Playwright's own `FullResult`; a non-`passed` runner can never accompany `result: pass` |
+| Free-text `base_url` | A preview deployment or a lookalike host could be audited and filed as production | Exact-origin allowlist on `base_url`, `api_base_url` and the **final** origin the browser landed on, plus a bounded redirect chain |
+| Origin-only failure grading | `api.bainluck.com` is a *different origin*, so **every backend 500 behind a blank feed was discarded as third-party noise** | First-party means "ours", not "same origin": the API's 4xx/5xx fail the journey |
+| `{name, sha256}` artifacts | A plausible 64-hex digest with no file anywhere validated. A fictional artifact is worse than none — it reads as evidence in every summary | Normalized relative `path` under `artifacts/`, positive byte count, unique across the run, and `--verify-bytes` re-hashes the actual bytes in CI |
+| Shell-interpolated input | `$(( ${{ inputs.sha_timeout_seconds }} * 1000 ))` evaluated arbitrary shell arithmetic chosen by the dispatcher — and `${{ }}` expands before the shell sees the line, so quoting would not have helped | Every dispatch input travels through the job env and is pattern-checked before use |
+
+### Trace policy — phase 1 captures none
+
+L2-221 set `trace: "on"` directly beneath a comment explaining that an
+authenticated trace retains cookies and tokens. The reasoning was right and the
+setting contradicted it.
+
+A Playwright trace is a zip of the whole session: request and response bodies,
+storage, and every cookie and authorization header the page sent. The
+manifest's redaction pass scrubs **JSON fields**; it cannot touch those bytes.
+Uploading one for 90 days and calling the run redacted was not true.
+
+So phase 1 has three locks, not one: `trace: "off"` in the config, the workflow
+no longer uploads `test-results/` or `playwright-report/`, and the validator
+**rejects** a manifest that declares a trace artifact. Turning tracing back on
+requires a reviewed containment policy — short retention, restricted download,
+or a scrubber that operates on the trace zip itself — not an edit to the config.
+
+### Stable Discover hooks
+
+The smoke and latency specs used to select a card with
+`main div.break-inside-avoid`. That is a Tailwind **layout** class, and
+`DiscoverSkeletonGrid` carries it too — so a Discover stuck on skeletons
+satisfied "a real card was visible", recorded a first-card latency, and the run
+went green. The C96 [P1] false green, reintroduced through the selector rather
+than the `.catch()`.
+
+The empty state was matched by the copy string `"You're all caught up"`, so an
+editorial reword would have converted a proven empty state into an unproven
+blank page.
+
+Both now bind to semantic hooks the components render deliberately:
+`data-testid="discover-card"`, `data-testid="discover-empty-state"` with a
+machine-readable `data-empty-state-name`, `data-testid="discover-feed-error"`,
+and `data-testid="discover-skeleton"` — which the smoke journey now asserts is
+**gone**. `frontend/__tests__/components/discoverAuditHooks.test.tsx` fails CI
+if a hook is dropped, renamed, or leaks onto the skeleton.
+
 ### `helpers/redaction.js` — what may leave the browser
 
 No raw cookies, auth headers, or storage state. URLs keep their origin, path
@@ -127,9 +184,13 @@ explanatory comments.
 
 ## What a green run does and does not prove
 
-A green run proves: the named commit was the one deployed, the audited pages
-rendered a real card or a named empty state, and no console/page errors or
-same-origin request failures occurred, with hashed artifacts for each.
+A green run proves: the named commit was the one deployed, the grading code
+came from that commit or a descendant of it, the browser stayed on a canonical
+origin, every selected journey produced a record, the runner itself terminated
+cleanly, the audited pages rendered a real card or a named empty state, no
+console/page errors or first-party (site **or** API) request failures occurred,
+and every artifact named in the manifest re-hashes to bytes inside the uploaded
+evidence tree.
 
 It does **not** prove anything about signed-in surfaces, consent/telemetry
 behaviour (that is the phase-3 consent pack for #1453), or whether the design

@@ -37,6 +37,10 @@ function assertion(id, ok, detail) {
   return { assertion_id: id, ok: Boolean(ok), detail: detail == null ? null : String(detail) };
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 /**
  * Does an observed telemetry destination match a ledger rule?
  * `hostSuffix` matches the host or any subdomain of it; `pathPrefix` is a
@@ -176,6 +180,33 @@ function evaluateJourney(observation) {
         o.shaDetail == null ? null : redactText(o.shaDetail)
       )
     );
+  }
+
+  // --- Origin identity and bounded redirects (L2-223). ---
+  //
+  // The path alone does not say WHICH site rendered it. A canonical start that
+  // redirects to a preview host still lands on `/discover`, and every content
+  // assertion below would then be graded against the wrong build. An
+  // unbounded redirect chain is the same problem in slow motion, so the hop
+  // count is capped rather than merely recorded.
+  if (Array.isArray(o.canonicalOrigins) && o.canonicalOrigins.length > 0) {
+    const finalOrigin = isNonEmptyString(o.finalOrigin) ? o.finalOrigin : null;
+    assertions.push(
+      assertion(
+        "route.final_origin_canonical",
+        finalOrigin !== null && o.canonicalOrigins.includes(finalOrigin),
+        finalOrigin === null
+          ? "no final origin was resolved"
+          : `landed on ${redactUrl(finalOrigin)}`
+      )
+    );
+    const hops = Array.isArray(o.redirectChain) ? o.redirectChain.length : 0;
+    const maxHops = Number.isFinite(o.maxRedirects) ? o.maxRedirects : 3;
+    assertions.push(
+      assertion("route.redirects_bounded", hops <= maxHops, `${hops} redirect(s), max ${maxHops}`)
+    );
+  } else {
+    checkedClean.push("route.final_origin_canonical (journey declares no canonical origins)");
   }
 
   // --- Route identity. ---

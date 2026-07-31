@@ -31,9 +31,15 @@ import type { Page, Response } from "@playwright/test";
 
 const PATHS = ["/", "/discover"] as const;
 
-/** Per-card wrapper rendered only when the feed has visible items. */
-const CARD_WRAPPER = "main div.break-inside-avoid";
-const NAMED_EMPTY = "You're all caught up";
+/**
+ * Stable, state-based hooks (L2-223). `main div.break-inside-avoid` was a
+ * Tailwind layout class that `DiscoverSkeletonGrid` shares, so a feed stuck on
+ * skeletons satisfied "a real card appeared" and this latency spec — the very
+ * one C96 [P1] flagged for manufacturing plausible numbers — would have
+ * recorded a first-card time for a page that never rendered a card.
+ */
+const CARD_WRAPPER = '[data-testid="discover-card"]';
+const NAMED_EMPTY = '[data-testid="discover-empty-state"]';
 
 interface FeedTiming {
   status: number;
@@ -100,11 +106,11 @@ for (const path of PATHS) {
         .catch(() => false);
       const firstCardMs = realCardFound ? Date.now() - t0 : null;
 
-      const namedEmptyVisible = await page
-        .getByText(NAMED_EMPTY, { exact: false })
-        .first()
-        .isVisible()
-        .catch(() => false);
+      const emptyLocator = page.locator(NAMED_EMPTY).first();
+      const namedEmptyVisible = await emptyLocator.isVisible().catch(() => false);
+      const emptyStateName = namedEmptyVisible
+        ? await emptyLocator.getAttribute("data-empty-state-name").catch(() => null)
+        : null;
 
       // ---- WARM: reload; server shell + edge caches are hot ----
       const warmFeedPromise = captureFeed(page);
@@ -137,7 +143,9 @@ for (const path of PATHS) {
         expectedPath: path,
         realCardFound,
         firstCardMs,
-        emptyState: namedEmptyVisible ? { name: NAMED_EMPTY, visible: true } : null,
+        emptyState: namedEmptyVisible
+          ? { name: emptyStateName || "discover-empty-state", visible: true }
+          : null,
         mainRegionNonBlank: mainText.trim().length > 40,
       });
     });

@@ -23,7 +23,17 @@ export default function EndOfFeedCard({
   onRefresh: () => void;
 }) {
   return (
-    <div className="w-full max-w-md rounded-2xl bg-surface-card border border-surface-border px-6 py-8 text-center">
+    // `data-testid` + `data-empty-state-name` are the browser-audit rail's
+    // stable hook for "the feed legitimately has nothing more" (L2-223). The
+    // audit previously matched the copy string, so a wording change would have
+    // silently turned a proven empty state into an unproven blank page. The
+    // name is exported as data rather than scraped from the DOM text.
+    <div
+      className="w-full max-w-md rounded-2xl bg-surface-card border border-surface-border px-6 py-8 text-center"
+      data-testid="discover-empty-state"
+      data-empty-state-name={count > 0 ? "end-of-feed" : "no-markets"}
+      role="status"
+    >
       <p className="text-lg font-medium text-text-primary">You&apos;re all caught up</p>
       <p className="text-sm text-text-secondary mt-1">
         {count > 0 ? `${count} markets explored — ` : ""}new markets open throughout the day, so check back soon.

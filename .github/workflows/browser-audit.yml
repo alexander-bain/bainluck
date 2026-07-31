@@ -82,18 +82,104 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          # L2-223: full history so the ancestry proof below is possible. With
+          # the default depth-1 clone `git merge-base` cannot see the audited
+          # commit, and "cannot prove" would collapse into "assume fine".
+          fetch-depth: 0
 
-      - name: Validate the requested SHA is a full 40-hex
+      - name: Validate every dispatch input
+        # L2-223. Every value here is attacker-choosable by anyone who can
+        # dispatch the workflow, so each is read from the environment (never
+        # interpolated into shell syntax) and pattern-checked before use.
+        #
+        # `sha_timeout_seconds` was previously spliced straight into shell
+        # arithmetic as `$(( ${{ inputs.sha_timeout_seconds }} * 1000 ))`, which
+        # evaluates arbitrary shell arithmetic — and `${{ }}` expansion happens
+        # before the shell ever sees the line, so quoting it would not have
+        # helped. Gotcha #9: the checks live inside the run block.
+        env:
+          RAW_TIMEOUT: ${{ inputs.sha_timeout_seconds }}
         run: |
+          set -euo pipefail
+
           # An abbreviated sha is ambiguous, and "close enough" is exactly how
-          # a run gets attached to the wrong deployment. Gotcha #9: the check
-          # lives inside the run block, not a step-level `if`.
-          SHA="${AUDIT_REQUESTED_SHA}"
-          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::frontend_sha must be a full lowercase 40-hex commit sha (got '${SHA}')"
+          # a run gets attached to the wrong deployment.
+          if ! printf '%s' "${AUDIT_REQUESTED_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::frontend_sha must be a full lowercase 40-hex commit sha"
             exit 1
           fi
-          echo "Requested frontend commit: $SHA"
+
+          # Digits only, and bounded. A negative or enormous value would either
+          # skip the deployment wait entirely or hold a runner for hours.
+          if ! printf '%s' "${RAW_TIMEOUT}" | grep -Eq '^[0-9]{1,4}$'; then
+            echo "::error::sha_timeout_seconds must be 1-4 digits"
+            exit 1
+          fi
+          if [ "${RAW_TIMEOUT}" -lt 30 ] || [ "${RAW_TIMEOUT}" -gt 1800 ]; then
+            echo "::error::sha_timeout_seconds must be between 30 and 1800"
+            exit 1
+          fi
+          echo "AUDIT_SHA_TIMEOUT_MS=$(( RAW_TIMEOUT * 1000 ))" >> "$GITHUB_ENV"
+
+          # Canonical origins only. A preview deployment is a real Vercel host
+          # serving a DIFFERENT build, so a green from one attached to a
+          # production commit is a lie — hence exact match, not a suffix test.
+          case "${TRACE_BASE_URL}" in
+            https://www.bainluck.com|https://bainluck.com) ;;
+            *) echo "::error::base_url must be a canonical production origin"; exit 1 ;;
+          esac
+          case "${AUDIT_API_BASE_URL}" in
+            https://api.bainluck.com) ;;
+            *) echo "::error::api_base_url must be https://api.bainluck.com"; exit 1 ;;
+          esac
+
+          # Reject an unknown pack up front so it cannot reach a command line
+          # at all. Deliberately a `grep`, not a `case`: the packaging contract
+          # test asserts there is exactly ONE `case "${AUDIT_PACK}"` dispatch in
+          # this file — two would mean two playwright invocations, and the
+          # second manifest would silently overwrite the first.
+          if ! printf '%s' "${AUDIT_PACK}" | grep -Eq '^(deploy-smoke|consent|deploy-smoke\+consent)$'; then
+            echo "::error::unknown pack"
+            exit 1
+          fi
+
+      - name: Bind the grading commit to the audited commit
+        # L2-223. requested == observed proves WHICH DEPLOYMENT was exercised.
+        # It says nothing about which commit's specs, evaluator and validator
+        # did the grading — and a dispatch may name any ref, so a weakened
+        # evaluator on a side branch could manufacture a green for a commit it
+        # never graded honestly.
+        #
+        # Equality is not required: master legitimately moves ahead of what
+        # Vercel has deployed. What IS required is proof that the audited
+        # commit lies in this checkout's history. A fork commit, a rewritten
+        # commit, or an unrelated branch fails that test.
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REPOSITORY}" != "alexander-bain/bainluck" ]; then
+            echo "::error::this rail may only run on the canonical repository"
+            exit 1
+          fi
+
+          CHECKOUT_SHA="$(git rev-parse HEAD)"
+          echo "AUDIT_CHECKOUT_SHA=${CHECKOUT_SHA}" >> "$GITHUB_ENV"
+          echo "Grading commit (checkout): ${CHECKOUT_SHA}"
+          echo "Audited commit (deployed): ${AUDIT_REQUESTED_SHA}"
+
+          if [ "${CHECKOUT_SHA}" = "${AUDIT_REQUESTED_SHA}" ]; then
+            echo "AUDIT_CHECKOUT_ANCESTRY=identical" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if ! git cat-file -e "${AUDIT_REQUESTED_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::${AUDIT_REQUESTED_SHA} is not a commit in this repository"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${AUDIT_REQUESTED_SHA}" "${CHECKOUT_SHA}"; then
+            echo "::error::the deployed commit is not an ancestor of the checkout — the grading code is from a foreign line of history"
+            exit 1
+          fi
+          echo "AUDIT_CHECKOUT_ANCESTRY=requested-is-ancestor-of-checkout" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v6
         with:
@@ -126,7 +212,9 @@ jobs:
         # Exports AUDIT_OBSERVED_FRONTEND_SHA and, separately labelled,
         # AUDIT_OBSERVED_BACKEND_SHA. Exits non-zero if the requested commit
         # is not what /api/frontend-build reports within the bound.
-        run: node scripts/wait-for-frontend-sha.js --timeout-ms "$(( ${{ inputs.sha_timeout_seconds }} * 1000 ))"
+        # AUDIT_SHA_TIMEOUT_MS was computed from a digits-only, range-checked
+        # input in the validation step — no dispatch value reaches shell syntax.
+        run: node scripts/wait-for-frontend-sha.js --timeout-ms "${AUDIT_SHA_TIMEOUT_MS}"
 
       - name: Run the selected pack — desktop and mobile
         # EXACTLY ONE playwright invocation, deliberately.
@@ -157,21 +245,32 @@ jobs:
       - name: Validate the evidence manifest
         # The gate. A missing manifest, zero selected journeys, a SHA
         # mismatch, an unevidenced journey, or any non-pass result exits 1.
+        #
+        # L2-223 adds `--verify-bytes`: every artifact the manifest claims is
+        # opened and re-hashed here, while the files still exist. Before this,
+        # a fictional artifact with a plausible 64-hex digest validated — and a
+        # fictional artifact is worse than none, because it reads as evidence
+        # in every downstream summary.
         if: always()
-        run: npm run validate -- "$AUDIT_OUT_DIR/manifest.json"
+        run: npm run validate -- "$AUDIT_OUT_DIR/manifest.json" --verify-bytes
 
       - name: Upload audit evidence
         # `if: always()` so failures keep their artifacts. Deliberately NOT
         # continue-on-error: if the upload fails there is no evidence, and a
         # run with no evidence must not be green.
+        #
+        # L2-223: `test-results/` and `playwright-report/` are NOT uploaded.
+        # Both carry Playwright traces — zips of the whole session including
+        # request/response bodies, storage and cookie headers — and phase 1 has
+        # no reviewed containment policy for them. Tracing is off at the config
+        # level too; this is the second lock, not the only one. The manifest
+        # and its `artifacts/` screenshots are the closure evidence, and every
+        # artifact path is required to live in this one uploaded tree.
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: browser-audit-${{ inputs.frontend_sha }}-${{ github.run_id }}
-          path: |
-            frontend/e2e/audit-out/
-            frontend/e2e/test-results/
-            frontend/e2e/playwright-report/
+          path: frontend/e2e/audit-out/
           retention-days: 90
           if-no-files-found: error
 
@@ -184,8 +283,10 @@ jobs:
             echo ""
             echo "| field | value |"
             echo "|---|---|"
-            echo "| requested frontend sha | \`${AUDIT_REQUESTED_SHA}\` |"
+            echo "| requested frontend sha (audited) | \`${AUDIT_REQUESTED_SHA}\` |"
             echo "| observed frontend sha | \`${AUDIT_OBSERVED_FRONTEND_SHA:-unresolved}\` |"
+            echo "| checkout sha (grading code) | \`${AUDIT_CHECKOUT_SHA:-unresolved}\` |"
+            echo "| checkout ancestry | ${AUDIT_CHECKOUT_ANCESTRY:-unproven} |"
             echo "| observed backend sha (recorded only) | \`${AUDIT_OBSERVED_BACKEND_SHA:-unavailable}\` |"
             echo "| base url | ${TRACE_BASE_URL} |"
             if [ -f "$MANIFEST" ]; then
@@ -193,6 +294,7 @@ jobs:
                 const m = require(process.argv[1]);
                 const r = m.run;
                 console.log(`| result | **${r.result}** |`);
+                console.log(`| runner status | ${r.runner_status ?? "unrecorded"} |`);
                 console.log(`| selected / completed / failed | ${r.selected_count} / ${r.completed_count} / ${r.failed_count} |`);
                 for (const j of m.journeys) {
                   console.log(`| ${j.journey_id} [${j.project}] | ${j.result} |`);

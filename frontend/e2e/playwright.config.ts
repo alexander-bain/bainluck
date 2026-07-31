@@ -14,7 +14,14 @@ import { defineConfig, devices } from "@playwright/test";
  *   npx playwright install --with-deps chromium
  *   AUDIT_REQUESTED_SHA=<40-hex> \
  *   AUDIT_OBSERVED_FRONTEND_SHA=<40-hex> \
+ *   AUDIT_CHECKOUT_SHA=$(git rev-parse HEAD) \
+ *   AUDIT_CHECKOUT_ANCESTRY=requested-is-ancestor-of-checkout \
  *   TRACE_BASE_URL=https://www.bainluck.com npm run smoke
+ *
+ * `AUDIT_CHECKOUT_SHA` is required (L2-223): the manifest binds the commit
+ * that GRADED the run alongside the commit it audited, and a manifest missing
+ * it is rejected. Set the ancestry only when it is actually true — the point
+ * of the field is that nobody has to take the relationship on trust.
  *
  * The contract fixtures deliberately do NOT run here — they run on
  * `node --test` (`npm run contract`), with no Playwright and no browser
@@ -39,10 +46,23 @@ export default defineConfig({
   outputDir: process.env.AUDIT_RESULTS_DIR || "test-results",
   use: {
     baseURL: process.env.TRACE_BASE_URL || "https://www.bainluck.com",
-    trace: "on",
+    // Trace, video and HAR are ALL off in phase 1 (L2-223).
+    //
+    // L2-221 shipped `trace: "on"` directly beneath a comment explaining why
+    // an authenticated trace is dangerous — the reasoning was right and the
+    // setting contradicted it. A Playwright trace is a zip of the whole
+    // session: request and response bodies, storage, and every cookie and
+    // authorization header the page sent. The manifest's redaction pass
+    // scrubs JSON FIELDS; it cannot touch those bytes, so calling the run
+    // "redacted" while uploading a raw trace for 90 days was not true.
+    //
+    // Turning this back on requires a reviewed containment policy (short
+    // retention, restricted download, or a scrubbing step that operates on the
+    // trace zip itself) — not just an edit here. The manifest validator
+    // rejects a declared trace artifact, and the workflow no longer uploads
+    // `test-results/`, so this is one of three locks rather than the only one.
+    trace: "off",
     screenshot: "only-on-failure",
-    // Video and HAR stay OFF by default: an authenticated trace can retain
-    // cookies and tokens, and phase 1 publishes artifacts unconditionally.
     video: "off",
   },
   projects: [

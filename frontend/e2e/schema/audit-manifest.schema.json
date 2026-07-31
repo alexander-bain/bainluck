@@ -20,6 +20,8 @@
         "finished_at_utc",
         "requested_frontend_sha",
         "observed_frontend_sha",
+        "checkout_sha",
+        "runner_status",
         "base_url",
         "runtime",
         "selected_count",
@@ -46,12 +48,33 @@
           "pattern": "^[0-9a-f]{40}$",
           "description": "Read from the frontend build marker (/api/frontend-build). Vercel deploys independently of Heroku and of the GitHub SHA, so this is the ONLY frontend authority."
         },
+        "checkout_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit that supplied the specs, evaluator and validator that graded this run. Distinct from the deployed commit: a dispatch from an arbitrary ref grades production with that ref's rail."
+        },
+        "checkout_ancestry": {
+          "type": ["string", "null"],
+          "enum": ["identical", "requested-is-ancestor-of-checkout", null],
+          "description": "How the checkout relates to the audited commit, established by the workflow: identical when they are the same commit, or requested-is-ancestor-of-checkout when git merge-base --is-ancestor proved the deployed commit is in this history. The validator requires the ancestry proof whenever checkout_sha != requested_frontend_sha."
+        },
+        "runner_status": {
+          "enum": ["passed", "failed", "timedout", "interrupted"],
+          "description": "Playwright's process-level verdict. A run whose runner did not pass is never green, however the individual journey records read."
+        },
+        "api_base_url": {
+          "type": ["string", "null"],
+          "description": "First-party backend origin. Its 4xx/5xx are graded as our defects, not third-party noise."
+        },
         "observed_backend_sha": {
           "type": ["string", "null"],
           "description": "Recorded from backend /health as a second ledger entry. Never substitutable for observed_frontend_sha."
         },
         "base_url": { "type": "string", "minLength": 1 },
-        "final_origin": { "type": ["string", "null"] },
+        "final_origin": {
+          "type": ["string", "null"],
+          "description": "The origin the browser actually landed on. Held to the same canonical allowlist as base_url."
+        },
         "runtime": {
           "type": "object",
           "required": ["node", "playwright", "browser", "os"],
@@ -106,6 +129,7 @@
             }
           },
           "url_path": { "type": "string" },
+          "final_origin": { "type": ["string", "null"] },
           "redirect_chain": { "type": "array", "items": { "type": "string" } },
           "selected_fixture_ids": { "type": "array", "items": { "type": "string" } },
           "started_at_utc": { "type": "string", "format": "date-time" },
@@ -159,11 +183,16 @@
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["name", "sha256"],
+              "required": ["name", "path", "sha256", "bytes"],
               "properties": {
                 "name": { "type": "string", "minLength": 1 },
+                "path": {
+                  "type": "string",
+                  "pattern": "^artifacts/[^/\\\\][^\\\\]*$",
+                  "description": "Normalized, relative to the manifest's directory and under the artifacts/ root, so the bytes travel inside the uploaded Actions artifact and can be re-hashed by a reviewer."
+                },
                 "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-                "bytes": { "type": "integer", "minimum": 0 }
+                "bytes": { "type": "integer", "minimum": 1 }
               }
             }
           },

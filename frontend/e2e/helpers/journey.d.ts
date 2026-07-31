@@ -13,6 +13,8 @@ export interface FailedRequestSummary {
 
 export interface JourneyArtifact {
   name: string;
+  /** Relative to the manifest's directory, under the `artifacts/` root. */
+  path: string;
   sha256: string;
   bytes?: number;
 }
@@ -51,6 +53,13 @@ export interface JourneyObservation {
   shaDetail?: string | null;
   expectedPath?: string | null;
   urlPath?: string | null;
+  /** The origin the browser actually landed on. */
+  finalOrigin?: string | null;
+  /** Allowlist for `finalOrigin`. Omit to skip the check explicitly. */
+  canonicalOrigins?: string[];
+  redirectChain?: string[];
+  /** Max redirect hops before the chain is treated as a defect. Default 3. */
+  maxRedirects?: number;
   realCardFound?: boolean;
   /** `null` unless a real card was observed — see timing.duration_only_when_observed. */
   firstCardMs?: number | null;

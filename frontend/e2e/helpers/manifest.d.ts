@@ -10,6 +10,7 @@ export interface JourneyRecord {
   project: string;
   viewport: { width: number; height: number } | null;
   url_path: string;
+  final_origin?: string | null;
   redirect_chain?: string[];
   selected_fixture_ids?: string[];
   started_at_utc: string;
@@ -40,9 +41,13 @@ export interface RunManifest {
     finished_at_pt: string;
     requested_frontend_sha: string | null;
     observed_frontend_sha: string | null;
+    checkout_sha: string | null;
+    checkout_ancestry: string | null;
+    runner_status: string | null;
     observed_backend_sha: string | null;
     base_url: string;
     final_origin: string | null;
+    api_base_url: string | null;
     runtime: { node: string; playwright: string; browser: string; os: string };
     selected_count: number;
     completed_count: number;
@@ -72,9 +77,13 @@ export declare function buildRunManifest(input: {
   finishedAt?: Date | string | number;
   requestedFrontendSha?: string | null;
   observedFrontendSha?: string | null;
+  checkoutSha?: string | null;
+  checkoutAncestry?: string | null;
+  runnerStatus?: string | null;
   observedBackendSha?: string | null;
   baseUrl?: string;
   finalOrigin?: string | null;
+  apiBaseUrl?: string | null;
   runtime?: { node?: string; playwright?: string; browser?: string; os?: string };
   selectedCount?: number;
   journeys?: JourneyRecord[];
@@ -84,4 +93,25 @@ export declare function buildRunManifest(input: {
   notes?: string[];
 }): RunManifest;
 
+export declare const CANONICAL_ORIGINS: readonly string[];
+export declare const CANONICAL_API_ORIGINS: readonly string[];
+export declare const RUNNER_STATUSES: readonly string[];
+export declare const ARTIFACT_ROOT: string;
+
 export declare function validateManifest(manifest: unknown): { ok: boolean; errors: string[] };
+
+export declare function checkOrigin(
+  value: unknown,
+  allowlist: readonly string[],
+  field: string
+): { ok: boolean; errors: string[] };
+
+export declare function checkArtifactPath(
+  rawPath: unknown,
+  where: string
+): { ok: boolean; normalized: string | null; errors: string[] };
+
+export declare function verifyArtifactBytes(
+  manifest: unknown,
+  options: { root: string; fsImpl?: unknown }
+): { ok: boolean; errors: string[]; verified: number };

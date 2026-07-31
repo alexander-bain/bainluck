@@ -816,7 +816,7 @@ export default function DiscoverPage() {
         {isLoading && <DiscoverSkeletonGrid />}
 
         {!isLoading && feedError && !data && (
-          <div className="text-center py-20 text-text-muted">
+          <div className="text-center py-20 text-text-muted" data-testid="discover-feed-error" role="alert">
             <p className="text-text-secondary text-sm">Failed to load feed</p>
             <button
               onClick={() => window.location.reload()}
@@ -883,7 +883,18 @@ export default function DiscoverPage() {
             const isFirstCard = idx === 0 && showSwipeHint;
 
             return (
-              <div key={key} className={`break-inside-avoid mb-4${isFirstCard ? " animate-peek-right" : ""}`}>
+              // `data-testid="discover-card"` is the browser-audit rail's
+              // proof that REAL content rendered (L2-223). The audit used to
+              // match `main div.break-inside-avoid`, which the loading
+              // skeleton also carries — so a Discover stuck on skeletons
+              // satisfied "a real card was visible", recorded a first-card
+              // latency, and reported green. This hook exists only on a
+              // mounted feed item, so that false green cannot recur.
+              <div
+                key={key}
+                data-testid="discover-card"
+                className={`break-inside-avoid mb-4${isFirstCard ? " animate-peek-right" : ""}`}
+              >
                 <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
