@@ -379,6 +379,34 @@ export interface WebVitalParams {
   page_path: string;
 }
 
+/**
+ * My Stuff load attribution (L2-217 / C88) — bounded, non-PII. One packet per
+ * stage: `data_ready` (the required team feed was assigned) and `first_render`
+ * (a real team card actually rendered). Keeping them distinct is the point: a
+ * fast model assignment must never be readable as a fast first paint.
+ *
+ * `first_render_ms` is only ever set on the `first_render` stage AND only when
+ * `item_count > 0`; every other case reports -1, which is also the convention
+ * for a stage that did not run or is not measurable from the browser. Carries
+ * no uid, email, token, session id, item id, or market text.
+ */
+export interface MyStuffLoadParams {
+  stage: 'data_ready' | 'first_render';
+  auth_ready_ms: number;
+  network_ms: number;
+  backend_elapsed_ms: number;
+  decode_ms: number;
+  required_data_ready_ms: number;
+  first_render_ms: number;
+  cache_outcome: 'hit' | 'miss' | 'none';
+  cache_age_seconds: number;
+  item_count: number;
+  /** Deploy tag (short commit sha, or "web") — never user data. */
+  app_build: string;
+  surface: 'my_stuff';
+  outcome_class: string;
+}
+
 // ============================================================================
 // Account Events (for future auth integration)
 // ============================================================================
@@ -834,6 +862,9 @@ export interface AnalyticsEventMap {
   // Performance / observability (L2-189)
   feed_telemetry: FeedTelemetryParams;
   web_vital: WebVitalParams;
+
+  // My Stuff first-card attribution (L2-217 / C88)
+  my_stuff_load: MyStuffLoadParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

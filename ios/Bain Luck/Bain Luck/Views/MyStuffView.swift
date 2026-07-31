@@ -14,6 +14,11 @@ struct MyStuffView: View {
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
     @State private var landscapeColumns = false
+    /// The render generation already reported to the first-card rail (L2-217 Item 3
+    /// / C88). Keying the once-only guard on the token's IMMUTABLE id — not a
+    /// boolean an `onAppear` refire could desync — is what lets a same-row-ID
+    /// refresh emit its new generation while a stale re-appear cannot double-emit.
+    @State private var lastEmittedRenderGenerationId: Int?
     @Environment(\.horizontalSizeClass) private var sizeClass
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
@@ -66,6 +71,43 @@ struct MyStuffView: View {
                 path.append(route)
             }
         }
+        // Rebind on ANY auth identity change — login, logout, account switch, or a
+        // failed restore dropping back to anonymous (L2-217 Item 2 / C88).
+        // `activeFeedUserId` fires even on the nil→nil `user` restore-failure case
+        // that `onChange(of: user)` would miss. Order matters: clear the previous
+        // account's published state FIRST so its team cards cannot survive into the
+        // new session even for a frame, then load under the new principal.
+        .onChange(of: authManager.activeFeedUserId) { _, _ in
+            lastEmittedRenderGenerationId = nil
+            vm.resetForIdentityChange()
+            Task { await vm.startLoad() }
+        }
+        // Acknowledge a newly stamped render generation even when SwiftUI retains
+        // the same rows across a refresh and therefore does not re-fire `onAppear`.
+        .onChange(of: vm.firstRenderGeneration) { _, _ in
+            emitMyStuffFirstRenderIfNeeded()
+        }
+    }
+
+    /// Emit the on-screen first-render milestone once per render generation
+    /// (L2-217 Item 3 / C88), when the first real team card appears OR when the
+    /// view model stamps a new token. BOTH the elapsed time and the item count come
+    /// from that frozen token — never a live `vm.items.count` the optional futures
+    /// merge could have changed. The view model stamps no token for an empty
+    /// success, a required failure, a cancellation, or a superseded identity, so
+    /// none of those can emit a first-card time.
+    private func emitMyStuffFirstRenderIfNeeded() {
+        guard let decision = MyStuffFirstRender.generationDecision(
+            generation: vm.firstRenderGeneration,
+            lastEmittedGenerationId: lastEmittedRenderGenerationId,
+            now: Date()
+        ) else { return }
+        lastEmittedRenderGenerationId = decision.generation.generation
+        AnalyticsService.trackMyStuffFirstRender(
+            firstRenderMs: decision.ms,
+            itemCount: decision.generation.itemCount,
+            fromCache: decision.generation.fromCache
+        )
     }
 
     // MARK: - State 1: Sign In
@@ -249,10 +291,17 @@ struct MyStuffView: View {
             }
         }
         .task {
-            await vm.load()
+            // Route every entry point through the single owned load rail so a
+            // re-appearance supersedes (cancels + joins) the prior load rather than
+            // running an overlapping one (L2-217 Item 2 / C88).
+            vm.viewDidStart()
+            await vm.startLoad()
         }
         .onDisappear {
-            vm.stopRefresh()
+            // Real termination, not just a discard: cancels the owned load and its
+            // optional futures sibling, stops the refresh timer, and invalidates the
+            // generation so a request that outraces cancellation cannot publish.
+            vm.viewDidStop()
         }
     }
 
@@ -359,7 +408,7 @@ struct MyStuffView: View {
         .listStyle(.insetGrouped)
         #endif
         .refreshable {
-            await vm.load()
+            await vm.startLoad()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
@@ -379,6 +428,7 @@ struct MyStuffView: View {
                             .background(Color.cardBackgroundDark)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .contextMenu { pinContextMenu(item) }
+                            .onAppear { emitMyStuffFirstRenderIfNeeded() }
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -388,6 +438,7 @@ struct MyStuffView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             pinSwipeButton(item)
                         }
+                        .onAppear { emitMyStuffFirstRenderIfNeeded() }
                 }
             }
         } header: {

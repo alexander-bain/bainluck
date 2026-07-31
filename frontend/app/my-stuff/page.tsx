@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
@@ -21,6 +21,13 @@ import FuturesCard from "@/components/FuturesCard";
 import ProgressionLadder from "@/components/ProgressionLadder";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import {
+  resolveMyStuffPrincipal,
+  myStuffKey,
+  bindToPrincipal,
+  dataForPrincipal,
+} from "@/lib/myStuffIdentity";
+import { classifyMyStuffOutcome, reportMyStuffTelemetry } from "@/lib/myStuffTelemetry";
 
 export default function MyStuffPage() {
   // Analytics hooks must be called before conditional returns
@@ -28,20 +35,35 @@ export default function MyStuffPage() {
   useScrollDepth({ pageType: 'my_stuff' });
   useEngagementTime({ pageType: 'my_stuff' });
 
-  const { isAuthenticated, isLoading: authLoading, signInWithGoogle, signInWithApple } = useAuthContext();
+  const { user, isAuthenticated, isLoading: authLoading, signInWithGoogle, signInWithApple } = useAuthContext();
+
+  // The stable resolved principal for this viewer (L2-217 Item 1 / C88). Null
+  // while auth restore is in flight, when nobody is signed in, and in the
+  // supersession window where a user object exists without a usable uid — all
+  // of which must render NO personalized data rather than a guess.
+  const principal = resolveMyStuffPrincipal({
+    isLoading: authLoading,
+    isAuthenticated,
+    uid: user?.uid,
+  });
 
   // State A: Not authenticated
   if (!authLoading && !isAuthenticated) {
     return <SignInPrompt onSignInGoogle={signInWithGoogle} onSignInApple={signInWithApple} />;
   }
 
-  // Auth is still loading — show skeleton
-  if (authLoading) {
+  // Auth still resolving, or signed in without a stable principal yet — show a
+  // skeleton. Never a previous account's content, and never a request.
+  if (authLoading || !principal) {
     return <SkeletonGrid count={4} />;
   }
 
-  // State B & C: Authenticated — render the feed
-  return <MyTeamsFeed />;
+  // State B & C: Authenticated — render the feed. Keying the subtree on the
+  // principal makes an account switch a REMOUNT, so no derived state (merged
+  // futures, expansion, pinned recovery) can survive from the previous account
+  // even for one frame. Same-principal renders reuse the identical key, so
+  // ordinary revalidation and SWR reuse are unchanged.
+  return <MyTeamsFeed key={principal} principal={principal} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +118,7 @@ function SignInPrompt({ onSignInGoogle, onSignInApple }: { onSignInGoogle: () =>
 // Team-filtered feed (State B + C)
 // ---------------------------------------------------------------------------
 
-function MyTeamsFeed() {
+function MyTeamsFeed({ principal }: { principal: string }) {
   // Pinned items
   const { pinnedIds, togglePin, isMaxReached } = usePinnedEvents();
   const {
@@ -105,24 +127,47 @@ function MyTeamsFeed() {
     isMaxReached: isFuturesMaxReached,
   } = usePinnedFutures();
 
-  // Fetch team-only feed (events only — team futures section handles futures)
+  // Load-start anchor for the attribution packet: the first render of this
+  // subtree for THIS principal (the subtree is keyed on it, so a switch
+  // restarts the clock rather than measuring from the previous account's load).
+  const loadStartRef = useRef<number>(
+    typeof performance !== "undefined" ? performance.now() : 0,
+  );
+  const networkMsRef = useRef<number | null>(null);
+  const emittedDataReadyRef = useRef(false);
+  const emittedFirstRenderRef = useRef(false);
+
+  // Every authenticated record below is keyed by the resolved principal and its
+  // payload is bound to the principal that fetched it (L2-217 Item 1 / C88), so
+  // account B can neither read account A's cached entry (different key) nor
+  // render a late account-A response (bound principal mismatch). Nothing is
+  // globally flushed — unrelated surfaces' caches are untouched.
   const {
-    data: feedData,
+    data: feedRecord,
     error: feedError,
     isLoading: feedLoading,
     mutate: refreshFeed,
   } = useSWR(
-    "my-teams-feed",
-    () => fetchFeed({ limit: 100, my_teams_only: true, include_futures: false }),
+    myStuffKey(principal, "feed"),
+    async () => {
+      const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+      const data = await fetchFeed({ limit: 100, my_teams_only: true, include_futures: false });
+      networkMsRef.current =
+        (typeof performance !== "undefined" ? performance.now() : 0) - t0;
+      return bindToPrincipal(principal, data);
+    },
     { refreshInterval: 60000 },
   );
+  const feedData = dataForPrincipal(feedRecord, principal);
 
-  // Fetch team futures ("Your Teams' Odds")
-  const { data: teamFuturesData } = useSWR(
-    "my-team-futures",
-    () => fetchMyTeamFutures(100),
+  // Fetch team futures ("Your Teams' Odds") — OPTIONAL. It renders as a sibling
+  // section and never gates the team feed above it.
+  const { data: teamFuturesRecord, error: teamFuturesError } = useSWR(
+    myStuffKey(principal, "team-futures"),
+    async () => bindToPrincipal(principal, await fetchMyTeamFutures(100)),
     { refreshInterval: 300000 }, // 5 min
   );
+  const teamFuturesData = dataForPrincipal(teamFuturesRecord, principal);
 
   // State B check (must be after all hooks)
   const teamCount = feedData?.personalization?.team_count ?? null;
@@ -141,10 +186,11 @@ function MyTeamsFeed() {
     return pinnedIds.filter(id => !feedEventIds.has(id));
   }, [feedEventIds, pinnedIds]);
 
-  const { data: fetchedPinnedEvents } = useSWR(
-    missingPinnedIds.length > 0 ? ["my-stuff-pinned-events", ...missingPinnedIds] : null,
-    () => fetchEventsByIds(missingPinnedIds),
+  const { data: fetchedPinnedEventsRecord } = useSWR(
+    missingPinnedIds.length > 0 ? myStuffKey(principal, "pinned-events", missingPinnedIds) : null,
+    async () => bindToPrincipal(principal, await fetchEventsByIds(missingPinnedIds)),
   );
+  const fetchedPinnedEvents = dataForPrincipal(fetchedPinnedEventsRecord, principal);
 
   const pinnedEvents = useMemo(() => {
     const feedEventMap = new Map<number, Event>();
@@ -198,10 +244,13 @@ function MyTeamsFeed() {
     return pinnedFuturesIds.filter(id => !feedFuturesIds.has(id));
   }, [feedFuturesIds, pinnedFuturesIds]);
 
-  const { data: fetchedPinnedFutures } = useSWR(
-    missingPinnedFuturesIds.length > 0 ? ["my-stuff-pinned-futures", ...missingPinnedFuturesIds] : null,
-    () => fetchFuturesByIds(missingPinnedFuturesIds),
+  const { data: fetchedPinnedFuturesRecord } = useSWR(
+    missingPinnedFuturesIds.length > 0
+      ? myStuffKey(principal, "pinned-futures", missingPinnedFuturesIds)
+      : null,
+    async () => bindToPrincipal(principal, await fetchFuturesByIds(missingPinnedFuturesIds)),
   );
+  const fetchedPinnedFutures = dataForPrincipal(fetchedPinnedFuturesRecord, principal);
 
   const pinnedFutures = useMemo(() => {
     const fetchedMap = new Map((fetchedPinnedFutures ?? []).map(f => [f.id, f]));
@@ -270,15 +319,65 @@ function MyTeamsFeed() {
     return sections;
   }, [feedData]);
 
+  const hasEvents = feedSections.length > 0;
+  const hasFutures = Boolean(teamFuturesData && teamFuturesData.items.length > 0);
+  const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
+  const hasContent = hasEvents || hasFutures || hasPinned;
+
+  // ---- Attribution (L2-217 Item 3 / C88) ------------------------------------
+  // Two distinct milestones, both hook-ordered ABOVE every conditional return.
+  // `data_ready` fires when the REQUIRED team feed is assigned; `first_render`
+  // fires only once a real card is actually committed to the DOM. An empty
+  // success, a required failure, or a superseded identity therefore reports a
+  // classified outcome but never a first-card time.
+  const requiredRenderableCount = feedSections.reduce((n, s) => n + s.items.length, 0);
+  const requiredSettled = Boolean(feedData) || Boolean(feedError);
+  const outcomeClass = classifyMyStuffOutcome({
+    identityReady: true,
+    dispatchPrincipal: principal,
+    currentPrincipal: principal,
+    requiredRequest: feedData ? "success" : feedError ? "failure" : "not_started",
+    optionalRequest: teamFuturesData ? "success" : teamFuturesError ? "failure" : "not_started",
+    requiredItemCount: requiredRenderableCount,
+    fromCache: networkMsRef.current == null,
+  });
+
+  useEffect(() => {
+    if (!requiredSettled || emittedDataReadyRef.current) return;
+    emittedDataReadyRef.current = true;
+    reportMyStuffTelemetry({
+      stage: "data_ready",
+      outcomeClass,
+      itemCount: requiredRenderableCount,
+      networkMs: networkMsRef.current,
+      requiredDataReadyMs: performance.now() - loadStartRef.current,
+      cacheOutcome: networkMsRef.current == null ? "hit" : "miss",
+    });
+  }, [requiredSettled, outcomeClass, requiredRenderableCount]);
+
+  useEffect(() => {
+    // A REAL card on screen — not a model assignment, and never an empty
+    // success. This effect runs after React has committed the card subtree.
+    if (emittedFirstRenderRef.current) return;
+    if (!hasContent || requiredRenderableCount + pinnedEvents.length + pinnedFutures.length === 0) {
+      return;
+    }
+    emittedFirstRenderRef.current = true;
+    reportMyStuffTelemetry({
+      stage: "first_render",
+      outcomeClass,
+      itemCount: requiredRenderableCount + pinnedEvents.length + pinnedFutures.length,
+      networkMs: networkMsRef.current,
+      requiredDataReadyMs: performance.now() - loadStartRef.current,
+      firstRenderMs: performance.now() - loadStartRef.current,
+      cacheOutcome: networkMsRef.current == null ? "hit" : "miss",
+    });
+  }, [hasContent, requiredRenderableCount, pinnedEvents.length, pinnedFutures.length, outcomeClass]);
+
   // State B: Authenticated but no teams followed
   if (feedData && teamCount === 0) {
     return <OnboardingPrompt />;
   }
-
-  const hasEvents = feedSections.length > 0;
-  const hasFutures = teamFuturesData && teamFuturesData.items.length > 0;
-  const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
-  const hasContent = hasEvents || hasFutures || hasPinned;
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>

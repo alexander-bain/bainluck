@@ -284,6 +284,54 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - My Stuff Latency (L2-217 / C88 — identity boundary + first team card)
+
+    /// One My Stuff load milestone. `required_data_ready` is the REQUIRED team
+    /// feed's model assignment; `optional_merge` is the supplemental team-futures
+    /// section landing afterward. Neither is a first render — that is the separate,
+    /// view-driven `my_stuff_first_render` event — so a fast model assignment can
+    /// never be read as a fast first paint. `-1` marks a stage that did not run or
+    /// is not separately measurable. Carries no uid, email, token, session id,
+    /// item id, or market text; the outcome class comes from a closed enum.
+    nonisolated static func trackMyStuffStage(_ stage: MyStuffLoadStage) {
+        Analytics.logEvent("my_stuff_load", parameters: [
+            "stage": stage.kind.rawValue,
+            "auth_ready_ms": stage.authReadyMs,
+            "network_ms": stage.networkMs,
+            // Not separately measurable from the view model — reported as -1 rather
+            // than guessed, matching the Discover/Sports rails' convention.
+            "backend_elapsed_ms": -1,
+            "decode_ms": -1,
+            "required_data_ready_ms": stage.requiredDataReadyMs,
+            "first_render_ms": -1,
+            "cache_outcome": stage.cacheOutcome,
+            "cache_age_seconds": stage.cacheAgeSeconds,
+            "item_count": stage.itemCount,
+            "app_build": appBuild(),
+            "surface": "my_stuff",
+            "outcome_class": stage.outcomeClass.rawValue,
+        ])
+    }
+
+    /// The on-screen first-render milestone for My Stuff (L2-217 Item 3 / C88):
+    /// the FIRST real team card's SwiftUI appearance, once per render generation.
+    /// It NEVER fires for a model assignment, an empty success, a cancellation, or
+    /// a superseded identity — the view model stamps no render token in those
+    /// cases, so there is nothing to emit. No PII.
+    nonisolated static func trackMyStuffFirstRender(
+        firstRenderMs: Double,
+        itemCount: Int,
+        fromCache: Bool
+    ) {
+        Analytics.logEvent("my_stuff_first_render", parameters: [
+            "first_render_ms": firstRenderMs,
+            "item_count": itemCount,
+            "from_cache": fromCache,
+            "app_build": appBuild(),
+            "surface": "my_stuff",
+        ])
+    }
+
     // MARK: - Predictions
 
     nonisolated static func trackPredictionSubmit(
