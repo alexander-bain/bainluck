@@ -29,6 +29,7 @@ import pytest
 
 import app.routes.feed as feed_mod
 from app.utils import candidate_base as cb
+from app.utils.personalization import PersonalizationContext
 from scripts.evals.cold_feed_latency_authority import (
     candidate_base_key,
     load_fixture,
@@ -219,3 +220,111 @@ def test_score_futures_reads_base_before_running_pools():
     hit_idx = src.index("if _cb_base_ids is not None:")
     compute_idx = src.index("_compute_ordered_candidate_ids(")
     assert hit_idx < compute_idx, "direct queries must be under the base-miss branch"
+
+
+# --- Mechanical base-hit gating: a hit runs ZERO candidate-pool SQL -----------
+class _CountingDB:
+    """Records every executed query so a base hit's SQL can be counted."""
+
+    def __init__(self):
+        self.executed: list = []
+
+    async def execute(self, query):
+        self.executed.append(query)
+        return _FakeResult([])
+
+
+class _MarketsScalars:
+    def unique(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _MarketsResult:
+    def scalars(self):
+        return _MarketsScalars()
+
+
+async def _score_futures_with_base(monkeypatch, base_result):
+    """Run ``_score_futures`` with ``get_candidate_base`` forced to ``base_result``.
+
+    Returns ``(db, helper_calls)`` — the counting session and how many times the
+    candidate-pool builder was invoked.
+    """
+    from app.utils import candidate_base as cb_mod
+
+    async def _fake_get_base(now, sport_filter, static_tag_filter, *, stages=None):
+        return base_result
+
+    monkeypatch.setattr(cb_mod, "get_candidate_base", _fake_get_base)
+
+    helper_calls: list = []
+
+    async def _fake_helper(db, now, sport_filter, static_tag_filter=None, **kwargs):
+        helper_calls.append(True)
+        return [7, 8], {"deduped": 2}, []
+
+    monkeypatch.setattr(feed_mod, "_compute_ordered_candidate_ids", _fake_helper)
+
+    # Keep the best-effort publish off the network in tests.
+    from app.utils import request_cache as _rc_mod
+
+    scheduled: list = []
+
+    def _capture(coro):
+        scheduled.append(coro)
+        coro.close()  # never awaited in-test; avoid the un-awaited warning
+
+    monkeypatch.setattr(_rc_mod, "schedule_background", _capture)
+
+    db = _CountingDB()
+    # The market-load query returns no rows, so _score_futures returns early —
+    # after the candidate stage, which is all this test measures.
+    db.execute = _make_market_load_execute(db)
+
+    ctx = PersonalizationContext()
+    result = await feed_mod._score_futures(db, NOW, None, ctx)
+    assert result == []
+    return db, helper_calls
+
+
+def _make_market_load_execute(db):
+    async def _execute(query):
+        db.executed.append(query)
+        return _MarketsResult()
+
+    return _execute
+
+
+@pytest.mark.asyncio
+async def test_base_hit_runs_zero_candidate_pool_sql(monkeypatch):
+    """Queue 286: a base hit must issue NO candidate-pool query.
+
+    Queue 285 asserted this by reading ``_score_futures``'s source. This measures
+    it: with a served base, the only SQL ``_score_futures`` issues before its
+    early return is the single market-load ``SELECT``, and the pool builder is
+    never called.
+    """
+    db, helper_calls = await _score_futures_with_base(
+        monkeypatch, ([101, 102, 103], "fresh", [101])
+    )
+
+    assert helper_calls == [], "a base hit must not run the candidate-pool queries"
+    assert len(db.executed) == 1, (
+        "a base hit must issue exactly one query (the market load), got "
+        f"{len(db.executed)}"
+    )
+    compiled = str(db.executed[0]).lower()
+    assert "from futures_markets" in compiled
+
+
+@pytest.mark.asyncio
+async def test_base_miss_does_run_the_candidate_pool_builder(monkeypatch):
+    """The negative control: without this, the test above would pass vacuously."""
+    db, helper_calls = await _score_futures_with_base(
+        monkeypatch, (None, "direct", None)
+    )
+
+    assert helper_calls == [True], "a base miss must run the candidate-pool builder"

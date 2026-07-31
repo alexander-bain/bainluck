@@ -69,10 +69,11 @@ def test_editorial_recall_pool_folds_flag_no_global_materialization():
     )
 
     # 2. The candidate-pool source folds the flag and drops the id-list
-    #    intersection. The pool queries now live in the user-independent
-    #    ``_compute_ordered_candidate_ids`` helper (Queue 285), which both the
-    #    request-path direct fallback and the precompute beat call.
-    src = inspect.getsource(feed_mod._compute_ordered_candidate_ids)
+    #    intersection. The pool queries live in ``_discover_candidate_pool_specs``
+    #    (Queue 286) — the single spec source that the user-independent builder
+    #    ``_compute_ordered_candidate_ids`` (request-path fallback + precompute
+    #    beat) and the admin pool trace both execute.
+    src = inspect.getsource(feed_mod._discover_candidate_pool_specs)
     assert "nonsports_editorial_recall_query" in src
     assert (
         "_discover_editorial_recall_filter()" in src

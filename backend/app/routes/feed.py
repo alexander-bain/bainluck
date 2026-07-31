@@ -3113,125 +3113,33 @@ async def _discover_candidate_pool_trace(
     now: datetime,
     market_id: int,
 ) -> dict:
-    base_filters = [
-        FuturesMarket.status == "open",
-        FuturesMarket.event_id.is_(None),
-        or_(
-            FuturesMarket.resolution_date.is_(None),
-            FuturesMarket.resolution_date >= now,
-        ),
-        ~FuturesMarket.name.like("% vs %"),
-        ~FuturesMarket.name.like("% vs. %"),
-    ]
-    non_sports_filter = or_(
-        ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-        FuturesMarket.llm_sport_category.is_(None),
-    )
-    movement_expr = (
-        select(func.max(func.abs(FuturesOutcome.probability_change_24h)))
-        .where(FuturesOutcome.market_id == FuturesMarket.id)
-        .correlate(FuturesMarket)
-        .scalar_subquery()
-    )
-    pool_specs = [
-        (
-            "sports_tier",
-            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-            [
-                FuturesMarket.market_tier.asc().nulls_last(),
-                FuturesMarket.resolution_date.asc().nulls_last(),
-            ],
-            50,
-        ),
-        (
-            "sports_postseason",
-            _SPORTS_POSTSEASON_SQL_FILTER,
-            [
-                FuturesMarket.resolution_date.asc().nulls_last(),
-                FuturesMarket.updated_at.desc().nulls_last(),
-            ],
-            80,
-        ),
-        (
-            "sports_editorial_recall",
-            and_(
-                FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
-                _discover_sports_editorial_recall_filter(),
-            ),
-            [
-                FuturesMarket.market_tier.asc().nulls_last(),
-                FuturesMarket.volume_24h.desc().nulls_last(),
-                FuturesMarket.updated_at.desc().nulls_last(),
-            ],
-            80,
-        ),
-        (
-            "nonsports_volume",
-            non_sports_filter,
-            [
-                FuturesMarket.volume_24h.desc().nulls_last(),
-                FuturesMarket.market_tier.asc().nulls_last(),
-            ],
-            180,
-        ),
-        (
-            "nonsports_movement",
-            non_sports_filter,
-            [
-                movement_expr.desc().nulls_last(),
-                FuturesMarket.volume_24h.desc().nulls_last(),
-            ],
-            160,
-        ),
-        (
-            "nonsports_enriched",
-            and_(
-                non_sports_filter,
-                or_(
-                    FuturesMarket.hook_description.isnot(None),
-                    FuturesMarket.image_url.isnot(None),
-                ),
-            ),
-            [
-                FuturesMarket.hook_generated_at.desc().nulls_last(),
-                FuturesMarket.updated_at.desc().nulls_last(),
-            ],
-            160,
-        ),
-        (
-            "nonsports_editorial_recall",
-            and_(non_sports_filter, _discover_editorial_recall_filter()),
-            [
-                FuturesMarket.market_tier.asc().nulls_last(),
-                FuturesMarket.volume_24h.desc().nulls_last(),
-                FuturesMarket.updated_at.desc().nulls_last(),
-            ],
-            120,
-        ),
-        (
-            "nonsports_timely",
-            and_(non_sports_filter, FuturesMarket.resolution_date.isnot(None)),
-            [
-                FuturesMarket.resolution_date.asc().nulls_last(),
-                FuturesMarket.volume_24h.desc().nulls_last(),
-            ],
-            120,
-        ),
-    ]
+    """Admin trace: which candidate pool(s) surfaced ``market_id``, and where.
+
+    Queue 286: this consumes the SAME ``_discover_candidate_pool_specs`` the
+    production builder (``_compute_ordered_candidate_ids``) runs, so the trace can
+    never drift from the real pools again. It previously kept a private copy of
+    the specs and had silently gone stale (``sports`` 50 vs 80, ``nonsports_volume``
+    180 vs 120, ``nonsports_movement`` 160 vs 100 and still ordering by the retired
+    correlated ``max(abs(probability_change_24h))`` subquery instead of the
+    denormalized ``max_movement_24h`` column, ``nonsports_enriched`` 160 vs 100,
+    both editorial-recall/timely pools 120 vs 80) — i.e. it was answering "why is
+    this market not a candidate?" against pools the feed no longer runs.
+    """
+    id_filters, pool_specs = _discover_candidate_pool_specs(now)
 
     pools = []
     candidate_ids: list[int] = []
     external_curator_ids = await _external_curator_recall_market_ids(
         db,
-        base_filters,
-        row_limit=80,
-        market_limit=80,
+        id_filters,
+        row_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
+        market_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
     )
     candidate_ids.extend(external_curator_ids)
     pools.append(
         {
             "name": "external_curator_recall",
-            "limit": 80,
+            "limit": _EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
             "candidate_count": len(external_curator_ids),
             "included": market_id in external_curator_ids,
             "position": (
@@ -3241,13 +3149,8 @@ async def _discover_candidate_pool_trace(
             ),
         }
     )
-    for name, extra_filter, ordering, limit in pool_specs:
-        result = await db.execute(
-            select(FuturesMarket.id)
-            .where(*base_filters, extra_filter)
-            .order_by(*ordering)
-            .limit(limit)
-        )
+    for name, query, limit in pool_specs:
+        result = await db.execute(query)
         ids = list(result.scalars().all())
         candidate_ids.extend(ids)
         pools.append(
@@ -5580,6 +5483,77 @@ async def _compute_ordered_candidate_ids(
         if mark_timing is not None:
             mark_timing(stage)
 
+    id_filters, pool_specs = _discover_candidate_pool_specs(
+        now, sport_filter, static_tag_filter
+    )
+
+    external_curator_recall_ids = await _external_curator_recall_market_ids(
+        db,
+        id_filters,
+        row_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
+        market_limit=_EXTERNAL_CURATOR_RECALL_POOL_LIMIT,
+    )
+    _mark("pool_external_curator_recall")
+
+    external_curator_recall_list = list(external_curator_recall_ids)
+    pool_ids: dict[str, list[int]] = {}
+    candidate_market_ids: list[int] = list(external_curator_recall_list)
+    for name, query, _limit in pool_specs:
+        result = await db.execute(query)
+        _mark(f"pool_{name}")
+        ids = list(result.scalars().all())
+        pool_ids[name] = ids
+        candidate_market_ids.extend(ids)
+
+    seen_market_ids: set[int] = set()
+    market_ids: list[int] = []
+    for market_id in candidate_market_ids:
+        if market_id in seen_market_ids:
+            continue
+        seen_market_ids.add(market_id)
+        market_ids.append(market_id)
+
+    pool_counts = {
+        "external_curator_recall": len(external_curator_recall_list),
+        **{name: len(ids) for name, ids in pool_ids.items()},
+        "deduped": len(market_ids),
+    }
+    return market_ids, pool_counts, external_curator_recall_list
+
+
+# Both the production candidate builder and the admin pool trace pull the
+# external-curator recall lane at this depth.
+_EXTERNAL_CURATOR_RECALL_POOL_LIMIT = 80
+
+
+def _discover_candidate_pool_specs(
+    now: datetime,
+    sport_filter: Optional[str] = None,
+    static_tag_filter: Optional[list[str]] = None,
+) -> tuple[list, list[tuple[str, Any, int]]]:
+    """Single source of truth for the Discover futures candidate pools.
+
+    Returns ``(id_filters, pool_specs)`` where ``pool_specs`` is the ORDERED list
+    of ``(name, select_query, limit)`` — the exact queries, in the exact
+    concatenation order, that build the candidate-ID union. The external-curator
+    recall lane is not a plain ``select()`` (it aggregates ground-truth rows) so
+    both callers run it separately, first, at
+    ``_EXTERNAL_CURATOR_RECALL_POOL_LIMIT``.
+
+    Consumers:
+    * ``_compute_ordered_candidate_ids`` — the production builder (request-path
+      fallback + the Queue 285 precompute beat).
+    * ``_discover_candidate_pool_trace`` — the admin "why is this market not a
+      candidate?" trace, which used to keep a private copy of these specs and had
+      drifted (Queue 286).
+
+    Depends ONLY on ``now``, ``sport_filter`` and ``static_tag_filter`` — never on
+    the user, session, limit, offset, or personalization. That user-independence
+    is what makes the candidate base (``app.utils.candidate_base``) shareable
+    across response-cache keys; ``tests/test_feed_candidate_pool_specs.py`` guards
+    it, and ``pool_specs`` names double as the ``futures.pool_*`` timing stages
+    and the ``pool_counts`` provenance keys.
+    """
     base_filters = [
         FuturesMarket.status == "open",
         FuturesMarket.event_id.is_(None),
@@ -5736,76 +5710,19 @@ async def _compute_ordered_candidate_ids(
         .limit(80)
     )
 
-    external_curator_recall_ids = await _external_curator_recall_market_ids(
-        db,
-        id_filters,
-        row_limit=80,
-        market_limit=80,
-    )
-    _mark("pool_external_curator_recall")
-    sports_result = await db.execute(sports_query)
-    _mark("pool_sports")
-    sports_postseason_result = await db.execute(sports_postseason_query)
-    _mark("pool_sports_postseason")
-    sports_editorial_recall_result = await db.execute(sports_editorial_recall_query)
-    _mark("pool_sports_editorial_recall")
-    nonsports_result = await db.execute(nonsports_query)
-    _mark("pool_nonsports_volume")
-    nonsports_movement_result = await db.execute(nonsports_movement_query)
-    _mark("pool_nonsports_movement")
-    nonsports_enriched_result = await db.execute(nonsports_enriched_query)
-    _mark("pool_nonsports_enriched")
-    nonsports_editorial_recall_result = await db.execute(
-        nonsports_editorial_recall_query
-    )
-    _mark("pool_nonsports_editorial_recall")
-    nonsports_timely_result = await db.execute(nonsports_timely_query)
-    _mark("pool_nonsports_timely")
-
-    external_curator_recall_list = list(external_curator_recall_ids)
-    sports_ids = list(sports_result.scalars().all())
-    sports_postseason_ids = list(sports_postseason_result.scalars().all())
-    sports_editorial_recall_list = list(sports_editorial_recall_result.scalars().all())
-    nonsports_ids = list(nonsports_result.scalars().all())
-    nonsports_movement_ids = list(nonsports_movement_result.scalars().all())
-    nonsports_enriched_ids = list(nonsports_enriched_result.scalars().all())
-    nonsports_editorial_recall_list = list(
-        nonsports_editorial_recall_result.scalars().all()
-    )
-    nonsports_timely_ids = list(nonsports_timely_result.scalars().all())
-
-    candidate_market_ids = (
-        external_curator_recall_list
-        + sports_ids
-        + sports_postseason_ids
-        + sports_editorial_recall_list
-        + nonsports_ids
-        + nonsports_movement_ids
-        + nonsports_enriched_ids
-        + nonsports_editorial_recall_list
-        + nonsports_timely_ids
-    )
-    seen_market_ids: set[int] = set()
-    market_ids: list[int] = []
-    for market_id in candidate_market_ids:
-        if market_id in seen_market_ids:
-            continue
-        seen_market_ids.add(market_id)
-        market_ids.append(market_id)
-
-    pool_counts = {
-        "external_curator_recall": len(external_curator_recall_list),
-        "sports": len(sports_ids),
-        "sports_postseason": len(sports_postseason_ids),
-        "sports_editorial_recall": len(sports_editorial_recall_list),
-        "nonsports_volume": len(nonsports_ids),
-        "nonsports_movement": len(nonsports_movement_ids),
-        "nonsports_enriched": len(nonsports_enriched_ids),
-        "nonsports_editorial_recall": len(nonsports_editorial_recall_list),
-        "nonsports_timely": len(nonsports_timely_ids),
-        "deduped": len(market_ids),
-    }
-    return market_ids, pool_counts, external_curator_recall_list
+    # ORDER IS THE CONTRACT: the concatenation order below is the candidate
+    # ordering, and each name doubles as the ``futures.pool_*`` timing stage and
+    # the ``pool_counts`` provenance key.
+    return id_filters, [
+        ("sports", sports_query, 80),
+        ("sports_postseason", sports_postseason_query, 80),
+        ("sports_editorial_recall", sports_editorial_recall_query, 80),
+        ("nonsports_volume", nonsports_query, 120),
+        ("nonsports_movement", nonsports_movement_query, 100),
+        ("nonsports_enriched", nonsports_enriched_query, 100),
+        ("nonsports_editorial_recall", nonsports_editorial_recall_query, 80),
+        ("nonsports_timely", nonsports_timely_query, 80),
+    ]
 
 
 async def _score_futures(
