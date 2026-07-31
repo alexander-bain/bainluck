@@ -466,3 +466,95 @@ class TestMonotonicPublication:
         assert isinstance(env["generated_epoch_ms"], int)
         older = cb.build_envelope(NOW - timedelta(seconds=1), identity, [1])
         assert older["generated_epoch_ms"] < env["generated_epoch_ms"]
+
+
+# --- 7. Monotonicity of the LOCAL service tiers (Queue 289) --------------------
+class TestLocalTierMonotonicity:
+    """Monotonicity must hold on every tier the feed serves from, not just Redis.
+
+    Queue 288 made the Redis write compare-and-set, but the publisher still wrote
+    its own process-local tiers unconditionally — so an older build whose Redis
+    write was *rejected* still replaced the newer base in L0 (read tier 1) and in
+    the process last-good (read tier 5). The process then served the older
+    candidate set, labelled ``fresh``, for a full L0 window.
+
+    Note the Queue 288 tests above call ``_reset_l0_for_tests()`` between the
+    publish and the read, which is exactly what hid this: the assertion never saw
+    the local tiers the publisher had just written.
+    """
+
+    @pytest.mark.asyncio
+    async def test_older_publish_does_not_poison_l0_for_the_same_process(
+        self, monkeypatch
+    ):
+        client = _FakeRedis({})
+        _install(monkeypatch, client)
+        identity = cb.base_identity(None, None)
+
+        await cb.publish_candidate_base(cb.build_envelope(NOW, identity, [100, 200]))
+        await cb.publish_candidate_base(
+            cb.build_envelope(NOW - timedelta(seconds=30), identity, [9])
+        )
+
+        # Redis correctly kept the newer base ...
+        stored = json.loads(client.store[cb._redis_keys(identity)[0]])
+        assert stored["candidate_ids"] == [100, 200]
+        # ... and so must the next request served by THIS process (no L0 reset).
+        ids, prov, _ = await cb.get_candidate_base(NOW, None, None)
+        assert ids == [100, 200], "older build poisoned the process-local L0 base"
+        assert prov == cb.PROV_FRESH
+
+    @pytest.mark.asyncio
+    async def test_older_publish_does_not_poison_process_last_good(self, monkeypatch):
+        client = _FakeRedis({})
+        _install(monkeypatch, client)
+        identity = cb.base_identity(None, None)
+
+        await cb.publish_candidate_base(cb.build_envelope(NOW, identity, [100, 200]))
+        await cb.publish_candidate_base(
+            cb.build_envelope(NOW - timedelta(seconds=30), identity, [9])
+        )
+
+        recalled = rc.recall_last_good(f"candidate_base:{identity}")
+        assert recalled is not None
+        assert recalled["candidate_ids"] == [100, 200]
+
+    def test_l0_store_never_downgrades_to_an_older_envelope(self):
+        identity = cb.base_identity(None, None)
+        cb._l0_store(identity, cb.build_envelope(NOW, identity, [100, 200]))
+        cb._l0_store(
+            identity, cb.build_envelope(NOW - timedelta(seconds=5), identity, [9])
+        )
+        served = cb._l0_lookup(identity, NOW)
+        assert served is not None
+        assert served[0] == [100, 200]
+
+    def test_newer_envelope_still_updates_the_local_tiers(self):
+        """The guard must not freeze the base — a newer build always wins."""
+        identity = cb.base_identity(None, None)
+        cb._l0_store(
+            identity, cb.build_envelope(NOW - timedelta(seconds=5), identity, [9])
+        )
+        cb._l0_store(identity, cb.build_envelope(NOW, identity, [100, 200]))
+        served = cb._l0_lookup(identity, NOW)
+        assert served is not None
+        assert served[0] == [100, 200]
+
+    def test_equal_clock_rebuild_is_accepted(self):
+        """Equal ``generated_epoch_ms`` is the same generation — not a downgrade."""
+        identity = cb.base_identity(None, None)
+        cb._l0_store(identity, cb.build_envelope(NOW, identity, [1]))
+        cb._l0_store(identity, cb.build_envelope(NOW, identity, [2]))
+        served = cb._l0_lookup(identity, NOW)
+        assert served is not None
+        assert served[0] == [2]
+
+    def test_envelope_without_a_usable_epoch_is_still_stored(self):
+        """Unknown provenance must not block the store (fail-open, as before)."""
+        identity = cb.base_identity(None, None)
+        first = cb.build_envelope(NOW, identity, [1])
+        second = cb.build_envelope(NOW, identity, [2])
+        second["generated_epoch_ms"] = "not-an-int"
+        cb._l0_store(identity, first)
+        cb._l0_store(identity, second)
+        assert cb._l0[identity]["envelope"]["candidate_ids"] == [2]

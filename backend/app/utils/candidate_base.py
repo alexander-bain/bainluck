@@ -422,12 +422,52 @@ def _l0_evict(now_wall: float) -> None:
         _l0.pop(identity, None)
 
 
+def _envelope_epoch_ms(envelope: Any) -> Optional[int]:
+    """Return the build clock of ``envelope``, or None when it is unusable."""
+    if not isinstance(envelope, dict):
+        return None
+    stored = envelope.get("generated_epoch_ms")
+    if isinstance(stored, bool) or not isinstance(stored, int):
+        return None
+    return stored
+
+
+def _is_downgrade(existing: Any, incoming: dict) -> bool:
+    """True iff ``existing`` is a strictly NEWER build than ``incoming``.
+
+    Fail-open: when either build clock is unusable the write proceeds, so an
+    unknown-provenance envelope can never wedge a tier.
+    """
+    existing_ms = _envelope_epoch_ms(existing)
+    incoming_ms = _envelope_epoch_ms(incoming)
+    if existing_ms is None or incoming_ms is None:
+        return False
+    return existing_ms > incoming_ms
+
+
 def _l0_store(identity: str, envelope: dict) -> None:
+    # Monotonic, like the Redis write (Queue 289). Two builds for one identity can
+    # overlap — a slow request-path build and the beat, or two cold pages — and the
+    # one that finishes LAST is not necessarily the newest. Redis rejects the older
+    # write via compare-and-set, but this tier is read FIRST, so writing it
+    # unconditionally let a rejected older build still serve its stale candidate
+    # set (labelled ``fresh``) for a full L0 window.
+    existing = _l0.get(identity)
+    if existing is not None and _is_downgrade(existing.get("envelope"), envelope):
+        return
     now_wall = time.time()
     _l0[identity] = {"envelope": envelope, "fetched_wall": now_wall}
     # Bounded by construction: the map can never be observed above the cap, and
     # expired entries never linger (the map is <=256 entries, so this is cheap).
     _l0_evict(now_wall)
+
+
+def _remember_last_good(identity: str, envelope: dict) -> None:
+    """Monotonic twin of ``_l0_store`` for the process-local last-good tier."""
+    key = f"candidate_base:{identity}"
+    if _is_downgrade(_rc.recall_last_good(key), envelope):
+        return
+    _rc.remember_last_good(key, envelope)
 
 
 def _l0_drop(identity: str) -> None:
@@ -551,7 +591,7 @@ async def get_candidate_base(
         fresh_env = await _read_key(client, fresh_key)
         if _usable(fresh_env, now, CANDIDATE_BASE_FRESH_SECONDS, identity):
             _l0_store(identity, fresh_env)
-            _rc.remember_last_good(f"candidate_base:{identity}", fresh_env)
+            _remember_last_good(identity, fresh_env)
             _record_stage(stages, "candidate_base_read", t0)
             return _served(fresh_env, PROV_FRESH)
 
@@ -565,7 +605,7 @@ async def get_candidate_base(
 
         if last_good_env is not None:
             _l0_store(identity, last_good_env)
-            _rc.remember_last_good(f"candidate_base:{identity}", last_good_env)
+            _remember_last_good(identity, last_good_env)
             _record_stage(stages, "candidate_base_read", t0)
             return _served(last_good_env, PROV_LAST_GOOD)
     except asyncio.CancelledError:
@@ -679,7 +719,7 @@ async def publish_candidate_base(envelope: dict, *, stages=None) -> None:
             client, last_good_key, payload, epoch_ms, CANDIDATE_BASE_LAST_GOOD_TTL_S
         )
         _l0_store(identity, envelope)
-        _rc.remember_last_good(f"candidate_base:{identity}", envelope)
+        _remember_last_good(identity, envelope)
     except asyncio.CancelledError:
         raise
     except Exception:  # pragma: no cover - publish is best-effort
