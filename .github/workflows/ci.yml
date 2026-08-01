@@ -49,8 +49,45 @@ jobs:
       - name: Build (includes TypeScript + ESLint)
         run: npm run build
 
+  e2e-contract:
+    # L2-229 Item 1 — the browser-audit rail's fixtures, on ordinary push CI.
+    #
+    # These are the tests that test the tests: they mutate the workflow, the
+    # evaluator, the manifest validator and the redactor, and assert each
+    # mutation produces exactly its own red. If they stop failing, every green
+    # the rail reports afterwards is worthless — so until now the rail's only
+    # always-on gate lived in a MANUAL workflow nobody dispatches on a normal
+    # push, and a false-green-fixture regression could ship silently.
+    #
+    # It is cheap enough to be unconditional: no dependency install, no browser
+    # download, no network — `node --test` needs nothing but Node, which is why
+    # browser-audit.yml also runs it ahead of any install. ~0.2s of test time.
+    #
+    # Deliberately NOT `npm ci`: adding an install here would couple every push
+    # to the e2e lockfile and to registry availability, which is the opposite of
+    # what makes this gate safe to run on everything.
+    name: Browser-audit contract fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          # Must match browser-audit.yml. Node only globs `--test` arguments
+          # from v22, so on 20 the shell has to expand `contract/*.test.js` —
+          # quoting it made this suite silently never run in CI (L2-228).
+          node-version: "20"
+
+      - name: Contract fixtures (no dependencies, no browser, no network)
+        run: npm run contract
+
   deploy:
-    needs: [backend-tests, frontend-build]
+    needs: [backend-tests, frontend-build, e2e-contract]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     concurrency:
