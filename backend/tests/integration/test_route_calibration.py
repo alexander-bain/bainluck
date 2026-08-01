@@ -170,6 +170,27 @@ class TestCalibrationPublicEndpoint:
         assert "buckets" in body
         assert isinstance(body["buckets"], list)
 
+    async def test_names_its_population_contract(self, client):
+        """C111 P2 / Queue 297: the REAL computed payload carries its population
+        version. Without it a cached copy from an older contract can be served
+        under current UI labels, and the publish gate cannot distinguish an
+        intended population change from a silent one."""
+        from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+        body = (await client.get("/api/calibration")).json()
+
+        assert body["population_version"] == CALIBRATION_POPULATION_VERSION
+
+    async def test_the_real_payload_satisfies_the_publish_gate_contract(self, client):
+        """The gate's REQUIRED_SECTIONS must describe the payload we actually
+        build — otherwise the beat would refuse every real candidate and the page
+        would freeze on its last-good forever."""
+        from app.utils.calibration_publish_gate import REQUIRED_SECTIONS
+
+        body = (await client.get("/api/calibration")).json()
+
+        assert [s for s in REQUIRED_SECTIONS if s not in body] == []
+
     async def test_has_closing_line_coverage_key(self, client):
         resp = await client.get("/api/calibration")
         body = resp.json()
@@ -240,6 +261,10 @@ class TestCalibrationPublicEndpoint:
             "total_markets",
             "total_outcomes",
             "total_winners",
+            # C111 P2 / Queue 297: the public artifact names its own population
+            # contract, so a cached copy from an older contract can't be served
+            # under current UI labels.
+            "population_version",
             "mce_ci_lower",
             "mce_ci_upper",
             "mce_closing_line",

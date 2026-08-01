@@ -44,7 +44,7 @@ def _at(*, days_ago: float = 0.0) -> str:
     return (base - timedelta(days=days_ago)).isoformat()
 
 
-def _payload(*, outcomes: int = 1_000_000, version: str = "q267", generated_at=None):
+def _payload(*, outcomes: int = 1_000_000, version: str | None = None, generated_at=None):
     from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
 
     return {
@@ -149,6 +149,43 @@ async def test_main_miss_serves_dated_last_good(monkeypatch):
     assert out["cache"]["generated_at"] == lg["generated_at"]
     # ~2 days, with generous slack for clock granularity.
     assert 1.5 * 86400 < out["cache"]["age_s"] < 2.5 * 86400
+
+
+async def test_an_untrustworthy_main_falls_back_to_the_durable_last_good(monkeypatch):
+    """C111 P2: every cache tier is validated, not just last-good.
+
+    A wrong-version ``main`` rendered under current UI labels is uninterpretable,
+    so it must lose to a trustworthy last-good rather than be served.
+    """
+    from app.routes import calibration
+
+    good_lg = _payload(outcomes=1_000_000, generated_at=_at(days_ago=1))
+    wrong_version_main = _payload(outcomes=42, version="q001-ancient")
+    _use(
+        monkeypatch,
+        _FakeRedis(main=json.dumps(wrong_version_main), last_good=json.dumps(good_lg)),
+    )
+    _no_compute(monkeypatch)
+
+    out = await calibration.public_calibration(db=object(), bust=0)
+
+    assert out["total_outcomes"] == 1_000_000
+    assert out["cache"]["status"] == "stale"
+
+
+async def test_the_published_payload_names_its_population_contract():
+    """C111 P2: the public artifact must carry its own population version.
+
+    Without it the publish gate cannot tell an intended population change from a
+    silent one, and no consumer can tell which contract it is looking at.
+    """
+    from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+    from app.utils.calibration_publish_gate import census
+
+    payload = _payload()
+
+    assert payload["population_version"] == CALIBRATION_POPULATION_VERSION
+    assert census(payload)["population_version"] == CALIBRATION_POPULATION_VERSION
 
 
 # ---------------------------------------------------------------------------

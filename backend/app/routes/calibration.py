@@ -1,5 +1,6 @@
 """Public calibration endpoint — no auth required, cached for 1 hour."""
 
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -15,6 +16,8 @@ from app.services import get_db, get_db_rw
 # drifting second copy). It now delegates to the ONE shared
 # app.tasks.precompute_calibration.compute_calibration_payload, so those local
 # stats helpers (and their math/random/select/func imports) are gone.
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -870,11 +873,28 @@ async def public_calibration(
         res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
         if res.is_ok:
             data = _json.loads(res.value)
-            if isinstance(data, dict):
+            # C111 P2: check the population contract at THIS tier too, not just on
+            # last-good. Scope is deliberately narrow — only a version mismatch is
+            # rejected here. ``main`` is written by our own publisher, which now
+            # runs the stricter publish gate at WRITE time, and its 2h TTL bounds
+            # its age; re-validating shape on read would mean a payload-shape
+            # addition could reject a freshly published copy and degrade the page,
+            # which is the exact failure this queue exists to end. The durable
+            # last-good gets the full check because it can be ancient and written
+            # under a different contract.
+            main_verdict = snapshot_verdict(
+                data, expected_version=_expected_version(), max_age_s=SERVE_MAX_AGE_S
+            )
+            if isinstance(data, dict) and main_verdict.status != "wrong_version":
                 _cache["data"] = data
                 _cache["timestamp"] = now
                 _rc.remember_last_good(_lg_key, data)
                 return data
+            elif isinstance(data, dict):
+                logger.warning(
+                    "calibration: main key rejected (%s: %s) — falling back to last-good",
+                    main_verdict.status, main_verdict.reason,
+                )
         _redis_failed = res.is_failure
     except Exception:
         _redis_failed = True
@@ -919,7 +939,11 @@ async def public_calibration(
                     verdict.status, verdict.reason,
                 )
         except Exception:
-            pass
+            # Falling through to the cold compute is the right behavior, but this
+            # used to be a silent `pass` — which is how a NameError in the branch
+            # above stayed invisible while quietly disabling the whole last-good
+            # tier. Never swallow this without saying so.
+            logger.warning("calibration: durable last-good read failed", exc_info=True)
 
     # 3. Redis unavailable (not a clean miss): prefer a truthful stale/last-good
     #    payload over recomputing during Redis flakiness (Queue 271 Item 2).

@@ -2489,6 +2489,14 @@ async def compute_calibration_payload(db) -> dict:
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
+        # C111 P2 / Queue 297 Item 3: the PUBLIC artifact must name its own
+        # population contract. The version constant already guarded the horizon /
+        # examples / bucket-debug consumers, but not the payload the page itself
+        # renders — so an older last-good could be served under current UI labels
+        # and no consumer could tell. It is also what makes an intended population
+        # change expressible: the publish gate waives a drift/collapse rejection
+        # only when this value is explicitly bumped.
+        "population_version": CALIBRATION_POPULATION_VERSION,
         "mce_ci_lower": round(mce_ci_lo * 100, 2),
         "mce_ci_upper": round(mce_ci_hi * 100, 2),
         "mce_closing_line": mce_closing_line,
