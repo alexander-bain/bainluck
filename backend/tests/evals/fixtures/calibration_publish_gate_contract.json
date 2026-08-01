@@ -1,0 +1,1295 @@
+{
+  "policy": {
+    "contract_version": "calibration-publish-gate/v1",
+    "artifact_schema_version": "calibration-artifact/v1",
+    "required_sections": [
+      "buckets",
+      "categories",
+      "sources",
+      "activity_tiers",
+      "count_bridge"
+    ],
+    "population_change_limit_pct": 5.0,
+    "category_drop_limit_pct": 20.0,
+    "tier_inversion_tolerance_pp": 0.5,
+    "category_min_n": 1000,
+    "category_ece_regression_pp": 5.0,
+    "scope": "mechanical publication safety only"
+  },
+  "application_contract": {
+    "permission": "A passing version bump is mechanical permission only.",
+    "forbidden_choices": [
+      "population methodology",
+      "liquidity thresholds",
+      "ranking",
+      "product narrative"
+    ]
+  },
+  "artifacts": {
+    "prior": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 35000,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "clean": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 1.9
+        },
+        {
+          "name": "politics",
+          "n": 35000,
+          "ece_pp": 2.9
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.1
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.4
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 2.1
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 3.9
+        }
+      ]
+    },
+    "partial": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 65000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "activity_tiers"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 39000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 26000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "drop_no_bump": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 94000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 37600,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 32900,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 752,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 22748,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 56400,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 37600,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "drop_with_bridge": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q268",
+      "build_status": "complete",
+      "total_outcomes": 94000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 37600,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 32900,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 752,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 22748,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 56400,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 37600,
+          "ece_pp": 4.0
+        }
+      ],
+      "population_bridge": {
+        "from_version": "q267",
+        "to_version": "q268",
+        "prior_total": 100000,
+        "candidate_total": 94000,
+        "components": [
+          {
+            "reason": "declared eligibility change",
+            "delta": -6000
+          }
+        ],
+        "rationale": "Versioned census bridge; methodology still requires product approval."
+      }
+    },
+    "inversion": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 35000,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 5.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 2.0
+        }
+      ]
+    },
+    "category_drop": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 26249,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 32951,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "cricket_low_n": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 35000,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 12.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "failed": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q267",
+      "build_status": "oom_killed",
+      "total_outcomes": 65000,
+      "completed_sections": [
+        "buckets",
+        "categories"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 39000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 26000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "wrong_schema": {
+      "schema_version": "calibration-artifact/v0",
+      "population_version": "q267",
+      "build_status": "complete",
+      "total_outcomes": 100000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 40000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 35000,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 800,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 24200,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 60000,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 40000,
+          "ece_pp": 4.0
+        }
+      ]
+    },
+    "bump_no_bridge": {
+      "schema_version": "calibration-artifact/v1",
+      "population_version": "q268",
+      "build_status": "complete",
+      "total_outcomes": 94000,
+      "completed_sections": [
+        "buckets",
+        "categories",
+        "sources",
+        "activity_tiers",
+        "count_bridge"
+      ],
+      "categories": [
+        {
+          "name": "baseball",
+          "n": 37600,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "politics",
+          "n": 32900,
+          "ece_pp": 3.0
+        },
+        {
+          "name": "cricket",
+          "n": 752,
+          "ece_pp": 4.0
+        },
+        {
+          "name": "other",
+          "n": 22748,
+          "ece_pp": 2.5
+        }
+      ],
+      "activity_tiers": [
+        {
+          "name": "price_changed",
+          "n": 56400,
+          "ece_pp": 2.0
+        },
+        {
+          "name": "price_unchanged",
+          "n": 37600,
+          "ece_pp": 4.0
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "partial_categories",
+      "prior_artifact": "prior",
+      "candidate_artifact": "partial",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "REQUIRED_CATEGORY_MISSING",
+          "REQUIRED_SECTIONS_INCOMPLETE"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:755da65c1f0498d3",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 65000,
+        "failed_gates": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "REQUIRED_CATEGORY_MISSING",
+          "REQUIRED_SECTIONS_INCOMPLETE"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "status": "missing",
+            "prior_n": 35000
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "population_drop_no_bump",
+      "prior_artifact": "prior",
+      "candidate_artifact": "drop_no_bump",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:eebb82b5fbbfab3f",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 94000,
+        "failed_gates": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 37600,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 752,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 22748,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 32900,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "population_drop_with_bridge",
+      "prior_artifact": "prior",
+      "candidate_artifact": "drop_with_bridge",
+      "expected": {
+        "verdict": "publish",
+        "main_state": "candidate",
+        "last_good_state": "candidate",
+        "findings": [],
+        "warnings": [],
+        "issue": null
+      }
+    },
+    {
+      "id": "activity_rank_inversion",
+      "prior_artifact": "prior",
+      "candidate_artifact": "inversion",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "ACTIVITY_TIER_RANK_INVERSION"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:6af21db83f029e00",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "ACTIVITY_TIER_RANK_INVERSION"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          }
+        ],
+        "tier_inversions": [
+          {
+            "left": "price_changed",
+            "right": "price_unchanged",
+            "prior_delta_pp": -2.0,
+            "candidate_delta_pp": 3.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "category_drop_over_20",
+      "prior_artifact": "prior",
+      "candidate_artifact": "category_drop",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "CATEGORY_COUNT_DROP_EXCEEDS_LIMIT"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:d0211733315546b2",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "CATEGORY_COUNT_DROP_EXCEEDS_LIMIT"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 32951,
+            "n_change_pct": 36.1612,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 26249,
+            "n_change_pct": -25.0029,
+            "ece_change_pp": 0.0
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "cricket_low_n_noise",
+      "prior_artifact": "prior",
+      "candidate_artifact": "cricket_low_n",
+      "expected": {
+        "verdict": "publish",
+        "main_state": "candidate",
+        "last_good_state": "candidate",
+        "findings": [],
+        "warnings": [
+          "LOW_N_CATEGORY_DISTORTION"
+        ],
+        "issue": null
+      }
+    },
+    {
+      "id": "oom_shaped_failed_build",
+      "prior_artifact": "prior",
+      "candidate_artifact": "failed",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "BUILD_NOT_COMPLETE",
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "REQUIRED_CATEGORY_MISSING",
+          "REQUIRED_SECTIONS_INCOMPLETE"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:261f36e3d6fcbda6",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 65000,
+        "failed_gates": [
+          "BUILD_NOT_COMPLETE",
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "REQUIRED_CATEGORY_MISSING",
+          "REQUIRED_SECTIONS_INCOMPLETE"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "status": "missing",
+            "prior_n": 35000
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "clean_complete_build",
+      "prior_artifact": "prior",
+      "candidate_artifact": "clean",
+      "expected": {
+        "verdict": "publish",
+        "main_state": "candidate",
+        "last_good_state": "candidate",
+        "findings": [],
+        "warnings": [],
+        "issue": null
+      }
+    },
+    {
+      "id": "wrong_schema",
+      "prior_artifact": "prior",
+      "candidate_artifact": "wrong_schema",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "ARTIFACT_SCHEMA_MISMATCH"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:fed91b84993b29be",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "ARTIFACT_SCHEMA_MISMATCH"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.0
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "version_bump_missing_bridge",
+      "prior_artifact": "prior",
+      "candidate_artifact": "bump_no_bridge",
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "VERSION_BUMP_WITHOUT_COUNT_BRIDGE"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:fbfd63aa92f1ce07",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q268",
+        "prior_total": 100000,
+        "candidate_total": 94000,
+        "failed_gates": [
+          "POPULATION_CHANGE_EXCEEDS_LIMIT",
+          "VERSION_BUMP_WITHOUT_COUNT_BRIDGE"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 37600,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 752,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 22748,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 32900,
+            "n_change_pct": -6.0,
+            "ece_change_pp": 0.0
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "poison_category_first",
+      "prior_artifact": "prior",
+      "candidate_artifact": "clean",
+      "poison_category_index": 0,
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:c6e7dbc924345bfb",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "status": "missing",
+            "prior_n": 40000
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.1
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "poison_category_middle",
+      "prior_artifact": "prior",
+      "candidate_artifact": "clean",
+      "poison_category_index": 2,
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:c6e7dbc924345bfb",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "cricket",
+            "status": "missing",
+            "prior_n": 800
+          },
+          {
+            "name": "other",
+            "prior_n": 24200,
+            "candidate_n": 24200,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "poison_category_last",
+      "prior_artifact": "prior",
+      "candidate_artifact": "clean",
+      "poison_category_index": 3,
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:c6e7dbc924345bfb",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "POISON_CATEGORY_ROW",
+          "REQUIRED_CATEGORY_MISSING"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "cricket",
+            "prior_n": 800,
+            "candidate_n": 800,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 0.1
+          },
+          {
+            "name": "other",
+            "status": "missing",
+            "prior_n": 24200
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          }
+        ],
+        "tier_inversions": []
+      }
+    },
+    {
+      "id": "cricket_material_regression",
+      "prior_artifact": "prior",
+      "candidate_artifact": "clean",
+      "prior_category_overrides": {
+        "cricket": {
+          "n": 5000,
+          "ece_pp": 4.0
+        },
+        "other": {
+          "n": 20000
+        }
+      },
+      "candidate_category_overrides": {
+        "cricket": {
+          "n": 5000,
+          "ece_pp": 12.0
+        },
+        "other": {
+          "n": 20000
+        }
+      },
+      "expected": {
+        "verdict": "refuse",
+        "main_state": "prior",
+        "last_good_state": "prior",
+        "findings": [
+          "MATERIAL_CATEGORY_ACCURACY_REGRESSION"
+        ],
+        "warnings": []
+      },
+      "expected_issue": {
+        "priority": "P2",
+        "labels": [
+          "needs-triage"
+        ],
+        "fingerprint": "calibration-publish-gate:39013cc11b525051",
+        "title": "Calibration candidate refused by publish gate",
+        "prior_version": "q267",
+        "candidate_version": "q267",
+        "prior_total": 100000,
+        "candidate_total": 100000,
+        "failed_gates": [
+          "MATERIAL_CATEGORY_ACCURACY_REGRESSION"
+        ],
+        "warnings": [],
+        "category_deltas": [
+          {
+            "name": "baseball",
+            "prior_n": 40000,
+            "candidate_n": 40000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "cricket",
+            "prior_n": 5000,
+            "candidate_n": 5000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": 8.0
+          },
+          {
+            "name": "other",
+            "prior_n": 20000,
+            "candidate_n": 20000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          },
+          {
+            "name": "politics",
+            "prior_n": 35000,
+            "candidate_n": 35000,
+            "n_change_pct": 0.0,
+            "ece_change_pp": -0.1
+          }
+        ],
+        "tier_inversions": []
+      }
+    }
+  ]
+}
