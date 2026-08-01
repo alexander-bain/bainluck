@@ -9,6 +9,7 @@
     "latency": "playwright test --project=desktop --project=mobile discover-latency",
     "consent": "playwright test --project=desktop --project=mobile consent",
     "grid": "playwright test --project=desktop --project=mobile championship-grid",
+    "calibration": "playwright test --project=desktop --project=mobile calibration",
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js"

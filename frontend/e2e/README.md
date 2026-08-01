@@ -55,6 +55,25 @@ npm run validate -- audit-out/manifest.json --verify-bytes
 In CI: **Actions → Browser audit (manual) → Run workflow**, with
 `frontend_sha` set to the full 40-hex commit the deployed frontend must report.
 
+## Packs
+
+| Pack (dropdown) | Script | Spec | Proves |
+|---|---|---|---|
+| `deploy-smoke` | `smoke` | `discover-smoke.spec.ts` | Anonymous Discover rendered a real card or a named empty state |
+| `consent` | `consent` | `consent.spec.ts` | Telemetry ledger before/after consent choices (#1453) |
+| `deploy-smoke+consent` | `smoke-consent` | both of the above | The default |
+| `grid` | `grid` | `championship-grid.spec.ts` | The five championship grids render honest cell states (L2-227) |
+| `calibration` | `calibration` | `calibration.spec.ts` | `/calibration` renders finite, non-degraded numbers (L2-228) |
+
+A pack must be declared in **four** places to actually run: the workflow's
+`options:` dropdown, the input-validation allowlist, the dispatch `case`, and an
+npm script. L2-227 added `grid` to three of them and missed the allowlist, so
+the dropdown advertised a pack that died at input validation every time —
+coverage on paper, nothing executed. `contract/packaging.contract.test.js` now
+**derives** the expected set from the dropdown and fails when the four drift
+apart, so adding a pack to `options:` and nowhere else is a red contract test
+rather than a broken dispatch.
+
 ## Why each piece exists
 
 ### `helpers/journey.js` — the verdict, as a pure function
@@ -170,10 +189,42 @@ so they are masked out before phone redaction and restored after.
 
 ## Reproducibility
 
+> ### ⚠️ The browser leg cannot run yet — `package-lock.json` is MISSING
+>
+> This section used to state that the lockfile "is **committed** (it used to be
+> gitignored)". **That was never true.** `frontend/e2e/package-lock.json` has
+> never existed in any commit — only the `.gitignore` comment claiming it is
+> committed on purpose was ever written. So the workflow's `npm ci` step exits
+> `EUSAGE` on every run, and **the browser leg of this rail has been unrunnable
+> since L2-221** (found by L2-227, which wrote the `grid` pack and could not
+> execute it).
+>
+> The contract fixtures (`npm run contract`) are unaffected and genuinely green
+> — they run on `node --test` with no install, which is exactly why they were
+> built that way.
+>
+> **To fix (L2-228 could not: `registry.npmjs.org` is unreachable from the
+> agent sandbox — `curl` returns 000 with and without the sandbox, so the
+> dependency graph cannot be resolved):**
+>
+> ```bash
+> cd frontend/e2e
+> npm install --package-lock-only     # resolves the already-pinned exact version
+> git add package-lock.json && git commit -m "e2e: commit the Playwright lockfile"
+> ```
+>
+> Run that from any machine with npm registry access. It must be a **generated**
+> lockfile — a hand-written one would carry invented `integrity` hashes, which
+> is precisely the fabricated-evidence shape this rail exists to make
+> impossible. Until it lands, treat every `pack` in the workflow dropdown as
+> **wired but unproven**.
+
 `package.json` pins `@playwright/test` to an exact version and
-`package-lock.json` is **committed** (it used to be gitignored). `npm ci` is the
+`package-lock.json` is **intended** to be committed. `npm ci` is the
 enforcing gate — it exits non-zero when the lock is missing or disagrees with
 `package.json`, so a run cannot produce evidence from an unpinned install.
+Note that this gate is currently doing its job *too well*: it is the thing
+failing the run, and it is right to.
 `contract/packaging.contract.test.js` additionally fails if a future edit
 reintroduces a range specifier, un-isolates the tree, or loosens the workflow's
 permissions / `npm ci` / no-schedule guarantees. It reads the workflow with

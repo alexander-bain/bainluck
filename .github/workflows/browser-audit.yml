@@ -52,6 +52,7 @@ on:
           - deploy-smoke
           - consent
           - grid
+          - calibration
 
 # Least privilege: read the repo, nothing else. The filer that consumes a
 # validated manifest is a separate, later job with its own `issues: write`.
@@ -139,7 +140,17 @@ jobs:
           # test asserts there is exactly ONE `case "${AUDIT_PACK}"` dispatch in
           # this file — two would mean two playwright invocations, and the
           # second manifest would silently overwrite the first.
-          if ! printf '%s' "${AUDIT_PACK}" | grep -Eq '^(deploy-smoke|consent|deploy-smoke\+consent)$'; then
+          #
+          # L2-228: this allowlist and the `options:` list above are TWO places
+          # that must agree, and they silently did not. L2-227 added `grid` to
+          # the dropdown and to the dispatch `case`, but not here — so the only
+          # way to select the grid pack was to have the run die at input
+          # validation. An advertised choice that cannot execute is worse than
+          # an absent one: it reads as coverage on the dropdown. The packaging
+          # contract now DERIVES the expected set from `options:` and fails when
+          # the allowlist, the dispatch and the npm scripts drift apart, so this
+          # class cannot recur silently.
+          if ! printf '%s' "${AUDIT_PACK}" | grep -Eq '^(deploy-smoke|consent|deploy-smoke\+consent|grid|calibration)$'; then
             echo "::error::unknown pack"
             exit 1
           fi
@@ -238,6 +249,7 @@ jobs:
             consent)               npm run consent ;;
             deploy-smoke+consent)  npm run smoke-consent ;;
             grid)                  npm run grid ;;
+            calibration)           npm run calibration ;;
             *)
               echo "::error::unknown pack '${AUDIT_PACK}'"
               exit 1

@@ -27,6 +27,67 @@ const pkg = JSON.parse(fs.readFileSync(path.join(e2eRoot, "package.json"), "utf8
 /** Anything that is not a single exact version. */
 const RANGE_SPECIFIER = /^[\^~>< ]|[*x]$|\s-\s|\|\|/;
 
+const workflowPath = path.join(repoRoot, ".github", "workflows", "browser-audit.yml");
+const workflowRaw = fs.readFileSync(workflowPath, "utf8");
+
+/**
+ * Strip `#` comment lines before asserting on content.
+ *
+ * Learned the hard way in this very file: the first version of these
+ * assertions tripped on the workflow's OWN comments, which explain that it
+ * uses `npm ci` and never `npm install`, and that `issues: write` belongs to
+ * a later job. A prose mention is not a configured behaviour, so the
+ * assertions must read the configuration.
+ */
+const workflowConfig = workflowRaw
+  .split("\n")
+  .filter((line) => !/^\s*#/.test(line))
+  .join("\n");
+
+/**
+ * L2-228 — pack parity, derived rather than listed.
+ *
+ * A pack has to be declared in FOUR places to actually run: the dispatch
+ * `options:` dropdown, the input-validation allowlist, the dispatch `case`, and
+ * an npm script. L2-227 added `grid` to three of them and missed the
+ * allowlist, so the dropdown advertised a pack that died at input validation
+ * every time. Nothing caught it, because this file asserted against a
+ * hard-coded `["smoke", "consent", "smoke-consent"]` — a list that cannot
+ * notice a pack it was never told about.
+ *
+ * So the expected set is now DERIVED from the workflow's own dropdown, and the
+ * other three places are checked against it. Adding a pack to `options:` and
+ * nowhere else is now a red contract test rather than a broken dispatch.
+ */
+
+/** The packs the dropdown advertises to whoever runs the workflow. */
+function advertisedPacks() {
+  const block = workflowConfig.match(/options:\n((?:\s*-\s*[^\n]+\n)+)/);
+  assert.ok(block, "the workflow must offer a `pack` choice with an options list");
+  return block[1]
+    .split("\n")
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter(Boolean);
+}
+
+/** The packs the input-validation step will actually let through. */
+function allowlistedPacks() {
+  const m = workflowConfig.match(/AUDIT_PACK\}"\s*\|\s*grep -Eq '\^\(([^)]*)\)\$'/);
+  assert.ok(m, "the workflow must pattern-check AUDIT_PACK before use");
+  return m[1].split("|").map((p) => p.replace(/\\/g, "").trim());
+}
+
+/** The single `case` dispatch, and the pack → npm script mapping inside it. */
+function dispatchBlock() {
+  const caseBlock = workflowConfig.match(/case "\$\{AUDIT_PACK\}"[\s\S]*?esac/);
+  assert.ok(caseBlock, "pack selection must be a single `case` dispatch");
+  const mapping = new Map();
+  for (const m of caseBlock[0].matchAll(/^\s*([A-Za-z0-9+_-]+)\)\s*npm run ([A-Za-z0-9_-]+)\b/gm)) {
+    mapping.set(m[1], m[2]);
+  }
+  return { text: caseBlock[0], mapping };
+}
+
 describe("dependency pinning", () => {
   it("pins every dependency to an exact version", () => {
     const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
@@ -78,22 +139,7 @@ describe("isolation from the Vercel build", () => {
 });
 
 describe("the manual workflow keeps its phase-1 boundary", () => {
-  const workflowPath = path.join(repoRoot, ".github", "workflows", "browser-audit.yml");
-  const raw = fs.readFileSync(workflowPath, "utf8");
-
-  /**
-   * Strip `#` comment lines before asserting on content.
-   *
-   * Learned the hard way in this very file: the first version of these
-   * assertions tripped on the workflow's OWN comments, which explain that it
-   * uses `npm ci` and never `npm install`, and that `issues: write` belongs to
-   * a later job. A prose mention is not a configured behaviour, so the
-   * assertions must read the configuration.
-   */
-  const config = raw
-    .split("\n")
-    .filter((line) => !/^\s*#/.test(line))
-    .join("\n");
+  const config = workflowConfig;
 
   it("the comment-stripped config is not vacuous", () => {
     // Guard: if stripping ever eats the file, every `!includes` below would
@@ -159,19 +205,23 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
     // Every pack invocation must sit inside ONE `case` dispatch. Two separate
     // steps would each run playwright, and the second manifest would replace
     // the first.
-    const caseBlock = config.match(/case "\$\{AUDIT_PACK\}"[\s\S]*?esac/);
-    assert.ok(caseBlock, "pack selection must be a single `case` dispatch");
+    const { text, mapping } = dispatchBlock();
+    assert.ok(mapping.size >= 1, "the dispatch must run at least one pack");
 
-    const outsideCase = config.replace(caseBlock[0], "");
-    const strays = [...outsideCase.matchAll(/npm run (smoke-consent|smoke|consent|latency)\b/g)];
+    // L2-228: the stray scan used to look for a hard-coded script list, so a
+    // pack added later could be invoked outside the dispatch and go unnoticed
+    // — the exact blind spot that let the `grid` allowlist gap survive. The
+    // scan now derives its needles from the dispatch's own mapping.
+    const scripts = [...new Set(mapping.values())].sort((a, b) => b.length - a.length);
+    const needle = new RegExp(`npm run (${scripts.join("|")})\\b`, "g");
+
+    const outsideCase = config.replace(text, "");
+    const strays = [...outsideCase.matchAll(needle)];
     assert.deepEqual(
       strays.map((m) => m[0]),
       [],
       "a pack invocation outside the dispatch would clobber the manifest"
     );
-
-    const inside = [...caseBlock[0].matchAll(/npm run (smoke-consent|smoke|consent|latency)\b/g)];
-    assert.ok(inside.length >= 1, "the dispatch must run at least one pack");
   });
 
   it("offers the consent pack, and defaults to running it", () => {
@@ -181,9 +231,31 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
 });
 
 describe("the pack scripts exist for every workflow choice", () => {
-  it("every pack the workflow can dispatch has a script", () => {
-    for (const script of ["smoke", "consent", "smoke-consent"]) {
-      assert.ok(pkg.scripts[script], `missing npm script "${script}"`);
+  it("advertises at least the packs this rail is known to ship", () => {
+    // A floor, so that deriving from the dropdown can never degenerate into
+    // "the dropdown agrees with itself" if someone empties it.
+    const advertised = advertisedPacks();
+    for (const pack of ["deploy-smoke", "consent", "deploy-smoke+consent", "grid", "calibration"]) {
+      assert.ok(advertised.includes(pack), `the workflow no longer offers the "${pack}" pack`);
+    }
+  });
+
+  it("the input allowlist accepts exactly the advertised packs", () => {
+    // The L2-227 defect: `grid` was offered in the dropdown and wired into the
+    // dispatch, but the validation step's allowlist never learned about it, so
+    // selecting it failed the run before a browser ever opened. An advertised
+    // choice that cannot execute is worse than an absent one — it reads as
+    // coverage.
+    assert.deepEqual(allowlistedPacks().sort(), advertisedPacks().sort());
+  });
+
+  it("the dispatch handles exactly the advertised packs", () => {
+    assert.deepEqual([...dispatchBlock().mapping.keys()].sort(), advertisedPacks().sort());
+  });
+
+  it("every dispatched pack maps to a real script that runs both viewports", () => {
+    for (const [pack, script] of dispatchBlock().mapping) {
+      assert.ok(pkg.scripts[script], `pack "${pack}" dispatches missing npm script "${script}"`);
       assert.match(
         pkg.scripts[script],
         /--project=desktop --project=mobile/,
@@ -212,5 +284,38 @@ describe("the pack scripts exist for every workflow choice", () => {
     ]) {
       assert.ok(raw.includes(`journeyId: "${id}"`), `consent pack is missing ${id}`);
     }
+  });
+
+  /**
+   * L2-228. An npm script is a `playwright test <filter>` — a filter matching
+   * NOTHING exits 0 having run no tests, the reporter writes a manifest with
+   * zero journeys, and only `deriveRunResult([])` downstream stops that from
+   * reading as green. Pinning the file the filter is meant to select keeps the
+   * failure at "the spec is gone" rather than "the run proved nothing".
+   */
+  it("the calibration spec exists and is selected by the calibration filter", () => {
+    const spec = path.join(e2eRoot, "specs", "calibration.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/calibration.spec.ts must exist");
+    const raw = fs.readFileSync(spec, "utf8");
+    assert.ok(
+      raw.includes('journeyId: "calibration.anonymous"'),
+      "calibration pack is missing calibration.anonymous"
+    );
+    // The filter token in the npm script must actually match the filename.
+    const filter = pkg.scripts.calibration.split(" ").pop();
+    assert.ok(
+      path.basename(spec).includes(filter),
+      `"${filter}" does not select ${path.basename(spec)}`
+    );
+  });
+
+  it("the grid spec exists and is selected by the grid filter", () => {
+    const spec = path.join(e2eRoot, "specs", "championship-grid.spec.ts");
+    assert.ok(fs.existsSync(spec), "specs/championship-grid.spec.ts must exist");
+    const filter = pkg.scripts.grid.split(" ").pop();
+    assert.ok(
+      path.basename(spec).includes(filter),
+      `"${filter}" does not select ${path.basename(spec)}`
+    );
   });
 });
