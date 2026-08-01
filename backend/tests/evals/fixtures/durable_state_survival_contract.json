@@ -1,0 +1,51 @@
+{
+  "schema_version": "durable-state-survival/v1",
+  "defaults": {
+    "artifact": {"family": "calibration", "identity": "calibration:main", "schema_version": "v1", "max_age_s": 604800, "checked": 10, "payload_verdict": "GREEN"},
+    "reads": {
+      "fresh_process": false,
+      "volatile": {"state": "ok", "schema_version": "v1", "generation": 10, "checksum_valid": true, "complete": true, "age_s": 60, "error_class": null, "error_detail": null},
+      "durable": {"state": "ok", "schema_version": "v1", "generation": 10, "checksum_valid": true, "complete": true, "age_s": 60, "error_class": null, "error_detail": null},
+      "process": {"state": "missing", "schema_version": "v1", "generation": 0, "checksum_valid": false, "complete": false, "age_s": 0, "error_class": null, "error_detail": null}
+    },
+    "publication": {"stage": "not_applicable", "compute_complete": true, "durable_write": "not_attempted", "volatile_write": "not_attempted", "cancelled": false, "prior_last_good_preserved": true},
+    "surfaces": ["calibration_route", "sentinel_last", "ops_snapshot", "cockpit", "task_metric", "board_sentinel"],
+    "expected": {"source": "volatile", "health": "GREEN", "task_success": null, "errors": []}
+  },
+  "cases": [
+    {"id": "healthy-fresh"},
+    {"id": "redis-evicted-durable-good", "reads": {"volatile": {"state": "missing"}}, "expected": {"source": "durable"}},
+    {"id": "redis-outage-fresh-process", "reads": {"fresh_process": true, "volatile": {"state": "unavailable", "error_class": "connection"}, "process": {"state": "missing"}}, "expected": {"source": "durable"}},
+    {"id": "redis-outage-no-durable", "reads": {"fresh_process": true, "volatile": {"state": "unavailable", "error_class": "connection"}, "durable": {"state": "unavailable", "error_class": "connection"}}, "expected": {"source": "unavailable", "health": "UNKNOWN"}},
+    {"id": "tls-eof-durable-good", "reads": {"volatile": {"state": "tls_eof", "error_class": "tls", "error_detail": "redis.example.internal secret"}}, "expected": {"source": "durable"}},
+    {"id": "command-timeout-durable-good", "reads": {"volatile": {"state": "timeout", "error_class": "timeout"}}, "expected": {"source": "durable"}},
+    {"id": "volatile-malformed-durable-good", "reads": {"volatile": {"state": "malformed", "checksum_valid": false, "error_class": "decode"}}, "expected": {"source": "durable"}},
+    {"id": "volatile-wrong-type-durable-good", "reads": {"volatile": {"state": "wrong_type", "complete": false, "error_class": "shape"}}, "expected": {"source": "durable"}},
+    {"id": "durable-malformed", "reads": {"volatile": {"state": "missing"}, "durable": {"state": "malformed", "checksum_valid": false, "error_class": "decode"}}, "expected": {"source": "unavailable", "health": "UNKNOWN"}},
+    {"id": "durable-wrong-version", "reads": {"volatile": {"state": "missing"}, "durable": {"schema_version": "v0"}}, "expected": {"source": "unavailable", "health": "UNKNOWN"}},
+    {"id": "durable-too-old", "reads": {"volatile": {"state": "missing"}, "durable": {"age_s": 604801}}, "expected": {"source": "unavailable", "health": "UNKNOWN"}},
+    {"id": "warm-process-fallback", "reads": {"volatile": {"state": "unavailable"}, "durable": {"state": "unavailable"}, "process": {"state": "ok", "generation": 9, "checksum_valid": true, "complete": true, "age_s": 300}}, "expected": {"source": "process"}},
+    {"id": "fresh-process-rejects-process-only", "reads": {"fresh_process": true, "volatile": {"state": "unavailable"}, "durable": {"state": "unavailable"}, "process": {"state": "ok", "generation": 9, "checksum_valid": true, "complete": true, "age_s": 300}}, "expected": {"source": "unavailable", "health": "UNKNOWN"}},
+    {"id": "producer-compute-failure", "reads": {"volatile": {"state": "missing"}, "durable": {"generation": 9, "age_s": 3600}}, "publication": {"stage": "producer", "compute_complete": false}, "expected": {"source": "durable", "task_success": false}},
+    {"id": "durable-write-fails", "reads": {"volatile": {"state": "missing"}, "durable": {"generation": 9, "age_s": 3600}}, "publication": {"stage": "producer", "durable_write": "error"}, "expected": {"source": "durable", "task_success": false}},
+    {"id": "volatile-write-fails-after-durable", "reads": {"volatile": {"state": "missing"}, "durable": {"generation": 11}}, "publication": {"stage": "producer", "durable_write": "ok", "volatile_write": "error"}, "expected": {"source": "durable", "task_success": true}},
+    {"id": "durable-ahead-generation", "reads": {"volatile": {"generation": 10}, "durable": {"generation": 11}}, "expected": {"source": "durable"}},
+    {"id": "volatile-ahead-generation-conflict", "reads": {"volatile": {"generation": 11}, "durable": {"generation": 10}}, "expected": {"source": "durable", "health": "UNKNOWN", "errors": ["VOLATILE_AHEAD_OF_DURABLE"]}},
+    {"id": "partial-torn-pair", "reads": {"volatile": {"generation": 11}, "durable": {"generation": 10}}, "publication": {"stage": "producer", "durable_write": "error", "volatile_write": "ok"}, "expected": {"source": "durable", "health": "UNKNOWN", "task_success": false, "errors": ["VOLATILE_AHEAD_OF_DURABLE", "VOLATILE_PUBLISHED_WITHOUT_DURABLE"]}},
+    {"id": "cancelled-producer", "reads": {"volatile": {"state": "missing"}, "durable": {"generation": 9}}, "publication": {"stage": "producer", "compute_complete": false, "cancelled": true}, "expected": {"source": "durable", "task_success": false}},
+    {"id": "duplicate-generation", "reads": {"volatile": {"generation": 12}, "durable": {"generation": 12}}, "expected": {"source": "volatile"}},
+    {"id": "poison-first", "poison": {"position": "first", "healthy_siblings_survive": true}},
+    {"id": "poison-middle", "poison": {"position": "middle", "healthy_siblings_survive": true}},
+    {"id": "poison-last", "poison": {"position": "last", "healthy_siblings_survive": true}},
+    {"id": "checked-zero", "artifact": {"checked": 0}, "expected": {"health": "UNKNOWN"}},
+    {"id": "mixed-composite", "composite": {"per_field_metadata": true, "checked_zero_as_green": false}},
+    {"id": "flow-family", "artifact": {"family": "flow", "identity": "sentinel:flow"}},
+    {"id": "grid-family", "artifact": {"family": "grid", "identity": "sentinel:grid"}},
+    {"id": "calibration-sentinel-family", "artifact": {"family": "calibration_sentinel", "identity": "sentinel:calibration"}},
+    {"id": "board-family", "artifact": {"family": "board", "identity": "sentinel:board"}},
+    {"id": "horizon-family", "artifact": {"family": "horizon", "identity": "sentinel:horizon"}},
+    {"id": "grid-register-family", "artifact": {"family": "grid_register", "identity": "sentinel:grid-register"}},
+    {"id": "settled-concept-family", "artifact": {"family": "settled_concept", "identity": "sentinel:settled-concept"}},
+    {"id": "durable-red-verdict", "artifact": {"family": "flow", "identity": "sentinel:flow", "payload_verdict": "RED"}, "reads": {"volatile": {"state": "missing"}}, "expected": {"source": "durable", "health": "RED"}}
+  ]
+}
