@@ -185,6 +185,39 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
     assert.ok(config.includes("npm run validate"));
   });
 
+  /**
+   * L2-228. `actions/setup-node` hard-fails its whole step when a configured
+   * `cache-dependency-path` does not resolve — "Some specified paths were not
+   * resolved, unable to cache dependencies". The workflow pointed that at
+   * `frontend/e2e/package-lock.json`, which has never existed, so a pure speed
+   * optimisation aborted the job at SETUP and the contract fixtures below
+   * never ran at all (run 30721023236).
+   *
+   * This asserts the invariant rather than the current state, so restoring the
+   * cache in the same commit that adds the lockfile passes automatically,
+   * while re-adding it without the lockfile stays red.
+   */
+  it("caches only against a dependency path that actually exists", () => {
+    for (const m of config.matchAll(/cache-dependency-path:\s*(\S+)/g)) {
+      const target = path.join(repoRoot, m[1].replace(/^["']|["']$/g, ""));
+      assert.ok(
+        fs.existsSync(target),
+        `cache-dependency-path "${m[1]}" does not exist — setup-node will abort the job at setup`
+      );
+    }
+  });
+
+  it("runs the dependency-free contract fixtures before any install", () => {
+    // The fixtures are placed ahead of `npm ci` on purpose: a gate that only
+    // runs once a package install succeeds is a gate that gets skipped on the
+    // day it matters. Reordering them behind the install would silently give
+    // that up.
+    const fixtures = config.indexOf("npm run contract");
+    const install = config.indexOf("npm ci");
+    assert.ok(fixtures > -1 && install > -1, "expected both a contract step and an npm ci step");
+    assert.ok(fixtures < install, "the contract fixtures must run before npm ci");
+  });
+
   it("pins the Node major the repo builds with", () => {
     assert.match(config, /node-version:\s*["']?20/);
   });
