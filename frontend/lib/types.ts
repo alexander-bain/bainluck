@@ -1358,7 +1358,9 @@ export interface ProgressionParticipant {
   record: string | null;
   probabilities: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
-  status: Record<string, "clinched" | "eliminated" | null>;
+  /** null = live/trading. "missing"/"unavailable" come from the championship
+   *  grid register cutover (Q295) and render as an honest empty cell. */
+  status: Record<string, "clinched" | "eliminated" | "missing" | "unavailable" | null>;
   /** Per-source probabilities for each stage (optional, from championship grid) */
   sources_data?: Record<string, { source: string; probability: number }[]>;
 }
@@ -1438,10 +1440,16 @@ export interface ChampionshipGridCellSource {
 }
 
 export interface ChampionshipGridCell {
-  merged_probability: number;
+  /** Null for every non-live cell: settled and missing cells carry a state,
+   *  not a number (Q295 register cutover). */
+  merged_probability: number | null;
   sources: ChampionshipGridCellSource[];
   trend_24h: number | null;
   is_minimum_tick?: boolean;
+  /** Register-backed cell state — one of the C108 reader states
+   *  (live / won / eliminated / missing / unavailable). Absent on
+   *  pre-register cached payloads. Normalize via `lib/gridCellState`. */
+  state?: string | null;
 }
 
 export interface ChampionshipGridTeam {

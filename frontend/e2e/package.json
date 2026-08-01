@@ -2,12 +2,13 @@
   "name": "bainluck-e2e-browser-audit",
   "private": true,
   "version": "1.0.0",
-  "description": "L2-221 — the browser-audit rail (replaces the retired third-party browser QA provider). Locked, portable Playwright. Kept OUT of the main frontend dependency tree so it never touches Vercel/CI installs or `next build`.",
+  "description": "L2-221 \u2014 the browser-audit rail (replaces the retired third-party browser QA provider). Locked, portable Playwright. Kept OUT of the main frontend dependency tree so it never touches Vercel/CI installs or `next build`.",
   "scripts": {
     "contract": "node --test \"contract/*.test.js\"",
     "smoke": "playwright test --project=desktop --project=mobile discover-smoke",
     "latency": "playwright test --project=desktop --project=mobile discover-latency",
     "consent": "playwright test --project=desktop --project=mobile consent",
+    "grid": "playwright test --project=desktop --project=mobile championship-grid",
     "smoke-consent": "playwright test --project=desktop --project=mobile discover-smoke consent",
     "validate": "node scripts/validate-manifest.js",
     "wait-for-sha": "node scripts/wait-for-frontend-sha.js"

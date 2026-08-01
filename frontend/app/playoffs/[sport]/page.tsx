@@ -7,6 +7,7 @@ import { fetchChampionshipGrid, fetchGolfSchedule } from "@/lib/api";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
+import { gridCellsToProgression } from "@/lib/gridCellState";
 import {
   usePageTracking,
   useScrollDepth,
@@ -84,20 +85,11 @@ function teamsToProgression(
     resolved: c.resolved ?? false,
   }));
 
-  const participants: ProgressionParticipant[] = teams.map((t) => {
-    const probabilities: Record<string, number | null> = {};
-    const changes_24h: Record<string, number | null> = {};
-    const status: Record<string, "clinched" | "eliminated" | null> = {};
-    const sources_data: Record<string, { source: string; probability: number }[]> = {};
-
-    for (const [colKey, cell] of Object.entries(t.cells || {})) {
-      probabilities[colKey] = cell?.merged_probability ?? null;
-      changes_24h[colKey] = cell?.trend_24h ?? null;
-      status[colKey] = null;
-      if (cell?.sources) {
-        sources_data[colKey] = cell.sources;
-      }
-    }
+  const participants: ProgressionParticipant[] = (teams || []).map((t) => {
+    // Register-backed cells (Q295) carry a typed state; a settled or missing
+    // cell must never render a live-looking number. The adapter is fail-closed
+    // and never throws, so one poison cell cannot blank the row.
+    const { probabilities, changes_24h, status, sources_data } = gridCellsToProgression(t?.cells);
 
     return {
       name: t.name,

@@ -4,6 +4,8 @@ import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import type { ProgressionResponse, ProgressionParticipant, ProgressionStage } from "@/lib/types";
+import type { ProgressionCellStatus } from "@/lib/gridCellState";
+import { progressionSortValue } from "@/lib/gridCellState";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -38,9 +40,14 @@ function barWidth(probability: number | null): number {
  * Font weight / opacity class based on probability value.
  * Higher values get bolder text; very small values fade out.
  */
-function probTextClass(probability: number | null, status?: "clinched" | "eliminated" | null): string {
-  if (status === "eliminated") return "text-red-400/60 line-through";
+function probTextClass(probability: number | null, status?: ProgressionCellStatus): string {
+  // Eliminated with no number left to strike renders the terminal glyph, so the
+  // strike-through only applies where a legacy producer still supplies one.
+  if (status === "eliminated") {
+    return probability === null ? "text-red-400/60" : "text-red-400/60 line-through";
+  }
   if (status === "clinched") return "text-emerald-600 font-bold";
+  if (status === "missing" || status === "unavailable") return "text-text-secondary/40";
   if (probability === null) return "text-text-secondary/40";
   if (probability >= 0.10) return "text-text-primary font-semibold";
   if (probability >= 0.01) return "text-text-primary";
@@ -48,11 +55,45 @@ function probTextClass(probability: number | null, status?: "clinched" | "elimin
 }
 
 /**
+ * Glyph + accessible name for a stage cell (L2-227).
+ *
+ * "Settled means settled": a clinched cell shows ✓, an eliminated cell shows ✕,
+ * and neither ever shows a number. A cell with no market (missing) or one the
+ * register cannot vouch for (unavailable) shows a muted em-dash — never 50%,
+ * never a stale live-looking probability. The em-dash keeps the cell's
+ * dimensions stable so a row cannot collapse.
+ */
+function cellDisplay(
+  probability: number | null,
+  status: ProgressionCellStatus,
+): { text: string; label: string } {
+  switch (status) {
+    case "clinched":
+      return { text: "✓", label: "Clinched" };
+    case "eliminated":
+      // A legacy producer may still send a probability alongside the status;
+      // keep showing it (struck through) rather than dropping information.
+      return probability === null
+        ? { text: "✕", label: "Eliminated" }
+        : { text: formatProb(probability), label: "Eliminated" };
+    case "missing":
+      return { text: "—", label: "No market" };
+    case "unavailable":
+      return { text: "—", label: "Unavailable" };
+    default:
+      return {
+        text: formatProb(probability),
+        label: probability === null ? "No data" : "Live probability",
+      };
+  }
+}
+
+/**
  * Format probability for display in cells.
  * Shows percentage with appropriate precision.
  */
 function formatProb(p: number | null): string {
-  if (p === null || p === undefined) return "—";
+  if (p === null || p === undefined || !Number.isFinite(p)) return "—";
   const pct = p * 100;
   if (pct >= 10) return `${Math.round(pct)}%`;
   if (pct >= 1) return `${pct.toFixed(1)}%`;
@@ -119,24 +160,54 @@ export default function TournamentProgressionTable({
 }: TournamentProgressionTableProps) {
   const { track } = useAnalytics();
   const [sort, setSort] = useState<SortConfig>({
-    stageKey: data.stages.length > 0 ? data.stages[data.stages.length - 1].key : null,
+    stageKey: Array.isArray(data.stages) && data.stages.length > 0
+      ? data.stages[data.stages.length - 1]?.key ?? null
+      : null,
     direction: "desc",
   });
 
-  const sortedParticipants = useMemo(() => {
-    if (!data.participants.length) return [];
+  // One poison row must not blank the table: drop entries that are not usable
+  // objects instead of letting a `.name`/`.probabilities` access throw during
+  // render (gotcha #42, applied to the grid surface).
+  const safeParticipants = useMemo(
+    () =>
+      (Array.isArray(data.participants) ? data.participants : []).filter(
+        (p): p is ProgressionParticipant =>
+          !!p && typeof p === "object" && typeof p.name === "string",
+      ),
+    [data.participants],
+  );
 
-    return [...data.participants].sort((a, b) => {
+  const safeStages = useMemo(
+    () =>
+      (Array.isArray(data.stages) ? data.stages : []).filter(
+        (s): s is ProgressionStage => !!s && typeof s === "object" && typeof s.key === "string",
+      ),
+    [data.stages],
+  );
+
+  const sortedParticipants = useMemo(() => {
+    if (!safeParticipants.length) return [];
+
+    return [...safeParticipants].sort((a, b) => {
       if (sort.stageKey === null) {
         const cmp = a.name.localeCompare(b.name);
         return sort.direction === "asc" ? cmp : -cmp;
       }
-      const aVal = a.probabilities[sort.stageKey] ?? -1;
-      const bVal = b.probabilities[sort.stageKey] ?? -1;
+      // Terminal cells carry no probability, so sorting on the raw number would
+      // file a clinched champion below a 0.1% longshot. Live cells are unchanged.
+      const aVal = progressionSortValue(
+        a.probabilities?.[sort.stageKey],
+        a.status?.[sort.stageKey] ?? null,
+      );
+      const bVal = progressionSortValue(
+        b.probabilities?.[sort.stageKey],
+        b.status?.[sort.stageKey] ?? null,
+      );
       const cmp = bVal - aVal;
       return sort.direction === "desc" ? cmp : -cmp;
     });
-  }, [data.participants, sort]);
+  }, [safeParticipants, sort]);
 
   const handleSort = useCallback((stageKey: string | null) => {
     setSort((prev) => {
@@ -146,7 +217,7 @@ export default function TournamentProgressionTable({
           : stageKey === null ? "asc" : "desc";
 
       const stageLabel = stageKey
-        ? data.stages.find((s) => s.key === stageKey)?.label ?? stageKey
+        ? safeStages.find((s) => s.key === stageKey)?.label ?? stageKey
         : "name";
 
       track("progression_sort", {
@@ -159,7 +230,7 @@ export default function TournamentProgressionTable({
 
       return { stageKey, direction: newDirection };
     });
-  }, [data.stages, data.sport, pageType, track]);
+  }, [safeStages, data.sport, pageType, track]);
 
   const handleStageClick = useCallback((stage: ProgressionStage) => {
     if (!stage.market_id) return;
@@ -175,17 +246,17 @@ export default function TournamentProgressionTable({
   // Find unique sources across all participants for column header labels
   const uniqueSources = useMemo(() => {
     const srcSet = new Set<string>();
-    for (const p of data.participants) {
+    for (const p of safeParticipants) {
       for (const sources of Object.values(p.sources_data ?? {})) {
         for (const s of sources) srcSet.add(s.source);
       }
     }
     return Array.from(srcSet).sort();
-  }, [data.participants]);
+  }, [safeParticipants]);
 
   const hasSources = uniqueSources.length > 1;
 
-  if (!data.stages.length || !data.participants.length) {
+  if (!safeStages.length || !safeParticipants.length) {
     return (
       <div className={`text-center text-text-secondary py-8 ${className || ""}`}>
         No multi-stage data available for this market.
@@ -193,7 +264,7 @@ export default function TournamentProgressionTable({
     );
   }
 
-  const stagesAvailable = data.stages.length;
+  const stagesAvailable = safeStages.length;
   const sportStageCount = _sportStageCount(data.sport);
 
   return (
@@ -246,7 +317,7 @@ export default function TournamentProgressionTable({
                 </span>
               </th>
               {/* Stage columns */}
-              {data.stages.map((stage) => {
+              {safeStages.map((stage) => {
                 // Resolved (season-state decided) columns are de-emphasized so
                 // they no longer read as live probability bars (#927).
                 const isResolved = !!stage.resolved;
@@ -337,10 +408,13 @@ export default function TournamentProgressionTable({
                   </div>
                 </td>
                 {/* Stage cells */}
-                {data.stages.map((stage) => {
-                  const prob = participant.probabilities[stage.key] ?? null;
-                  const change = participant.changes_24h[stage.key];
-                  const status = participant.status[stage.key];
+                {safeStages.map((stage) => {
+                  // Every lookup is guarded: a participant missing one of these
+                  // maps (poison payload, partial adapter) must render an empty
+                  // cell, never throw and blank the whole table.
+                  const prob = participant.probabilities?.[stage.key] ?? null;
+                  const change = participant.changes_24h?.[stage.key];
+                  const status = participant.status?.[stage.key] ?? null;
                   const sources = participant.sources_data?.[stage.key];
                   // Build tooltip with per-source values
                   const tooltip = sources?.length
@@ -354,11 +428,12 @@ export default function TournamentProgressionTable({
                   // Resolved columns: no live bar, no change indicator — a muted
                   // decided glyph (in@✓ / out@—) so it can't read as a live bar.
                   const bw = isResolved ? 0 : barWidth(prob);
+                  const display = cellDisplay(prob, status);
                   return (
                     <td
                       key={stage.key}
                       className="py-1.5 px-2 text-center relative"
-                      title={isResolved ? "Decided" : tooltip}
+                      title={isResolved ? "Decided" : (tooltip ?? display.label)}
                     >
                       {/* Inline data bar — scaled width, single-hue accent */}
                       {bw > 0 && (
@@ -374,8 +449,12 @@ export default function TournamentProgressionTable({
                           </span>
                         ) : (
                           <>
-                            <span className={`font-mono text-sm ${probTextClass(prob, status)}`}>
-                              {status === "clinched" ? "✓" : formatProb(prob)}
+                            <span
+                              className={`font-mono text-sm ${probTextClass(prob, status)}`}
+                              aria-label={display.label}
+                              data-cell-state={status ?? "live"}
+                            >
+                              {display.text}
                             </span>
                             <SourceBreakdown sources={sources ?? []} />
                             <ChangeIndicator change={change} />

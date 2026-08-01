@@ -29,6 +29,7 @@ import type {
   FeedEventData,
 } from "@/lib/types";
 import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
+import { gridCellsToProgression } from "@/lib/gridCellState";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
@@ -95,23 +96,9 @@ function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse 
   }));
 
   const participants: ProgressionParticipant[] = (grid.teams || []).map((t) => {
-    const probabilities: Record<string, number | null> = {};
-    const changes_24h: Record<string, number | null> = {};
-    const status: Record<string, "clinched" | "eliminated" | null> = {};
-    const sources_data: Record<string, { source: string; probability: number }[]> = {};
-    const minimum_ticks: Record<string, boolean> = {};
-
-    for (const [colKey, cell] of Object.entries(t.cells || {})) {
-      probabilities[colKey] = cell?.merged_probability ?? null;
-      changes_24h[colKey] = cell?.trend_24h ?? null;
-      status[colKey] = null;
-      if (cell?.sources) {
-        sources_data[colKey] = cell.sources;
-      }
-      if (cell?.is_minimum_tick) {
-        minimum_ticks[colKey] = true;
-      }
-    }
+    // Same register-backed state normalization as /playoffs/[sport] — settled
+    // and missing cells render their state, never a stale-looking number.
+    const { probabilities, changes_24h, status, sources_data } = gridCellsToProgression(t?.cells);
 
     return {
       name: t.name,

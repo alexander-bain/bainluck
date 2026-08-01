@@ -51,6 +51,7 @@ on:
           - deploy-smoke+consent
           - deploy-smoke
           - consent
+          - grid
 
 # Least privilege: read the repo, nothing else. The filer that consumes a
 # validated manifest is a separate, later job with its own `issues: write`.
@@ -236,6 +237,7 @@ jobs:
             deploy-smoke)          npm run smoke ;;
             consent)               npm run consent ;;
             deploy-smoke+consent)  npm run smoke-consent ;;
+            grid)                  npm run grid ;;
             *)
               echo "::error::unknown pack '${AUDIT_PACK}'"
               exit 1
