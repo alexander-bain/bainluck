@@ -38,6 +38,7 @@ from app.models.models import (
 )
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db
+from app.utils import health_reads
 
 logger = logging.getLogger(__name__)
 
@@ -283,10 +284,16 @@ def _flow_sentinel_group() -> dict:
     skipped (e.g. event_completeness idles in the summer offseason); GREEN when
     every flow that ran passed; UNKNOWN before the first run is cached.
     """
-    raw = _read_redis_json("bainluck:flow_sentinel:last")
+    read = _read_state("bainluck:flow_sentinel:last")
+    if read.degraded:
+        # Unreadable is UNKNOWN-with-cause, not "hasn't run yet" — the operator
+        # needs to know the difference before trusting any other tile.
+        return _unknown_group(read, "Flow Sentinel", {"per_flow": []})
+    raw = read.value if read.ok else None
     if not raw or raw.get("status") == "no_run_cached" or "scorecard" not in raw:
         return {
             "status": "unknown",
+            "unreadable": False,
             "detail": (
                 "No Flow Sentinel run cached yet — it runs daily (07:10 UTC) or "
                 "on POST /api/admin/flow-sentinel/run."
@@ -372,8 +379,17 @@ def _grid_sentinel_group() -> dict | None:
     RED" by design per CLAUDE.md) do NOT escalate the tile: a clean-but-watch grid
     stays GREEN and surfaces a watch COUNT instead (L2-157 — amber misread as
     trouble). Returns None (not a stale tile) before the first run is cached, so
-    the caller falls back to the raw audit score."""
-    raw = _read_redis_json("bainluck:grid_sentinel:last")
+    the caller falls back to the raw audit score.
+
+    C102: that fallback is legitimate ONLY for a genuine never-run. When the
+    verdict cannot be READ, this returns an explicit unreadable group instead of
+    None, because the legacy raw score is documented in this very file as
+    non-authoritative — colouring a tile GREEN from it during a Redis outage is
+    the false-green this queue exists to kill."""
+    read = _read_state("bainluck:grid_sentinel:last")
+    if read.degraded:
+        return _unknown_group(read, "Grid Sentinel verdict", {"per_league": []})
+    raw = read.value if read.ok else None
     if not raw or "scorecard" not in raw:
         return None
     per = (raw.get("scorecard") or {}).get("per_league") or []
@@ -443,10 +459,14 @@ def _data_quality_group() -> dict:
     on a P2 failure or a self-error (monitor unreliable); GREEN when all clear.
     Always returns a group (never None): before the first run, status='unknown'
     with an empty per_check so the tile renders 'unknown', never a false green."""
-    raw = _read_redis_json("bainluck:data_quality_watchdog:last")
+    read = _read_state("bainluck:data_quality_watchdog:last")
+    if read.degraded:
+        return _unknown_group(read, "Data-quality watchdog", {"per_check": []})
+    raw = read.value if read.ok else None
     if not raw or "status" not in raw:
         return {
             "status": "unknown",
+            "unreadable": False,
             "detail": (
                 "No data-quality watchdog run cached yet — it runs on its schedule "
                 "or on POST /api/admin/data-quality/check."
@@ -479,29 +499,65 @@ def _data_quality_group() -> dict:
     }
 
 
-def _read_redis_json(key: str) -> dict | None:
-    try:
-        from app.tasks.redis_state import get_redis_client
+def _read_state(key: str) -> health_reads.RedisRead:
+    """The typed read every cockpit tile should use (Queue #294 / C102).
 
-        cached = get_redis_client().get(key)
-        if cached:
-            return _json.loads(cached)
-    except Exception:
-        logger.debug("cockpit: could not read redis key %s", key, exc_info=True)
-    return None
+    Tiles must be able to tell "this has never run" from "we cannot read the
+    store". Collapsing them is how an unreadable Grid verdict fell through to a
+    legacy raw score and coloured a tile GREEN during a dependency outage.
+    """
+    read = health_reads.read_json_key(key)
+    if read.degraded:
+        logger.debug(
+            "cockpit: redis key %s unusable (%s)", key, read.status, exc_info=False
+        )
+    return read
+
+
+def _read_redis_json(key: str) -> dict | None:
+    """Back-compat shim for tiles where absent and unreadable are equivalent
+    (a subtitle that simply drops off). Anything that COLOURS a tile must use
+    :func:`_read_state` instead."""
+    read = _read_state(key)
+    return read.value if read.ok else None
+
+
+def _unknown_group(read: health_reads.RedisRead, label: str, extra: dict | None = None) -> dict:
+    """A tile group for state we could not read: UNKNOWN plus the cause."""
+    group = {
+        "status": "unknown",
+        "unreadable": True,
+        "read_status": read.status,
+        "source": read.key,
+        "error_class": read.error_class,
+        "detail": (
+            f"{label} state is unreadable ({read.status}"
+            + (f": {read.error}" if read.error else "")
+            + ") — this is UNKNOWN, not healthy."
+        ),
+        "generated_at": None,
+    }
+    if extra:
+        group.update(extra)
+    return group
 
 
 def _queue_depths() -> dict:
-    """Realtime + background Celery queue depths (cheap LLEN)."""
-    depths = {"background": None, "realtime": None}
-    try:
-        from app.tasks.redis_state import get_redis_client
+    """Realtime + background Celery queue depths (cheap LLEN).
 
-        r = get_redis_client()
-        depths["background"] = r.llen("background")
-        depths["realtime"] = r.llen("realtime")
-    except Exception:
-        logger.debug("cockpit: could not read queue depths", exc_info=True)
+    A depth we could not read stays None, but the failure is reported alongside
+    so the caller can render UNKNOWN rather than reading None as 'quiet'."""
+    depths: dict = {"background": None, "realtime": None, "errors": {}}
+    conn, failure = health_reads.client(key="queue-depths")
+    if failure is not None:
+        depths["errors"]["client"] = failure.as_status()
+        return depths
+    for queue in ("background", "realtime"):
+        read = health_reads.command(queue, lambda q=queue: conn.llen(q))
+        if read.ok:
+            depths[queue] = read.value
+        else:
+            depths["errors"][queue] = read.as_status()
     return depths
 
 
@@ -836,8 +892,26 @@ async def _health_group(db: AsyncSession) -> list[dict]:
     # score rides along as secondary context. Cold sentinel cache falls back to the
     # legacy raw-score tile below.
     grid_group = _grid_sentinel_group()
-    audit = _read_redis_json("bainluck:admin:audit_all")
-    if grid_group:
+    audit_read = _read_state("bainluck:admin:audit_all")
+    audit = audit_read.value if audit_read.ok else None
+    if grid_group and grid_group.get("unreadable"):
+        # The authoritative verdict is unreadable. The legacy raw score is NOT a
+        # substitute for it (mlb-66: 67/100 in-season with zero real defects), so
+        # the tile says UNKNOWN and names the cause instead of borrowing a colour
+        # from a number this file already documents as crying wolf.
+        tiles.append(
+            {
+                "key": "grid_health",
+                "label": "Grid health",
+                "value": "UNKNOWN",
+                "numeric": None,
+                "status": "unknown",
+                "detail": grid_group["detail"],
+                "sentinel": grid_group,
+                "href": "/admin/matching",
+            }
+        )
+    elif grid_group:
         reds = [r for r in grid_group["per_league"] if r["status"] == "red"]
         scores = (audit or {}).get("scores") or {}
         watch_total = grid_group.get("watch_total") or 0
@@ -926,6 +1000,16 @@ async def _health_group(db: AsyncSession) -> list[dict]:
         if depths.get("realtime") is not None
         else "realtime: —"
     )
+    # C102: a depth we could not READ is not a quiet queue. Name the failure so
+    # the "—" is legible as an outage rather than as calm.
+    depth_errors = depths.get("errors") or {}
+    if depth_errors:
+        q_status = "unknown"
+        first_err = next(iter(depth_errors.values()))
+        q_detail = (
+            f"⚠ queue depth unreadable ({first_err.get('error_class') or 'error'}) · "
+            + q_detail
+        )
     # L2-116 companion signal: the phase-heartbeat watchdog flags a poll that is
     # WEDGED mid-fetch (a `running_phase` marker unchanged past PHASE_STUCK_SECONDS
     # — #995's synchronous-op block). This is the distinct, real failure mode that
@@ -1223,27 +1307,48 @@ async def _eval_queue(db: AsyncSession) -> dict:
         )
     ).scalar()
 
-    eval_promote_enabled = True
-    try:
-        from app.tasks.redis_state import get_redis_client
+    # C102: this used to default to True on a read failure, so "the human ranking
+    # steers are live" and "we cannot tell whether they are live" were the same
+    # answer. An observability payload must not pick a value for a product
+    # control whose store is unreachable — it reports UNKNOWN.
+    eval_promote_status = "ok"
+    eval_promote_error = None
+    eval_promote_enabled = None
+    conn, failure = health_reads.client(key=EVAL_PROMOTE_ENABLED_KEY)
+    switch = (
+        failure
+        if failure is not None
+        else health_reads.read_text(conn, EVAL_PROMOTE_ENABLED_KEY)
+    )
+    if switch.unavailable:
+        eval_promote_status = switch.status
+        eval_promote_error = switch.error
+    else:
+        # Absent key = the switch's documented default (opt-out), which IS a
+        # known state — only an unreadable store is unknown.
+        eval_promote_enabled = is_enabled_value(switch.value if switch.ok else None)
 
-        eval_promote_enabled = is_enabled_value(
-            get_redis_client().get(EVAL_PROMOTE_ENABLED_KEY)
-        )
-    except Exception:
-        eval_promote_enabled = True
-
-    return {
+    payload = {
         "pending_eval_count": len(pending),
         "pending_eval_sample": sample,
         "new_bug_reports": int(new_bugs or 0),
         "applied_boosts_count": int(applied_boosts or 0),
-        "eval_promote_enabled": eval_promote_enabled,
+        "eval_promote_status": eval_promote_status,
+        "eval_promote_error": eval_promote_error,
         "verdict_endpoint": "/api/admin/label-pass/verdict",
         "undo_endpoint": "/api/admin/label-pass/undo",
         "eval_href": "/admin/eval",
         "bug_reports_href": "/admin/bug-reports",
     }
+    # The boolean is OMITTED (not nulled) when the switch state is unknown.
+    # `lib/evalPromoteSwitch.killSwitchView` already documents `undefined` as
+    # "we don't know the state → hide the button"; a JSON null instead falls
+    # through that guard and renders "Enable", i.e. it would assert the switch
+    # is OFF during an outage. `eval_promote_status` carries the cause for API
+    # consumers. This keeps the fix inside the backend contract.
+    if eval_promote_status == "ok":
+        payload["eval_promote_enabled"] = eval_promote_enabled
+    return payload
 
 
 @router.get("/cockpit")
@@ -1257,20 +1362,41 @@ async def cockpit(
     _check_admin_secret(secret, request=request)
 
     if not bust:
-        cached = _read_redis_json(_CACHE_KEY)
-        if cached:
+        cache_read = _read_state(_CACHE_KEY)
+        if cache_read.ok:
+            cached = cache_read.value
             cached["cached"] = True
+            # Explicit cache provenance: how old is the thing being served, and
+            # where did it come from.
+            cached["cache_source"] = "redis"
+            cached["cache_age_s"] = health_reads.payload_age_seconds(cached)
             return cached
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
+        "cache_source": "computed",
+        "cache_age_s": 0.0,
         "health": await _health_group(db),
         "waiting_on_you": _waiting_on_you(),
         "eval_queue": await _eval_queue(db),
         "flow_sentinel": _flow_sentinel_group(),
         "grid_sentinel": _grid_sentinel_group(),
         "data_quality_watchdog": _data_quality_group(),
+    }
+
+    # A payload composed while a dependency was down is still worth caching (the
+    # alternative is recomputing the same degraded answer every request), but it
+    # must carry that fact for its whole TTL — a degraded snapshot must never be
+    # served later as an ordinary healthy beat.
+    degraded_groups = sorted(
+        name
+        for name in ("flow_sentinel", "grid_sentinel", "data_quality_watchdog")
+        if isinstance(payload.get(name), dict) and payload[name].get("unreadable")
+    )
+    payload["completeness"] = {
+        "status": "partial" if degraded_groups else "complete",
+        "degraded_groups": degraded_groups,
     }
 
     try:

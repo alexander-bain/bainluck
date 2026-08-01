@@ -403,16 +403,47 @@ class TestCockpitDataQualityTile:
     """#1132 / L2-140: the watchdog verdict must reach the Alex Cockpit as a tile.
     A P0/P1 that only emails + files an issue is a silent alert (the #1091 lesson);
     the cockpit is the always-open eye. RED on any P0/P1 failing; None before the
-    first run (so the tile renders 'unknown', never a false green)."""
+    first run (so the tile renders 'unknown', never a false green).
+
+    Queue #294 note: the tile now reads through the typed ``_read_state``
+    boundary, so these patch that seam. The reason is the point of the change —
+    "the watchdog has never run" and "we cannot read the watchdog's state" used
+    to be the same ``None``, and both rendered the same tile."""
+
+    @staticmethod
+    def _state(status, value=None):
+        from app.utils import health_reads as hr
+
+        return hr.RedisRead(
+            status=status, key="bainluck:data_quality_watchdog:last", value=value
+        )
 
     def test_tile_unknown_before_first_run(self):
         # Never None (L2-140 accesses per_check) — 'unknown' + empty list, never a
         # false green, before the first run is cached.
         import app.routes.admin_cockpit as cockpit
+        from app.utils import health_reads as hr
 
-        with patch.object(cockpit, "_read_redis_json", return_value=None):
+        with patch.object(
+            cockpit, "_read_state", return_value=self._state(hr.MISSING)
+        ):
             tile = cockpit._data_quality_group()
         assert tile["status"] == "unknown" and tile["per_check"] == []
+        # A never-run is NOT a dependency failure.
+        assert tile["unreadable"] is False
+
+    def test_tile_unknown_with_cause_when_state_unreadable(self):
+        """Queue #294: unreadable must not borrow the never-run wording."""
+        import app.routes.admin_cockpit as cockpit
+        from app.utils import health_reads as hr
+
+        with patch.object(
+            cockpit, "_read_state", return_value=self._state(hr.UNAVAILABLE)
+        ):
+            tile = cockpit._data_quality_group()
+        assert tile["status"] == "unknown"
+        assert tile["unreadable"] is True
+        assert tile["per_check"] == []
 
     def test_tile_red_on_p1_failure_matches_l2140_contract(self):
         import app.routes.admin_cockpit as cockpit
@@ -429,7 +460,9 @@ class TestCockpitDataQualityTile:
                  "threshold": 0, "message": "gap", "issue": 1132},
             ],
         }
-        with patch.object(cockpit, "_read_redis_json", return_value=summary):
+        with patch.object(
+            cockpit, "_read_state", return_value=self._state("ok", summary)
+        ):
             tile = cockpit._data_quality_group()
         assert tile["status"] == "red"
         assert tile["last_run"] == "2026-07-21T17:00:00Z"
@@ -445,6 +478,8 @@ class TestCockpitDataQualityTile:
 
         summary = {"status": "green", "checks_run": 10, "checks_passed": 10,
                    "alerts_fired": 0, "self_error": False, "failing": []}
-        with patch.object(cockpit, "_read_redis_json", return_value=summary):
+        with patch.object(
+            cockpit, "_read_state", return_value=self._state("ok", summary)
+        ):
             tile = cockpit._data_quality_group()
         assert tile["status"] == "green" and tile["per_check"] == []

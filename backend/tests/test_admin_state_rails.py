@@ -27,10 +27,22 @@ from app.utils import candidate_base as cb
 
 
 def _envelope(identity, epoch_ms, ids=(1, 2, 3)):
+    """A realistic envelope: BOTH clocks derive from one instant.
+
+    Queue #294 note — the original fixture pinned ``generated_at`` to a literal
+    while ``generated_epoch_ms`` floated relative to now. ``build_envelope``
+    never emits that: it stamps both from the same datetime. The inconsistency
+    only went unnoticed because this rail used to infer ``would_serve`` from a
+    structural "valid" flag; it now applies the production reader's policy
+    (``candidate_base._usable``), which gates on ``generated_at``.
+    """
+    from datetime import datetime, timezone
+
+    generated = datetime.fromtimestamp(epoch_ms / 1000.0, tz=timezone.utc)
     return {
         "schema_version": cb.CANDIDATE_BASE_SCHEMA_VERSION,
-        "generated_at": "2026-07-31T19:00:00+00:00",
-        "generated_epoch_ms": epoch_ms,
+        "generated_at": generated.isoformat(),
+        "generated_epoch_ms": int(epoch_ms),
         "identity": identity,
         "candidate_ids": list(ids),
         "external_curator_recall_ids": [],

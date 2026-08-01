@@ -16,7 +16,7 @@ from sqlalchemy import text, func, delete, and_
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
 from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision, WinProbSnapshot
 from app.services import get_db
-from app.utils import probability_to_american
+from app.utils import health_reads, probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth, _safe_send_task  # noqa: F401 — re-exported for backward compat
@@ -558,14 +558,19 @@ async def get_latency_stats(
     # `get_redis_client()` constructs lazily, so a dead Redis surfaces on the
     # FIRST command, not here. Both must be inside the guard or an unreachable
     # store returns an opaque 500 instead of a truthful "cannot measure" 503.
-    try:
-        from app.tasks.redis_state import get_redis_client
-        r = get_redis_client()
-        endpoints_set = r.smembers("latency:_endpoints")
-    except Exception as exc:
+    r, failure = health_reads.client(key="latency:_endpoints")
+    if failure is not None:
         raise HTTPException(
-            status_code=503, detail=f"Redis unavailable: {str(exc)[:160]}"
+            status_code=503, detail=f"Redis unavailable: {failure.error}"
         )
+    members = health_reads.command(
+        "latency:_endpoints", lambda: r.smembers("latency:_endpoints")
+    )
+    if members.unavailable:
+        raise HTTPException(
+            status_code=503, detail=f"Redis unavailable: {members.error}"
+        )
+    endpoints_set = members.value
 
     if not endpoints_set:
         return {"endpoints": [], "note": "No latency data collected yet"}
@@ -573,6 +578,13 @@ async def get_latency_stats(
     now = _time.time()
     cutoff = now - 3600  # last hour only
     results = []
+    # C102: the per-endpoint sorted-set read used to sit OUTSIDE the acquisition
+    # guard above, so a connection dropped after a successful SMEMBERS turned the
+    # whole rail into an opaque 500. Each read is now classified: siblings that
+    # succeed are still reported, the failures are named, and a rail where NO
+    # endpoint could be measured degrades to the same bounded 503 as a dead
+    # client rather than pretending the window was simply empty.
+    read_errors: list[dict] = []
 
     for raw_ep in endpoints_set:
         ep = raw_ep.decode() if isinstance(raw_ep, bytes) else raw_ep
@@ -580,7 +592,20 @@ async def get_latency_stats(
 
         # Get all members within the time window (score = timestamp).
         # member format: "timestamp:latency_ms[:cache_bucket]"
-        pairs = r.zrangebyscore(key, cutoff, "+inf")
+        window = health_reads.command(
+            key, lambda k=key: r.zrangebyscore(k, cutoff, "+inf")
+        )
+        if window.unavailable:
+            read_errors.append(
+                {
+                    "endpoint": ep,
+                    "status": window.status,
+                    "error_class": window.error_class,
+                    "error": window.error,
+                }
+            )
+            continue
+        pairs = window.value
         if not pairs:
             continue
 
@@ -620,6 +645,19 @@ async def get_latency_stats(
     def _sort_key(e):
         return e.get("p95_ms") if e.get("p95_ms") is not None else (e.get("max_ms") or 0)
 
+    # Nothing measurable AND at least one read failed = the rail is down, not
+    # quiet. Say so with a bounded 503 instead of returning a confident, empty,
+    # green-looking payload. Checked before sorting/truncation so the rail's
+    # verdict does not depend on presentation.
+    if read_errors and not results:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Redis unavailable: latency samples unreadable for all "
+                f"{len(read_errors)} tracked endpoint(s) — {read_errors[0]['error']}"
+            ),
+        )
+
     results.sort(key=_sort_key, reverse=True)
     results = results[:top]
 
@@ -634,6 +672,12 @@ async def get_latency_stats(
         ),
         "endpoints": results,
         "total_endpoints_tracked": len(endpoints_set),
+        # Explicit partial-read provenance: an endpoint whose samples could not
+        # be read is named here, never silently absent from `endpoints`.
+        "unreadable_endpoints": read_errors,
+        "completeness": (
+            "partial" if read_errors else "complete"
+        ),
     }
 
 
@@ -656,7 +700,6 @@ async def get_candidate_base_state(
     """
     _check_admin_secret(secret, request=request)
 
-    import json as _json
     import time as _time
 
     from app.utils import candidate_base as cb
@@ -679,28 +722,23 @@ async def get_candidate_base_state(
         ],
     }
 
-    try:
-        from app.tasks.redis_state import get_redis_client
-        r = get_redis_client()
-    except Exception as exc:
+    r, failure = health_reads.client(key=cb.CANDIDATE_BASE_ENABLED_KEY)
+    if failure is not None:
         # UNKNOWN, not "disabled" — an unreadable store is not a configuration.
         state["enabled"] = None
         state["status"] = "unavailable"
-        state["error"] = str(exc)[:200]
+        state["error_class"] = failure.error_class
+        state["error"] = failure.error
         return state
 
-    def _text(value):
-        if value is None:
-            return None
-        return value.decode() if isinstance(value, bytes) else str(value)
-
-    try:
-        raw_switch = _text(r.get(cb.CANDIDATE_BASE_ENABLED_KEY))
-    except Exception as exc:
+    switch_read = health_reads.read_text(r, cb.CANDIDATE_BASE_ENABLED_KEY)
+    if switch_read.unavailable:
         state["enabled"] = None
         state["status"] = "unavailable"
-        state["error"] = str(exc)[:200]
+        state["error_class"] = switch_read.error_class
+        state["error"] = switch_read.error
         return state
+    raw_switch = switch_read.value if switch_read.ok else None
 
     # Absent key = enabled (the switch is an opt-OUT set to "0"); report the raw
     # value too so "unset" and "explicitly 1" stay distinguishable.
@@ -716,38 +754,84 @@ async def get_candidate_base_state(
 
     now_ms = _time.time() * 1000
     keys: dict[str, dict] = {}
+    reads: dict[str, health_reads.RedisRead] = {}
+    envelopes: dict[str, dict] = {}
     for label, key in (("fresh", fresh_key), ("last_good", last_good_key)):
-        info: dict = {"present": False}
-        try:
-            raw = r.get(key)
-            ttl = r.ttl(key)
-        except Exception as exc:
-            info["error"] = str(exc)[:200]
+        info: dict = {"present": False, "key_status": None}
+        read = health_reads.read_json(r, key)
+        reads[label] = read
+        info["key_status"] = read.status
+        if read.unavailable:
+            # A key we could not READ is not a key that is ABSENT. Leave
+            # `present` unknown rather than asserting False.
+            info["present"] = None
+            info["error_class"] = read.error_class
+            info["error"] = read.error
             keys[label] = info
             continue
-        if raw is None:
+        if read.missing:
             info["ttl_s"] = None
             keys[label] = info
             continue
+
         info["present"] = True
-        info["ttl_s"] = ttl if isinstance(ttl, int) and ttl >= 0 else None
-        try:
-            envelope = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-        except Exception as exc:
+        ttl_read = health_reads.command(key, lambda k=key: r.ttl(k))
+        info["ttl_s"] = (
+            ttl_read.value
+            if ttl_read.ok and isinstance(ttl_read.value, int) and ttl_read.value >= 0
+            else None
+        )
+        if read.status == health_reads.MALFORMED:
             info["valid"] = False
-            info["error"] = f"unparseable envelope: {str(exc)[:120]}"
+            info["error_class"] = read.error_class
+            info["error"] = f"unparseable envelope: {read.error}"
             keys[label] = info
             continue
+        if read.status == health_reads.WRONG_SHAPE:
+            # A valid-JSON list/scalar used to reach `envelope.get(...)` and 500
+            # the whole rail. It is a shape fault, reported as one.
+            info["valid"] = False
+            info["error_class"] = read.error_class
+            info["error"] = f"envelope is not an object: {read.error}"
+            keys[label] = info
+            continue
+
+        envelope = read.value
+        envelopes[label] = envelope
         info["valid"] = cb.payload_valid(envelope, expected_identity=identity)
         info["schema_version"] = envelope.get("schema_version")
         info["generated_at"] = envelope.get("generated_at")
         generated_ms = envelope.get("generated_epoch_ms")
-        if isinstance(generated_ms, (int, float)):
-            info["age_seconds"] = round(max(0.0, (now_ms - generated_ms) / 1000.0), 1)
-            info["is_fresh"] = info["age_seconds"] <= cb.CANDIDATE_BASE_FRESH_SECONDS
+        if isinstance(generated_ms, (int, float)) and not isinstance(generated_ms, bool):
+            # NOT clamped at zero: an envelope stamped in the future is clock
+            # skew, and the production reader rejects it (`_usable` requires a
+            # non-negative age). Hiding the sign hid the rejection.
+            info["age_seconds"] = round((now_ms - generated_ms) / 1000.0, 1)
+            info["is_fresh"] = 0 <= info["age_seconds"] <= cb.CANDIDATE_BASE_FRESH_SECONDS
+            info["within_last_good_max_age"] = (
+                0 <= info["age_seconds"] <= cb.CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S
+            )
         else:
             info["age_seconds"] = None
             info["is_fresh"] = None
+            info["within_last_good_max_age"] = None
+        # The publication clock (`generated_epoch_ms`, used for the monotonic
+        # compare-and-set) and the clock the READER gates on (`generated_at`)
+        # are separate fields. `build_envelope` writes both from one instant, so
+        # a disagreement means a malformed or hand-written envelope — and the
+        # reader would silently rule on a different age than this rail reports.
+        # Surface both instead of picking one.
+        info["reader_age_seconds"] = health_reads.age_seconds(
+            envelope.get("generated_at")
+        )
+        if (
+            info["age_seconds"] is not None
+            and info["reader_age_seconds"] is not None
+            and abs(info["age_seconds"] - info["reader_age_seconds"]) > 5
+        ):
+            info["clock_disagreement_s"] = round(
+                info["reader_age_seconds"] - info["age_seconds"], 1
+            )
         ids = envelope.get("candidate_ids")
         info["candidate_id_count"] = len(ids) if isinstance(ids, list) else None
         info["pool_counts"] = envelope.get("pool_counts")
@@ -755,16 +839,48 @@ async def get_candidate_base_state(
         keys[label] = info
     state["keys"] = keys
 
-    # What provenance an anonymous cold request would get RIGHT NOW, derived
-    # from the same policy the feed applies. Read-only inference; no request.
+    # A payload key we could not read leaves the whole rail's answer partial —
+    # the kill switch reading fine does not make the base's state known. Both
+    # payload keys unreadable is a dependency loss, not a configuration.
+    state["completeness"] = health_reads.completeness(reads)
+    degraded = [label for label, read in reads.items() if read.unavailable]
+    if len(degraded) == len(reads):
+        state["status"] = "unavailable"
+    elif degraded:
+        state["status"] = "partial"
+    state["degraded_keys"] = degraded
+
+    # What provenance an anonymous cold request would get RIGHT NOW. This must
+    # apply the PRODUCTION reader's policy (`candidate_base._usable`: schema +
+    # identity + a non-negative age inside the relevant max age), not a laxer
+    # "structurally valid" test — an expired last-good was previously advertised
+    # as serveable forever.
+    now_dt = datetime.now(timezone.utc)
+
+    def _usable(label: str, max_age_s: float) -> bool:
+        envelope = envelopes.get(label)
+        return envelope is not None and cb._usable(envelope, now_dt, max_age_s, identity)
+
     if not state["enabled"]:
         state["would_serve"] = cb.PROV_DISABLED
-    elif keys.get("fresh", {}).get("valid") and keys["fresh"].get("is_fresh"):
+    elif _usable("fresh", cb.CANDIDATE_BASE_FRESH_SECONDS):
         state["would_serve"] = cb.PROV_FRESH
-    elif any(keys.get(k, {}).get("valid") for k in ("fresh", "last_good")):
+    elif _usable("fresh", cb.CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S) or _usable(
+        "last_good", cb.CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S
+    ):
         state["would_serve"] = cb.PROV_LAST_GOOD
+    elif degraded:
+        # We cannot see what the reader would see, so we must not claim it would
+        # fall through to a direct query.
+        state["would_serve"] = None
+        state["would_serve_status"] = "unknown"
     else:
         state["would_serve"] = cb.PROV_DIRECT
+
+    # The production reader can also serve a PROCESS-LOCAL last-good that is
+    # invisible from here (a warm dyno surviving a Redis outage), so this is the
+    # Redis-visible inference, not a promise about a specific dyno.
+    state["would_serve_scope"] = "redis_visible"
 
     return state
 
@@ -785,22 +901,18 @@ async def get_category_precompute_last(
     """
     _check_admin_secret(secret, request=request)
 
-    import json as _json
-
     from app.tasks.precompute_category_pages import (
         PRECOMPUTE_STATUS_KEY,
         PRECOMPUTE_STATUS_TTL,
     )
 
-    try:
-        from app.tasks.redis_state import get_redis_client
-        raw = get_redis_client().get(PRECOMPUTE_STATUS_KEY)
-    except Exception as exc:
+    read = health_reads.read_json_key(PRECOMPUTE_STATUS_KEY)
+    if read.unavailable:
         raise HTTPException(
-            status_code=503, detail=f"Redis unavailable: {str(exc)[:120]}"
+            status_code=503, detail=f"Redis unavailable: {read.error}"
         )
 
-    if not raw:
+    if read.missing:
         return {
             "status": "unknown",
             "report": None,
@@ -813,12 +925,43 @@ async def get_category_precompute_last(
             ),
         }
 
-    try:
-        report = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-    except Exception as exc:
-        return {"status": "unparseable", "error": str(exc)[:200], "report": None}
+    if read.status == health_reads.MALFORMED:
+        return {
+            "status": "unparseable",
+            "key": PRECOMPUTE_STATUS_KEY,
+            "error_class": read.error_class,
+            "error": read.error,
+            "report": None,
+        }
 
-    return {"status": "ok", "key": PRECOMPUTE_STATUS_KEY, "report": report}
+    # A report that decodes to a list/scalar is not a report. Previously it was
+    # returned as `status: ok`, so a consumer reading `report["sections"]` broke
+    # downstream instead of here, where the fault actually is.
+    if read.status == health_reads.WRONG_SHAPE:
+        return {
+            "status": "wrong_shape",
+            "key": PRECOMPUTE_STATUS_KEY,
+            "error_class": read.error_class,
+            "error": read.error,
+            "report": None,
+        }
+
+    report = read.value
+    # Schema + freshness annotation only — the producer is untouched. `sections`
+    # is what every consumer indexes; a report missing it is structurally
+    # incomplete even though it parsed.
+    missing_fields = [f for f in ("sections",) if f not in report]
+    age_s = health_reads.age_seconds(
+        report.get("generated_at") or report.get("completed_at") or report.get("started_at")
+    )
+    return {
+        "status": "ok" if not missing_fields else "incomplete_schema",
+        "key": PRECOMPUTE_STATUS_KEY,
+        "missing_fields": missing_fields,
+        "age_seconds": age_s,
+        "stale": (age_s is not None and age_s > PRECOMPUTE_STATUS_TTL),
+        "report": report,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +1035,44 @@ async def trigger_calibration_sentinel(
     return {"status": "enqueued", "task_id": result.id}
 
 
+def _sentinel_last_payload(key: str) -> dict:
+    """Shared fail-honest read for every cached sentinel ``/last`` rail (#1197).
+
+    Each of these rails used to be a bare ``get_redis_client().get(key)`` plus
+    ``json.loads`` — so a dead store, an evicted key and a half-written payload
+    were an opaque 500, while ONLY a genuine absence produced the honest
+    ``no_run_cached``. The four cases are now distinct:
+
+    * dependency loss (construction or command)  → bounded **503**
+    * the store answered and the key is absent   → ``no_run_cached`` (unchanged)
+    * bytes that do not decode                   → ``unparseable`` + error class
+    * decodes to a non-object                    → ``wrong_shape``
+
+    The happy path returns the sentinel's persisted payload verbatim, so every
+    existing consumer of these rails is unaffected.
+    """
+    read = health_reads.read_json_key(key)
+    if read.unavailable:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {read.error}")
+    if read.missing:
+        return {"status": "no_run_cached", "key": key}
+    if read.status == health_reads.MALFORMED:
+        return {
+            "status": "unparseable",
+            "key": key,
+            "error_class": read.error_class,
+            "error": read.error,
+        }
+    if read.status == health_reads.WRONG_SHAPE:
+        return {
+            "status": "wrong_shape",
+            "key": key,
+            "error_class": read.error_class,
+            "error": read.error,
+        }
+    return read.value
+
+
 @router.get("/calibration-sentinel/last")
 async def get_calibration_sentinel_last(
     request: Request,
@@ -902,19 +1083,12 @@ async def get_calibration_sentinel_last(
     issues). Lets an enqueued worker run be inspected without a web-request scan."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
     key = (
         "bainluck:calibration_sentinel:last_backtest"
         if backtest
         else "bainluck:calibration_sentinel:last"
     )
-    raw = get_redis_client().get(key)
-    if not raw:
-        return {"status": "no_run_cached", "key": key}
-    return json.loads(raw)
+    return _sentinel_last_payload(key)
 
 
 @router.post("/flow-sentinel/run")
@@ -958,14 +1132,7 @@ async def get_flow_sentinel_last(
     the persisted scorecard the cockpit can tile later."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
-    raw = get_redis_client().get("bainluck:flow_sentinel:last")
-    if not raw:
-        return {"status": "no_run_cached", "key": "bainluck:flow_sentinel:last"}
-    return json.loads(raw)
+    return _sentinel_last_payload("bainluck:flow_sentinel:last")
 
 
 @router.get("/mlb-schedule-coverage")
@@ -1026,14 +1193,7 @@ async def get_grid_sentinel_last(
     and is the persisted scorecard the cockpit grid tile consumes."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
-    raw = get_redis_client().get("bainluck:grid_sentinel:last")
-    if not raw:
-        return {"status": "no_run_cached", "key": "bainluck:grid_sentinel:last"}
-    return json.loads(raw)
+    return _sentinel_last_payload("bainluck:grid_sentinel:last")
 
 
 @router.post("/board-sentinel/run")
@@ -1075,14 +1235,7 @@ async def get_board_sentinel_last(
     the persisted verdict the cockpit board tile consumes."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
-    raw = get_redis_client().get("bainluck:board_sentinel:last")
-    if not raw:
-        return {"status": "no_run_cached", "key": "bainluck:board_sentinel:last"}
-    return json.loads(raw)
+    return _sentinel_last_payload("bainluck:board_sentinel:last")
 
 
 @router.post("/horizon-sentinel/run")
@@ -1126,14 +1279,7 @@ async def get_horizon_sentinel_last(
     calendar walk."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
-    raw = get_redis_client().get("bainluck:horizon_sentinel:last")
-    if not raw:
-        return {"status": "no_run_cached", "key": "bainluck:horizon_sentinel:last"}
-    return json.loads(raw)
+    return _sentinel_last_payload("bainluck:horizon_sentinel:last")
 
 
 # ---------------------------------------------------------------------------
@@ -1148,7 +1294,11 @@ def _ops_compact(payload) -> dict:
     """Compact a cached sentinel/warm payload down to an ops digest: keep scalar
     top-level fields (incl. ``generated_at``) verbatim and replace list values with
     a ``<key>_count``. Nested dicts are dropped to stay small. Robust to whatever
-    schema each source persists."""
+    schema each source persists.
+
+    A non-dict payload means the key was READ and held nothing usable — callers
+    that could not read the key at all must use the read's own status object
+    (``RedisRead.as_status()``) instead, so an outage never lands here."""
     if not isinstance(payload, dict):
         return {"status": "no_run_cached"}
     out: dict = {}
@@ -1172,35 +1322,66 @@ async def get_ops_snapshot(
     queries and never calls Sentry live (the sentry field is served from the cached
     ``sentry_snapshot`` beat). Every field is independently guarded — a cold cache
     or Redis hiccup degrades that one field to a status object instead of 500ing the
-    whole snapshot. 5-min in-process cache (``fresh=true`` to bypass)."""
+    whole snapshot. 5-min in-process cache (``fresh=true`` to bypass).
+
+    C102 fix: "guarded" used to mean "swallowed". Every read now carries its own
+    classified status, so a Redis outage reads as ``unavailable`` with a cause
+    rather than borrowing the vocabulary of a cold cache (``no_data`` /
+    ``no_run_cached``) or a genuine zero. The envelope reports ``completeness``,
+    and a degraded snapshot is cached only with that provenance attached — it can
+    no longer masquerade as an ordinary cold beat for five minutes.
+    """
     _check_admin_secret(secret, request=request)
 
-    import json as _json
     import time as _time
-    from datetime import datetime, timezone
 
     now = _time.time()
     if not fresh and _OPS_SNAPSHOT_CACHE["data"] is not None:
-        if now - _OPS_SNAPSHOT_CACHE["at"] < _OPS_SNAPSHOT_TTL:
+        age = now - _OPS_SNAPSHOT_CACHE["at"]
+        if age < _OPS_SNAPSHOT_TTL:
             cached = dict(_OPS_SNAPSHOT_CACHE["data"])
             cached["cache"] = "hit"
+            # Explicit cache provenance: `generated_at` is preserved (it is the
+            # compute stamp, not the read stamp), and the age of the thing being
+            # served is stated rather than inferred.
+            cached["cache_age_s"] = round(age, 1)
+            cached["cache_source"] = "in_process"
+            cached["cache_ttl_s"] = _OPS_SNAPSHOT_TTL
             return cached
 
     from app.tasks.redis_state import (
         get_all_task_metrics,
         get_odds_api_quota,
-        get_redis_client,
         get_task_metrics,
     )
 
-    r = get_redis_client()
+    reads: dict[str, health_reads.RedisRead] = {}
+    r, client_failure = health_reads.client(key="ops-snapshot")
 
-    def _read_json(key):
-        try:
-            raw = r.get(key)
-            return _json.loads(raw) if raw else None
-        except Exception:
-            return None
+    def _read(field: str, key: str) -> health_reads.RedisRead:
+        """One classified warm read, recorded for the completeness rollup."""
+        if r is None:
+            failed = health_reads.RedisRead(
+                status=health_reads.UNAVAILABLE,
+                key=key,
+                error_class=client_failure.error_class,
+                error=client_failure.error,
+            )
+            reads[field] = failed
+            return failed
+        read = health_reads.read_json(r, key)
+        reads[field] = read
+        return read
+
+    def _compact_field(field: str, key: str) -> dict:
+        """``_ops_compact`` for a readable key; a status object for one we could
+        not read. The two must never collapse into the same shape."""
+        read = _read(field, key)
+        if read.degraded:
+            return read.as_status()
+        if read.missing:
+            return {"status": "no_data", "source": key}
+        return _ops_compact(read.value)
 
     def _metric_subset(label):
         try:
@@ -1213,24 +1394,34 @@ async def get_ops_snapshot(
                 "last_result_summary": m.get("last_result_summary"),
             }
         except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "error": str(exc)[:120]}
+            return {
+                "status": "error",
+                "error_class": exc.__class__.__name__,
+                "error": health_reads.redact(exc),
+            }
 
-    snapshot: dict = {"generated_at": datetime.now(timezone.utc).isoformat(), "cache": "miss"}
+    snapshot: dict = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "cache": "miss",
+        "cache_source": "computed",
+        "cache_age_s": 0.0,
+    }
 
     # 1. Link rate + matured linkage (warm Redis keys — never recompute).
-    try:
-        lr = _read_json("bainluck:admin:link_rate") or {}
+    lr_read = _read("link_rate", "bainluck:admin:link_rate")
+    if lr_read.degraded:
+        snapshot["link_rate"] = lr_read.as_status()
+    elif lr_read.missing:
+        snapshot["link_rate"] = {"status": "no_data", "source": lr_read.key}
+    else:
         snapshot["link_rate"] = {
-            "overall": lr.get("overall"),
-            "generated_at": lr.get("generated_at"),
-        } if lr else {"status": "no_data"}
-    except Exception as exc:  # noqa: BLE001
-        snapshot["link_rate"] = {"status": "error", "error": str(exc)[:120]}
-    try:
-        ml = _read_json("bainluck:admin:matured_linkage")
-        snapshot["matured_linkage"] = _ops_compact(ml) if ml else {"status": "no_data"}
-    except Exception as exc:  # noqa: BLE001
-        snapshot["matured_linkage"] = {"status": "error", "error": str(exc)[:120]}
+            "overall": lr_read.value.get("overall"),
+            "generated_at": lr_read.value.get("generated_at"),
+            "age_seconds": health_reads.payload_age_seconds(lr_read.value),
+        }
+    snapshot["matured_linkage"] = _compact_field(
+        "matured_linkage", "bainluck:admin:matured_linkage"
+    )
 
     # 2. Coverage poll counts.
     snapshot["coverage"] = {
@@ -1242,43 +1433,66 @@ async def get_ops_snapshot(
     snapshot["cal_beat"] = _metric_subset("calibration_prices")
 
     # 4. Time-horizon state (calibration time-horizon precompute).
-    try:
-        th = _read_json("bainluck:calibration:time_horizon")
-        snapshot["time_horizon"] = _ops_compact(th) if th else {"status": "no_data"}
-    except Exception as exc:  # noqa: BLE001
-        snapshot["time_horizon"] = {"status": "error", "error": str(exc)[:120]}
+    snapshot["time_horizon"] = _compact_field(
+        "time_horizon", "bainluck:calibration:time_horizon"
+    )
 
     # 5. The three sentinel verdicts (+ generated_at, via _ops_compact).
     snapshot["sentinels"] = {
-        "flow": _ops_compact(_read_json("bainluck:flow_sentinel:last")),
-        "calibration": _ops_compact(_read_json("bainluck:calibration_sentinel:last")),
-        "grid": _ops_compact(_read_json("bainluck:grid_sentinel:last")),
+        "flow": _compact_field("sentinel_flow", "bainluck:flow_sentinel:last"),
+        "calibration": _compact_field(
+            "sentinel_calibration", "bainluck:calibration_sentinel:last"
+        ),
+        "grid": _compact_field("sentinel_grid", "bainluck:grid_sentinel:last"),
     }
 
     # 6. Quota.
     try:
         snapshot["quota"] = get_odds_api_quota()
     except Exception as exc:  # noqa: BLE001
-        snapshot["quota"] = {"status": "error", "error": str(exc)[:120]}
+        snapshot["quota"] = {
+            "status": "error",
+            "error_class": exc.__class__.__name__,
+            "error": health_reads.redact(exc),
+        }
 
     # 7. Top Sentry 24h (cached beat — never a live Sentry call here).
-    snapshot["sentry"] = _read_json("bainluck:sentry:top_24h") or {"status": "no_data"}
+    # #1501: the Sentry rail is already dark when its quota is exhausted; making
+    # "no token", "beat never ran", and "cannot read Redis" the same `no_data`
+    # compounded that. They stay separate.
+    sentry_read = _read("sentry", "bainluck:sentry:top_24h")
+    if sentry_read.degraded:
+        snapshot["sentry"] = sentry_read.as_status()
+    elif sentry_read.missing:
+        snapshot["sentry"] = {"status": "no_data", "source": sentry_read.key}
+    else:
+        snapshot["sentry"] = sentry_read.value
 
     # 8. Celery / queue health.
+    depths: dict = {}
+    for q in ("background", "realtime", "heavy"):
+        if r is None:
+            depths[q] = None
+            continue
+        depth = health_reads.command(q, lambda queue=q: r.llen(queue))
+        # A depth we could not read is NOT a depth of zero and not a plain null:
+        # it says so.
+        depths[q] = depth.value if depth.ok else depth.as_status()
     try:
-        depths = {}
-        for q in ("background", "realtime", "heavy"):
-            try:
-                depths[q] = r.llen(q)
-            except Exception:
-                depths[q] = None
         health_counts: dict = {}
         for m in get_all_task_metrics() or []:
             h = m.get("health") or "unknown"
             health_counts[h] = health_counts.get(h, 0) + 1
         snapshot["celery"] = {"queue_depths": depths, "task_health": health_counts}
     except Exception as exc:  # noqa: BLE001
-        snapshot["celery"] = {"status": "error", "error": str(exc)[:120]}
+        snapshot["celery"] = {
+            "status": "error",
+            "error_class": exc.__class__.__name__,
+            "error": health_reads.redact(exc),
+            "queue_depths": depths,
+        }
+
+    snapshot["completeness"] = health_reads.completeness(reads)
 
     _OPS_SNAPSHOT_CACHE["at"] = now
     _OPS_SNAPSHOT_CACHE["data"] = snapshot
@@ -1328,14 +1542,7 @@ async def get_settled_concept_sentinel_last(
     filed issues) without re-running the checks."""
     _check_admin_secret(secret, request=request)
 
-    import json
-
-    from app.tasks.redis_state import get_redis_client
-
-    raw = get_redis_client().get("bainluck:settled_concept_sentinel:last")
-    if not raw:
-        return {"status": "no_run_cached", "key": "bainluck:settled_concept_sentinel:last"}
-    return json.loads(raw)
+    return _sentinel_last_payload("bainluck:settled_concept_sentinel:last")
 
 
 # ---------------------------------------------------------------------------
