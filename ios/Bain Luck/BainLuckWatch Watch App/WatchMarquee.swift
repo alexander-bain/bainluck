@@ -70,14 +70,14 @@ enum WatchMarquee {
     /// story. Now we scan: live events take priority (first live event that yields
     /// a story), then the first renderable item of any kind. Concept/tournament
     /// cards carry no Watch-renderable probability, so they are skipped, not fatal.
-    static func marquee(from items: [WatchFeedItem]) -> WatchTopStory? {
+    static func marquee(from items: [WatchFeedItem], now: Date = Date()) -> WatchTopStory? {
         // Live priority: the first live event that can actually produce a story.
         for item in items where item.event?.isLive == true {
-            if let story = story(from: item) { return story }
+            if let story = story(from: item, now: now) { return story }
         }
         // Otherwise the first renderable item in rank order.
         for item in items {
-            if let story = story(from: item) { return story }
+            if let story = story(from: item, now: now) { return story }
         }
         return nil
     }
@@ -86,11 +86,17 @@ enum WatchMarquee {
     /// the Watch can render (concept/tournament hubs, or an event/futures card
     /// missing its probability). Pure so `marquee(from:)` can scan for the first
     /// item that qualifies.
-    static func story(from item: WatchFeedItem) -> WatchTopStory? {
+    static func story(from item: WatchFeedItem, now: Date = Date()) -> WatchTopStory? {
         if let e = item.event, let home = e.currentOdds?.homeProbability {
             return eventStory(item, e, homeProb: home)
         }
-        if let f = item.futures, let leader = f.topOutcomes?.first, let p = leader.probability {
+        // L2-225: a settled market carries a normal-looking price and no badge, so
+        // without this it could become the wrist's TOP STORY — the single biggest
+        // number on the watch face's feed — for a question already decided. Skipped,
+        // not fatal: `marquee(from:)` scans on to the next renderable item, the same
+        // way it already steps over concept/tournament hubs (L2-200).
+        if let f = item.futures, !f.isSettled(now: now),
+           let leader = f.topOutcomes?.first, let p = leader.probability {
             let pct = pct(p)
             return WatchTopStory(
                 id: item.id,
@@ -149,7 +155,15 @@ enum WatchMarquee {
                 ),
                 live: e.isLive,
                 clock: e.clockText,
-                startText: e.isLive ? nil : startText(e.commenceTime)
+                // L2-225: a FINISHED game must not advertise a start time. `live` is
+                // false once a game settles, so the old expression fell straight
+                // through to `startText(commenceTime)` and rendered a completed game
+                // with a forward-looking "Tmrw 7:30 PM"-shaped line next to a
+                // probability split. Suppress it; the row stays, honestly quiet.
+                // (Whether a settled team game should instead show FINAL + score is a
+                // product call — `WatchTeamGame` carries no result field — routed to
+                // Fable rather than invented here.)
+                startText: (e.isLive || e.isSettled) ? nil : startText(e.commenceTime)
             )
         }
     }

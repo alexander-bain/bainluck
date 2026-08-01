@@ -710,12 +710,14 @@ final class DiscoverViewModel: ObservableObject {
         return "unknown_type"
     }
 
-    private static let settledStatuses: Set<String> = [
-        "resolved", "closed", "settled", "finalized", "final",
-    ]
-
+    /// L2-225: this used to check terminal STATUS only — one of the four authorities
+    /// web's `_futuresIsSettled` consults (`discover/utils.ts`). A futures card that
+    /// was settled by `resolved` / `winner` / a past `resolution_date` but still
+    /// carried `status='open'` (gotcha #33, the normal Kalshi shape) was therefore
+    /// classified `empty_futures` here and dropped, while web admitted it as a
+    /// result-carrying card. Both surfaces now read the same shared predicate.
     private static func futuresIsSettled(_ d: FeedFuturesData) -> Bool {
-        settledStatuses.contains((d.status ?? "").lowercased())
+        FeedLifecycle.futuresIsSettled(d)
     }
 
     /// Emit identity-free suppression telemetry (card type + machine reason + count,

@@ -336,6 +336,15 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     // `confidence_tier`/`confidence_score` via the decoder's .convertFromSnakeCase.
     let confidenceTier: String?
     let confidenceScore: Double?
+    /// L2-225: authoritative settlement, sent by the backend on every effectively
+    /// resolved futures card (`routes/feed.py` :6692–6694) and read by web as three
+    /// of the four settlement authorities (`discover/utils.ts` `_futuresIsSettled`).
+    /// The native model dropped all three, so both native lifecycle predicates could
+    /// only ever consult `status`. Decoded from `resolved` / `winner` /
+    /// `winner_opening_probability` via the decoder's `.convertFromSnakeCase`.
+    let resolved: Bool?
+    let winner: String?
+    let winnerOpeningProbability: Double?
 }
 
 // MARK: - Discover Card Archetype
@@ -412,6 +421,29 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     let movement24h: Double?
 
     var id: String { name }
+
+    /// L2-225 — `movement24h` had **never decoded**, on any build.
+    ///
+    /// The client decodes with `.convertFromSnakeCase`, whose conversion capitalises
+    /// each component after an underscore via `String.capitalized`. `"24h".capitalized`
+    /// is `"24H"` — the digit is not a letter, so the *next* character is treated as
+    /// the word's first letter and uppercased. The backend's `movement_24h` therefore
+    /// arrives as the key `movement24H`, which never matched the property, and the
+    /// tournament card's "+2.3pp today" mover line has been silently nil since it was
+    /// written. Found by the L2-225 render fixture, which rasterised a live card whose
+    /// movement line simply was not there.
+    ///
+    /// The explicit key below is matched against the CONVERTED key, hence the capital
+    /// `H`. It looks wrong and is correct; the alternative (renaming the property to
+    /// `movement24H`) hides the hazard instead of labelling it.
+    ///
+    /// This is a CLASS, not an instance — every `…24h` / `…7d` property decoded with
+    /// this strategy is affected. The rest are on non-Discover surfaces and are routed
+    /// rather than swept here; see the L2-225 report.
+    enum CodingKeys: String, CodingKey {
+        case name, probability, rank
+        case movement24h = "movement24H"
+    }
 }
 
 /// Outcome matched to the user's followed team (from my_teams_only feed).
@@ -431,6 +463,83 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+}
+
+// MARK: - Feed Lifecycle (shared terminal-state semantics)
+
+/// The single native source of truth for "is this card over?", mirroring the web
+/// semantic in `frontend/components/discover/utils.ts` field for field (L2-225).
+///
+/// It exists because the same question was being answered in three different
+/// places with three different answers: `DiscoverView.isStaleItem` consulted two
+/// of the four futures authorities and had **no** tournament branch at all, while
+/// `DiscoverViewModel.futuresIsSettled` consulted only one. Pure and `now`-injectable
+/// so fixtures are deterministic (gotcha #44).
+///
+/// The two consumers read this fact with OPPOSITE polarity, and that is correct:
+/// the Discover stale gate DROPS a settled card ("settled means settled", L2-191,
+/// no restoration path), while the empty-envelope classifier KEEPS one (a settled
+/// card carries an authoritative result, so it is not an empty envelope). Both are
+/// asking the same question; only their answers differ.
+nonisolated enum FeedLifecycle {
+    /// Terminal MARKET status tokens — the same list web uses (`_SETTLED_STATUSES`).
+    /// Deliberately excludes `completed`: markets never carry it, and matching web
+    /// token-for-token is the point of this set.
+    static let settledStatuses: Set<String> = [
+        "resolved", "closed", "settled", "finalized", "final",
+    ]
+
+    /// Terminal SCHEDULE/EVENT status tokens. Tournaments and concepts speak the
+    /// schedule vocabulary, not the market one — `_filter_stale_tournaments`
+    /// (`routes/golf.py`) keys on exactly `schedule_status == "completed"`, and event
+    /// concepts use the same `completed`/`closed` pair events do. Keeping the two
+    /// sets separate is why this is a superset rather than an edit to the one above.
+    static let terminalScheduleStatuses: Set<String> =
+        settledStatuses.union(["completed"])
+
+    /// Grace after a tournament's `end_date` before it counts as over. Mirrors the
+    /// backend's own `_filter_stale_tournaments` (`routes/golf.py`), which drops a
+    /// tournament once `end_date.date() < now.date() - 1 day` — i.e. somewhere
+    /// between 24h and 48h past the end date. 48h is chosen so the client gate can
+    /// never be MORE aggressive than the producer: it is containment for a
+    /// stale-served golf base (#1475's `last_good` tier serves a base filtered when
+    /// it was built, not when it is read), never a second opinion about liveness.
+    static let tournamentEndGrace: TimeInterval = 48 * 3600
+
+    /// Mirrors web `_futuresIsSettled` (`discover/utils.ts`): resolved flag, named
+    /// winner, terminal status, or a resolution date already in the past. That last
+    /// one is the authority that actually fires in production — gotcha #33 means a
+    /// settled Kalshi market keeps `status='open'` forever.
+    static func futuresIsSettled(_ d: FeedFuturesData, now: Date = Date()) -> Bool {
+        if d.resolved == true { return true }
+        if let winner = d.winner?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !winner.isEmpty { return true }
+        if settledStatuses.contains((d.status ?? "").lowercased()) { return true }
+        if let raw = d.resolutionDate, let date = raw.asDate, date < now { return true }
+        return false
+    }
+
+    /// A tournament is over when the schedule says so, or when its end date has been
+    /// past for longer than the producer's own grace. The T+36h WHAT-HIT window is
+    /// NOT terminal for this purpose: that card is deliberately pinned to lead with
+    /// the result (#235 Item 4 / L2-224), so it must survive the gate to be shown.
+    static func tournamentIsSettled(_ d: FeedTournamentData, now: Date = Date()) -> Bool {
+        if d.marqueeWhathit == true { return false }
+        if terminalScheduleStatuses.contains((d.scheduleStatus ?? "").lowercased()) {
+            return true
+        }
+        if let raw = d.endDate, let date = raw.asDate,
+           now.timeIntervalSince(date) > tournamentEndGrace { return true }
+        return false
+    }
+
+    /// A concept hub is over when its status says so and it is outside the WHAT-HIT
+    /// window. (The empty-envelope classifier already fails a non-WHAT-HIT concept
+    /// closed, so this is coherence rather than a second drop path.)
+    static func conceptIsSettled(_ d: FeedConceptData, now: Date = Date()) -> Bool {
+        if d.marqueeWhathit == true { return false }
+        return terminalScheduleStatuses.contains((d.status ?? "").lowercased())
+    }
 }
 
 // MARK: - Pins Response

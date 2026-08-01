@@ -75,7 +75,10 @@ struct BainLuckProvider: TimelineProvider {
                         awayColor: e.awayTeamData?.primaryColor ?? "#FF453A"
                     )
                 }
-                if topMarket == nil, let f = item.futures,
+                // L2-225: the complication is the longest-lived surface on the
+                // wrist — its timeline is cached, so a settled market picked here
+                // sits on the watch face showing a live number and a movement delta.
+                if topMarket == nil, let f = item.futures, !f.isSettled(),
                    let leader = f.topOutcomes?.first, let prob = leader.probability {
                     topMarket = ComplicationMarket(
                         name: f.name,

@@ -245,9 +245,12 @@ struct DiscoverView: View {
     /// authority stays unknown (surfaces). `now` is injectable so tests are
     /// deterministic and don't straddle a date boundary (gotcha #44).
     static func isStaleItem(_ item: FeedItem, now: Date = Date()) -> Bool {
+        // L2-225: futures terminality now runs through the shared `FeedLifecycle`
+        // predicate, so this gate reads the SAME four authorities web does
+        // (`resolved` / `winner` / terminal status / past resolution date) instead
+        // of the two it used to.
         if let f = item.futures {
-            if f.status == "closed" || f.status == "resolved" { return true }
-            if let rd = f.resolutionDate, let d = rd.asDate, d < now { return true }
+            if FeedLifecycle.futuresIsSettled(f, now: now) { return true }
         }
         if let e = item.event {
             if e.status == "completed" || e.status == "closed" {
@@ -255,6 +258,19 @@ struct DiscoverView: View {
                     return now.timeIntervalSince(d) > 8 * 3600
                 }
             }
+        }
+        // L2-225: tournaments had NO branch here. Decode and the WHAT-HIT render were
+        // repaired in L2-224, but nothing gated a tournament that is simply over —
+        // and the golf base is served from a `last_good` Redis tier (#1475) whose
+        // producer-side stale filter ran when the base was BUILT, not when it is
+        // read, while request-side scoring only drops a tournament 4 days after its
+        // START. So a finished tournament could still lead with a live "62%" hero.
+        // The WHAT-HIT window is exempt by construction (see `tournamentIsSettled`).
+        if let t = item.tournament {
+            if FeedLifecycle.tournamentIsSettled(t, now: now) { return true }
+        }
+        if let c = item.concept {
+            if FeedLifecycle.conceptIsSettled(c, now: now) { return true }
         }
         return false
     }

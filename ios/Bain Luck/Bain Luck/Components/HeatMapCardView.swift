@@ -308,7 +308,12 @@ private func heatmapPreviewData(
             reasons: nil
         ),
         confidenceTier: nil,
-        confidenceScore: nil
+        confidenceScore: nil,
+        // L2-225: preview fixture — an OPEN market, so it never trips the shared
+        // terminal-lifecycle gate (`FeedLifecycle.futuresIsSettled`).
+        resolved: nil,
+        winner: nil,
+        winnerOpeningProbability: nil
     )
 }
 #endif

@@ -152,6 +152,9 @@ final class WatchGlancesViewModel: ObservableObject {
             logger.info("Glances feed received: \(feed.items.count) items")
             markets = feed.items.compactMap { item -> WatchMarket? in
                 guard let f = item.futures,
+                      // L2-225: glances is a probability-only surface — a settled
+                      // market here reads as a live call with no way to tell.
+                      !f.isSettled(),
                       let leader = f.topOutcomes?.first,
                       let prob = leader.probability else { return nil }
                 return WatchMarket(

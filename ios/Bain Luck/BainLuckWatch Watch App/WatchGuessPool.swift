@@ -45,10 +45,20 @@ enum WatchGuessPool {
     static let minProb = 0.05
     static let maxProb = 0.95
 
-    static func buildQuestions(from items: [WatchFeedItem]) -> [GuessQuestion] {
+    /// `now` is injectable so lifecycle fixtures are deterministic (gotcha #44).
+    static func buildQuestions(
+        from items: [WatchFeedItem],
+        now: Date = Date()
+    ) -> [GuessQuestion] {
         items.compactMap { item -> GuessQuestion? in
             // Futures only. Do NOT add an `event` branch here — see the enum doc.
             guard item.type == "futures", let f = item.futures else { return nil }
+            // L2-225: never ask the user to predict something that has already
+            // happened. A settled market keeps a perfectly plausible-looking price,
+            // so without a lifecycle check the deck could serve a Higher/Lower
+            // question whose answer is already fixed — and then grade the guess
+            // against it ("settled means settled").
+            guard !f.isSettled(now: now) else { return nil }
             guard let leader = f.topOutcomes?.first,
                   let prob = leader.probability,
                   prob > minProb, prob < maxProb else { return nil }

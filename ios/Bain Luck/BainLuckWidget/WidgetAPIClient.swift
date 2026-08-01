@@ -85,6 +85,10 @@ actor WidgetAPIClient {
 
         return feed.items.compactMap { item -> WidgetDiscoverItem? in
             guard let futures = item.data,
+                  // L2-225: never put a settled market on the home screen. A widget
+                  // timeline is cached for hours, so a resolved/past-resolution card
+                  // admitted here outlives every other surface's view of it.
+                  !WidgetLifecycle.isSettled(futures),
                   let leader = futures.topOutcomes?.first,
                   let probability = leader.probability else {
                 return nil

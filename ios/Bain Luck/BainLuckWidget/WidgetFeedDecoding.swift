@@ -90,6 +90,67 @@ struct WidgetFuturesData: Decodable {
     let llmSportCategory: String?
     let topOutcomes: [WidgetOutcome]?
     let hookDescription: String?
+    // L2-225 — terminal lifecycle authority. The widget decoded NONE of these, so
+    // it had no way to tell a settled market from a live one and rendered whatever
+    // carried a leader price. Decoded from `status` / `resolution_date` /
+    // `resolved` / `winner` via the client's `.convertFromSnakeCase`.
+    let status: String?
+    let resolutionDate: String?
+    let resolved: Bool?
+    let winner: String?
+}
+
+// MARK: - Widget lifecycle gate (L2-225)
+
+/// "Is this market over?" for the widget extension, mirroring the main app's
+/// `FeedLifecycle.futuresIsSettled` and web's `_futuresIsSettled` authority list.
+///
+/// The widget is the surface where this matters most and was missing entirely: the
+/// main app hides a settled card (`DiscoverView.isStaleItem`) and web labels it, but
+/// `fetchDiscoverItems` admitted anything with a leader probability — and a widget
+/// timeline is cached for hours, so a settled market would sit on the home screen
+/// showing a live-looking number and a movement delta long after every other surface
+/// had moved on ("settled means settled").
+///
+/// Lives here rather than in `WidgetAPIClient` because this file is a member of the
+/// test bundle (L2-182's target-membership exception), so the predicate is directly
+/// exercisable; the client is not.
+enum WidgetLifecycle {
+    static let settledStatuses: Set<String> = [
+        "resolved", "closed", "settled", "finalized", "final",
+    ]
+
+    /// Tolerant by construction: an unknown/missing status is NOT terminal. Unknown
+    /// authority stays unknown and the card surfaces (the L2-214 rule) — only
+    /// positive evidence settles it. Probability is never evidence.
+    static func isSettled(_ d: WidgetFuturesData, now: Date = Date()) -> Bool {
+        if d.resolved == true { return true }
+        if let winner = d.winner?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !winner.isEmpty { return true }
+        if settledStatuses.contains((d.status ?? "").lowercased()) { return true }
+        if let raw = d.resolutionDate, let date = widgetISODate(raw), date < now {
+            return true
+        }
+        return false
+    }
+
+    /// ISO8601 with or without fractional seconds — the widget has no access to the
+    /// main app's `String.asDate`, so the same two-formatter shape is repeated here.
+    static func widgetISODate(_ raw: String) -> Date? {
+        isoFrac.date(from: raw) ?? isoPlain.date(from: raw)
+    }
+
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
 }
 
 struct WidgetCurrentOdds: Decodable {

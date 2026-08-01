@@ -154,6 +154,57 @@ nonisolated struct WatchFeedFutures: Decodable, Identifiable, Sendable {
     let name: String
     let llmSportCategory: String?
     let topOutcomes: [WatchFeedOutcome]?
+    // L2-225 — terminal lifecycle authority. `WatchFeedEvent` has carried `status`
+    // (and `isSettled`) since it was written; the futures model never did, so every
+    // Watch futures consumer (glances, marquee, the Higher/Lower deck, the
+    // complication) could only see a name and a price. Decoded from `status` /
+    // `resolution_date` / `resolved` / `winner` via `.convertFromSnakeCase`.
+    let status: String?
+    let resolutionDate: String?
+    let resolved: Bool?
+    let winner: String?
+
+    /// Mirrors `WatchFeedEvent.isSettled` for markets, and the main app's
+    /// `FeedLifecycle.futuresIsSettled` / web's `_futuresIsSettled` authority list.
+    ///
+    /// Tolerant by construction: unknown/missing authority is NOT settled, so a card
+    /// still surfaces (L2-214 — probability alone never settles anything). The
+    /// authority that actually fires in production is the past `resolution_date`:
+    /// gotcha #33 means a settled Kalshi market keeps `status='open'` indefinitely.
+    func isSettled(now: Date = Date()) -> Bool {
+        if resolved == true { return true }
+        if let winner = winner?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !winner.isEmpty { return true }
+        if WatchFeedFutures.settledStatuses.contains((status ?? "").lowercased()) {
+            return true
+        }
+        if let raw = resolutionDate, let date = WatchFeedFutures.isoDate(raw), date < now {
+            return true
+        }
+        return false
+    }
+
+    static let settledStatuses: Set<String> = [
+        "resolved", "closed", "settled", "finalized", "final",
+    ]
+
+    /// ISO8601 with or without fractional seconds (the Watch target has no access to
+    /// the main app's `String.asDate`).
+    static func isoDate(_ raw: String) -> Date? {
+        isoFrac.date(from: raw) ?? isoPlain.date(from: raw)
+    }
+
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
 }
 
 // MARK: - Feed Outcome
