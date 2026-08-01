@@ -207,6 +207,28 @@ describe("the manual workflow keeps its phase-1 boundary", () => {
     }
   });
 
+  /**
+   * L2-228. The contract script was `node --test "contract/*.test.js"` — the
+   * glob QUOTED, so the shell could not expand it and Node had to. Node only
+   * learned to glob `--test` arguments in v22; the workflow pins Node 20, where
+   * that is `Could not find '.../contract/*.test.js'` and exit 1.
+   *
+   * So the rail's one always-on, dependency-free gate had never executed in CI
+   * — it passed only on developer machines running a newer Node, which is the
+   * worst possible split: green everywhere a human looks, never actually run
+   * where it counts. Verified against run 30721583936.
+   *
+   * Unquoted, the shell expands the glob into a file list that every Node
+   * version accepts.
+   */
+  it("lets the shell expand the contract glob, not Node", () => {
+    assert.doesNotMatch(
+      pkg.scripts.contract,
+      /--test\s+["']/,
+      "a quoted glob makes Node do the globbing, which Node 20 cannot — the gate silently never runs"
+    );
+  });
+
   it("runs the dependency-free contract fixtures before any install", () => {
     // The fixtures are placed ahead of `npm ci` on purpose: a gate that only
     // runs once a package install succeeds is a gate that gets skipped on the
