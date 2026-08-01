@@ -1,0 +1,941 @@
+{
+  "policy": {
+    "contract_version": "settled-event-result-authority/v1",
+    "case_schema_version": "settled-event-case/v1",
+    "standing_ruling": "settled means settled; final result authority replaces live probability presentation"
+  },
+  "surface_contract": {
+    "api": "terminal 1/0 or explicit settled-result envelope for decisive finals",
+    "metadata": "winner and final score lead; no win-probability copy",
+    "chart": "preserve historic samples and append/declare terminal result without rewriting history",
+    "unknown": "conflict or missing authority is typed UNKNOWN, never fabricated result or GREEN"
+  },
+  "cases": [
+    {
+      "id": "completed_home_win_loser_favored",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "espn_final",
+          "home": 3,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.001,
+        "away": 0.999
+      },
+      "expected": {
+        "authority_state": "decisive",
+        "winner_side": "home",
+        "final_score": {
+          "home": 3,
+          "away": 2
+        },
+        "reasons": [],
+        "api": {
+          "mode": "settled_result",
+          "winner_side": "home",
+          "final_score": {
+            "home": 3,
+            "away": 2
+          },
+          "allowed_terminal_home_probability": 1.0,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "result",
+          "web_hero_mode": "result",
+          "native_hero_mode": "result",
+          "card_mode": "result",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": "home"
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "HERO_MATCHES_FINAL_RESULT"
+        }
+      }
+    },
+    {
+      "id": "closed_away_win_loser_favored",
+      "schema_version": "settled-event-case/v1",
+      "status": "closed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "statpal_final",
+          "home": 1,
+          "away": 4
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.854,
+        "away": 0.146
+      },
+      "expected": {
+        "authority_state": "decisive",
+        "winner_side": "away",
+        "final_score": {
+          "home": 1,
+          "away": 4
+        },
+        "reasons": [],
+        "api": {
+          "mode": "settled_result",
+          "winner_side": "away",
+          "final_score": {
+            "home": 1,
+            "away": 4
+          },
+          "allowed_terminal_home_probability": 0.0,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "result",
+          "web_hero_mode": "result",
+          "native_hero_mode": "result",
+          "card_mode": "result",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": "away"
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "HERO_MATCHES_FINAL_RESULT"
+        }
+      }
+    },
+    {
+      "id": "extra_innings_decisive",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "official_final",
+          "home": 8,
+          "away": 7
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.49,
+        "away": 0.51
+      },
+      "expected": {
+        "authority_state": "decisive",
+        "winner_side": "home",
+        "final_score": {
+          "home": 8,
+          "away": 7
+        },
+        "reasons": [],
+        "api": {
+          "mode": "settled_result",
+          "winner_side": "home",
+          "final_score": {
+            "home": 8,
+            "away": 7
+          },
+          "allowed_terminal_home_probability": 1.0,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "result",
+          "web_hero_mode": "result",
+          "native_hero_mode": "result",
+          "card_mode": "result",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": "home"
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "HERO_MATCHES_FINAL_RESULT"
+        }
+      }
+    },
+    {
+      "id": "completed_zero_score_decisive",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "official_final",
+          "home": 0,
+          "away": 1
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.75,
+        "away": 0.25
+      },
+      "expected": {
+        "authority_state": "decisive",
+        "winner_side": "away",
+        "final_score": {
+          "home": 0,
+          "away": 1
+        },
+        "reasons": [],
+        "api": {
+          "mode": "settled_result",
+          "winner_side": "away",
+          "final_score": {
+            "home": 0,
+            "away": 1
+          },
+          "allowed_terminal_home_probability": 0.0,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "result",
+          "web_hero_mode": "result",
+          "native_hero_mode": "result",
+          "card_mode": "result",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": "away"
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "HERO_MATCHES_FINAL_RESULT"
+        }
+      }
+    },
+    {
+      "id": "completed_tie",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "official_final",
+          "home": 2,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.62,
+        "away": 0.38
+      },
+      "expected": {
+        "authority_state": "tie",
+        "winner_side": null,
+        "final_score": {
+          "home": 2,
+          "away": 2
+        },
+        "reasons": [],
+        "api": {
+          "mode": "settled_result",
+          "winner_side": null,
+          "final_score": {
+            "home": 2,
+            "away": 2
+          },
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "tie",
+          "web_hero_mode": "tie",
+          "native_hero_mode": "tie",
+          "card_mode": "tie",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": "tie"
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "TIE_EXPLICIT"
+        }
+      }
+    },
+    {
+      "id": "abandoned",
+      "schema_version": "settled-event-case/v1",
+      "status": "abandoned",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "non_decisive",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DISPOSITION_ABANDONED"
+        ],
+        "api": {
+          "mode": "typed_disposition",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "disposition",
+          "web_hero_mode": "disposition",
+          "native_hero_mode": "disposition",
+          "card_mode": "disposition",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "DISPOSITION_ABANDONED"
+        }
+      }
+    },
+    {
+      "id": "cancelled",
+      "schema_version": "settled-event-case/v1",
+      "status": "cancelled",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "non_decisive",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DISPOSITION_CANCELLED"
+        ],
+        "api": {
+          "mode": "typed_disposition",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "disposition",
+          "web_hero_mode": "disposition",
+          "native_hero_mode": "disposition",
+          "card_mode": "disposition",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "DISPOSITION_CANCELLED"
+        }
+      }
+    },
+    {
+      "id": "postponed",
+      "schema_version": "settled-event-case/v1",
+      "status": "postponed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "non_decisive",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DISPOSITION_POSTPONED"
+        ],
+        "api": {
+          "mode": "typed_disposition",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "disposition",
+          "web_hero_mode": "disposition",
+          "native_hero_mode": "disposition",
+          "card_mode": "disposition",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "DISPOSITION_POSTPONED"
+        }
+      }
+    },
+    {
+      "id": "void",
+      "schema_version": "settled-event-case/v1",
+      "status": "void",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "non_decisive",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DISPOSITION_VOID"
+        ],
+        "api": {
+          "mode": "typed_disposition",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "disposition",
+          "web_hero_mode": "disposition",
+          "native_hero_mode": "disposition",
+          "card_mode": "disposition",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "DISPOSITION_VOID"
+        }
+      }
+    },
+    {
+      "id": "no_contest",
+      "schema_version": "settled-event-case/v1",
+      "status": "no_contest",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "non_decisive",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DISPOSITION_NO_CONTEST"
+        ],
+        "api": {
+          "mode": "typed_disposition",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "disposition",
+          "web_hero_mode": "disposition",
+          "native_hero_mode": "disposition",
+          "card_mode": "disposition",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "pass",
+          "reason": "DISPOSITION_NO_CONTEST"
+        }
+      }
+    },
+    {
+      "id": "completed_missing_score",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "FINAL_SCORE_MISSING"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "FINAL_SCORE_MISSING"
+        }
+      }
+    },
+    {
+      "id": "completed_partial_score",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "feed",
+          "home": 3
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.6,
+        "away": 0.4
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "SCORE_EVIDENCE_MISSING_FIELDS"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "SCORE_EVIDENCE_MISSING_FIELDS"
+        }
+      }
+    },
+    {
+      "id": "live_final_looking_score",
+      "schema_version": "settled-event-case/v1",
+      "status": "live",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "live_feed",
+          "home": 5,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "live",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [],
+        "api": {
+          "mode": "live_probability",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": true
+        },
+        "surfaces": {
+          "metadata_mode": "live_probability",
+          "web_hero_mode": "live_probability",
+          "native_hero_mode": "live_probability",
+          "card_mode": "live_probability",
+          "probability_copy_allowed": true,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "not_applicable",
+          "reason": "EVENT_NOT_TERMINAL"
+        }
+      }
+    },
+    {
+      "id": "result_reopened",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": true,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "prior_final",
+          "home": 5,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "RESULT_REOPENED"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "RESULT_REOPENED"
+        }
+      }
+    },
+    {
+      "id": "provider_score_conflict",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": true,
+      "score_evidence": [
+        {
+          "source": "espn",
+          "home": 5,
+          "away": 2
+        },
+        {
+          "source": "statpal",
+          "home": 2,
+          "away": 5
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "DECLARED_AUTHORITY_CONFLICT",
+          "SCORE_AUTHORITY_CONFLICT"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "DECLARED_AUTHORITY_CONFLICT"
+        }
+      }
+    },
+    {
+      "id": "poison_score_first",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        null,
+        {
+          "source": "official",
+          "home": 5,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "POISON_SCORE_EVIDENCE"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "POISON_SCORE_EVIDENCE"
+        }
+      }
+    },
+    {
+      "id": "poison_score_middle",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "a",
+          "home": 5,
+          "away": 2
+        },
+        "poison",
+        {
+          "source": "b",
+          "home": 5,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "POISON_SCORE_EVIDENCE"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "POISON_SCORE_EVIDENCE"
+        }
+      }
+    },
+    {
+      "id": "poison_score_last",
+      "schema_version": "settled-event-case/v1",
+      "status": "completed",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "official",
+          "home": 5,
+          "away": 2
+        },
+        42
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "POISON_SCORE_EVIDENCE"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "POISON_SCORE_EVIDENCE"
+        }
+      }
+    },
+    {
+      "id": "unknown_status",
+      "schema_version": "settled-event-case/v1",
+      "status": "FINAL",
+      "correction_reopen": false,
+      "authority_conflict": false,
+      "score_evidence": [
+        {
+          "source": "official",
+          "home": 5,
+          "away": 2
+        }
+      ],
+      "last_live_blend": {
+        "home": 0.9,
+        "away": 0.1
+      },
+      "expected": {
+        "authority_state": "unknown",
+        "winner_side": null,
+        "final_score": null,
+        "reasons": [
+          "INVALID_STATUS"
+        ],
+        "api": {
+          "mode": "typed_unknown",
+          "winner_side": null,
+          "final_score": null,
+          "allowed_terminal_home_probability": null,
+          "stale_live_probability_may_headline": false
+        },
+        "surfaces": {
+          "metadata_mode": "unknown",
+          "web_hero_mode": "unknown",
+          "native_hero_mode": "unknown",
+          "card_mode": "unknown",
+          "probability_copy_allowed": false,
+          "title_suffix_count": 1
+        },
+        "chart": {
+          "history_mutated": false,
+          "terminal_result_marker": null
+        },
+        "sentinel": {
+          "verdict": "unknown",
+          "reason": "INVALID_STATUS"
+        }
+      }
+    }
+  ]
+}
