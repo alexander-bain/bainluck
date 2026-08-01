@@ -1,0 +1,23 @@
+{
+  "schema_version":"nonexclusive-bundle/v1",
+  "defaults":{"source":"polymarket","category":"cricket","league":"unknown","threshold":1.15,"tolerance":0.000001,"publish_bar":1000,"cohort_after_n":null,"evidence":{"outcome_count":3,"probability_sum":1.52,"winner_count":2,"independent_binary_questions":true,"exclusive_proved":false,"parent_condition_missing":false,"duplicate_ids":false,"contradictory":false},"expected":{"shape":"independent_bundle","normalize":false,"publish":false,"reason":"nonexclusive_bundle","disposition":"excluded_structural"}},
+  "cases":[
+    {"id":"cricket-multiwinner"},{"id":"esports-same-shape","category":"esports"},{"id":"entertainment-same-shape","category":"entertainment"},
+    {"id":"mex-above-threshold","evidence":{"winner_count":1,"independent_binary_questions":false,"exclusive_proved":true},"expected":{"shape":"mex_field","normalize":true,"publish":true,"reason":null,"disposition":"published"}},
+    {"id":"mex-below-threshold","evidence":{"winner_count":1,"independent_binary_questions":false,"exclusive_proved":true,"probability_sum":1.1},"expected":{"shape":"mex_field","normalize":false,"publish":true,"reason":null,"disposition":"published"}},
+    {"id":"mex-at-threshold","evidence":{"winner_count":1,"independent_binary_questions":false,"exclusive_proved":true,"probability_sum":1.15},"expected":{"shape":"mex_field","normalize":false,"publish":true,"reason":null,"disposition":"published"}},
+    {"id":"independent-one-winner","evidence":{"winner_count":1},"expected":{"shape":"independent_bundle","normalize":false,"publish":false,"reason":"nonexclusive_bundle","disposition":"excluded_structural"}},
+    {"id":"independent-no-winner","evidence":{"winner_count":0}},{"id":"independent-many-winners"},
+    {"id":"orphan-one-outcome","evidence":{"outcome_count":1,"winner_count":0,"independent_binary_questions":false},"expected":{"shape":"orphan","normalize":false,"publish":false,"reason":"orphan_half_market","disposition":"excluded_structural"}},
+    {"id":"ordinary-binary","evidence":{"outcome_count":2,"probability_sum":1.01,"winner_count":1,"independent_binary_questions":false},"expected":{"shape":"binary","normalize":false,"publish":true,"reason":null,"disposition":"published"}},
+    {"id":"draw-three-way","evidence":{"winner_count":1,"independent_binary_questions":false,"exclusive_proved":true,"probability_sum":1.02},"expected":{"shape":"mex_field","normalize":false,"publish":true,"reason":null,"disposition":"published"}},
+    {"id":"duplicate-outcomes","evidence":{"duplicate_ids":true},"expected":{"shape":"unknown","normalize":false,"publish":false,"reason":"conflicting_shape_evidence","disposition":"excluded_unknown"}},
+    {"id":"poison-first","evidence":{"contradictory":true},"expected":{"shape":"unknown","normalize":false,"publish":false,"reason":"conflicting_shape_evidence","disposition":"excluded_unknown"}},
+    {"id":"poison-middle","evidence":{"contradictory":true},"expected":{"shape":"unknown","normalize":false,"publish":false,"reason":"conflicting_shape_evidence","disposition":"excluded_unknown"}},
+    {"id":"poison-last","evidence":{"contradictory":true},"expected":{"shape":"unknown","normalize":false,"publish":false,"reason":"conflicting_shape_evidence","disposition":"excluded_unknown"}},
+    {"id":"parent-condition-missing","evidence":{"winner_count":1,"independent_binary_questions":false,"parent_condition_missing":true},"expected":{"shape":"unknown","normalize":false,"publish":false,"reason":"parent_condition_unknown","disposition":"excluded_unknown"}},
+    {"id":"category-mistag","category":"soccer"},
+    {"id":"cricket-corrected-below-bar","cohort_after_n":429,"expected":{"shape":"independent_bundle","normalize":false,"publish":false,"reason":"nonexclusive_bundle","disposition":"parked_below_publish_bar"}},
+    {"id":"clean-cohort-above-bar","cohort_after_n":1500,"evidence":{"outcome_count":2,"probability_sum":1.01,"winner_count":1,"independent_binary_questions":false},"expected":{"shape":"binary","normalize":false,"publish":true,"reason":null,"disposition":"published_cohort"}}
+  ]
+}
