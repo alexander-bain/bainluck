@@ -28,6 +28,7 @@ from app.models import (
 from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import lookup_division as _static_lookup_division
+from app.utils.grid_register import GridRegister, load_register
 
 logger = logging.getLogger(__name__)
 
@@ -846,6 +847,95 @@ async def _load_outcomes_for_markets(
     return grouped
 
 
+async def _build_register_column_data(
+    session: AsyncSession,
+    register: GridRegister,
+) -> tuple[dict[str, list[tuple]], dict[int, tuple[str, str]], dict[str, int]]:
+    """Resolve grid cells from an explicit register instead of fuzzy matching.
+
+    This is the whole point of Queue 295. The fuzzy path asks "which markets
+    *look like* they belong to this league?" and then "which team does this
+    outcome name *look like*?" — two guesses per cell, both silent when wrong.
+    Here we instead load exactly the ``market_id``/``outcome_id`` pairs the
+    register pins, and key each cell by the register's canonical ``entity_key``.
+
+    Returns ``(column_data, outcome_entity, stats)`` where ``column_data``
+    matches the shape the existing aggregation step already consumes, so every
+    probability, blend, and normalization semantic downstream is untouched.
+
+    Note what is deliberately *absent*: no ILIKE candidate scan, no league or
+    season name regex, no stage classifier, no team-name prefix/abbreviation/
+    alias merging. A registered identity that the DB no longer carries becomes
+    an honest ``missing`` cell and is counted — never a silent 50% or a
+    neighbouring team's number.
+    """
+    column_data: dict[str, list[tuple]] = defaultdict(list)
+    outcome_entity: dict[int, tuple[str, str]] = {}
+    stats: dict[str, int] = {
+        "registered": len(register.entries),
+        "live": 0,
+        "settled": 0,
+        "missing": 0,
+        "unresolved": 0,
+    }
+
+    outcomes_by_market = await _load_outcomes_for_markets(session, register.market_ids)
+    markets_by_id: dict[int, FuturesMarket] = {}
+    if register.market_ids:
+        result = await session.execute(
+            select(FuturesMarket).where(FuturesMarket.id.in_(register.market_ids))
+        )
+        markets_by_id = {m.id: m for m in result.scalars().unique().all()}
+
+    outcome_index: dict[tuple, FuturesOutcome] = {
+        (mid, outcome.id): outcome
+        for mid, outcomes in outcomes_by_market.items()
+        for outcome in outcomes
+    }
+
+    for entry in register.entries:
+        status = entry.get("status")
+        if status == "missing":
+            stats["missing"] += 1
+            continue
+        if status == "settled":
+            stats["settled"] += 1
+            continue
+
+        market = markets_by_id.get(entry.get("market_id"))
+        outcome = outcome_index.get((entry.get("market_id"), entry.get("outcome_id")))
+        if market is None or outcome is None:
+            # Registered but not present in the DB right now. This is the case
+            # the fuzzy matcher used to paper over by finding *some* other
+            # market; the register makes it visible instead.
+            stats["unresolved"] += 1
+            logger.warning(
+                "Grid register %s v%s: %s/%s/%s pins market=%s outcome=%s which is not loadable",
+                register.league, register.version, entry.get("stage"),
+                entry.get("entity_key"), entry.get("source"),
+                entry.get("market_id"), entry.get("outcome_id"),
+            )
+            continue
+
+        prob = outcome.current_probability
+        if prob is None:
+            stats["unresolved"] += 1
+            continue
+        prob = float(prob)
+        if prob <= 0 or prob >= 1.0:
+            stats["unresolved"] += 1
+            continue
+
+        stats["live"] += 1
+        column_data[entry["stage"]].append((market, outcome))
+        outcome_entity[outcome.id] = (
+            entry["entity_key"],
+            entry.get("entity_name") or entry["entity_key"],
+        )
+
+    return column_data, outcome_entity, stats
+
+
 async def _compute_movers(
     session: AsyncSession,
     outcome_ids: list[int],
@@ -1608,6 +1698,10 @@ def _build_golf_grid_team_rows(
                 "merged_probability": round(merged, 4),
                 "sources": sources,
                 "trend_24h": trend_24h,
+                # Explicit cell state. Additive — existing consumers keep reading
+                # merged_probability. Register-backed grids additionally emit
+                # "won"/"eliminated"/"missing" cells, which carry no probability.
+                "state": "live",
             }
             if (len(sources) == 1 and sources[0]["source"] == "kalshi"
                     and abs(merged - 0.01) < 0.001):
@@ -2036,6 +2130,10 @@ async def _build_upcoming_golf_event_grid(
                 "merged_probability": round(merged, 4),
                 "sources": sources,
                 "trend_24h": trend_24h,
+                # Explicit cell state. Additive — existing consumers keep reading
+                # merged_probability. Register-backed grids additionally emit
+                # "won"/"eliminated"/"missing" cells, which carry no probability.
+                "state": "live",
             }
             if (len(sources) == 1
                     and sources[0]["source"] == "kalshi"
@@ -2574,266 +2672,290 @@ async def get_playoff_grid(
         # Fall through to normal flow if DataGolf unavailable
 
     # -----------------------------------------------------------------------
+    # 1r. Register-backed identity (Queue 295) — preferred when one exists
+    # -----------------------------------------------------------------------
+    # A committed register pins every cell to an exact market/outcome id, so the
+    # whole fuzzy candidate scan below is skipped for that league. Leagues with
+    # no register keep their existing path byte-for-byte, which makes this
+    # cutover per-league and reversible by deleting a file.
+    register_data = load_register(config.slug, config.season_pattern)
+    register = GridRegister(register_data) if register_data else None
+    register_stats: dict[str, int] = {}
+    register_entities: dict[int, tuple[str, str]] = {}
+
+    # -----------------------------------------------------------------------
     # 1. Query futures markets that match this league
     # -----------------------------------------------------------------------
 
-    # Path A: Match by external_id sport key prefix (Odds API markets)
-    sport_conditions = []
-    for sk in config.sport_keys:
-        sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
-
-    # Path B.1: Match by external_id ticker prefix (Kalshi markets like KXNBA%)
-    if config.external_id_prefixes:
-        for pfx in config.external_id_prefixes:
-            sport_conditions.append(FuturesMarket.external_id.ilike(f"{pfx}%"))
-
-    # Path B.2: Match by llm_sport_category + league name patterns (Polymarket).
-    # Push league name filter to SQL via ILIKE to avoid loading ALL category markets.
-    category_conditions = []
-    if config.league_name_patterns:
-        for pattern_str in config.league_name_patterns:
-            # Convert regex to SQL ILIKE: \bNBA\b → %NBA%, \bPro\s+Basketball\b → %Pro%Basketball%
-            sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
-            sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
-            sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
-            sql_pattern = sql_pattern.replace("\\", "").strip()
-            if sql_pattern:
-                category_conditions.append(
-                    and_(
-                        FuturesMarket.llm_sport_category == config.sport_category,
-                        FuturesMarket.name.ilike(f"%{sql_pattern}%"),
-                    )
-                )
-    if not category_conditions:
-        category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
-
-    # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g., division
-    # winners after regular season). Category-matched (Polymarket) stay open/closed
-    # to avoid loading thousands of resolved markets.
-    ticker_filter = or_(*sport_conditions) if sport_conditions else None
-    category_filter = or_(*category_conditions) if category_conditions else None
-
-    status_conditions = []
-    if ticker_filter is not None:
-        status_conditions.append(and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved"))))
-    if category_filter is not None:
-        status_conditions.append(and_(category_filter, FuturesMarket.status.in_(("open", "closed"))))
-    market_filter_with_status = or_(*status_conditions) if status_conditions else FuturesMarket.status.in_(("open", "closed"))
-    # Keep the original market_filter for the resolved backfill (which adds its own status filter)
-    market_filter = or_(*sport_conditions, *category_conditions) if sport_conditions or category_conditions else None
-
-    # #1484 bounded compute — phase 1 of a two-phase load: market ROWS only, no
-    # outcomes. Every filter between here and the column match (`_market_passes_
-    # league_filter`, the season filter, `_match_market_to_column`) reads only
-    # market fields (name / external_id / market_tier), so eagerly loading the
-    # outcomes of every candidate market was pure waste. In-season MLB matches
-    # every per-game Kalshi series (`KXMLB%`) and every Odds-API game market
-    # (`baseball_mlb%`), and `selectinload` pulled ALL of their outcomes — the
-    # league-specific cost that pushed the MLB grid past its 25s request budget
-    # while the out-of-season NBA/NHL grids stayed cheap. Phase 2 (below) loads
-    # outcomes only for markets that actually resolved to a grid column, so the
-    # response is unchanged and only the wasted I/O is gone.
-    stmt = select(FuturesMarket).where(market_filter_with_status)
-    result = await db.execute(stmt)
-    all_markets = result.scalars().unique().all()
-
-    # Filter by league membership (Python-side) to separate e.g. NBA from NCAAB
-    # and reject sibling competitions (e.g. the NBA Cup) whose ticker/name would
-    # otherwise leak in. The full gating decision lives in the pure, unit-tested
-    # helper _market_passes_league_filter (series -> league gating guard).
-    markets = [
-        market for market in all_markets
-        if _market_passes_league_filter(market.name or "", market.external_id or "", config)
-    ]
-
-    # -----------------------------------------------------------------------
-    # 1b. Filter out non-current-season markets
-    # -----------------------------------------------------------------------
-    # Markets from other seasons contaminate the grid.  Two failure modes:
-    #
-    # Future seasons: "NBA: 2027 Champion" has systematically lower
-    # probabilities (preseason lines), so the per-source dedup (keep lowest
-    # prob) picks the wrong entry.
-    #
-    # Past seasons: "2024-25 NBA Champion" outcomes are settled near 0%/1%.
-    # When a resolved past-season market and a fresh current-season market
-    # both map to the championship column from the same source, the min()
-    # dedup picks the stale ~1% value instead of the live ~30% value.
-    # This caused 30x staleness on the NBA grid (issue #708).
-    _season_max_year = _extract_season_max_year(config.season_pattern)
-    if _season_max_year:
-        before_filter = len(markets)
-        markets = [
-            m for m in markets
-            if not _is_future_season_market(m.name or "", _season_max_year)
-            and not _is_past_season_market(m.name or "", _season_max_year)
-        ]
-        filtered_season = before_filter - len(markets)
-        if filtered_season:
-            logger.info(
-                "Playoff grid %s: filtered %d non-current-season markets (max_year=%d)",
-                league_slug, filtered_season, _season_max_year,
-            )
-
-    logger.info(
-        "Playoff grid %s: found %d markets for sport_keys=%s, category=%s",
-        league_slug,
-        len(markets),
-        config.sport_keys,
-        config.sport_category,
-    )
-
-    # -----------------------------------------------------------------------
-    # 2. Match each market to a grid column
-    # -----------------------------------------------------------------------
-
-    # column_key -> list of (market, outcome) tuples
-    column_data: dict[str, list[tuple]] = defaultdict(list)
-    _stale_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    # Settled columns (make_playoffs, division) stop trading after regular
-    # season ends — prices stay at 99.5%/0.5% with no updates for weeks.
-    # Use a much longer cutoff for these columns.
-    _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
-    _SETTLED_COLUMNS = {"make_playoffs", "division"}
-    _stale_skipped = 0
-
-    # Resolve every market to its column FIRST (market fields only), then load
-    # outcomes for just the survivors — phase 2 of the #1484 bounded load.
-    matched_markets: list[tuple[FuturesMarket, str]] = []
-    for market in markets:
-        col_key = _match_market_to_column(market, config)
-        if col_key:
-            matched_markets.append((market, col_key))
-
-    outcomes_by_market = await _load_outcomes_for_markets(
-        db, [m.id for m, _ in matched_markets]
-    )
-    logger.info(
-        "Playoff grid %s: %d/%d markets matched a column; loaded outcomes for those only",
-        league_slug, len(matched_markets), len(markets),
-    )
-
-    for market, col_key in matched_markets:
-        cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
-        for outcome in outcomes_by_market.get(market.id, ()):
-            if outcome.last_updated and outcome.last_updated < cutoff:
-                _stale_skipped += 1
-                continue
-            if outcome.current_probability is not None:
-                prob = float(outcome.current_probability)
-            elif (outcome.current_yes_bid is not None
-                  and outcome.current_yes_ask is not None
-                  and float(outcome.current_yes_ask) > 0):
-                # Fallback: compute from bid/ask when current_probability
-                # wasn't written (e.g. during API format migrations).
-                prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
-            else:
-                continue
-            if prob <= 0 or prob >= 1.0:
-                continue
-            # Skip non-team outcome names (thresholds, dates, generic)
-            oname = outcome.name or ""
-            if _NON_PLAYOFF_MARKET_RE.search(oname):
-                continue
-            # Skip generic yes/no, over/under outcomes
-            if oname.lower().strip() in ("yes", "no", "over", "under"):
-                continue
-            # Skip matchup pair outcomes like "Tampa Bay and Colorado"
-            if re.search(r"\band\b", oname, re.IGNORECASE) and \
-               not re.search(r"\bTrail\s+Blazers\b", oname, re.IGNORECASE):
-                # Allow "Trail Blazers" which is a real team (Portland Trail Blazers)
-                # but block "Tampa Bay and Colorado" matchup pairs
-                if re.match(r"^[\w\s.]+ and [\w\s.]+$", oname.strip()):
-                    continue
-            # Skip generic/seeded outcomes like "#1 seed", "1+ wins"
-            if re.match(r"^#?\d+", oname.strip()):
-                continue
-            # Skip country/national team names in club competitions
-            # (catches World Cup outcomes leaking into Champions League, EPL, etc.)
-            if config.sport_category == "soccer" and oname.strip() in _COUNTRY_NAMES:
-                continue
-            # Filter prediction market 0.5 noise — binary markets near 50%
-            # are illiquid defaults, not real predictions.  Applies to both
-            # Kalshi and Polymarket.  But skip this filter when bid/ask data
-            # shows real trading activity (bid > 0 means someone placed a
-            # real order, not just a default).
-            if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
-                has_real_activity = (
-                    outcome.current_yes_bid is not None
-                    and float(outcome.current_yes_bid) > 0
-                )
-                if not has_real_activity:
-                    continue
-
-            column_data[col_key].append((market, outcome))
-
-    if _stale_skipped:
+    if register is not None:
+        # Explicit identity: exactly the pinned market/outcome pairs, keyed by
+        # the register's canonical entity. None of the candidate scanning,
+        # season regex, stage classification, or name merging below runs.
+        column_data, register_entities, register_stats = await _build_register_column_data(
+            db, register,
+        )
         logger.info(
-            "Playoff grid %s: skipped %d stale outcomes (>7 days old)",
-            league_slug, _stale_skipped,
+            "Playoff grid %s: register v%s (%s) resolved %s",
+            league_slug, register.version, register.season, register_stats,
+        )
+    else:
+        # Path A: Match by external_id sport key prefix (Odds API markets)
+        sport_conditions = []
+        for sk in config.sport_keys:
+            sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
+
+        # Path B.1: Match by external_id ticker prefix (Kalshi markets like KXNBA%)
+        if config.external_id_prefixes:
+            for pfx in config.external_id_prefixes:
+                sport_conditions.append(FuturesMarket.external_id.ilike(f"{pfx}%"))
+
+        # Path B.2: Match by llm_sport_category + league name patterns (Polymarket).
+        # Push league name filter to SQL via ILIKE to avoid loading ALL category markets.
+        category_conditions = []
+        if config.league_name_patterns:
+            for pattern_str in config.league_name_patterns:
+                # Convert regex to SQL ILIKE: \bNBA\b → %NBA%, \bPro\s+Basketball\b → %Pro%Basketball%
+                sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
+                sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
+                sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
+                sql_pattern = sql_pattern.replace("\\", "").strip()
+                if sql_pattern:
+                    category_conditions.append(
+                        and_(
+                            FuturesMarket.llm_sport_category == config.sport_category,
+                            FuturesMarket.name.ilike(f"%{sql_pattern}%"),
+                        )
+                    )
+        if not category_conditions:
+            category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
+
+        # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g., division
+        # winners after regular season). Category-matched (Polymarket) stay open/closed
+        # to avoid loading thousands of resolved markets.
+        ticker_filter = or_(*sport_conditions) if sport_conditions else None
+        category_filter = or_(*category_conditions) if category_conditions else None
+
+        status_conditions = []
+        if ticker_filter is not None:
+            status_conditions.append(and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved"))))
+        if category_filter is not None:
+            status_conditions.append(and_(category_filter, FuturesMarket.status.in_(("open", "closed"))))
+        market_filter_with_status = or_(*status_conditions) if status_conditions else FuturesMarket.status.in_(("open", "closed"))
+        # Keep the original market_filter for the resolved backfill (which adds its own status filter)
+        market_filter = or_(*sport_conditions, *category_conditions) if sport_conditions or category_conditions else None
+
+        # #1484 bounded compute — phase 1 of a two-phase load: market ROWS only, no
+        # outcomes. Every filter between here and the column match (`_market_passes_
+        # league_filter`, the season filter, `_match_market_to_column`) reads only
+        # market fields (name / external_id / market_tier), so eagerly loading the
+        # outcomes of every candidate market was pure waste. In-season MLB matches
+        # every per-game Kalshi series (`KXMLB%`) and every Odds-API game market
+        # (`baseball_mlb%`), and `selectinload` pulled ALL of their outcomes — the
+        # league-specific cost that pushed the MLB grid past its 25s request budget
+        # while the out-of-season NBA/NHL grids stayed cheap. Phase 2 (below) loads
+        # outcomes only for markets that actually resolved to a grid column, so the
+        # response is unchanged and only the wasted I/O is gone.
+        stmt = select(FuturesMarket).where(market_filter_with_status)
+        result = await db.execute(stmt)
+        all_markets = result.scalars().unique().all()
+
+        # Filter by league membership (Python-side) to separate e.g. NBA from NCAAB
+        # and reject sibling competitions (e.g. the NBA Cup) whose ticker/name would
+        # otherwise leak in. The full gating decision lives in the pure, unit-tested
+        # helper _market_passes_league_filter (series -> league gating guard).
+        markets = [
+            market for market in all_markets
+            if _market_passes_league_filter(market.name or "", market.external_id or "", config)
+        ]
+
+        # -----------------------------------------------------------------------
+        # 1b. Filter out non-current-season markets
+        # -----------------------------------------------------------------------
+        # Markets from other seasons contaminate the grid.  Two failure modes:
+        #
+        # Future seasons: "NBA: 2027 Champion" has systematically lower
+        # probabilities (preseason lines), so the per-source dedup (keep lowest
+        # prob) picks the wrong entry.
+        #
+        # Past seasons: "2024-25 NBA Champion" outcomes are settled near 0%/1%.
+        # When a resolved past-season market and a fresh current-season market
+        # both map to the championship column from the same source, the min()
+        # dedup picks the stale ~1% value instead of the live ~30% value.
+        # This caused 30x staleness on the NBA grid (issue #708).
+        _season_max_year = _extract_season_max_year(config.season_pattern)
+        if _season_max_year:
+            before_filter = len(markets)
+            markets = [
+                m for m in markets
+                if not _is_future_season_market(m.name or "", _season_max_year)
+                and not _is_past_season_market(m.name or "", _season_max_year)
+            ]
+            filtered_season = before_filter - len(markets)
+            if filtered_season:
+                logger.info(
+                    "Playoff grid %s: filtered %d non-current-season markets (max_year=%d)",
+                    league_slug, filtered_season, _season_max_year,
+                )
+
+        logger.info(
+            "Playoff grid %s: found %d markets for sport_keys=%s, category=%s",
+            league_slug,
+            len(markets),
+            config.sport_keys,
+            config.sport_category,
         )
 
-    # Backfill empty columns from resolved markets (e.g., make_playoffs after
-    # regular season ends). Non-critical — grid works without it.
-    empty_cols = [c for c in config.columns if not column_data.get(c.key)]
-    logger.info("Grid %s: empty columns=%s", league_slug, [c.key for c in empty_cols])
-    if empty_cols:
-      try:
-        resolved_stmt = (
-            select(FuturesMarket)
-            .where(
-                market_filter,
-                FuturesMarket.status == "resolved",
-                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
-            )
-            .options(selectinload(FuturesMarket.outcomes))
-            .limit(50)
-        )
-        resolved_result = await db.execute(resolved_stmt)
-        resolved_markets = resolved_result.scalars().unique().all()
-        logger.info("Grid %s: resolved backfill found %d markets", league_slug, len(resolved_markets))
-        for market in resolved_markets:
-            if league_patterns and not any(p.search(market.name or "") for p in league_patterns):
-                logger.debug("Grid %s backfill: %s rejected by league_patterns", league_slug, market.name[:40])
-                continue
-            if league_exclude and any(p.search(market.name or "") for p in league_exclude):
-                logger.debug("Grid %s backfill: %s rejected by league_exclude", league_slug, market.name[:40])
-                continue
+        # -----------------------------------------------------------------------
+        # 2. Match each market to a grid column
+        # -----------------------------------------------------------------------
+
+        # column_key -> list of (market, outcome) tuples
+        column_data: dict[str, list[tuple]] = defaultdict(list)
+        _stale_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        # Settled columns (make_playoffs, division) stop trading after regular
+        # season ends — prices stay at 99.5%/0.5% with no updates for weeks.
+        # Use a much longer cutoff for these columns.
+        _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
+        _SETTLED_COLUMNS = {"make_playoffs", "division"}
+        _stale_skipped = 0
+
+        # Resolve every market to its column FIRST (market fields only), then load
+        # outcomes for just the survivors — phase 2 of the #1484 bounded load.
+        matched_markets: list[tuple[FuturesMarket, str]] = []
+        for market in markets:
             col_key = _match_market_to_column(market, config)
-            logger.info("Grid %s backfill: %s (id=%d, tier=%s) → col=%s (empty=%s)",
-                        league_slug, market.name[:40], market.id, market.market_tier,
-                        col_key, [c.key for c in empty_cols])
-            if col_key and col_key in [c.key for c in empty_cols]:
-                for outcome in market.outcomes:
-                    if outcome.is_winner is True:
-                        outcome.current_probability = 1.0
-                    if outcome.current_probability is None or float(outcome.current_probability) <= 0:
-                        continue
-                    oname = outcome.name or ""
-                    if _NON_PLAYOFF_MARKET_RE.search(oname):
-                        continue
-                    if oname.lower().strip() in ("yes", "no", "over", "under"):
-                        continue
-                    column_data[col_key].append((market, outcome))
-        if resolved_markets:
-            logger.info("Playoff grid %s: backfilled %d resolved markets for empty columns %s",
-                        league_slug, len(resolved_markets), [c.key for c in empty_cols])
-      except Exception as e:
-        logger.warning("Playoff grid %s: resolved backfill failed (non-critical): %s", league_slug, e)
+            if col_key:
+                matched_markets.append((market, col_key))
 
-    # Log column coverage + per-market breakdown for debugging
-    for col in config.columns:
-        entries = column_data.get(col.key, [])
-        count = len(entries)
-        logger.info("  Column %s (%s): %d outcome entries", col.key, col.label, count)
-        # Log distinct markets feeding this column
-        market_names: dict[int, str] = {}
-        for market, outcome in entries:
-            if market.id not in market_names:
-                market_names[market.id] = f"{market.source}:{market.name}"
-        if market_names:
-            for mid, mname in list(market_names.items())[:10]:
-                logger.info("    → market %d: %s", mid, mname)
+        outcomes_by_market = await _load_outcomes_for_markets(
+            db, [m.id for m, _ in matched_markets]
+        )
+        logger.info(
+            "Playoff grid %s: %d/%d markets matched a column; loaded outcomes for those only",
+            league_slug, len(matched_markets), len(markets),
+        )
+
+        for market, col_key in matched_markets:
+            cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
+            for outcome in outcomes_by_market.get(market.id, ()):
+                if outcome.last_updated and outcome.last_updated < cutoff:
+                    _stale_skipped += 1
+                    continue
+                if outcome.current_probability is not None:
+                    prob = float(outcome.current_probability)
+                elif (outcome.current_yes_bid is not None
+                      and outcome.current_yes_ask is not None
+                      and float(outcome.current_yes_ask) > 0):
+                    # Fallback: compute from bid/ask when current_probability
+                    # wasn't written (e.g. during API format migrations).
+                    prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+                else:
+                    continue
+                if prob <= 0 or prob >= 1.0:
+                    continue
+                # Skip non-team outcome names (thresholds, dates, generic)
+                oname = outcome.name or ""
+                if _NON_PLAYOFF_MARKET_RE.search(oname):
+                    continue
+                # Skip generic yes/no, over/under outcomes
+                if oname.lower().strip() in ("yes", "no", "over", "under"):
+                    continue
+                # Skip matchup pair outcomes like "Tampa Bay and Colorado"
+                if re.search(r"\band\b", oname, re.IGNORECASE) and \
+                   not re.search(r"\bTrail\s+Blazers\b", oname, re.IGNORECASE):
+                    # Allow "Trail Blazers" which is a real team (Portland Trail Blazers)
+                    # but block "Tampa Bay and Colorado" matchup pairs
+                    if re.match(r"^[\w\s.]+ and [\w\s.]+$", oname.strip()):
+                        continue
+                # Skip generic/seeded outcomes like "#1 seed", "1+ wins"
+                if re.match(r"^#?\d+", oname.strip()):
+                    continue
+                # Skip country/national team names in club competitions
+                # (catches World Cup outcomes leaking into Champions League, EPL, etc.)
+                if config.sport_category == "soccer" and oname.strip() in _COUNTRY_NAMES:
+                    continue
+                # Filter prediction market 0.5 noise — binary markets near 50%
+                # are illiquid defaults, not real predictions.  Applies to both
+                # Kalshi and Polymarket.  But skip this filter when bid/ask data
+                # shows real trading activity (bid > 0 means someone placed a
+                # real order, not just a default).
+                if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
+                    has_real_activity = (
+                        outcome.current_yes_bid is not None
+                        and float(outcome.current_yes_bid) > 0
+                    )
+                    if not has_real_activity:
+                        continue
+
+                column_data[col_key].append((market, outcome))
+
+        if _stale_skipped:
+            logger.info(
+                "Playoff grid %s: skipped %d stale outcomes (>7 days old)",
+                league_slug, _stale_skipped,
+            )
+
+        # Backfill empty columns from resolved markets (e.g., make_playoffs after
+        # regular season ends). Non-critical — grid works without it.
+        empty_cols = [c for c in config.columns if not column_data.get(c.key)]
+        logger.info("Grid %s: empty columns=%s", league_slug, [c.key for c in empty_cols])
+        if empty_cols:
+          try:
+            resolved_stmt = (
+                select(FuturesMarket)
+                .where(
+                    market_filter,
+                    FuturesMarket.status == "resolved",
+                    FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+                )
+                .options(selectinload(FuturesMarket.outcomes))
+                .limit(50)
+            )
+            resolved_result = await db.execute(resolved_stmt)
+            resolved_markets = resolved_result.scalars().unique().all()
+            logger.info("Grid %s: resolved backfill found %d markets", league_slug, len(resolved_markets))
+            for market in resolved_markets:
+                if league_patterns and not any(p.search(market.name or "") for p in league_patterns):
+                    logger.debug("Grid %s backfill: %s rejected by league_patterns", league_slug, market.name[:40])
+                    continue
+                if league_exclude and any(p.search(market.name or "") for p in league_exclude):
+                    logger.debug("Grid %s backfill: %s rejected by league_exclude", league_slug, market.name[:40])
+                    continue
+                col_key = _match_market_to_column(market, config)
+                logger.info("Grid %s backfill: %s (id=%d, tier=%s) → col=%s (empty=%s)",
+                            league_slug, market.name[:40], market.id, market.market_tier,
+                            col_key, [c.key for c in empty_cols])
+                if col_key and col_key in [c.key for c in empty_cols]:
+                    for outcome in market.outcomes:
+                        if outcome.is_winner is True:
+                            outcome.current_probability = 1.0
+                        if outcome.current_probability is None or float(outcome.current_probability) <= 0:
+                            continue
+                        oname = outcome.name or ""
+                        if _NON_PLAYOFF_MARKET_RE.search(oname):
+                            continue
+                        if oname.lower().strip() in ("yes", "no", "over", "under"):
+                            continue
+                        column_data[col_key].append((market, outcome))
+            if resolved_markets:
+                logger.info("Playoff grid %s: backfilled %d resolved markets for empty columns %s",
+                            league_slug, len(resolved_markets), [c.key for c in empty_cols])
+          except Exception as e:
+            logger.warning("Playoff grid %s: resolved backfill failed (non-critical): %s", league_slug, e)
+
+        # Log column coverage + per-market breakdown for debugging
+        for col in config.columns:
+            entries = column_data.get(col.key, [])
+            count = len(entries)
+            logger.info("  Column %s (%s): %d outcome entries", col.key, col.label, count)
+            # Log distinct markets feeding this column
+            market_names: dict[int, str] = {}
+            for market, outcome in entries:
+                if market.id not in market_names:
+                    market_names[market.id] = f"{market.source}:{market.name}"
+            if market_names:
+                for mid, mname in list(market_names.items())[:10]:
+                    logger.info("    → market %d: %s", mid, mname)
 
     # -----------------------------------------------------------------------
     # 3. Aggregate by team × column with cross-source merging
@@ -2849,7 +2971,15 @@ async def get_playoff_grid(
     for col_key, entries in column_data.items():
         for market, outcome in entries:
             team_name = outcome.name
-            norm = _normalize_team_name(team_name)
+            if register is not None:
+                # The register already decided which entity this outcome is.
+                # Never re-derive it from the outcome text — that guess is the
+                # bug class this queue removes.
+                entity_key, entity_name = register_entities[outcome.id]
+                norm = entity_key
+                team_name = entity_name
+            else:
+                norm = _normalize_team_name(team_name)
 
             source_entry = {
                 "source": market.source,
@@ -2906,7 +3036,13 @@ async def get_playoff_grid(
             grid_raw[alias_tgt] = grid_raw.pop(alias_src)
             logger.info("Applied admin alias rename: '%s' → '%s'", alias_src, alias_tgt)
 
-    norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
+    # Register-backed grids skip every heuristic merge below. Entities are
+    # already canonical, so prefix / single-letter / word-subset / alias merging
+    # can only do harm here (it is what collapsed distinct teams onto each other
+    # in the first place).
+    norm_names = [] if register is not None else sorted(
+        grid_raw.keys(), key=len, reverse=True
+    )  # longest first
     merge_map: dict[str, str] = {}  # short_name → long_name
 
     # Abbreviation expansions for team name merging.
@@ -2997,7 +3133,7 @@ async def get_playoff_grid(
     # (e.g., "Connecticut" vs "UConn Huskies")
     team_id_to_norm: dict[int, str] = {}
     meta_merge_map: dict[str, str] = {}
-    for norm_name in list(grid_raw.keys()):
+    for norm_name in ([] if register is not None else list(grid_raw.keys())):
         meta = team_meta.get(norm_name, {})
         tid = meta.get("team_id")
         if tid is None:
@@ -3024,6 +3160,10 @@ async def get_playoff_grid(
     old_probs = await _compute_movers(db, all_outcome_ids, hours=24)
 
     teams = []
+    # entity/norm name -> the row we emitted for it, so register terminal states
+    # can be attached later. Rows with no cells are skipped, so this cannot be
+    # reconstructed by zipping teams against grid_raw.
+    row_by_entity: dict[str, dict] = {}
     championship_col = config.columns[-1].key  # Last column is typically championship
 
     for norm_name, col_map in grid_raw.items():
@@ -3037,8 +3177,12 @@ async def get_playoff_grid(
                     break
             break
 
-        # Look up team metadata
-        meta = team_meta.get(norm_name, {})
+        # Look up team metadata. Register grids key rows by the register's
+        # canonical entity, which may not be spelled the way the Team table
+        # normalizes, so fall back to the display name before giving up.
+        meta = team_meta.get(norm_name) or {}
+        if not meta and display_name:
+            meta = team_meta.get(_normalize_team_name(display_name)) or {}
 
         cells = {}
         for col in config.columns:
@@ -3093,6 +3237,10 @@ async def get_playoff_grid(
                 "merged_probability": round(merged, 4),
                 "sources": sources,
                 "trend_24h": trend_24h,
+                # Explicit cell state. Additive — existing consumers keep reading
+                # merged_probability. Register-backed grids additionally emit
+                # "won"/"eliminated"/"missing" cells, which carry no probability.
+                "state": "live",
             }
             # Kalshi's minimum tick is 0.01 (1%). When a cell is exactly at the
             # minimum and Kalshi is the only source, flag it so the frontend
@@ -3185,6 +3333,66 @@ async def get_playoff_grid(
             "cells": cells,
         }
         teams.append(team_row)
+        row_by_entity[norm_name] = team_row
+
+    # -----------------------------------------------------------------------
+    # 4r. Register terminal + missing states
+    # -----------------------------------------------------------------------
+    # "Settled means settled": a clinched or eliminated cell renders its result,
+    # never a live-looking number. A registered cell whose source has gone away
+    # renders an honest empty state and is counted. Both carry no probability,
+    # so they are injected AFTER the blend and are invisible to it.
+    if register is not None:
+        rows_by_entity = row_by_entity
+        entity_names = register.entity_names()
+
+        for entry in register.entries:
+            status = entry.get("status")
+            if status not in ("settled", "missing"):
+                continue
+            entity_key = entry.get("entity_key")
+            row = rows_by_entity.get(entity_key)
+            if row is None:
+                display = entity_names.get(entity_key, entity_key)
+                meta = (
+                    team_meta.get(entity_key)
+                    or team_meta.get(_normalize_team_name(display))
+                    or {}
+                )
+                row = {
+                    "name": display,
+                    "short_name": meta.get("short_name") or display,
+                    "team_id": meta.get("team_id"),
+                    "logo_url": meta.get("logo_url"),
+                    "primary_color": meta.get("primary_color"),
+                    "secondary_color": meta.get("secondary_color"),
+                    "record": meta.get("record"),
+                    "conference": meta.get("conference"),
+                    "division": meta.get("division"),
+                    "region": meta.get("region"),
+                    "seed": meta.get("seed"),
+                    "cells": {},
+                }
+                rows_by_entity[entity_key] = row
+                teams.append(row)
+
+            stage = entry.get("stage")
+            # A live cell for this stage already won on merit; a terminal result
+            # still supersedes it, because settled outranks trading.
+            if status == "settled":
+                row["cells"][stage] = {
+                    "merged_probability": None,
+                    "sources": [],
+                    "trend_24h": None,
+                    "state": entry.get("terminal_result"),
+                }
+            elif stage not in row["cells"]:
+                row["cells"][stage] = {
+                    "merged_probability": None,
+                    "sources": [],
+                    "trend_24h": None,
+                    "state": "missing",
+                }
 
     # -----------------------------------------------------------------------
     # 4b. Column-sum sanity check

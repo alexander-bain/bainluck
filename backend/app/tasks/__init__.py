@@ -299,6 +299,7 @@ HEAVY_TASKS = {
     # background would keep a beat contending exactly where #233 needs quiet.
     "app.tasks.flow_sentinel",
     "app.tasks.grid_sentinel",
+    "app.tasks.grid_register_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
@@ -1774,6 +1775,25 @@ def grid_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
+                 name="app.tasks.grid_register_sentinel")
+def grid_register_sentinel(self, apply=False, file_issues=True):
+    """Grid Register Sentinel (Queue #295): diff each committed grid register
+    against current source inventory. Unambiguous drift (exact-identity ticker
+    rename, authoritative settlement) proposes a validated next version;
+    ambiguous drift is never applied and files ONE deduped P2 needs-triage issue
+    per league with an MC-ready question. Defaults to ``apply=False`` (dry-run /
+    diff only) so publication is an explicit choice. Identity only — reads no
+    probabilities and writes no market data (gotcha #21). The 600s soft limit
+    sits under the 660s hard limit and above the run's 240s inner deadline, so
+    it can never SIGKILL untracked (#966)."""
+    from app.tasks.grid_register_sentinel import _run_grid_register_sentinel
+    return _tracked_run(
+        "grid_register_sentinel",
+        _run_grid_register_sentinel(apply=apply, file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.horizon_sentinel")
 def horizon_sentinel(self, file_issues=True):
     """Horizon Sentinel (Queue #223): read THE HORIZON CALENDAR
@@ -2592,6 +2612,16 @@ celery_app.conf.beat_schedule = {
         # heavy queue (#233).
         "task": "app.tasks.grid_sentinel",
         "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
+        "options": {"queue": "heavy"},
+    },
+    "grid-register-sentinel-daily": {
+        # Queue #295: diff every committed grid register against live source
+        # inventory. Runs at 07:32 UTC — after the grid sentinel (07:25) so the
+        # two never contend for the heavy dyno, and before the horizon sentinel
+        # (07:40). Dry-run by default: it proposes and reports versions but does
+        # not publish until apply=True is passed explicitly.
+        "task": "app.tasks.grid_register_sentinel",
+        "schedule": crontab(minute=32, hour=7),  # Daily 07:32 UTC
         "options": {"queue": "heavy"},
     },
     "horizon-sentinel-daily": {

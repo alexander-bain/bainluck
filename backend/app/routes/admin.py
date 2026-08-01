@@ -1196,6 +1196,48 @@ async def get_grid_sentinel_last(
     return _sentinel_last_payload("bainluck:grid_sentinel:last")
 
 
+@router.post("/grid-register-sentinel/run")
+async def trigger_grid_register_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    apply: bool = Query(False, description="Publish validated register versions (default: dry-run/diff only)"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+):
+    """Queue #295: on-demand run of the Grid Register Sentinel.
+
+    Diffs each committed grid register against current source inventory.
+    Defaults to ``apply=false`` — it reports the diff and any proposed version
+    without publishing, which is the intended way to inspect drift
+    (?inline=true&file_issues=false). Ambiguous drift is never applied.
+    Identity only; never writes market data (gotcha #21)."""
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.grid_register_sentinel import _run_grid_register_sentinel
+
+        return await _run_grid_register_sentinel(apply=apply, file_issues=file_issues)
+
+    result = _safe_send_task(
+        "app.tasks.grid_register_sentinel",
+        kwargs={"apply": apply, "file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/grid-register-sentinel/last")
+async def get_grid_register_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Queue #295: read the last cached Grid Register Sentinel run — per-league
+    register version, age, missing/settled/live counts, drift and ambiguity
+    counts, and any failure cause."""
+    _check_admin_secret(secret, request=request)
+
+    return _sentinel_last_payload("bainluck:grid_register_sentinel:last")
+
+
 @router.post("/board-sentinel/run")
 async def trigger_board_sentinel(
     request: Request,

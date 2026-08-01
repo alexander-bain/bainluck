@@ -47,8 +47,13 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
             prev_cell = cells.get(prev_key)
             curr_cell = cells.get(curr_key)
             if prev_cell and curr_cell:
-                prev_p = prev_cell["merged_probability"]
-                curr_p = curr_cell["merged_probability"]
+                prev_p = prev_cell.get("merged_probability")
+                curr_p = curr_cell.get("merged_probability")
+                # Register-backed grids carry settled/missing cells that have no
+                # probability at all. They are terminal states, not numbers to
+                # compare, so monotonicity simply does not apply to them.
+                if prev_p is None or curr_p is None:
+                    continue
                 if curr_p > prev_p:
                     curr_cell["merged_probability"] = prev_p
                     # Also cap individual source probabilities
@@ -81,9 +86,14 @@ def normalize_column_sums(
         expected = EXPECTED_COLUMN_SUMS.get(col_key)
         if not expected:
             continue
+        # Settled/missing cells (register-backed grids) contribute no
+        # probability — normalizing against them would scale the live cells by a
+        # denominator that never included them.
         col_sum = sum(
-            t["cells"].get(col_key, {}).get("merged_probability", 0)
-            for t in teams
+            p for p in (
+                t["cells"].get(col_key, {}).get("merged_probability")
+                for t in teams
+            ) if p is not None
         )
         if col_sum > expected * 2.5:
             logger.warning(
@@ -161,15 +171,27 @@ def compute_movers(
     return movers[:limit]
 
 
+def _championship_sort_value(team: dict, championship_col: str) -> float:
+    """Sort weight for a team's championship cell.
+
+    Live cells sort by probability. A settled cell has no probability, so it
+    sorts by its terminal result: a confirmed champion belongs at the top, an
+    eliminated team at the bottom — the same place its 100%/0% would have put it.
+    """
+    cell = team["cells"].get(championship_col) or {}
+    prob = cell.get("merged_probability")
+    if prob is not None:
+        return float(prob)
+    return 1.0 if cell.get("state") == "won" else 0.0
+
+
 def sort_teams_by_championship(
     teams: list[dict],
     championship_col: str,
     max_teams: int,
 ) -> list[dict]:
     """Sort teams by championship probability (descending) and cap to max."""
-    teams.sort(
-        key=lambda t: -(t["cells"].get(championship_col, {}).get("merged_probability", 0))
-    )
+    teams.sort(key=lambda t: -_championship_sort_value(t, championship_col))
     return teams[:max_teams]
 
 

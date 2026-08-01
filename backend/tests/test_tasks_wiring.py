@@ -276,6 +276,7 @@ class TestBeatScheduleCompleteness:
         "mlb-schedule-coverage-daily",
         "flow-sentinel-daily",
         "grid-sentinel-daily",
+        "grid-register-sentinel-daily",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",
